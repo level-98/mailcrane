@@ -8,6 +8,7 @@ Write one when you add a dependency, change a public API or the database schema,
 
 | Number | Decision | Status |
 |---|---|---|
+| [0000](0000-app-name-and-domain-acquisition.md) | App name and domain name acquisition |
 | [0001](0001-tech-stack.md) | Shared Rust core with native UIs, bound through UniFFI | proposed |
 
 ## Template
