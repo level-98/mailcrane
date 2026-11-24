@@ -16,7 +16,7 @@ Goal: anyone can clone, build an empty app on both platforms and run CI.
 - [x] **M0-04** Rust workspace skeleton in `core/` with empty crates: `mailcrane-core`, `-imap`, `-smtp`, `-jmap`, `-mime`, `-store`, `-ffi`, `-testkit`; `#![forbid(unsafe_code)]` and the no-panic clippy lints 🤖
 - [x] **M0-05** UniFFI setup: expose a `hello()` function, generate Kotlin and Swift bindings 🤖
 - [x] **M0-06** Android app shell: Compose + Material 3, Hilt, calls `hello()` through the bindings, ktlint 🤖
-- [ ] **M0-07** iOS app shell: SwiftUI, XCFramework build of the core, calls `hello()`, SwiftLint 🤖
+- [x] **M0-07** iOS app shell: SwiftUI, XCFramework build of the core, calls `hello()`, SwiftLint 🤖
 - [x] **M0-08** `cargo xtask ci`: one command for fmt, clippy, tests, cargo-deny, and Android/iOS checks when installed; CI (GitHub Actions) just runs it 🤖
 - [x] **M0-09** `cargo deny` config allowing only MPL-2.0-compatible licences 🟢🤖
 - [ ] **M0-10** Generate the Compose theme and SwiftUI colour assets from `design/colors.json` (the brand pack itself is already in `design/`) 🤖
