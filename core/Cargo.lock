@@ -1001,6 +1001,7 @@ dependencies = [
  "mailcrane-store",
  "mailcrane-testkit",
  "proptest",
+ "tempfile",
  "thiserror",
  "tokio",
  "tracing",

@@ -65,23 +65,18 @@ pub enum CoreEvent {
         /// What kind of failure.
         kind: SyncErrorKind,
     },
-}
-
-impl From<events::CoreEvent> for CoreEvent {
-    fn from(event: events::CoreEvent) -> Self {
-        match event {
-            events::CoreEvent::FolderChanged { folder_id } => Self::FolderChanged {
-                folder_id: folder_id.0,
-            },
-            events::CoreEvent::MessagesChanged { folder_id } => Self::MessagesChanged {
-                folder_id: folder_id.0,
-            },
-            events::CoreEvent::SyncError { account_id, kind } => Self::SyncError {
-                account_id: account_id.0,
-                kind: kind.into(),
-            },
-        }
-    }
+    /// The server refused a message action for good. Its local change was
+    /// undone (a `MessagesChanged` event comes with it); tell the user.
+    ActionFailed {
+        /// Row id of the account.
+        account_id: i64,
+        /// What was refused.
+        action: crate::actions::ActionKind,
+        /// Row ids of the messages it was applied to.
+        message_ids: Vec<i64>,
+        /// Why, without server text.
+        reason: SyncErrorKind,
+    },
 }
 
 /// Receives events, implemented in Kotlin and Swift. It may be called from
@@ -92,7 +87,7 @@ pub trait CoreEventListener: Send + Sync {
     fn on_event(&self, event: CoreEvent);
 }
 
-struct ListenerAdapter(Arc<dyn CoreEventListener>);
+pub(crate) struct ListenerAdapter(pub(crate) Arc<dyn CoreEventListener>);
 
 impl EventListener for ListenerAdapter {
     fn on_event(&self, event: events::CoreEvent) {
@@ -111,7 +106,7 @@ pub enum SyncFailure {
     },
 }
 
-fn failed(kind: events::SyncErrorKind) -> SyncFailure {
+pub(crate) fn failed(kind: events::SyncErrorKind) -> SyncFailure {
     SyncFailure::Failed { kind: kind.into() }
 }
 
@@ -127,7 +122,7 @@ impl From<CoreSyncError> for SyncFailure {
 #[derive(uniffi::Object)]
 pub struct SyncEngine {
     db_path: String,
-    listener: Arc<dyn CoreEventListener>,
+    pub(crate) listener: Arc<dyn CoreEventListener>,
     config: SyncConfig,
     /// Serialises sync calls.
     busy: Mutex<()>,
@@ -151,9 +146,11 @@ impl SyncEngine {
     }
 
     /// Fetches headers for the newest messages of the folder (200 at first,
-    /// in batches of 50, newest first). Returns how many were stored.
+    /// in batches of 50, newest first). Returns how many were stored. Queued
+    /// message actions of the account due by now are replayed first, so the
+    /// server's flags already include them.
     pub fn sync_folder(&self, folder_id: i64) -> Result<u32, SyncFailure> {
-        let stored = self.run(FolderId(folder_id), |syncer| {
+        let stored = self.run_replaying(FolderId(folder_id), true, |syncer| {
             Box::pin(async move { syncer.sync_folder(FolderId(folder_id)).await })
         })?;
         Ok(u32::try_from(stored).unwrap_or(u32::MAX))
@@ -191,33 +188,18 @@ impl SyncEngine {
         })
     }
 
-    /// Marks the message as read. For now this changes only the local copy
-    /// (until read state is synced back to the server, M1-14), so a later
-    /// sync that reports the server's flags can undo it. Sends
-    /// `MessagesChanged` for its folder when something changed. Doesn't wait
-    /// for a running sync.
+    /// Marks the message as read, locally at once and queued for the
+    /// server (M1-14); sends `MessagesChanged` for its folder when something
+    /// changed. Doesn't wait for a running sync. The queue is replayed by
+    /// `replay_actions` or the next sync.
     pub fn mark_read(&self, message_id: i64) -> Result<(), SyncFailure> {
-        let store = self.open_store()?;
-        let id = MessageId(message_id);
-        let header = store
-            .get_message_header(id)
-            .map_err(|_| failed(events::SyncErrorKind::Storage))?
-            .ok_or_else(|| failed(events::SyncErrorKind::NotFound))?;
-        let mut flags = header.details.flags;
-        if flags.seen {
-            return Ok(());
+        match self.apply_action(vec![message_id], crate::actions::MessageAction::MarkRead) {
+            Ok(_) => Ok(()),
+            Err(crate::actions::ActionFailure::NotFound) => {
+                Err(failed(events::SyncErrorKind::NotFound))
+            }
+            Err(_) => Err(failed(events::SyncErrorKind::Storage)),
         }
-        flags.seen = true;
-        let changed = store
-            .set_flags(id, flags)
-            .map_err(|_| failed(events::SyncErrorKind::Storage))?;
-        if !changed {
-            return Err(failed(events::SyncErrorKind::NotFound));
-        }
-        self.listener.on_event(CoreEvent::MessagesChanged {
-            folder_id: header.details.folder_id.0,
-        });
-        Ok(())
     }
 
     /// Lists the account's folders on the server and saves them, keeping
@@ -246,7 +228,7 @@ type SyncFuture<'a, T> =
     std::pin::Pin<Box<dyn std::future::Future<Output = Result<T, CoreSyncError>> + 'a>>;
 
 impl SyncEngine {
-    fn open_store(&self) -> Result<Store, SyncFailure> {
+    pub(crate) fn open_store(&self) -> Result<Store, SyncFailure> {
         Store::open(&self.db_path).map_err(|_| failed(events::SyncErrorKind::Storage))
     }
 
@@ -254,6 +236,18 @@ impl SyncEngine {
     fn run<T>(
         &self,
         folder: FolderId,
+        job: impl for<'a> FnOnce(&'a mut FolderSyncer<'_>) -> SyncFuture<'a, T>,
+    ) -> Result<T, SyncFailure> {
+        self.run_replaying(folder, false, job)
+    }
+
+    /// [`Self::run`], replaying the account's queued actions first when
+    /// `replay` is set. A replay that fails only defers the actions; the
+    /// sync goes ahead.
+    fn run_replaying<T>(
+        &self,
+        folder: FolderId,
+        replay: bool,
         job: impl for<'a> FnOnce(&'a mut FolderSyncer<'_>) -> SyncFuture<'a, T>,
     ) -> Result<T, SyncFailure> {
         // A poisoned lock only means an earlier call panicked; nothing in it
@@ -271,12 +265,49 @@ impl SyncEngine {
         let runtime = runtime().map_err(report)?;
         runtime.block_on(async {
             let mut session = self.connect(&store, account).await.map_err(report)?;
+            if replay {
+                // Only a local database failure comes back as an error, and
+                // the sync reports that itself; actions that failed against
+                // the server are already deferred or undone.
+                let _ = mailcrane_core::actions::replay(
+                    &store,
+                    &mut session,
+                    &listener,
+                    account,
+                    crate::actions::now(),
+                )
+                .await;
+            }
             // The syncer borrows the session; end that borrow before logout.
             let result = {
                 let mut syncer =
                     FolderSyncer::new(&store, &mut session, &listener, account, self.config);
                 job(&mut syncer).await
             };
+            session.logout().await;
+            result.map_err(SyncFailure::from)
+        })
+    }
+
+    /// Connects for `account` and runs `job` with the store, session and
+    /// listener. Serialised with the other calls.
+    pub(crate) fn with_session<T>(
+        &self,
+        account: AccountId,
+        job: impl for<'a> FnOnce(
+            &'a Store,
+            &'a mut Session,
+            &'a ListenerAdapter,
+        ) -> SyncFuture<'a, T>,
+    ) -> Result<T, SyncFailure> {
+        let _guard = self.busy.lock().unwrap_or_else(|p| p.into_inner());
+        let store = self.open_store()?;
+        let listener = ListenerAdapter(self.listener.clone());
+        let report = |kind| self.report(account, kind);
+        let runtime = runtime().map_err(report)?;
+        runtime.block_on(async {
+            let mut session = self.connect(&store, account).await.map_err(report)?;
+            let result = job(&store, &mut session, &listener).await;
             session.logout().await;
             result.map_err(SyncFailure::from)
         })
