@@ -111,6 +111,6 @@ Goal: add an IMAP account and read your inbox, online and offline.
 
 - [ ] **P-01** Check and register domains: mailcrane.app / .com / .org / .dev 🧑
 - [x] **P-02** GitHub repo created: `level-98/mailcrane` 🧑
-- [ ] **P-03** Google Play and App Store name search 🧑
+- [x] **P-03** Google Play and App Store name search 🧑
 - [ ] **P-04** Trademark search: UKIPO, USPTO, EUIPO (classes 9 and 38) 🧑
 - [ ] **P-05** Reserve app IDs (`app.mailcrane` / `org.mailcrane.android`) and the F-Droid package name 🧑
