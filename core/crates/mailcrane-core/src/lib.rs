@@ -2,6 +2,8 @@
 
 #![forbid(unsafe_code)]
 
+pub mod secrets;
+
 /// The name of this crate.
 pub const CRATE_NAME: &str = env!("CARGO_PKG_NAME");
 

@@ -24,4 +24,5 @@ required-features = ["bindgen"]
 
 [dependencies]
 mailcrane-core = { path = "../mailcrane-core" }
+thiserror = "2.0.21"
 uniffi = "0.32.2"

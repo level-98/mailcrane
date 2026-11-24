@@ -6,6 +6,7 @@ pub mod fault;
 pub mod imap;
 pub mod jmap;
 pub mod mailbox;
+pub mod secrets;
 pub mod smtp;
 mod tls;
 
@@ -13,6 +14,7 @@ pub use fault::{Fault, Quirk};
 pub use imap::FakeImap;
 pub use jmap::{FakeJmap, JmapSentRequest};
 pub use mailbox::{Mailbox, Message};
+pub use secrets::MemorySecretStore;
 pub use smtp::{FakeSmtp, SentMessage};
 
 /// Start a fake IMAP server, deliver a synthetic message, and inspect the mailbox.
