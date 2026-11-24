@@ -51,7 +51,7 @@ Goal: add an IMAP account and read your inbox, online and offline.
 
 ## M2 — Send mail
 
-- [ ] **M2-01** SMTP sending with STARTTLS and implicit TLS 🔒🤖
+- [x] **M2-01** SMTP sending with STARTTLS and implicit TLS 🔒🤖
 - [ ] **M2-02** Compose screen: to/cc/bcc, subject, plain-text body 🤖
 - [ ] **M2-03** Reply, reply-all and forward, with correct `In-Reply-To` and `References` headers 🤖
 - [ ] **M2-04** Attachments: add, send, preview and save 🤖

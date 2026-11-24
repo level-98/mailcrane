@@ -147,6 +147,7 @@ async fn smtp_connection(
             quirks,
             &mut None,
             &mut Vec::new(),
+            &command_count,
         )
         .await;
     }
@@ -230,6 +231,7 @@ async fn smtp_connection(
                         quirks,
                         &mut from,
                         &mut recipients,
+                        &command_count,
                     )
                     .await;
                 }
@@ -267,6 +269,13 @@ async fn smtp_connection(
                     .flatten()
                     .map(|value| value.trim_start_matches('<').to_string())
                     .unwrap_or_else(|| text.trim().to_string());
+                if faults.contains(&Fault::RejectRecipient(address.clone())) {
+                    stream
+                        .write_all(b"550 recipient rejected\r\n")
+                        .await
+                        .map_err(|error| error.to_string())?;
+                    continue;
+                }
                 recipients.push(address);
                 stream
                     .write_all(smtp_reply(
@@ -282,6 +291,9 @@ async fn smtp_connection(
                     .write_all(b"354 End data with <CR><LF>.<CR><LF>\r\n")
                     .await
                     .map_err(|error| error.to_string())?;
+                if faults.contains(&Fault::DropMidData) {
+                    return Ok(());
+                }
                 let mut data = Vec::new();
                 loop {
                     let mut line = Vec::new();
@@ -346,6 +358,7 @@ async fn smtp_plain_stream(
     _quirks: Arc<Vec<Quirk>>,
     from: &mut Option<String>,
     recipients: &mut Vec<String>,
+    command_count: &AtomicUsize,
 ) -> Result<(), String> {
     loop {
         let mut line = Vec::new();
@@ -365,6 +378,13 @@ async fn smtp_plain_stream(
             .next()
             .unwrap_or("")
             .to_ascii_uppercase();
+        let count = command_count.fetch_add(1, Ordering::SeqCst) + 1;
+        if faults
+            .iter()
+            .any(|fault| matches!(fault, Fault::DropAfterCommands(limit) if count >= *limit))
+        {
+            return Ok(());
+        }
         match command.as_str() {
             "EHLO" => stream
                 .write_all(b"250-mailcrane.test\r\n250 AUTH PLAIN LOGIN\r\n")
@@ -387,7 +407,11 @@ async fn smtp_plain_stream(
                     .map(|value| value.trim_start_matches('<').to_string());
                 *from = address;
                 stream
-                    .write_all(b"250 sender accepted\r\n")
+                    .write_all(smtp_reply(
+                        &faults,
+                        b"250 sender accepted\r\n",
+                        b"550 sender rejected\r\n",
+                    ))
                     .await
                     .map_err(|error| error.to_string())?;
             }
@@ -399,9 +423,20 @@ async fn smtp_plain_stream(
                     .flatten()
                     .map(|value| value.trim_start_matches('<').to_string())
                     .unwrap_or_else(|| text.trim().to_string());
+                if faults.contains(&Fault::RejectRecipient(address.clone())) {
+                    stream
+                        .write_all(b"550 recipient rejected\r\n")
+                        .await
+                        .map_err(|error| error.to_string())?;
+                    continue;
+                }
                 recipients.push(address);
                 stream
-                    .write_all(b"250 recipient accepted\r\n")
+                    .write_all(smtp_reply(
+                        &faults,
+                        b"250 recipient accepted\r\n",
+                        b"550 recipient rejected\r\n",
+                    ))
                     .await
                     .map_err(|error| error.to_string())?;
             }
@@ -410,6 +445,9 @@ async fn smtp_plain_stream(
                     .write_all(b"354 End data with <CR><LF>.<CR><LF>\r\n")
                     .await
                     .map_err(|error| error.to_string())?;
+                if faults.contains(&Fault::DropMidData) {
+                    return Ok(());
+                }
                 let mut data = Vec::new();
                 loop {
                     let mut line = Vec::new();
@@ -435,7 +473,11 @@ async fn smtp_plain_stream(
                 });
                 recipients.clear();
                 stream
-                    .write_all(b"250 message accepted\r\n")
+                    .write_all(smtp_reply(
+                        &faults,
+                        b"250 message accepted\r\n",
+                        b"550 message rejected\r\n",
+                    ))
                     .await
                     .map_err(|error| error.to_string())?;
             }

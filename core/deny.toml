@@ -15,6 +15,9 @@ allow = [
     "BSD-3-Clause",
     "ISC",
     "MPL-2.0",
+    # Root-certificate data shipped by `webpki-root-certs`, through
+    # `rustls-platform-verifier`.
+    "CDLA-Permissive-2.0",
     # Permissive; used by some compression crates (e.g. miniz_oxide).
     "Zlib",
     # Needed by `unicode-ident` and the ICU crates.
