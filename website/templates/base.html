@@ -37,7 +37,7 @@
     <meta name="twitter:card" content="summary">
     <link rel="icon" href="{{ get_url(path='brand/mark-color.svg') }}" type="image/svg+xml">
     <link rel="apple-touch-icon" href="{{ get_url(path='brand/app-icon-512.png') }}">
-    <link rel="stylesheet" href="{{ get_url(path='css/site.css') }}">
+    <link rel="stylesheet" href="{{ get_url(path='css/site.css', cachebust=true) }}">
     <script>
       (function () {
         let savedTheme = null;
@@ -55,7 +55,7 @@
           theme === "dark" ? "#0F1424" : "#F4F6FB";
       })();
     </script>
-    <script src="{{ get_url(path='js/site.js') }}" defer></script>
+    <script src="{{ get_url(path='js/site.js', cachebust=true) }}" defer></script>
   </head>
   <body>
     <a class="skip-link" href="#main">Skip to content</a>
