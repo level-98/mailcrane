@@ -12,7 +12,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import app.mailcrane.ui.account.ManualSetupScreen
 import app.mailcrane.ui.components.WelcomeState
-import app.mailcrane.ui.messagelist.InboxScreen
+import app.mailcrane.ui.folders.MailboxScreen
 import app.mailcrane.ui.theme.MailcraneTheme
 import dagger.hilt.android.AndroidEntryPoint
 
@@ -22,13 +22,13 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         setContent {
             MailcraneTheme {
-                // Adding an account opens its inbox. Remembering accounts across restarts comes
+                // Adding an account opens its mail. Remembering accounts across restarts comes
                 // with the account list; until then, no account id means no accounts.
                 var accountId by rememberSaveable { mutableStateOf<Long?>(null) }
                 var addingAccount by rememberSaveable { mutableStateOf(false) }
                 val id = accountId
                 when {
-                    id != null -> InboxScreen(accountId = id)
+                    id != null -> MailboxScreen(accountId = id)
                     addingAccount -> {
                         BackHandler { addingAccount = false }
                         ManualSetupScreen(onAccountAdded = { accountId = it })

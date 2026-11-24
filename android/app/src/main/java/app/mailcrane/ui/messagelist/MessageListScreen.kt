@@ -12,6 +12,8 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
@@ -31,7 +33,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalResources
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -46,6 +50,7 @@ import java.time.ZonedDateTime
 fun MessageListScreen(
     folderId: Long,
     title: String,
+    onOpenFolders: (() -> Unit)? = null,
     viewModel: MessageListViewModel =
         hiltViewModel<MessageListViewModel, MessageListViewModel.Factory>(
             key = "folder-$folderId",
@@ -64,6 +69,7 @@ fun MessageListScreen(
         snackbar = snackbar,
         onRefresh = viewModel::refresh,
         onLoadMore = viewModel::loadMore,
+        onOpenFolders = onOpenFolders,
     )
 }
 
@@ -75,10 +81,25 @@ fun MessageListContent(
     snackbar: SnackbarHostState,
     onRefresh: () -> Unit,
     onLoadMore: () -> Unit,
+    onOpenFolders: (() -> Unit)? = null,
     listState: LazyListState = rememberLazyListState(),
 ) {
     Scaffold(
-        topBar = { TopAppBar(title = { Text(title) }) },
+        topBar = {
+            TopAppBar(
+                title = { Text(title, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                navigationIcon = {
+                    if (onOpenFolders != null) {
+                        IconButton(onClick = onOpenFolders) {
+                            Icon(
+                                painter = painterResource(R.drawable.ic_mc_menu),
+                                contentDescription = stringResource(R.string.folders_open),
+                            )
+                        }
+                    }
+                },
+            )
+        },
         snackbarHost = { SnackbarHost(snackbar) },
     ) { padding ->
         PullToRefreshBox(

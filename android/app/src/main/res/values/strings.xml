@@ -48,10 +48,8 @@
     <string name="setup_error_unexpected">Something went wrong while checking the settings. Nothing was saved.</string>
 
     <!-- Message list (M1-10) -->
-    <string name="message_list_inbox">Inbox</string>
     <string name="message_list_loading">Checking for mail…</string>
     <string name="message_list_retry">Try again</string>
-    <string name="message_list_no_inbox">This account has no inbox on the server.</string>
     <string name="message_no_subject">(No subject)</string>
     <string name="message_unknown_sender">Unknown sender</string>
     <!-- TalkBack reads one row as these parts joined by spaces, e.g. "Unread. From Ana. Subject: Lunch. 10:42. Has attachment." -->
@@ -70,6 +68,27 @@
     <string name="welcome_title">Welcome to Mailcrane</string>
     <string name="welcome_body">Add an email account to get started.</string>
     <string name="welcome_add_account">Add account</string>
+
+    <!-- Folder drawer (M1-13) -->
+    <string name="folders_title">Folders</string>
+    <string name="folders_open">Open folders</string>
+    <string name="folders_none">This account has no folders on the server.</string>
+    <!-- Standard folders show these names instead of the server's -->
+    <string name="folder_inbox">Inbox</string>
+    <string name="folder_drafts">Drafts</string>
+    <string name="folder_sent">Sent</string>
+    <string name="folder_archive">Archive</string>
+    <string name="folder_spam">Spam</string>
+    <string name="folder_trash">Trash</string>
+    <string name="folder_all_mail">All mail</string>
+    <!-- Unread badge next to a folder -->
+    <string name="folder_unread_count">%1$d</string>
+    <string name="folder_unread_overflow">%1$d+</string>
+    <!-- TalkBack reads a folder as its name and unread count, e.g. "Inbox, 3 unread" -->
+    <plurals name="folder_a11y_unread">
+        <item quantity="one">%1$s, %2$d unread</item>
+        <item quantity="other">%1$s, %2$d unread</item>
+    </plurals>
 
     <!-- Sync failures, shown in a snackbar -->
     <string name="sync_error_network">Couldn’t reach the mail server. Check your connection.</string>
