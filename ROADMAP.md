@@ -17,7 +17,7 @@ Goal: anyone can clone, build an empty app on both platforms and run CI.
 - [x] **M0-05** UniFFI setup: expose a `hello()` function, generate Kotlin and Swift bindings 🤖
 - [x] **M0-06** Android app shell: Compose + Material 3, Hilt, calls `hello()` through the bindings, ktlint 🤖
 - [ ] **M0-07** iOS app shell: SwiftUI, XCFramework build of the core, calls `hello()`, SwiftLint 🤖
-- [ ] **M0-08** `cargo xtask ci`: one command for fmt, clippy, tests, cargo-deny, and Android/iOS checks when installed; CI (GitHub Actions) just runs it 🤖
+- [x] **M0-08** `cargo xtask ci`: one command for fmt, clippy, tests, cargo-deny, and Android/iOS checks when installed; CI (GitHub Actions) just runs it 🤖
 - [x] **M0-09** `cargo deny` config allowing only MPL-2.0-compatible licences 🟢🤖
 - [ ] **M0-10** Generate the Compose theme and SwiftUI colour assets from `design/colors.json` (the brand pack itself is already in `design/`) 🤖
 - [ ] **M0-11** `mailcrane-testkit`: in-process fake IMAP, SMTP and JMAP servers that can misbehave on purpose (drop connections, malformed replies, Gmail-style quirks) 🤖
