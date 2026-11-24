@@ -1,10 +1,10 @@
 use crate::fault::{Fault, Quirk};
+use crate::loopback::Loopback;
 use crate::tls;
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::TcpListener;
 use tokio::sync::RwLock;
 use tokio::task::JoinHandle;
 
@@ -23,6 +23,7 @@ pub struct FakeSmtpBuilder {
 #[derive(Debug, Clone)]
 pub struct FakeSmtp {
     addr: SocketAddr,
+    starttls_addr: SocketAddr,
     root_cert_der: Vec<u8>,
     sent: Arc<RwLock<Vec<SentMessage>>>,
     shutdown: Arc<RwLock<Option<JoinHandle<()>>>>,
@@ -40,17 +41,25 @@ impl FakeSmtpBuilder {
     pub async fn start(self) -> Result<FakeSmtp, String> {
         let started = std::time::Instant::now();
         let tls = tls::generate()?;
-        let listener = TcpListener::bind("127.0.0.1:0")
-            .await
-            .map_err(|error| error.to_string())?;
-        let addr = listener.local_addr().map_err(|error| error.to_string())?;
+        // Like a real server (465 and 587), one port is implicit TLS and the
+        // other starts in plain text for STARTTLS. Guessing the mode from
+        // whether a TLS hello arrives in time fails when the client is slow
+        // to build its TLS config (Windows' verifier often is).
+        let tls_listener = Loopback::bind().await?;
+        let plain_listener = Loopback::bind().await?;
+        let addr = tls_listener.addr();
+        let starttls_addr = plain_listener.addr();
         let sent = Arc::new(RwLock::new(Vec::new()));
         let sent_for_server = sent.clone();
         let faults = Arc::new(self.faults);
         let quirks = Arc::new(self.quirks);
         let handle = tokio::spawn(async move {
             loop {
-                let Ok((stream, _)) = listener.accept().await else {
+                let accepted = tokio::select! {
+                    accepted = tls_listener.accept() => accepted.map(|(stream, _)| (stream, true)),
+                    accepted = plain_listener.accept() => accepted.map(|(stream, _)| (stream, false)),
+                };
+                let Ok((stream, implicit_tls)) = accepted else {
                     break;
                 };
                 let sent = sent_for_server.clone();
@@ -58,7 +67,8 @@ impl FakeSmtpBuilder {
                 let quirks = quirks.clone();
                 let tls_config = tls.config.clone();
                 tokio::spawn(async move {
-                    let _ = smtp_connection(stream, tls_config, sent, faults, quirks).await;
+                    let _ = smtp_connection(stream, implicit_tls, tls_config, sent, faults, quirks)
+                        .await;
                 });
             }
         });
@@ -68,6 +78,7 @@ impl FakeSmtpBuilder {
         }
         Ok(FakeSmtp {
             addr,
+            starttls_addr,
             root_cert_der: tls.cert_der,
             sent,
             shutdown: Arc::new(RwLock::new(Some(handle))),
@@ -82,8 +93,13 @@ impl FakeSmtp {
             quirks: Vec::new(),
         }
     }
+    /// The implicit TLS port (like 465).
     pub fn addr(&self) -> SocketAddr {
         self.addr
+    }
+    /// The port that starts in plain text and offers STARTTLS (like 587).
+    pub fn starttls_addr(&self) -> SocketAddr {
+        self.starttls_addr
     }
     pub fn root_cert_der(&self) -> &[u8] {
         &self.root_cert_der
@@ -110,6 +126,7 @@ impl Drop for FakeSmtp {
 
 async fn smtp_connection(
     mut stream: tokio::net::TcpStream,
+    implicit_tls: bool,
     tls_config: Arc<rustls::ServerConfig>,
     sent: Arc<RwLock<Vec<SentMessage>>>,
     faults: Arc<Vec<Fault>>,
@@ -121,16 +138,6 @@ async fn smtp_connection(
             tokio::time::sleep(*duration).await;
         }
     }
-    let mut first = [0u8; 1];
-    let implicit_tls = match tokio::time::timeout(
-        std::time::Duration::from_millis(10),
-        stream.peek(&mut first),
-    )
-    .await
-    {
-        Ok(result) => result.unwrap_or(0) > 0 && first[0] == 0x16,
-        Err(_) => false,
-    };
     if implicit_tls {
         let mut tls_stream = tokio_rustls::TlsAcceptor::from(tls_config)
             .accept(stream)
