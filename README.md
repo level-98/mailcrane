@@ -16,7 +16,7 @@
 
 ---
 
-> **Status: pre-alpha.** There is no working app yet. We're laying the foundations (milestone **M0**). This is the best time to join and help shape it.
+> **Status: pre-alpha.** Not ready for everyday use yet. The foundations (milestone **M0**) are almost done, and most of the Rust mail engine for reading mail (**M1**) is built: it can connect to an IMAP server, sync your recent mail, and parse and sanitise messages. Sending over SMTP works in the core too. On Android you can set up an account by hand; the message list and message view screens are next. This is a good time to join and help shape it.
 
 ## What Mailcrane will be
 
@@ -30,9 +30,13 @@
 
 | Area | State |
 |---|---|
-| Repo, CI, contributor workflow | 🟡 In progress (M0) |
-| Rust core (IMAP, SMTP, storage, MIME) | ⚪ Not started (M1–M2) |
-| Android app (Kotlin + Jetpack Compose) | ⚪ Not started |
+| Repo, CI, contributor workflow | 🟢 Done: `cargo xtask ci`, cargo-deny licence checks, Dependabot, nightly fuzzing, release-notes script. Cross-platform CI (Android on Linux, core on Windows) still to do (M0-17) |
+| Rust core: storage and accounts | 🟢 SQLite store schema v1 with migrations; credentials in Android Keystore / iOS Keychain; manual IMAP/SMTP account setup with login checks |
+| Rust core: reading mail (IMAP, MIME) | 🟡 TLS connect, login and folder list; initial sync of recent headers with paging and body fetch; MIME parsing; HTML sanitiser. Incremental sync (M1-06) in progress, IDLE (M1-07) next |
+| Rust core: sending mail (SMTP) | 🟡 Sending over implicit TLS or STARTTLS done. Compose, reply, drafts and outbox to come (M2) |
+| Android app (Kotlin + Jetpack Compose) | 🟡 App shell, generated theme, manual account setup screen. Message list (M1-10) in progress |
+| Privacy features | 🟡 Remote content blocked by the sanitiser. Link tracking-parameter stripping (M5-02) in review |
+| Website and user docs | 🟢 [mailcrane.app](https://mailcrane.app) (M6-07) |
 | iOS app (Swift + SwiftUI) | ⏸️ Shell only, paused until after the Android release (M7) |
 | Brand and design | 🟢 v1 done (see below) |
 
@@ -57,7 +61,7 @@ Mail logic is written once in Rust and shared; each platform has its own native 
 
 | Folder | What's in it |
 |---|---|
-| `core/` | Rust workspace: the mail engine, the FFI layer, fake test servers and `xtask` |
+| `core/` | Rust workspace: the mail engine, the FFI layer, fake test servers, fuzz targets (`core/fuzz/`) and `xtask` |
 | `android/` | Android app (Kotlin, Jetpack Compose, Material 3) |
 | `ios/` | iOS app (Swift, SwiftUI) |
 | `design/` | Logo, app icons, UI icons, illustrations and colours |
@@ -106,9 +110,7 @@ See [design/README.md](design/README.md) for where each file goes and how to reb
 
 ## Building
 
-> These commands work once M0 is finished.
-
-**You need:** Rust (stable, via `rustup`). For the app, Android Studio with the NDK. Xcode 16+ on a Mac is only needed for the iOS shell, which is paused until after the Android release. No Docker or test accounts needed: tests use built-in fake mail servers.
+**You need:** Rust (stable, via `rustup`). For the app, JDK 17+, the Android SDK and NDK, the Android Rust targets and `cargo-ndk` (details in [android/README.md](android/README.md)). Xcode 16+ on a Mac is only needed for the iOS shell, which is paused until after the Android release. No Docker or test accounts needed: tests use built-in fake mail servers.
 
 ```bash
 git clone https://github.com/level-98/mailcrane.git
