@@ -1,3 +1,4 @@
+use crate::loopback::Loopback;
 use crate::tls;
 use crate::{Fault, Quirk};
 use http_body_util::{BodyExt, Full};
@@ -9,7 +10,6 @@ use hyper_util::rt::TokioIo;
 use std::convert::Infallible;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use tokio::net::TcpListener;
 use tokio::sync::RwLock;
 use tokio::task::JoinHandle;
 
@@ -44,10 +44,8 @@ impl FakeJmapBuilder {
     pub async fn start(self) -> Result<FakeJmap, String> {
         let started = std::time::Instant::now();
         let tls = tls::generate()?;
-        let listener = TcpListener::bind("127.0.0.1:0")
-            .await
-            .map_err(|error| error.to_string())?;
-        let addr = listener.local_addr().map_err(|error| error.to_string())?;
+        let listener = Loopback::bind().await?;
+        let addr = listener.addr();
         let requests = Arc::new(RwLock::new(Vec::new()));
         let requests_for_server = requests.clone();
         let faults = Arc::new(self.faults);

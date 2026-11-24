@@ -5,6 +5,7 @@
 pub mod fault;
 pub mod imap;
 pub mod jmap;
+mod loopback;
 pub mod mailbox;
 pub mod secrets;
 pub mod smtp;

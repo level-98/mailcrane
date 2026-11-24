@@ -1,4 +1,5 @@
 use crate::fault::{Fault, Quirk};
+use crate::loopback::Loopback;
 use crate::mailbox::Mailbox;
 use crate::tls;
 use std::net::SocketAddr;
@@ -6,7 +7,6 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::TcpListener;
 use tokio::sync::{Mutex, RwLock};
 
 /// Per-server settings shared by every connection.
@@ -23,6 +23,7 @@ use tokio::task::JoinHandle;
 #[derive(Debug, Clone)]
 pub struct FakeImap {
     addr: SocketAddr,
+    starttls_addr: SocketAddr,
     root_cert_der: Vec<u8>,
     mailbox: Mailbox,
     received: Arc<Mutex<Vec<String>>>,
@@ -68,10 +69,14 @@ impl FakeImapBuilder {
     pub async fn start(self) -> Result<FakeImap, String> {
         let started = Instant::now();
         let tls = tls::generate()?;
-        let listener = TcpListener::bind("127.0.0.1:0")
-            .await
-            .map_err(|error| error.to_string())?;
-        let addr = listener.local_addr().map_err(|error| error.to_string())?;
+        // Like a real server (993 and 143), one port is implicit TLS and the
+        // other starts in plain text for STARTTLS. Guessing the mode from
+        // whether a TLS hello arrives in time fails when the client is slow
+        // to build its TLS config (Windows' verifier often is).
+        let tls_listener = Loopback::bind().await?;
+        let plain_listener = Loopback::bind().await?;
+        let addr = tls_listener.addr();
+        let starttls_addr = plain_listener.addr();
         let mailbox = Mailbox::new(
             &self
                 .folders
@@ -94,13 +99,17 @@ impl FakeImapBuilder {
         });
         let handle = tokio::spawn(async move {
             loop {
-                let Ok((stream, _)) = listener.accept().await else {
+                let accepted = tokio::select! {
+                    accepted = tls_listener.accept() => accepted.map(|(stream, _)| (stream, true)),
+                    accepted = plain_listener.accept() => accepted.map(|(stream, _)| (stream, false)),
+                };
+                let Ok((stream, implicit_tls)) = accepted else {
                     break;
                 };
                 let tls_config = tls.config.clone();
                 let shared = shared.clone();
                 tokio::spawn(async move {
-                    let _ = handle_connection(stream, tls_config, shared).await;
+                    let _ = handle_connection(stream, implicit_tls, tls_config, shared).await;
                 });
             }
         });
@@ -109,6 +118,7 @@ impl FakeImapBuilder {
         }
         Ok(FakeImap {
             addr,
+            starttls_addr,
             root_cert_der: tls.cert_der,
             mailbox,
             received,
@@ -128,8 +138,13 @@ impl FakeImap {
         }
     }
 
+    /// The implicit TLS port (like 993).
     pub fn addr(&self) -> SocketAddr {
         self.addr
+    }
+    /// The port that starts in plain text and offers STARTTLS (like 143).
+    pub fn starttls_addr(&self) -> SocketAddr {
+        self.starttls_addr
     }
     pub fn root_cert_der(&self) -> &[u8] {
         &self.root_cert_der
@@ -168,19 +183,12 @@ async fn record(shared: &Shared, parts: &[&str]) {
 
 async fn handle_connection(
     mut stream: tokio::net::TcpStream,
+    implicit_tls: bool,
     tls_config: Arc<rustls::ServerConfig>,
     shared: Arc<Shared>,
 ) -> Result<(), String> {
     let faults = &shared.faults;
     let command_count = Arc::new(AtomicUsize::new(0));
-    let mut first = [0u8; 1];
-    let implicit_tls =
-        // A TLS client sends its hello first, but may be slow to start (it
-        // loads certificates); a STARTTLS client waits for our greeting.
-        match tokio::time::timeout(Duration::from_millis(150), stream.peek(&mut first)).await {
-            Ok(result) => result.unwrap_or(0) > 0 && first[0] == 0x16,
-            Err(_) => false,
-        };
     let mut tls_stream = if implicit_tls {
         let mut tls_stream = tokio_rustls::TlsAcceptor::from(tls_config.clone())
             .accept(stream)

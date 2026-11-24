@@ -133,6 +133,111 @@ mod suite {
         server.shutdown().await;
     }
 
+    /// Whether this machine has an IPv6 loopback at all.
+    async fn has_ipv6_loopback() -> bool {
+        tokio::net::TcpListener::bind((std::net::Ipv6Addr::LOCALHOST, 0))
+            .await
+            .is_ok()
+    }
+
+    /// Clients connect as `localhost`, which can resolve to `::1` before
+    /// `127.0.0.1` (it does on Windows). Each fake server must answer on
+    /// every address `localhost` resolves to, with its own certificate.
+    #[tokio::test]
+    async fn every_localhost_address_reaches_the_fake_server() {
+        let imap = FakeImap::builder().start().await.expect("imap starts");
+        let smtp = FakeSmtp::builder().start().await.expect("smtp starts");
+        let jmap = FakeJmap::builder().start().await.expect("jmap starts");
+        for (port, root) in [
+            (imap.addr().port(), imap.root_cert_der()),
+            (smtp.addr().port(), smtp.root_cert_der()),
+            (jmap.addr().port(), jmap.root_cert_der()),
+        ] {
+            let addrs: Vec<_> = tokio::net::lookup_host(("localhost", port))
+                .await
+                .expect("resolve localhost")
+                .collect();
+            assert!(!addrs.is_empty());
+            for addr in addrs {
+                // The handshake only succeeds against the server's own
+                // certificate, so this proves it is the fake server.
+                let _stream = open_tls(addr, root).await;
+            }
+        }
+    }
+
+    /// The Windows flake in `sync_load_older_and_fetch_body_through_the_ffi`:
+    /// the client connects, then builds its TLS config (on Windows the
+    /// platform verifier sets up a CryptoAPI chain engine, which can take
+    /// hundreds of milliseconds on a busy machine), then sends its hello.
+    /// The fake servers used to guess "no hello within 150 ms (IMAP) or
+    /// 10 ms (SMTP) means STARTTLS" and sent a plain-text greeting, which
+    /// the client's TLS handshake rejected. The implicit TLS port must wait
+    /// for the hello however long the client takes.
+    #[tokio::test]
+    async fn implicit_tls_port_waits_for_a_slow_client_hello() {
+        let imap = FakeImap::builder().start().await.expect("imap starts");
+        let smtp = FakeSmtp::builder().start().await.expect("smtp starts");
+        for (addr, root) in [
+            (imap.addr(), imap.root_cert_der()),
+            (smtp.addr(), smtp.root_cert_der()),
+        ] {
+            let stream = TcpStream::connect(addr).await.expect("connect");
+            tokio::time::sleep(Duration::from_millis(300)).await;
+            let server_name = ServerName::try_from("localhost".to_string()).expect("server name");
+            let handshake = tokio_rustls::TlsConnector::from(client_config(root))
+                .connect(server_name, stream)
+                .await;
+            assert!(handshake.is_ok(), "{addr}: {handshake:?}");
+        }
+    }
+
+    /// The STARTTLS port greets in plain text straight away, without
+    /// waiting to see whether the client sends a TLS hello.
+    #[tokio::test]
+    async fn starttls_port_greets_in_plain_text_at_once() {
+        let imap = FakeImap::builder().start().await.expect("imap starts");
+        let smtp = FakeSmtp::builder().start().await.expect("smtp starts");
+        for (addr, greeting) in [
+            (imap.starttls_addr(), &b"* OK"[..]),
+            (smtp.starttls_addr(), &b"220 "[..]),
+        ] {
+            let mut stream = TcpStream::connect(addr).await.expect("connect");
+            let mut first = vec![0u8; greeting.len()];
+            tokio::time::timeout(Duration::from_secs(5), stream.read_exact(&mut first))
+                .await
+                .expect("greeting in time")
+                .expect("greeting");
+            assert_eq!(first, greeting);
+        }
+    }
+
+    /// `localhost` can resolve to `::1`; while a fake server runs, no other
+    /// process may answer on `[::1]` at its port in its place.
+    #[tokio::test]
+    async fn nothing_else_can_listen_on_the_ipv6_loopback_port() {
+        if !has_ipv6_loopback().await {
+            return;
+        }
+        let imap = FakeImap::builder().start().await.expect("imap starts");
+        let smtp = FakeSmtp::builder().start().await.expect("smtp starts");
+        let jmap = FakeJmap::builder().start().await.expect("jmap starts");
+        for port in [
+            imap.addr().port(),
+            imap.starttls_addr().port(),
+            smtp.addr().port(),
+            smtp.starttls_addr().port(),
+            jmap.addr().port(),
+        ] {
+            let squatter =
+                tokio::net::TcpListener::bind((std::net::Ipv6Addr::LOCALHOST, port)).await;
+            assert!(
+                squatter.is_err(),
+                "[::1]:{port} was free for another listener"
+            );
+        }
+    }
+
     #[tokio::test]
     async fn imap_tls_and_commands_work() {
         let server = FakeImap::builder()
@@ -182,7 +287,9 @@ mod suite {
     #[tokio::test]
     async fn imap_starttls_rejects_commands_before_tls() {
         let server = FakeImap::builder().start().await.expect("server starts");
-        let mut stream = TcpStream::connect(server.addr()).await.expect("connect");
+        let mut stream = TcpStream::connect(server.starttls_addr())
+            .await
+            .expect("connect");
         let mut greeting = [0u8; 64];
         let _ = stream.read(&mut greeting).await.expect("greeting");
         stream

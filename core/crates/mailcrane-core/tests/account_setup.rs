@@ -71,16 +71,32 @@ mod account {
             }
         }
 
+        /// The fake IMAP server's port for `security`: implicit TLS and
+        /// STARTTLS are separate ports, as on a real server.
+        fn imap_port(servers: &Servers, security: Security) -> u16 {
+            match security {
+                Security::Tls => servers.imap.addr().port(),
+                Security::StartTls => servers.imap.starttls_addr().port(),
+            }
+        }
+
+        fn smtp_port(servers: &Servers, security: Security) -> u16 {
+            match security {
+                Security::Tls => servers.smtp.addr().port(),
+                Security::StartTls => servers.smtp.starttls_addr().port(),
+            }
+        }
+
         fn config_for(servers: &Servers, imap: Security, smtp: Security) -> ManualAccountConfig {
             let mut config = good_config();
             config.imap = ServerConfig {
                 host: "localhost".into(),
-                port: u32::from(servers.imap.addr().port()),
+                port: u32::from(imap_port(servers, imap)),
                 security: imap,
             };
             config.smtp = ServerConfig {
                 host: "localhost".into(),
-                port: u32::from(servers.smtp.addr().port()),
+                port: u32::from(smtp_port(servers, smtp)),
                 security: smtp,
             };
             config
@@ -139,7 +155,7 @@ mod account {
                 let account = store.get_account(id).expect("get").expect("saved");
                 assert_eq!(account.details.email, "alice@example.org");
                 assert_eq!(account.details.username, USER);
-                assert_eq!(account.details.imap_port, servers.imap.addr().port());
+                assert_eq!(account.details.imap_port, imap_port(&servers, imap_sec));
                 assert_eq!(account.details.imap_security, stored(imap_sec));
                 assert_eq!(account.details.smtp_security, stored(smtp_sec));
 

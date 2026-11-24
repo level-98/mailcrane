@@ -350,7 +350,7 @@ mod tests {
         let mut config = config();
         config.imap = ServerConfig {
             host: "localhost".into(),
-            port: u32::from(imap.addr().port()),
+            port: u32::from(imap.starttls_addr().port()),
             security: ConnectionSecurity::StartTls,
         };
         config.smtp = ServerConfig {

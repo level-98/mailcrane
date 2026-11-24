@@ -7,7 +7,11 @@ const EXPECTED: &[u8] =
     b"From: alice@example.org\r\nTo: bob@example.net\r\nSubject: Hi\r\n\r\nHello\r\n.dot line\r\n";
 
 fn config(smtp: &FakeSmtp, security: SmtpSecurity) -> SmtpConfig {
-    let mut config = SmtpConfig::new("localhost", smtp.addr().port(), security);
+    let addr = match security {
+        SmtpSecurity::ImplicitTls => smtp.addr(),
+        SmtpSecurity::StartTls => smtp.starttls_addr(),
+    };
+    let mut config = SmtpConfig::new("localhost", addr.port(), security);
     config.extra_root_certs = vec![smtp.root_cert_der().to_vec()];
     config
 }
