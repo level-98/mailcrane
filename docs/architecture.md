@@ -1,6 +1,6 @@
 # Architecture
 
-> Status: **proposed**. To be confirmed in `docs/decisions/0001-tech-stack.md` (task M0-12).
+> Status: **proposed**, see [ADR 0001](decisions/0001-tech-stack.md). Once the owner accepts it, this becomes "accepted, see ADR 0001".
 
 ## Overview
 

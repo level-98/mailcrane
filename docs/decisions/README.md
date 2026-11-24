@@ -4,6 +4,12 @@ Each important decision gets a short numbered file: `0001-tech-stack.md`, `0002-
 
 Write one when you add a dependency, change a public API or the database schema, or make any choice in CONTRIBUTING.md's "Decisions that only maintainers make" list. Open the PR with the `needs-decision` label.
 
+## Index
+
+| Number | Decision | Status |
+|---|---|---|
+| [0001](0001-tech-stack.md) | Shared Rust core with native UIs, bound through UniFFI | proposed |
+
 ## Template
 
 ```
