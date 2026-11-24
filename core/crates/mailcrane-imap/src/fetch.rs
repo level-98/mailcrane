@@ -15,6 +15,10 @@ pub struct SelectInfo {
     pub uidvalidity: u32,
     /// `UIDNEXT`.
     pub uidnext: u32,
+    /// `HIGHESTMODSEQ` (RFC 7162 §3.1.2.1), or `None` if the server did not
+    /// send one or said `NOMODSEQ` (§3.1.2.2): then mod-sequences cannot be
+    /// used for this folder.
+    pub highestmodseq: Option<u64>,
 }
 
 /// The result of fetching headers for a set of UIDs.
@@ -31,7 +35,7 @@ pub struct FetchedHeaders {
 const HEADER_ITEMS: &str = "(UID FLAGS INTERNALDATE RFC822.SIZE ENVELOPE BODYSTRUCTURE \
     BODY.PEEK[HEADER.FIELDS (REFERENCES IN-REPLY-TO LIST-UNSUBSCRIBE LIST-UNSUBSCRIBE-POST)])";
 
-fn code_number(done: &[Untagged], wanted: &str) -> Option<u32> {
+fn code_number<T: std::str::FromStr>(done: &[Untagged], wanted: &str) -> Option<T> {
     done.iter().find_map(|u| match u {
         Untagged::Condition {
             text:
@@ -45,7 +49,47 @@ fn code_number(done: &[Untagged], wanted: &str) -> Option<u32> {
     })
 }
 
-fn uid_set(uids: &[u32]) -> String {
+fn has_code(done: &[Untagged], wanted: &str) -> bool {
+    done.iter().any(|u| {
+        matches!(u, Untagged::Condition {
+            text: crate::parser::RespText {
+                code: Some(Code::Other { name, .. }),
+                ..
+            },
+            ..
+        } if name.eq_ignore_ascii_case(wanted))
+    })
+}
+
+/// Reads what a successful `SELECT` reported. Fails if `UIDVALIDITY` or
+/// `UIDNEXT` is missing.
+pub(crate) fn select_info(untagged: &[Untagged]) -> Result<SelectInfo, ImapError> {
+    let exists = untagged
+        .iter()
+        .find_map(|u| match u {
+            Untagged::Exists(n) => Some(*n),
+            _ => None,
+        })
+        .unwrap_or(0);
+    let uidvalidity = code_number(untagged, "UIDVALIDITY").ok_or(ImapError::Protocol)?;
+    let uidnext = code_number(untagged, "UIDNEXT").ok_or(ImapError::Protocol)?;
+    // RFC 7162 §3.1.2.2: NOMODSEQ wins over anything else; §7 limits a
+    // mod-sequence to 63 bits, and zero is not a valid HIGHESTMODSEQ.
+    let highestmodseq = if has_code(untagged, "NOMODSEQ") {
+        None
+    } else {
+        code_number::<u64>(untagged, "HIGHESTMODSEQ")
+            .filter(|m| *m > 0 && i64::try_from(*m).is_ok())
+    };
+    Ok(SelectInfo {
+        exists,
+        uidvalidity,
+        uidnext,
+        highestmodseq,
+    })
+}
+
+pub(crate) fn uid_set(uids: &[u32]) -> String {
     let mut out = String::new();
     for (i, uid) in uids.iter().enumerate() {
         if i > 0 {
@@ -65,21 +109,7 @@ impl Session {
             .run_command("SELECT", &[Arg::Str(raw_name.as_bytes())])
             .await?;
         expect_ok(&done)?;
-        let exists = done
-            .untagged
-            .iter()
-            .find_map(|u| match u {
-                Untagged::Exists(n) => Some(*n),
-                _ => None,
-            })
-            .unwrap_or(0);
-        let uidvalidity = code_number(&done.untagged, "UIDVALIDITY").ok_or(ImapError::Protocol)?;
-        let uidnext = code_number(&done.untagged, "UIDNEXT").ok_or(ImapError::Protocol)?;
-        Ok(SelectInfo {
-            exists,
-            uidvalidity,
-            uidnext,
-        })
+        select_info(&done.untagged)
     }
 
     /// `UID SEARCH UID <low>:<high>` in the selected folder (RFC 9051

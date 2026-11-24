@@ -280,3 +280,50 @@ fn store_parsed_body_replaces_attachments_and_is_atomic() -> R {
     assert!(!s.store_parsed_body(MessageId(999), b"raw", 5, "x", &[])?);
     Ok(())
 }
+
+#[test]
+fn remote_changes_delete_and_reflag_only_stored_messages() -> R {
+    let s = Store::open_in_memory()?;
+    let acc = s.insert_account(&account())?;
+    let f = s.upsert_folder(&folder(acc, "INBOX"))?;
+    s.upsert_message_headers(&[header(f, 1, 10), header(f, 2, 20), header(f, 3, 30)])?;
+    assert_eq!(s.newest_uid(f)?, Some(3));
+
+    let seen = RemoteFlags {
+        uid: 2,
+        flags: Flags {
+            seen: true,
+            ..Flags::default()
+        },
+        keywords_json: "[\"$x\"]".into(),
+    };
+    let unchanged = RemoteFlags {
+        uid: 3,
+        flags: Flags::default(),
+        keywords_json: "[]".into(),
+    };
+    let unknown = RemoteFlags {
+        uid: 99,
+        ..unchanged.clone()
+    };
+    // UID 1 and 98 are gone; 98 was never stored.
+    let changed = s.apply_remote_changes(f, &[1, 98], &[seen, unchanged, unknown])?;
+    assert_eq!(changed, 2);
+    assert_eq!(s.list_uids(f)?, [2, 3]);
+    let two = s
+        .list_messages(f, 10, 0)?
+        .into_iter()
+        .find(|m| m.details.uid == 2)
+        .ok_or("uid 2")?;
+    assert!(two.details.flags.seen);
+    assert_eq!(two.details.keywords_json, "[\"$x\"]");
+
+    assert!(s.set_folder_sync_state(f, 4, Some(77))?);
+    let stored = s.get_folder(f)?.ok_or("folder")?;
+    assert_eq!(
+        (stored.details.uidnext, stored.details.highestmodseq),
+        (Some(4), Some(77))
+    );
+    assert!(!s.set_folder_sync_state(FolderId(999), 1, None)?);
+    Ok(())
+}

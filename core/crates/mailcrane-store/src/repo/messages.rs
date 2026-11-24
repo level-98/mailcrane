@@ -1,7 +1,7 @@
 use super::narrow;
 use crate::{
-    BodyState, Flags, FolderId, MessageHeader, MessageId, NewAttachment, NewMessageHeader, Store,
-    StoreError, ThreadId,
+    BodyState, Flags, FolderId, MessageHeader, MessageId, NewAttachment, NewMessageHeader,
+    RemoteFlags, Store, StoreError, ThreadId,
 };
 use rusqlite::{params, OptionalExtension, Row};
 
@@ -143,6 +143,55 @@ impl Store {
             |r| r.get(0),
         )?;
         uid.map(|u| narrow(u, "uid")).transpose()
+    }
+
+    /// The highest UID stored for the folder, if it has any messages.
+    pub fn newest_uid(&self, folder: FolderId) -> Result<Option<u32>, StoreError> {
+        let uid: Option<i64> = self.conn.query_row(
+            "SELECT max(uid) FROM messages WHERE folder_id = ?1",
+            params![folder.0],
+            |r| r.get(0),
+        )?;
+        uid.map(|u| narrow(u, "uid")).transpose()
+    }
+
+    /// Applies what the server reported for messages already stored, in
+    /// one transaction: deletes the `expunged` UIDs (with their bodies and
+    /// attachment metadata) and sets the flags in `flags`. UIDs that are not
+    /// stored are ignored. Returns how many messages were deleted or had
+    /// their flags actually changed. On error nothing is changed.
+    pub fn apply_remote_changes(
+        &self,
+        folder: FolderId,
+        expunged: &[u32],
+        flags: &[RemoteFlags],
+    ) -> Result<usize, StoreError> {
+        let tx = self.conn.unchecked_transaction()?;
+        let mut changed = 0usize;
+        {
+            let mut delete =
+                tx.prepare("DELETE FROM messages WHERE folder_id = ?1 AND uid = ?2")?;
+            for uid in expunged {
+                changed = changed.saturating_add(delete.execute(params![folder.0, uid])?);
+            }
+            let mut update = tx.prepare(
+                "UPDATE messages SET seen = ?3, flagged = ?4, answered = ?5, draft = ?6,                  deleted = ?7, keywords_json = ?8                  WHERE folder_id = ?1 AND uid = ?2 AND (seen IS NOT ?3 OR flagged IS NOT ?4                  OR answered IS NOT ?5 OR draft IS NOT ?6 OR deleted IS NOT ?7                  OR keywords_json IS NOT ?8)",
+            )?;
+            for f in flags {
+                changed = changed.saturating_add(update.execute(params![
+                    folder.0,
+                    f.uid,
+                    f.flags.seen,
+                    f.flags.flagged,
+                    f.flags.answered,
+                    f.flags.draft,
+                    f.flags.deleted,
+                    f.keywords_json
+                ])?);
+            }
+        }
+        tx.commit()?;
+        Ok(changed)
     }
 
     /// Returns the header, or `None` if it doesn't exist.

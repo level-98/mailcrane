@@ -24,6 +24,7 @@
 
 mod b64;
 mod command;
+mod condstore;
 mod connection;
 mod error;
 mod fetch;
@@ -33,6 +34,7 @@ mod roles;
 mod session;
 mod tls;
 
+pub use condstore::{FetchedFlags, FlagUpdate, QresyncParams, QresyncSelect};
 pub use error::ImapError;
 pub use fetch::{parse_internal_date, FetchedHeaders, SelectInfo};
 pub use parser::{parse_response, Envelope, EnvelopeAddress, FetchData, Limits};

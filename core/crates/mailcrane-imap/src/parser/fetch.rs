@@ -65,6 +65,8 @@ pub struct FetchData {
     pub header_fields: Option<Vec<u8>>,
     /// `BODY[]`: the whole raw message.
     pub body: Option<Vec<u8>>,
+    /// `MODSEQ` (RFC 7162 §3.1.4.1): the message's mod-sequence.
+    pub modseq: Option<u64>,
 }
 
 /// A generic parenthesised value.
@@ -306,10 +308,16 @@ impl Cursor<'_> {
                     data.has_attachment = Some(structure(&value, 0).map_err(|()| self.err())?);
                 }
                 "BODY[]" => data.body = self.nstring_value()?,
+                // RFC 7162 §3.1.4.1 and §7: `MODSEQ (<number>)`.
+                "MODSEQ" => {
+                    self.expect(b'(')?;
+                    data.modseq = Some(self.number()?);
+                    self.expect(b')')?;
+                }
                 k if k.starts_with("BODY[HEADER.FIELDS") => {
                     data.header_fields = self.nstring_value()?;
                 }
-                // Anything else (MODSEQ, ...): read past it as one value.
+                // Anything else: read past it as one value.
                 _ => {
                     self.value(0, &mut nodes)?;
                 }
@@ -346,6 +354,47 @@ impl Cursor<'_> {
         self.crlf()?;
         Ok(Untagged::Search(uids))
     }
+}
+
+impl Cursor<'_> {
+    /// `* VANISHED [(EARLIER)] <known-uids>` (RFC 7162 §3.2.10 and §7,
+    /// `expunged-resp`), after the keyword.
+    pub(super) fn vanished_response(&mut self) -> Result<Untagged, ParseError> {
+        self.expect(b' ')?;
+        let mut earlier = false;
+        if self.eat(b'(') {
+            if !self.atom()?.eq_ignore_ascii_case("EARLIER") {
+                return Err(self.err());
+            }
+            self.expect(b')')?;
+            self.expect(b' ')?;
+            earlier = true;
+        }
+        let set = self.take_while(|b| b.is_ascii_digit() || b == b':' || b == b',');
+        let uids = parse_uid_ranges(set);
+        let uids = uids.ok_or_else(|| self.err())?;
+        self.crlf()?;
+        Ok(Untagged::Vanished { earlier, uids })
+    }
+}
+
+/// Parses a UID set without `*` (`1:3,7,9:8`) into inclusive ranges with
+/// `low <= high`. `None` if it is empty, has a zero or does not parse.
+pub(crate) fn parse_uid_ranges(set: &[u8]) -> Option<Vec<(u32, u32)>> {
+    let text = std::str::from_utf8(set).ok()?;
+    if text.is_empty() {
+        return None;
+    }
+    let number = |t: &str| t.parse::<u32>().ok().filter(|n| *n > 0);
+    text.split(',')
+        .map(|item| match item.split_once(':') {
+            Some((a, b)) => {
+                let (a, b) = (number(a)?, number(b)?);
+                Some((a.min(b), a.max(b)))
+            }
+            None => number(item).map(|n| (n, n)),
+        })
+        .collect()
 }
 
 /// Looks for `UID <number>` as a whole word before any literal or string.
