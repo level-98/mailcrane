@@ -1,0 +1,9 @@
+From: Ann Example <ann@example.org>
+To: Bob <bob@example.com>
+Subject: CP1252
+Date: Mon, 02 Mar 2026 10:00:00 +0000
+Message-ID: <cp1252@example.org>
+Content-Type: text/plain; charset=windows-1252
+Content-Transfer-Encoding: 8bit
+
+price € 5 “quoted”
