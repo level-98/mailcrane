@@ -49,36 +49,75 @@ android {
     }
 }
 
+// Compile for Java 17 with whichever JDK (17 or newer) runs Gradle, instead of
+// requiring an exact JDK 17 toolchain that most machines don't have.
 kotlin {
-    jvmToolchain(17)
+    compilerOptions {
+        jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
+    }
 }
 
 // Builds the Rust core for Android, then generates the Kotlin bindings from the
-// built library. Nothing it produces is committed.
-val buildRust by tasks.registering(Exec::class) {
+// built library. Nothing it produces is committed. Cargo runs directly, with no
+// shell in between, so this works the same on Windows, macOS and Linux.
+val rustProfile = if (rustRelease) "release" else "debug"
+
+// Where Cargo puts its output: CARGO_TARGET_DIR if set (relative to core/, as
+// Cargo treats it), otherwise core/target.
+val cargoTargetDir: File =
+    System.getenv("CARGO_TARGET_DIR")?.let { File(it) }?.let {
+        if (it.isAbsolute) it else coreDir.file(it.path).asFile
+    } ?: coreDir.dir("target").asFile
+
+val cargoNdkBuild by tasks.registering(Exec::class) {
     group = "build"
-    description = "Builds mailcrane-ffi with cargo-ndk and generates the UniFFI Kotlin bindings."
+    description = "Builds mailcrane-ffi for arm64-v8a and x86_64 with cargo-ndk."
     workingDir = coreDir.asFile
-    val outJni = rustJniLibsDir.get().asFile
-    val outUniffi = uniffiDir.get().asFile
-    val profile = if (rustRelease) "release" else "debug"
     inputs.dir(coreDir.dir("crates"))
     inputs.files(coreDir.file("Cargo.toml"), coreDir.file("Cargo.lock"))
-    outputs.dir(outJni)
-    outputs.dir(outUniffi)
+    outputs.dir(rustJniLibsDir)
     commandLine(
-        "sh",
-        "-c",
-        """
-        set -eu
-        cargo ndk -t arm64-v8a -t x86_64 -o "${'$'}1" build -p mailcrane-ffi ${if (rustRelease) "--release" else ""}
-        cargo run -q -p mailcrane-ffi --features bindgen --bin uniffi-bindgen -- \
-            generate --library "${'$'}{CARGO_TARGET_DIR:-target}/aarch64-linux-android/$profile/libmailcrane_ffi.so" \
-            --language kotlin --out-dir "${'$'}2"
-        """.trimIndent(),
-        "buildRust",
-        outJni.path,
-        outUniffi.path,
+        listOf(
+            "cargo",
+            "ndk",
+            "-t",
+            "arm64-v8a",
+            "-t",
+            "x86_64",
+            "-o",
+            rustJniLibsDir.get().asFile.path,
+            "build",
+            "-p",
+            "mailcrane-ffi",
+        ) + if (rustRelease) listOf("--release") else emptyList(),
+    )
+}
+
+val buildRust by tasks.registering(Exec::class) {
+    group = "build"
+    description = "Builds the Rust core for Android and generates the UniFFI Kotlin bindings."
+    dependsOn(cargoNdkBuild)
+    workingDir = coreDir.asFile
+    inputs.dir(rustJniLibsDir)
+    outputs.dir(uniffiDir)
+    commandLine(
+        "cargo",
+        "run",
+        "-q",
+        "-p",
+        "mailcrane-ffi",
+        "--features",
+        "bindgen",
+        "--bin",
+        "uniffi-bindgen",
+        "--",
+        "generate",
+        "--library",
+        cargoTargetDir.resolve("aarch64-linux-android/$rustProfile/libmailcrane_ffi.so").path,
+        "--language",
+        "kotlin",
+        "--out-dir",
+        uniffiDir.get().asFile.path,
     )
 }
 
@@ -91,10 +130,11 @@ tasks.matching { it.name.startsWith("runKtlint") }.configureEach {
     mustRunAfter(buildRust)
 }
 
-// ktlint must not look at generated bindings.
+// ktlint must not look at generated bindings. Compare with "/" on every OS,
+// since Windows paths use backslashes.
 ktlint {
     filter {
-        exclude { it.file.path.contains("/build/") }
+        exclude { it.file.invariantSeparatorsPath.contains("/build/") }
     }
 }
 
