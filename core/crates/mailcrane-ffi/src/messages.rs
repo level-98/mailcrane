@@ -37,7 +37,7 @@ pub struct MessageSummary {
 
 /// Header text as one safe line: CR, LF and NUL become spaces, and the
 /// result is at most [`MAX_TEXT_CHARS`] chars.
-fn one_line(text: &str) -> String {
+pub(crate) fn one_line(text: &str) -> String {
     text.chars()
         .take(MAX_TEXT_CHARS)
         .map(|c| {
