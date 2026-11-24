@@ -32,7 +32,7 @@ Goal: anyone can clone, build an empty app on both platforms and run CI.
 
 Goal: add an IMAP account and read your inbox, online and offline.
 
-- [ ] **M1-01** Store schema v1: accounts, folders, messages, threads, attachments metadata, with migrations 🤖
+- [x] **M1-01** Store schema v1: accounts, folders, messages, threads, attachments metadata, with migrations 🤖
 - [ ] **M1-02** Secure credential storage: Android Keystore and iOS Keychain, behind one FFI interface 🔒
 - [ ] **M1-03** Manual account setup: IMAP/SMTP host, port, security, username, password 🤖
 - [ ] **M1-04** IMAP connection, login and folder list (TLS via rustls) 🔒🤖
