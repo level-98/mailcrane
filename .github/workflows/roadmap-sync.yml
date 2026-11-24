@@ -1,0 +1,73 @@
+# Keeps the task boxes in ROADMAP.md in step with the issues.
+#
+# When a roadmap issue ("[M1-04] …") is closed, reopened or retitled, once a
+# day, or when run by hand, this runs scripts/sync_roadmap.py. If ROADMAP.md
+# needs changing it opens (or refreshes) one PR from the `bot/roadmap-sync`
+# branch for a maintainer to merge. It never pushes to `main`.
+#
+# Setup: Settings → Actions → General → Workflow permissions →
+# tick "Allow GitHub Actions to create and approve pull requests".
+#
+# PRs opened with the built-in token don't trigger other workflows, so once
+# CI is a required check, close and reopen the sync PR (or push to it) to run CI.
+name: Sync roadmap
+
+on:
+  issues:
+    types: [closed, reopened, edited]
+  schedule:
+    - cron: "41 5 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: read
+
+concurrency:
+  group: roadmap-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    if: github.event_name != 'issues' || startsWith(github.event.issue.title, '[')
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      BRANCH: bot/roadmap-sync
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Update ROADMAP.md from the issues
+        run: python3 scripts/sync_roadmap.py
+
+      - name: Open, refresh or close the sync PR
+        run: |
+          set -euo pipefail
+          open_pr=$(gh pr list --head "$BRANCH" --state open --json number --jq '.[0].number // empty')
+
+          if git diff --quiet -- ROADMAP.md; then
+            echo "ROADMAP.md on main already matches the issues."
+            if [ -n "$open_pr" ]; then
+              gh pr close "$open_pr" --delete-branch \
+                --comment "No longer needed: ROADMAP.md on main already matches the issues."
+            fi
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -C "$BRANCH"
+          git add ROADMAP.md
+          git commit -m "docs: sync roadmap with issues"
+          git push --force origin "$BRANCH"
+
+          if [ -z "$open_pr" ]; then
+            gh pr create --base main --head "$BRANCH" \
+              --title "docs: sync roadmap with issues" \
+              --body "Automated by \`.github/workflows/roadmap-sync.yml\`: ticks or unticks task boxes in \`ROADMAP.md\` to match the issues (\`scripts/sync_roadmap.py\`). This branch is rebuilt from \`main\` on every run, so don't push your own changes to it."
+          else
+            echo "Refreshed PR #$open_pr."
+          fi
