@@ -1,0 +1,53 @@
+name: Bug report
+description: Something doesn't work as it should
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Never include real email addresses, message content, passwords or tokens.** Replace them with `example.com` or `[redacted]`.
+        Security problems go to private reporting instead (see SECURITY.md).
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: And what did you expect to happen?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Add an IMAP account
+        2. Open the Inbox
+        3. ...
+    validations:
+      required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options: [Android, iOS, Both, Core / not sure]
+    validations:
+      required: true
+  - type: input
+    id: device
+    attributes:
+      label: Device and OS version
+      placeholder: Pixel 8, Android 15 / iPhone 15, iOS 18.2
+  - type: input
+    id: provider
+    attributes:
+      label: Email provider
+      placeholder: Gmail, Outlook, Fastmail, self-hosted Dovecot…
+  - type: input
+    id: version
+    attributes:
+      label: Mailcrane version or commit
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Check there's nothing personal in them before pasting.
+      render: text

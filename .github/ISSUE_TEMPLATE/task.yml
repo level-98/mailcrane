@@ -1,0 +1,59 @@
+name: Task
+description: A piece of planned work, written so a person or an AI agent can pick it up
+labels: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Write this so someone new (or an AI agent) could finish it without asking questions.
+        If every field is filled in properly, add the `agent-ready` label.
+  - type: input
+    id: roadmap
+    attributes:
+      label: Roadmap ID
+      placeholder: M1-04
+  - type: textarea
+    id: goal
+    attributes:
+      label: Goal
+      description: What should be true when this is done, and why it matters.
+    validations:
+      required: true
+  - type: textarea
+    id: files
+    attributes:
+      label: Files and places
+      description: Where the work goes. Name existing files to change and new ones to create.
+      placeholder: |
+        - core/crates/mailcrane-imap/src/idle.rs (new)
+        - core/crates/mailcrane-testkit/src/imap.rs (add IDLE to the fake server)
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: A checklist. The PR is done when every box is ticked.
+      placeholder: |
+        - [ ] IDLE starts after the initial sync and restarts every 29 minutes (RFC 2177)
+        - [ ] New messages appear in the store within 2 seconds against the fake server
+        - [ ] Falls back to polling if the server doesn't advertise IDLE
+    validations:
+      required: true
+  - type: textarea
+    id: testing
+    attributes:
+      label: How to test
+      placeholder: cargo test -p mailcrane-imap idle
+    validations:
+      required: true
+  - type: textarea
+    id: out-of-scope
+    attributes:
+      label: Out of scope
+      description: Things that are tempting but belong in another issue.
+  - type: input
+    id: depends
+    attributes:
+      label: Depends on
+      placeholder: "#12, #15"
