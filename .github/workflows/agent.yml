@@ -30,7 +30,9 @@ permissions:
 jobs:
   agent:
     if: github.event.label.name == 'agent-go'
-    runs-on: ubuntu-latest
+    # iOS work needs Xcode, so `area:ios` issues run on macOS (which also has
+    # the Android SDK). Everything else runs on Linux.
+    runs-on: ${{ contains(github.event.issue.labels.*.name, 'area:ios') && 'macos-latest' || 'ubuntu-latest' }}
     timeout-minutes: 60
     # The token is an `agent` environment secret, usable from `main` only.
     environment: agent
