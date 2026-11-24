@@ -208,3 +208,36 @@ fn debug_output_hides_html() -> R {
     assert!(!format!("{m:?}").contains("alert"));
     Ok(())
 }
+
+#[test]
+fn inline_part_by_content_id() -> R {
+    let path = format!(
+        "{}/../../../tests/fixtures/mime/multipart-related-cid.eml",
+        env!("CARGO_MANIFEST_DIR")
+    );
+    let bytes = std::fs::read(&path)?;
+    let part = mailcrane_mime::inline_part(&bytes, "logo@example.org")?.ok_or("no part")?;
+    assert_eq!(part.mime_type, "image/png");
+    // The base64 body decodes to the 8-byte PNG signature.
+    assert_eq!(part.bytes, b"\x89PNG\r\n\x1a\n");
+    assert_eq!(
+        mailcrane_mime::inline_part(&bytes, "other@example.org")?,
+        None
+    );
+    assert_eq!(mailcrane_mime::inline_part(&bytes, "")?, None);
+    // Angle brackets are not part of the id.
+    assert_eq!(
+        mailcrane_mime::inline_part(&bytes, "<logo@example.org>")?,
+        None
+    );
+    Ok(())
+}
+
+#[test]
+fn inline_part_enforces_the_size_limit() {
+    let huge = vec![b'a'; mailcrane_mime::limits::MAX_INPUT_BYTES + 1];
+    assert_eq!(
+        mailcrane_mime::inline_part(&huge, "x@example.org"),
+        Err(mailcrane_mime::MimeError::TooLarge)
+    );
+}

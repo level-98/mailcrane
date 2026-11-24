@@ -44,8 +44,8 @@ pub enum MimeError {
     Empty,
 }
 
-/// Parses raw message bytes.
-pub fn parse_message(raw: &[u8]) -> Result<ParsedMessage, MimeError> {
+/// Parses `raw` with the limits in [`limits`] enforced.
+fn parse_limited(raw: &[u8]) -> Result<mail_parser::Message<'_>, MimeError> {
     if raw.len() > limits::MAX_INPUT_BYTES {
         return Err(MimeError::TooLarge);
     }
@@ -67,6 +67,23 @@ pub fn parse_message(raw: &[u8]) -> Result<ParsedMessage, MimeError> {
     {
         return Err(MimeError::TooDeep);
     }
+    Ok(message)
+}
+
+/// Lower-case `type/subtype` of a part, `application/octet-stream` if missing.
+fn mime_type_of(part: &mail_parser::MessagePart<'_>) -> String {
+    part.content_type()
+        .map(|ct| match ct.subtype() {
+            Some(sub) => format!("{}/{}", ct.ctype(), sub),
+            None => ct.ctype().to_owned(),
+        })
+        .map(|s| headers::clean(&s).to_ascii_lowercase())
+        .unwrap_or_else(|| "application/octet-stream".to_owned())
+}
+
+/// Parses raw message bytes.
+pub fn parse_message(raw: &[u8]) -> Result<ParsedMessage, MimeError> {
+    let message = parse_limited(raw)?;
 
     let root = message.root();
 
@@ -96,14 +113,7 @@ pub fn parse_message(raw: &[u8]) -> Result<ParsedMessage, MimeError> {
     let attachments = root
         .attachments()
         .map(|part| {
-            let content_type = part.content_type();
-            let mime_type = content_type
-                .map(|ct| match ct.subtype() {
-                    Some(sub) => format!("{}/{}", ct.ctype(), sub),
-                    None => ct.ctype().to_owned(),
-                })
-                .map(|s| headers::clean(&s).to_ascii_lowercase())
-                .unwrap_or_else(|| "application/octet-stream".to_owned());
+            let mime_type = mime_type_of(&part);
             let disposition = if part.is_inline() {
                 Disposition::Inline
             } else {
@@ -153,6 +163,44 @@ pub fn parse_message(raw: &[u8]) -> Result<ParsedMessage, MimeError> {
         attachments,
         snippet,
     })
+}
+
+/// The decoded bytes of one attached or inline part.
+#[derive(Clone, PartialEq, Eq)]
+pub struct InlinePart {
+    /// Lower-case `type/subtype`, as in [`AttachmentInfo::mime_type`].
+    pub mime_type: String,
+    /// The bytes after transfer decoding.
+    pub bytes: Vec<u8>,
+}
+
+impl std::fmt::Debug for InlinePart {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Never print message content (AGENTS.md §4.4).
+        f.debug_struct("InlinePart")
+            .field("mime_type", &self.mime_type)
+            .field("bytes", &self.bytes.len())
+            .finish()
+    }
+}
+
+/// The first attached or inline part whose Content-ID is `content_id`
+/// (compared without angle brackets, as [`AttachmentInfo::content_id`] holds
+/// it), for showing `cid:` images (RFC 2392). `None` if no part has that id
+/// or `content_id` is empty. Enforces the same limits as [`parse_message`].
+pub fn inline_part(raw: &[u8], content_id: &str) -> Result<Option<InlinePart>, MimeError> {
+    if content_id.is_empty() {
+        return Ok(None);
+    }
+    let message = parse_limited(raw)?;
+    let found = message
+        .root()
+        .attachments()
+        .find(|part| headers::clean_opt(part.content_id()).as_deref() == Some(content_id));
+    Ok(found.map(|part| InlinePart {
+        mime_type: mime_type_of(&part),
+        bytes: part.decoded().into_owned(),
+    }))
 }
 
 #[cfg(test)]
