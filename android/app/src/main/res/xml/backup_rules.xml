@@ -1,6 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<!-- Android 11 and older. The secrets file is encrypted with a key that never
-     leaves this device, so a restored copy could not be read. Keep it out. -->
-<full-backup-content>
-    <exclude domain="file" path="datastore/mailcrane_secrets.preferences_pb" />
-</full-backup-content>

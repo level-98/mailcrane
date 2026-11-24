@@ -1,9 +1,0 @@
-From: Ann Example <ann@example.org>
-To: Bob <bob@example.com>
-Subject: UTF-8
-Date: Mon, 02 Mar 2026 10:00:00 +0000
-Message-ID: <utf8@example.org>
-Content-Type: text/plain; charset=utf-8
-Content-Transfer-Encoding: 8bit
-
-Grüße, café ☕

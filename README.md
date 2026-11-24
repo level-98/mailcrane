@@ -1,140 +1,24 @@
-<p align="center">
-  <img src="design/app-icon/icon-preview-rounded.svg" width="112" alt="Mailcrane app icon">
-</p>
+# Mailcrane website
 
-<h1 align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="design/brand/wordmark-white.svg">
-    <img src="design/brand/wordmark.svg" width="320" alt="Mailcrane">
-  </picture>
-</h1>
+This is the GitHub Pages branch for the Mailcrane project website. The static site lives in `index.html`, `styles.css`, and `script.js`; roadmap progress is fetched from the public GitHub issues and refreshed automatically.
 
-<p align="center">
-  A free, open-source email app for Android and iOS.<br>
-  Fast, private, and built in the open by people and AI agents working together.
-</p>
+The app source and full project documentation are maintained on [`main`](https://github.com/level-98/mailcrane/tree/main). This branch keeps the Markdown project documents and the brand assets used by the site.
 
----
+## Project
 
-> **Status: pre-alpha.** There is no working app yet. We're laying the foundations (milestone **M0**). This is the best time to join and help shape it.
+Mailcrane is a free, open-source email app for Android and iOS. It is in early development; there is no app to download yet. The project is designed around:
 
-## What Mailcrane will be
+- IMAP and SMTP for broad provider support, with JMAP and guided sign-in planned.
+- Privacy by default: no ads, analytics, or Mailcrane servers reading your mail.
+- Native Android and iOS apps backed by a shared Rust engine.
+- Offline access and a public, issue-driven roadmap.
 
-- **Works with any email provider.** IMAP and SMTP for everyone, JMAP where providers support it, and OAuth sign-in for Gmail, Outlook and Microsoft 365.
-- **Private by default.** No tracking, analytics or ads, and no servers of ours reading your mail. Remote images and tracking pixels are blocked until you allow them.
-- **Fast and works offline.** Mail is cached on the device, search works without a connection, and messages written offline wait in the outbox.
-- **Lots of features.** A unified inbox, conversation threads, full-text search, swipe actions, snooze, scheduled send, multiple accounts, and OpenPGP encryption.
-- **Native on both platforms.** Material 3 on Android and SwiftUI on iOS, sharing one engine written in Rust.
+Read the [roadmap](ROADMAP.md), [architecture](docs/architecture.md), and [contributor guide](CONTRIBUTING.md), or [browse open issues](https://github.com/level-98/mailcrane/issues).
 
-## Project status
+## Website deployment
 
-| Area | State |
-|---|---|
-| Repo, CI, contributor workflow | 🟡 In progress (M0) |
-| Rust core (IMAP, SMTP, storage, MIME) | ⚪ Not started (M1–M2) |
-| Android app (Kotlin + Jetpack Compose) | ⚪ Not started |
-| iOS app (Swift + SwiftUI) | ⚪ Not started |
-| Brand and design | 🟢 v1 done (see below) |
+The site has no build step or external runtime dependencies. In the repository’s GitHub Pages settings, publish the `website` branch from the repository root. The live progress tracker uses the public GitHub REST API and will show an error instead of stale data if that service is unavailable.
 
-The plan is in [ROADMAP.md](ROADMAP.md). The live to-do list is the [issues](../../issues).
+## Brand
 
-## How it works
-
-```
-┌──────────────────────┐   ┌──────────────────────┐
-│  Android app         │   │  iOS app             │
-│  Kotlin · Compose M3 │   │  Swift · SwiftUI     │
-└──────────┬───────────┘   └──────────┬───────────┘
-           │   generated bindings (UniFFI)
-┌──────────┴──────────────────────────┴───────────┐
-│  mailcrane-core (Rust)                           │
-│  accounts · IMAP/JMAP sync · SMTP · MIME         │
-│  SQLite store · search · HTML sanitising         │
-└──────────────────────────────────────────────────┘
-```
-
-Mail logic is written once in Rust and shared; each platform has its own native UI. Details and reasons: [docs/architecture.md](docs/architecture.md).
-
-| Folder | What's in it |
-|---|---|
-| `core/` | Rust workspace: the mail engine, the FFI layer, fake test servers and `xtask` |
-| `android/` | Android app (Kotlin, Jetpack Compose, Material 3) |
-| `ios/` | iOS app (Swift, SwiftUI) |
-| `design/` | Logo, app icons, UI icons, illustrations and colours |
-| `docs/` | Architecture, decisions and changelog fragments |
-| `tests/fixtures/` | Made-up test emails. Never real mail. |
-
-## Brand and design
-
-<p>
-  <img src="design/illustrations/empty-inbox.svg" width="150" alt="Empty inbox">
-  <img src="design/illustrations/no-results.svg" width="150" alt="No results">
-  <img src="design/illustrations/welcome.svg" width="150" alt="Welcome">
-</p>
-
-**The mark** is a geometric origami crane in flat folds: one shape for both the bird and folded mail. On the app icon it's white on Crane blue.
-
-**Style:** flat UI with a single blue accent, and 24 px line icons with a 1.75 stroke and round caps. **Typeface:** [DM Sans](https://fonts.google.com/specimen/DM+Sans) (Open Font License); the wordmark is DM Sans Bold converted to outlines.
-
-| Token | Light | Dark |
-|---|---|---|
-| primary (Crane blue) | `#2B57D9` | `#8FA8FF` |
-| primaryDark | `#1E44B8` | |
-| primaryContainer | `#E3EAFF` | |
-| tint | `#BFD0FF` | |
-| ink | `#141A2E` | `#E8ECF8` |
-| inkMuted | `#5A6380` | `#9AA3BF` |
-| surface | `#FFFFFF` | `#0F1424` |
-| outline | `#D5DBEA` | `#2A3350` |
-| error / success | `#D93B3B` / `#1F9D63` | |
-
-The colours live in [`design/colors.json`](design/colors.json), and apps read them from there. Never hard-code a colour.
-
-**What's in [`design/`](design/)** (all generated by `design/build.py`):
-
-| Asset | Path |
-|---|---|
-| Crane mark and wordmark (colour, white, mono; SVG + PNG) | `design/brand/` |
-| iOS app icon (1024 px) | `design/app-icon/ios/AppIcon.appiconset/` |
-| Android adaptive icon, themed-icon layer, legacy PNGs | `design/app-icon/android/res/` |
-| Play Store icon (512 px) | `design/app-icon/android/playstore-icon-512.png` |
-| Splash icons (Android 12+, iOS @1x/2x/3x) | `design/splash/` |
-| 24 UI icons (SVG and Android VectorDrawable) | `design/ui-icons/` |
-| Empty-state illustrations | `design/illustrations/` |
-
-See [design/README.md](design/README.md) for where each file goes and how to rebuild them.
-
-## Building
-
-> These commands work once M0 is finished.
-
-**You need:** Rust (stable, via `rustup`). For the apps, Android Studio with the NDK, and Xcode 16+ on a Mac for iOS. No Docker or test accounts needed: tests use built-in fake mail servers.
-
-```bash
-git clone https://github.com/level-98/mailcrane.git
-cd mailcrane
-
-cargo xtask ci          # every check CI runs, in one command
-cd android && ./gradlew assembleDebug                    # Android
-cd ios && xcodebuild -scheme Mailcrane build             # iOS (macOS only)
-```
-
-## Want to help?
-
-You don't need to be an expert, and AI tools are welcome. Three steps:
-
-1. Find an unassigned issue, such as a [`good first issue`](../../labels/good%20first%20issue) or [`agent-ready`](../../labels/agent-ready).
-2. Comment **`/claim`** on it.
-3. Open a PR that says `Closes #<issue>`.
-
-Fixed a bug already? Just open the report and the PR together. More in **[CONTRIBUTING.md](CONTRIBUTING.md)**. Using an AI coding agent? Point it at **[AGENTS.md](AGENTS.md)**.
-
-We'd especially like Rust developers (sync and storage), Android and iOS developers, people who can test with lots of email providers, designers, translators and accessibility testers.
-
-## Security
-
-Please don't report security problems in public issues. See [SECURITY.md](SECURITY.md).
-
-## Licence
-
-[Mozilla Public License 2.0](LICENSE). The brand assets in `design/` are under the same licence, but the Mailcrane name and logo may not be used to suggest that a fork is the official app.
+The website uses the original Mailcrane wordmark, crane mark, and colour palette from [`design/`](design/). The brand assets and project are licensed under the [Mozilla Public License 2.0](LICENSE).

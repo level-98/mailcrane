@@ -1,2 +1,0 @@
-[alias]
-xtask = "run --quiet --manifest-path core/Cargo.toml --package xtask --"

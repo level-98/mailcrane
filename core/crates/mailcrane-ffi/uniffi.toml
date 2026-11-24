@@ -1,8 +1,0 @@
-[bindings.kotlin]
-package_name = "app.mailcrane.core"
-# Generate Android-aware code: picks the object cleaner by API level, since
-# java.lang.ref.Cleaner only exists from Android 13 (API 33) and minSdk is 26.
-android = true
-
-[bindings.swift]
-module_name = "MailcraneCore"

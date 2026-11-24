@@ -1,6 +1,0 @@
-From: ann@example.org
-To: bob@example.com
-Subject: bare
-Message-ID: <bare@example.org>
-
-Just a body with no MIME headers.

@@ -1,8 +1,0 @@
-blank_issues_enabled: false
-contact_links:
-  - name: Report a security problem
-    url: https://github.com/level-98/mailcrane/security/advisories/new
-    about: Please report security problems privately, not in a public issue.
-  - name: Ask a question or share an idea
-    url: https://github.com/level-98/mailcrane/discussions
-    about: For questions and early ideas that aren't ready to be a task.
