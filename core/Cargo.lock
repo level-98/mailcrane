@@ -674,12 +674,18 @@ checksum = "5d15f86d12da44cd8d4ec3c73984537eb7f4cadcb9776a575a0a8a05ca11005c"
 [[package]]
 name = "mailcrane-core"
 version = "0.0.0"
+dependencies = [
+ "mailcrane-testkit",
+ "thiserror",
+ "zeroize",
+]
 
 [[package]]
 name = "mailcrane-ffi"
 version = "0.0.0"
 dependencies = [
  "mailcrane-core",
+ "thiserror",
  "uniffi",
 ]
 
@@ -723,6 +729,7 @@ dependencies = [
  "http-body-util",
  "hyper",
  "hyper-util",
+ "mailcrane-core",
  "rcgen",
  "rustls",
  "tokio",
