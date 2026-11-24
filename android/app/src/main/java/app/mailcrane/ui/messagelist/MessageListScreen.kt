@@ -1,5 +1,6 @@
 package app.mailcrane.ui.messagelist
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
@@ -50,6 +51,7 @@ import java.time.ZonedDateTime
 fun MessageListScreen(
     folderId: Long,
     title: String,
+    onOpenMessage: (Long) -> Unit,
     onOpenFolders: (() -> Unit)? = null,
     viewModel: MessageListViewModel =
         hiltViewModel<MessageListViewModel, MessageListViewModel.Factory>(
@@ -69,6 +71,7 @@ fun MessageListScreen(
         snackbar = snackbar,
         onRefresh = viewModel::refresh,
         onLoadMore = viewModel::loadMore,
+        onOpenMessage = onOpenMessage,
         onOpenFolders = onOpenFolders,
     )
 }
@@ -81,6 +84,7 @@ fun MessageListContent(
     snackbar: SnackbarHostState,
     onRefresh: () -> Unit,
     onLoadMore: () -> Unit,
+    onOpenMessage: (Long) -> Unit = {},
     onOpenFolders: (() -> Unit)? = null,
     listState: LazyListState = rememberLazyListState(),
 ) {
@@ -124,7 +128,7 @@ fun MessageListContent(
                         )
                     }
                 state.messages.isEmpty() -> EmptyFolderState()
-                else -> Messages(state, listState, onLoadMore)
+                else -> Messages(state, listState, onLoadMore, onOpenMessage)
             }
         }
     }
@@ -135,6 +139,7 @@ private fun Messages(
     state: MessageListState,
     listState: LazyListState,
     onLoadMore: () -> Unit,
+    onOpenMessage: (Long) -> Unit,
 ) {
     val locale = LocalConfiguration.current.locales[0]
     val now by currentMinute()
@@ -152,7 +157,12 @@ private fun Messages(
     }
     LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
         items(items = state.messages, key = { it.id }, contentType = { "message" }) { message ->
-            MessageRow(message = message, now = now, locale = locale)
+            MessageRow(
+                message = message,
+                now = now,
+                locale = locale,
+                modifier = Modifier.clickable { onOpenMessage(message.id) },
+            )
             HorizontalDivider(
                 modifier = Modifier.padding(start = 24.dp),
                 color = MaterialTheme.colorScheme.outlineVariant,

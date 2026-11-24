@@ -1,7 +1,9 @@
 //! Reading stored messages, as the apps call it: `list_messages` returns one
-//! page of a folder's message list, newest first.
+//! page of a folder's message list, newest first; `get_message` returns one
+//! message ready to show, and `get_inline_part` the `cid:` images in it.
 
-use mailcrane_store::{FolderId, MessageHeader, Store};
+use mailcrane_mime::{parse_message, sanitize_html, SanitizeOptions};
+use mailcrane_store::{BodyState, FolderId, MessageHeader, MessageId, Store};
 
 use crate::sync::{SyncErrorKind, SyncFailure};
 
@@ -80,14 +82,293 @@ pub fn list_messages(
     offset: u32,
     limit: u32,
 ) -> Result<Vec<MessageSummary>, SyncFailure> {
-    let storage = || SyncFailure::Failed {
-        kind: SyncErrorKind::Storage,
-    };
     let store = Store::open(&db_path).map_err(|_| storage())?;
     let rows = store
         .list_messages(FolderId(folder_id), limit.min(MAX_PAGE), offset)
         .map_err(|_| storage())?;
     Ok(rows.into_iter().map(MessageSummary::from).collect())
+}
+
+/// The scheme `cid:` images are rewritten to. The app serves it from
+/// [`get_inline_part`] and never from the network.
+pub const CID_SCHEME: &str = "mailcrane-cid";
+
+/// What a `cid:` reference becomes: this prefix plus the percent-encoded
+/// content id, e.g. `mailcrane-cid://part/logo%40example.org`.
+pub const CID_URL_PREFIX: &str = "mailcrane-cid://part/";
+
+/// The longest plain-text body passed to the apps, in chars. Longer text is
+/// cut; a phone can't usefully show more as one text block.
+const MAX_PLAIN_CHARS: usize = 1_000_000;
+
+/// Image types `get_inline_part` serves. SVG is not one of them.
+const INLINE_IMAGE_TYPES: &[&str] = &[
+    "image/png",
+    "image/jpeg",
+    "image/jpg",
+    "image/gif",
+    "image/webp",
+];
+
+/// A sender or recipient.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct MessageAddress {
+    /// Display name; empty when the message has none.
+    pub name: String,
+    /// The address; may be empty for a malformed header.
+    pub email: String,
+}
+
+/// An attached file, for the list under a message.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct AttachmentInfo {
+    /// The file name; empty when the sender gave none.
+    pub name: String,
+    /// Lower-case `type/subtype`.
+    pub mime_type: String,
+    /// Size in bytes after decoding.
+    pub size: u64,
+}
+
+/// The body of a message, ready to show.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
+pub enum MessageBody {
+    /// Plain text. Show it as text, never as HTML.
+    Plain {
+        /// The text.
+        text: String,
+    },
+    /// A complete HTML document: the sanitised message HTML with a strict
+    /// Content-Security-Policy. Show it only in a web view with JavaScript
+    /// off and network loads blocked unless remote content was allowed.
+    Html {
+        /// The document.
+        html: String,
+        /// Remote images that were removed because remote content is off.
+        remote_blocked: u32,
+        /// Tracking pixels removed (in both modes).
+        trackers_removed: u32,
+    },
+    /// The body has not been downloaded yet; call `SyncEngine::fetch_body`.
+    NotDownloaded,
+}
+
+/// One message, ready to show.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct MessageDetail {
+    /// Row id of the message.
+    pub id: i64,
+    /// Row id of its folder.
+    pub folder_id: i64,
+    /// Sender.
+    pub from: MessageAddress,
+    /// Recipients; empty until the body is downloaded.
+    pub to: Vec<MessageAddress>,
+    /// Copy recipients; empty until the body is downloaded.
+    pub cc: Vec<MessageAddress>,
+    /// Header date, unix seconds UTC.
+    pub date: i64,
+    /// Subject; empty when the message has none.
+    pub subject: String,
+    /// Whether the message has been read (`\Seen`).
+    pub is_seen: bool,
+    /// The body.
+    pub body: MessageBody,
+    /// Attached files, not counting inline images shown in the body.
+    pub attachments: Vec<AttachmentInfo>,
+}
+
+/// The bytes of an inline image.
+#[derive(Clone, PartialEq, Eq, uniffi::Record)]
+pub struct InlinePart {
+    /// Lower-case `type/subtype`; always an image type.
+    pub mime_type: String,
+    /// The decoded bytes.
+    pub bytes: Vec<u8>,
+}
+
+impl std::fmt::Debug for InlinePart {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Never print message content (AGENTS.md §4.4).
+        f.debug_struct("InlinePart")
+            .field("mime_type", &self.mime_type)
+            .field("bytes", &self.bytes.len())
+            .finish()
+    }
+}
+
+fn storage() -> SyncFailure {
+    SyncFailure::Failed {
+        kind: SyncErrorKind::Storage,
+    }
+}
+
+fn not_found() -> SyncFailure {
+    SyncFailure::Failed {
+        kind: SyncErrorKind::NotFound,
+    }
+}
+
+/// Percent-encodes everything except RFC 3986 unreserved characters, so a
+/// content id is one safe path segment.
+fn percent_encode(text: &str) -> String {
+    const HEX: &[u8; 16] = b"0123456789ABCDEF";
+    let mut out = String::with_capacity(text.len());
+    for b in text.bytes() {
+        if b.is_ascii_alphanumeric() || matches!(b, b'-' | b'.' | b'_' | b'~') {
+            out.push(char::from(b));
+        } else {
+            out.push('%');
+            out.push(char::from(HEX[usize::from(b >> 4)]));
+            out.push(char::from(HEX[usize::from(b & 0x0f)]));
+        }
+    }
+    out
+}
+
+fn cid_url(content_id: &str) -> String {
+    format!("{CID_URL_PREFIX}{}", percent_encode(content_id))
+}
+
+/// Wraps sanitised HTML in a document whose Content-Security-Policy allows
+/// nothing but inline styles, `cid:` and `data:` images, and, only when
+/// `allow_remote`, `https:` images. No referrer is ever sent.
+fn html_document(body: &str, allow_remote: bool) -> String {
+    let remote = if allow_remote { " https:" } else { "" };
+    format!(
+        "<!DOCTYPE html><html><head>\
+         <meta charset=\"utf-8\">\
+         <meta name=\"referrer\" content=\"no-referrer\">\
+         <meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; \
+         img-src {CID_SCHEME}: data:{remote}; style-src 'unsafe-inline'\">\
+         <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\
+         <style>body{{margin:16px;overflow-wrap:break-word}}\
+         img{{max-width:100%;height:auto}}</style>\
+         </head><body>{body}</body></html>"
+    )
+}
+
+fn address(a: mailcrane_mime::Address) -> MessageAddress {
+    MessageAddress {
+        name: one_line(a.name.as_deref().unwrap_or_default()),
+        email: one_line(&a.email),
+    }
+}
+
+/// Text for display: NUL removed, at most [`MAX_PLAIN_CHARS`] chars.
+fn plain_text(text: &str) -> String {
+    text.chars()
+        .filter(|c| *c != '\0')
+        .take(MAX_PLAIN_CHARS)
+        .collect()
+}
+
+/// Returns one message, ready to show. HTML goes through the sanitiser and
+/// comes back as a complete document (see [`MessageBody::Html`]); remote
+/// images stay blocked unless `allow_remote`. A body that can't be parsed is
+/// shown as its raw text. Reads only the local database.
+#[uniffi::export]
+pub fn get_message(
+    db_path: String,
+    message_id: i64,
+    allow_remote: bool,
+) -> Result<MessageDetail, SyncFailure> {
+    let store = Store::open(&db_path).map_err(|_| storage())?;
+    let id = MessageId(message_id);
+    let header = store
+        .get_message_header(id)
+        .map_err(|_| storage())?
+        .ok_or_else(not_found)?;
+    let raw = match header.body_state {
+        BodyState::Fetched => store.get_body(id).map_err(|_| storage())?,
+        BodyState::None => None,
+    };
+    let d = &header.details;
+    let mut detail = MessageDetail {
+        id: message_id,
+        folder_id: d.folder_id.0,
+        from: MessageAddress {
+            name: one_line(d.from_name.as_deref().unwrap_or_default()),
+            email: one_line(d.from_addr.as_deref().unwrap_or_default()),
+        },
+        to: Vec::new(),
+        cc: Vec::new(),
+        date: d.date,
+        subject: one_line(&d.subject),
+        is_seen: d.flags.seen,
+        body: MessageBody::NotDownloaded,
+        attachments: Vec::new(),
+    };
+    let Some(raw) = raw else {
+        return Ok(detail);
+    };
+    detail.attachments = store
+        .list_attachments(id)
+        .map_err(|_| storage())?
+        .into_iter()
+        .map(|a| a.details)
+        // Inline images are shown in the body, not listed.
+        .filter(|a| !(a.is_inline && a.content_id.is_some() && a.mime_type.starts_with("image/")))
+        .map(|a| AttachmentInfo {
+            name: one_line(a.filename.as_deref().unwrap_or_default()),
+            mime_type: one_line(&a.mime_type),
+            size: u64::try_from(a.size).unwrap_or(0),
+        })
+        .collect();
+    detail.body = match parse_message(&raw) {
+        Ok(parsed) => {
+            detail.to = parsed.to.into_iter().map(address).collect();
+            detail.cc = parsed.cc.into_iter().map(address).collect();
+            match parsed.text_html {
+                Some(html) => {
+                    let opts = SanitizeOptions {
+                        allow_remote_content: allow_remote,
+                        cid_url,
+                    };
+                    let clean = sanitize_html(&html, &opts);
+                    MessageBody::Html {
+                        html: html_document(&clean.html, allow_remote),
+                        remote_blocked: clean.remote_resources_blocked,
+                        trackers_removed: clean.trackers_removed,
+                    }
+                }
+                None => MessageBody::Plain {
+                    text: plain_text(parsed.text_plain.as_deref().unwrap_or_default()),
+                },
+            }
+        }
+        // Better to show the source as text than nothing.
+        Err(_) => MessageBody::Plain {
+            text: plain_text(&String::from_utf8_lossy(&raw)),
+        },
+    };
+    Ok(detail)
+}
+
+/// Returns the inline image with Content-ID `content_id` from the stored
+/// body of the message, for the app's `mailcrane-cid:` handler. `None` if the
+/// body isn't downloaded, no part has that id, or the part is not a
+/// supported image type. Reads only the local database.
+#[uniffi::export]
+pub fn get_inline_part(
+    db_path: String,
+    message_id: i64,
+    content_id: String,
+) -> Result<Option<InlinePart>, SyncFailure> {
+    let store = Store::open(&db_path).map_err(|_| storage())?;
+    let Some(raw) = store
+        .get_body(MessageId(message_id))
+        .map_err(|_| storage())?
+    else {
+        return Ok(None);
+    };
+    let part = mailcrane_mime::inline_part(&raw, &content_id).unwrap_or(None);
+    Ok(part
+        .filter(|p| INLINE_IMAGE_TYPES.contains(&p.mime_type.as_str()))
+        .map(|p| InlinePart {
+            mime_type: p.mime_type,
+            bytes: p.bytes,
+        }))
 }
 
 #[cfg(test)]
@@ -252,5 +533,292 @@ mod tests {
                 kind: SyncErrorKind::Storage
             })
         );
+    }
+
+    // ---- get_message / get_inline_part / mark_read (M1-12) ----
+
+    use crate::sync::{CoreEvent, CoreEventListener, SyncEngine};
+    use mailcrane_store::NewAttachment;
+    use std::sync::{Arc, Mutex};
+
+    /// Stores `raw` as the body of a new message in `folder`, with the
+    /// attachment metadata `parse_message` finds, as `fetch_body` does.
+    fn with_body(path: &str, folder: FolderId, uid: u32, raw: &[u8]) -> i64 {
+        let store = Store::open(path).expect("store");
+        let id = store
+            .upsert_message_header(&header(folder, uid, 1_000))
+            .expect("insert");
+        let attachments: Vec<NewAttachment> = parse_message(raw)
+            .map(|p| p.attachments)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|a| NewAttachment {
+                part_id: a.part_id,
+                filename: a.filename,
+                mime_type: a.mime_type,
+                size: i64::try_from(a.size).unwrap_or(i64::MAX),
+                content_id: a.content_id,
+                is_inline: a.disposition == mailcrane_mime::Disposition::Inline,
+            })
+            .collect();
+        assert!(store
+            .store_parsed_body(id, raw, 1, "", &attachments)
+            .expect("body"));
+        id.0
+    }
+
+    fn fixture(dir: &str, name: &str) -> Vec<u8> {
+        let path = format!(
+            "{}/../../../tests/fixtures/{dir}/{name}",
+            env!("CARGO_MANIFEST_DIR")
+        );
+        std::fs::read(path).expect("fixture")
+    }
+
+    fn html_message(html: &str) -> Vec<u8> {
+        format!(
+            "From: Ana <ana@example.org>\r\nTo: Bob <bob@example.com>\r\n\
+             Cc: Cy <cy@example.net>\r\nSubject: Hi\r\nMIME-Version: 1.0\r\n\
+             Content-Type: text/html; charset=utf-8\r\n\r\n{html}\r\n"
+        )
+        .into_bytes()
+    }
+
+    fn html_of(detail: &MessageDetail) -> (&str, u32) {
+        match &detail.body {
+            MessageBody::Html {
+                html,
+                remote_blocked,
+                ..
+            } => (html.as_str(), *remote_blocked),
+            other => panic!("expected HTML, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn body_not_downloaded_yet() {
+        let (_dir, path, folder) = setup();
+        let store = Store::open(&path).expect("store");
+        let id = store
+            .upsert_message_header(&header(folder, 1, 1_000))
+            .expect("insert");
+        drop(store);
+        let m = get_message(path, id.0, false).expect("message");
+        assert_eq!(m.body, MessageBody::NotDownloaded);
+        assert_eq!(m.subject, "Message 1");
+        assert_eq!(m.from.email, "ana@example.org");
+        assert_eq!(m.folder_id, folder.0);
+        assert!(!m.is_seen);
+    }
+
+    #[test]
+    fn plain_text_message() {
+        let (_dir, path, folder) = setup();
+        let id = with_body(&path, folder, 1, &fixture("mime", "plain-ascii.eml"));
+        let m = get_message(path, id, false).expect("message");
+        match &m.body {
+            MessageBody::Plain { text } => assert!(text.starts_with("Hello Bob,")),
+            other => panic!("expected plain text, got {other:?}"),
+        }
+        assert_eq!(m.to.len(), 1);
+        assert_eq!(m.to[0].email, "bob@example.com");
+        assert!(m.attachments.is_empty());
+    }
+
+    #[test]
+    fn html_is_sanitised_in_a_locked_down_document() {
+        let (_dir, path, folder) = setup();
+        let raw = html_message(
+            "<body onload=\"alert(1)\"><p>Hi</p><script>alert(2)</script>\
+             <img src=\"https://example.com/a.png\" width=\"100\" height=\"50\"></body>",
+        );
+        let id = with_body(&path, folder, 1, &raw);
+        let m = get_message(path.clone(), id, false).expect("message");
+        let (html, blocked) = html_of(&m);
+        assert!(html.contains("<p>Hi</p>"));
+        assert!(!html.contains("<script"));
+        assert!(!html.contains("alert"));
+        assert!(!html.contains("onload"));
+        assert!(
+            !html.contains("example.com"),
+            "remote image must be removed"
+        );
+        assert_eq!(blocked, 1);
+        assert!(html.contains("<meta name=\"referrer\" content=\"no-referrer\">"));
+        assert!(html.contains(
+            "content=\"default-src 'none'; img-src mailcrane-cid: data:; \
+             style-src 'unsafe-inline'\""
+        ));
+        assert!(!html.contains("https:"));
+        assert_eq!(m.cc[0].email, "cy@example.net");
+
+        let m = get_message(path, id, true).expect("message");
+        let (html, blocked) = html_of(&m);
+        assert_eq!(blocked, 0);
+        assert!(html.contains("src=\"https://example.com/a.png\""));
+        assert!(html.contains("img-src mailcrane-cid: data: https:;"));
+        assert!(!html.contains("<script"));
+    }
+
+    #[test]
+    fn every_xss_fixture_comes_out_without_script() {
+        let (_dir, path, folder) = setup();
+        let dir = format!(
+            "{}/../../../tests/fixtures/html",
+            env!("CARGO_MANIFEST_DIR")
+        );
+        let mut uid = 0;
+        for entry in std::fs::read_dir(dir).expect("fixtures") {
+            let entry = entry.expect("entry");
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if !name.starts_with("xss-") {
+                continue;
+            }
+            uid += 1;
+            let html = std::fs::read_to_string(entry.path()).expect("read");
+            let id = with_body(&path, folder, uid, &html_message(&html));
+            for allow_remote in [false, true] {
+                let m = get_message(path.clone(), id, allow_remote).expect("message");
+                let (doc, _) = html_of(&m);
+                let lower = doc.to_ascii_lowercase();
+                for bad in ["<script", "javascript:", "onload=", "onerror=", "<iframe"] {
+                    assert!(!lower.contains(bad), "{name}: {bad} survived");
+                }
+            }
+        }
+        assert!(uid >= 40, "only {uid} fixtures");
+    }
+
+    #[test]
+    fn cid_images_are_rewritten_and_served_from_the_body() {
+        let (_dir, path, folder) = setup();
+        let id = with_body(
+            &path,
+            folder,
+            1,
+            &fixture("mime", "multipart-related-cid.eml"),
+        );
+        let m = get_message(path.clone(), id, false).expect("message");
+        let (html, blocked) = html_of(&m);
+        assert!(html.contains("src=\"mailcrane-cid://part/logo%40example.org\""));
+        assert_eq!(blocked, 0);
+        // The inline image is shown in the body, not listed as an attachment.
+        assert!(m.attachments.is_empty());
+
+        let part = get_inline_part(path.clone(), id, "logo@example.org".into())
+            .expect("read")
+            .expect("part");
+        assert_eq!(part.mime_type, "image/png");
+        assert_eq!(part.bytes, b"\x89PNG\r\n\x1a\n");
+        assert_eq!(
+            get_inline_part(path.clone(), id, "nope@example.org".into()),
+            Ok(None)
+        );
+        // Another message's id never finds this message's parts.
+        assert_eq!(
+            get_inline_part(path, id + 1, "logo@example.org".into()),
+            Ok(None)
+        );
+    }
+
+    #[test]
+    fn inline_part_serves_only_raster_images() {
+        let (_dir, path, folder) = setup();
+        let raw = b"Subject: x\r\nMIME-Version: 1.0\r\n\
+            Content-Type: multipart/related; boundary=\"b\"\r\n\r\n\
+            --b\r\nContent-Type: text/html\r\n\r\n<img src=\"cid:s@example.org\">\r\n\
+            --b\r\nContent-Type: image/svg+xml\r\nContent-Disposition: inline\r\n\
+            Content-ID: <s@example.org>\r\n\r\n<svg onload=\"alert(1)\"/>\r\n\
+            --b\r\nContent-Type: text/html\r\nContent-Disposition: inline\r\n\
+            Content-ID: <h@example.org>\r\n\r\n<script>alert(1)</script>\r\n--b--\r\n";
+        let id = with_body(&path, folder, 1, raw);
+        assert_eq!(
+            get_inline_part(path.clone(), id, "s@example.org".into()),
+            Ok(None)
+        );
+        assert_eq!(get_inline_part(path, id, "h@example.org".into()), Ok(None));
+    }
+
+    #[test]
+    fn attachments_are_listed_with_name_type_and_size() {
+        let (_dir, path, folder) = setup();
+        let id = with_body(
+            &path,
+            folder,
+            1,
+            &fixture("mime", "multipart-mixed-pdf.eml"),
+        );
+        let m = get_message(path, id, false).expect("message");
+        assert_eq!(m.attachments.len(), 1);
+        let a = &m.attachments[0];
+        assert_eq!(a.mime_type, "application/pdf");
+        assert!(a.name.ends_with(".pdf"));
+        assert!(a.size > 0);
+    }
+
+    #[test]
+    fn unparseable_body_is_shown_as_text() {
+        let (_dir, path, folder) = setup();
+        let id = with_body(&path, folder, 1, b"");
+        let m = get_message(path, id, false).expect("message");
+        assert_eq!(
+            m.body,
+            MessageBody::Plain {
+                text: String::new()
+            }
+        );
+    }
+
+    #[test]
+    fn unknown_message_is_not_found() {
+        let (_dir, path, _folder) = setup();
+        assert_eq!(get_message(path.clone(), 999, false), Err(not_found()));
+        assert_eq!(get_inline_part(path, 999, "a@example.org".into()), Ok(None));
+    }
+
+    #[test]
+    fn percent_encoding_keeps_one_safe_segment() {
+        assert_eq!(percent_encode("a.b-c_d~e"), "a.b-c_d~e");
+        assert_eq!(
+            percent_encode("x@y/z?#\"<> %"),
+            "x%40y%2Fz%3F%23%22%3C%3E%20%25"
+        );
+        assert_eq!(percent_encode("é"), "%C3%A9");
+    }
+
+    #[derive(Default)]
+    struct Events(Mutex<Vec<CoreEvent>>);
+
+    impl CoreEventListener for Events {
+        fn on_event(&self, event: CoreEvent) {
+            if let Ok(mut e) = self.0.lock() {
+                e.push(event);
+            }
+        }
+    }
+
+    #[test]
+    fn mark_read_sets_seen_once_and_notifies() {
+        let (_dir, path, folder) = setup();
+        let store = Store::open(&path).expect("store");
+        let id = store
+            .upsert_message_header(&header(folder, 1, 1_000))
+            .expect("insert");
+        drop(store);
+        let events = Arc::new(Events::default());
+        let engine = SyncEngine::new(path.clone(), events.clone());
+
+        assert_eq!(engine.mark_read(id.0), Ok(()));
+        assert!(get_message(path.clone(), id.0, false).expect("m").is_seen);
+        // Already read: nothing changes and no event.
+        assert_eq!(engine.mark_read(id.0), Ok(()));
+        let seen = events.0.lock().expect("events").clone();
+        assert_eq!(
+            seen,
+            [CoreEvent::MessagesChanged {
+                folder_id: folder.0
+            }]
+        );
+        assert_eq!(engine.mark_read(999), Err(not_found()));
     }
 }

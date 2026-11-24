@@ -18,11 +18,19 @@ object CoreModule {
         @ApplicationContext context: Context,
     ): MailcraneCore = UniffiMailcraneCore(dbPath = dbPath(context))
 
+    // One instance serves both interfaces, so the message screen's changes (mark as read) reach
+    // the message list through the same event listener.
     @Provides
     @Singleton
-    fun provideMailboxCore(
+    fun provideUniffiMailboxCore(
         @ApplicationContext context: Context,
-    ): MailboxCore = UniffiMailboxCore(dbPath = dbPath(context))
+    ): UniffiMailboxCore = UniffiMailboxCore(dbPath = dbPath(context))
+
+    @Provides
+    fun provideMailboxCore(core: UniffiMailboxCore): MailboxCore = core
+
+    @Provides
+    fun provideMessageCore(core: UniffiMailboxCore): MessageCore = core
 
     // The database lives in app-private storage that is never backed up.
     private fun dbPath(context: Context): String = File(context.noBackupFilesDir, "mailcrane.sqlite").path
