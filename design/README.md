@@ -38,6 +38,10 @@ Both apps read their colours from this file. Never hard-code a colour.
 
 Typeface: **DM Sans** (Open Font License). The wordmark is Bold converted to outlines, so it doesn't need the font installed.
 
+## Regenerating app themes
+
+Change a brand colour in `colors.json`, then run `python3 design/gen_theme.py` to regenerate the Android Compose and iOS asset themes together. Run `python3 design/gen_theme.py --check` in CI to ensure generated files match the JSON.
+
 ## Folders
 
 | Path | Contents | Where it goes |

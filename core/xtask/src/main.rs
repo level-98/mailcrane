@@ -26,7 +26,11 @@ struct Step {
 }
 
 /// Steps in the order `ci` runs them. `bindings` is not part of `ci`.
-const CI_STEPS: [Step; 6] = [
+const CI_STEPS: [Step; 7] = [
+    Step {
+        name: "design",
+        run: design,
+    },
     Step {
         name: "fmt",
         run: fmt,
@@ -63,6 +67,7 @@ Usage: cargo xtask <command> [--strict] [--only <step>]... [--skip <step>]...
 
 Commands:
   ci        every step below except bindings, then a summary table
+  design    generated theme check and unit tests
   fmt       cargo fmt --all --check
   lint      cargo clippy --workspace --all-targets -- -D warnings
   test      cargo test --workspace
@@ -256,6 +261,45 @@ fn cargo() -> String {
 }
 
 // ------------------------------------------------------------------ steps
+
+fn design(ctx: &Ctx) -> Result<Outcome, Error> {
+    let (python, check_args) = if cfg!(windows) {
+        (
+            "py",
+            vec![
+                "-3".to_string(),
+                "design/gen_theme.py".to_string(),
+                "--check".to_string(),
+            ],
+        )
+    } else {
+        (
+            "python3",
+            vec!["design/gen_theme.py".to_string(), "--check".to_string()],
+        )
+    };
+    if !run(&ctx.root, python, &check_args)? {
+        return Ok(Outcome::Failed(
+            "`python3 design/gen_theme.py --check` failed".into(),
+        ));
+    }
+    let test_args = if cfg!(windows) {
+        vec![
+            "-3".to_string(),
+            "-m".to_string(),
+            "unittest".to_string(),
+            "design/test_gen_theme.py".to_string(),
+        ]
+    } else {
+        vec![
+            "-m".to_string(),
+            "unittest".to_string(),
+            "design/test_gen_theme.py".to_string(),
+        ]
+    };
+    let ok = run(&ctx.root, python, &test_args)?;
+    Ok(outcome(ok, "python3 -m unittest design/test_gen_theme.py"))
+}
 
 fn fmt(ctx: &Ctx) -> Result<Outcome, Error> {
     let ok = run(&ctx.core, &cargo(), &["fmt", "--all", "--check"])?;
