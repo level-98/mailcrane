@@ -1,0 +1,87 @@
+# CI only installs tools and runs `cargo xtask ci`. Every check lives in
+# core/xtask, so what passes locally is what passes here. Don't add check
+# logic to this file.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  NDK_VERSION: "30.0.16248370"
+
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+          # cargo-ndk builds the core for these when Gradle runs.
+          targets: aarch64-linux-android,x86_64-linux-android
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: core
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deny,cargo-ndk
+
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: android-actions/setup-android@v4
+
+      - name: Install the Android NDK
+        run: sdkmanager "ndk;${NDK_VERSION}"
+
+      - uses: gradle/actions/setup-gradle@v6
+
+      # The ios step always skips on Linux; the ios job below runs it.
+      - run: cargo xtask ci --strict --skip ios
+        env:
+          ANDROID_NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/${{ env.NDK_VERSION }}
+
+  ios:
+    runs-on: macos-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios,aarch64-apple-ios-sim
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: core
+
+      - name: Install XcodeGen and SwiftLint
+        run: brew install xcodegen swiftlint
+
+      # Add --strict once ios/ exists (M0-07). Until then the step skips with
+      # the reason "ios/project.yml does not exist yet".
+      - run: cargo xtask ci --only ios
+
+      # The owner has no Mac, so this artifact is how iOS UI gets reviewed.
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: ios-screenshots
+          path: ios/build/screenshots
+          if-no-files-found: ignore

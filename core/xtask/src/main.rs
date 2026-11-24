@@ -306,8 +306,14 @@ fn android(ctx: &Ctx) -> Result<Outcome, Error> {
             "neither ANDROID_HOME nor ANDROID_SDK_ROOT is set".into(),
         ));
     }
+    // Windows can't run the `gradlew` shell script; it has `gradlew.bat`.
+    let wrapper = if cfg!(windows) {
+        dir.join("gradlew.bat")
+    } else {
+        gradlew
+    };
     let args = ["ktlintCheck", "lintDebug", "testDebugUnitTest"];
-    let ok = run(&dir, "./gradlew", &args)?;
+    let ok = run(&dir, &wrapper.display().to_string(), &args)?;
     Ok(outcome(
         ok,
         "./gradlew ktlintCheck lintDebug testDebugUnitTest",
@@ -384,10 +390,13 @@ fn ios(ctx: &Ctx) -> Result<Outcome, Error> {
     Ok(outcome(ok, "xcodebuild test"))
 }
 
+/// Cargo's output directory. Steps run Cargo from `core/`, so a relative
+/// `CARGO_TARGET_DIR` is relative to `core/`, as Cargo itself treats it.
 fn target_dir(ctx: &Ctx) -> PathBuf {
-    env::var_os("CARGO_TARGET_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| ctx.core.join("target"))
+    match env::var_os("CARGO_TARGET_DIR").filter(|v| !v.is_empty()) {
+        Some(dir) => ctx.core.join(dir),
+        None => ctx.core.join("target"),
+    }
 }
 
 fn bindings(ctx: &Ctx) -> Result<Outcome, Error> {
