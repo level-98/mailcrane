@@ -5,6 +5,7 @@ import androidx.annotation.StringRes
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalDrawerSheet
@@ -42,6 +43,7 @@ fun FolderDrawer(
     selectedFolderId: Long?,
     onSelect: (Long) -> Unit,
     modifier: Modifier = Modifier,
+    onOpenSettings: (() -> Unit)? = null,
 ) {
     ModalDrawerSheet(modifier = modifier) {
         Text(
@@ -50,7 +52,7 @@ fun FolderDrawer(
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(horizontal = 28.dp, vertical = 16.dp).semantics { heading() },
         )
-        LazyColumn {
+        LazyColumn(Modifier.weight(1f)) {
             items(items = folders, key = { it.id }) { folder ->
                 FolderItem(
                     folder = folder,
@@ -58,6 +60,16 @@ fun FolderDrawer(
                     onClick = { onSelect(folder.id) },
                 )
             }
+        }
+        if (onOpenSettings != null) {
+            HorizontalDivider(Modifier.padding(horizontal = 28.dp))
+            NavigationDrawerItem(
+                label = { Text(stringResource(R.string.settings_title)) },
+                icon = { Icon(painterResource(R.drawable.ic_mc_settings), contentDescription = null) },
+                selected = false,
+                onClick = onOpenSettings,
+                modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding).padding(vertical = 8.dp),
+            )
         }
     }
 }

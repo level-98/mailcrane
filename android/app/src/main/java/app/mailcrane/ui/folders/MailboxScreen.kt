@@ -25,6 +25,7 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.mailcrane.R
+import app.mailcrane.settings.SettingsScreen
 import app.mailcrane.ui.message.MessageScreen
 import app.mailcrane.ui.messagelist.MessageListScreen
 import app.mailcrane.ui.messagelist.errorText
@@ -56,6 +57,12 @@ fun MailboxScreen(
             // scroll position while a message is open.
             var openMessage by rememberSaveable { mutableStateOf<Long?>(null) }
             val saved = rememberSaveableStateHolder()
+            var showSettings by rememberSaveable { mutableStateOf(false) }
+            if (showSettings) {
+                BackHandler { showSettings = false }
+                SettingsScreen(onBack = { showSettings = false })
+                return
+            }
             val messageId = openMessage
             if (messageId != null) {
                 BackHandler { openMessage = null }
@@ -74,6 +81,10 @@ fun MailboxScreen(
                         onSelect = { id ->
                             viewModel.select(id)
                             scope.launch { drawerState.close() }
+                        },
+                        onOpenSettings = {
+                            scope.launch { drawerState.close() }
+                            showSettings = true
                         },
                     )
                 },
