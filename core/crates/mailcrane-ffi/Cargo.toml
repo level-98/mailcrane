@@ -9,3 +9,19 @@ repository.workspace = true
 
 [lints]
 workspace = true
+
+[lib]
+crate-type = ["lib", "cdylib", "staticlib"]
+
+[features]
+# Needed only to build the `uniffi-bindgen` binary.
+bindgen = ["uniffi/cli"]
+
+[[bin]]
+name = "uniffi-bindgen"
+path = "src/bin/uniffi-bindgen.rs"
+required-features = ["bindgen"]
+
+[dependencies]
+mailcrane-core = { path = "../mailcrane-core" }
+uniffi = "0.32.2"

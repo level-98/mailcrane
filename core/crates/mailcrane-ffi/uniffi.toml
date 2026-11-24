@@ -1,0 +1,5 @@
+[bindings.kotlin]
+package_name = "app.mailcrane.core"
+
+[bindings.swift]
+module_name = "MailcraneCore"
