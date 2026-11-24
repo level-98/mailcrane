@@ -33,7 +33,7 @@ LABELS = {
     "area:design": ("BFD0FF", "Brand, icons and UI design"),
     "area:docs": ("BFD0FF", "Documentation"),
     "area:ci": ("BFD0FF", "CI, tooling and repo setup"),
-    **{f"m{i}": ("E3EAFF", f"Milestone M{i}") for i in range(7)},
+    **{f"m{i}": ("E3EAFF", f"Milestone M{i}") for i in range(8)},
     "pre-launch": ("E3EAFF", "Checks before going public"),
 }
 
@@ -89,6 +89,23 @@ def guess_areas(text: str) -> set:
     return {"area:core"}
 
 
+# Android first: app work in M1-M6 is Android only, and M7 is the iOS app
+# (ROADMAP.md, docs/decisions/0002-android-first-ios-after-release.md).
+IOS_MILESTONE = "m7"
+ANDROID_FIRST = {"m1", "m2", "m3", "m4", "m5", "m6"}
+
+
+def platform_areas(areas: set, milestone: str) -> set:
+    """Point app work at the platform its milestone is for."""
+    if milestone == IOS_MILESTONE:
+        return (areas - {"area:android"}) | {"area:ios"}
+    if "area:ci" in areas:
+        return areas
+    if milestone in ANDROID_FIRST and "area:ios" in areas:
+        return (areas - {"area:ios"}) | {"area:android"}
+    return areas
+
+
 def parse_roadmap(text: str):
     tasks, section, milestone = [], "", ""
     for line in text.splitlines():
@@ -112,7 +129,7 @@ def parse_roadmap(text: str):
         labels.discard("agent-ready")
         labels.add(milestone)
         if milestone != "pre-launch":
-            labels |= guess_areas(title)
+            labels |= platform_areas(guess_areas(title), milestone)
         tasks.append({
             "id": m["id"], "title": title, "section": section,
             "labels": sorted(labels), "agent_candidate": agent_candidate,

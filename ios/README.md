@@ -1,5 +1,7 @@
 # iOS app
 
+> **Paused until after the Android 1.0 release.** This is the M0 shell: it builds the core as an XCFramework and calls it, nothing more. The iOS app catches up in milestone **M7** of [ROADMAP.md](../ROADMAP.md) (see [decision 0002](../docs/decisions/0002-android-first-ios-after-release.md)). Until then CI only runs the iOS check when a maintainer starts the `iOS` workflow by hand, and the shell may fall behind the core.
+
 ## Prerequisites
 
 - macOS with Xcode 15 or later

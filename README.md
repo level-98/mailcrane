@@ -10,7 +10,7 @@
 </h1>
 
 <p align="center">
-  A free, open-source email app for Android and iOS.<br>
+  A free, open-source email app for Android, with iOS to follow.<br>
   Fast, private, and built in the open by people and AI agents working together.
 </p>
 
@@ -24,7 +24,7 @@
 - **Private by default.** No tracking, analytics or ads, and no servers of ours reading your mail. Remote images and tracking pixels are blocked until you allow them.
 - **Fast and works offline.** Mail is cached on the device, search works without a connection, and messages written offline wait in the outbox.
 - **Lots of features.** A unified inbox, conversation threads, full-text search, swipe actions, snooze, scheduled send, multiple accounts, and OpenPGP encryption.
-- **Native on both platforms.** Material 3 on Android and SwiftUI on iOS, sharing one engine written in Rust.
+- **Native on each platform.** Material 3 on Android, and later SwiftUI on iOS, sharing one engine written in Rust. Android comes first; the iOS app follows after the Android release.
 
 ## Project status
 
@@ -33,7 +33,7 @@
 | Repo, CI, contributor workflow | 🟡 In progress (M0) |
 | Rust core (IMAP, SMTP, storage, MIME) | ⚪ Not started (M1–M2) |
 | Android app (Kotlin + Jetpack Compose) | ⚪ Not started |
-| iOS app (Swift + SwiftUI) | ⚪ Not started |
+| iOS app (Swift + SwiftUI) | ⏸️ Shell only, paused until after the Android release (M7) |
 | Brand and design | 🟢 v1 done (see below) |
 
 The plan is in [ROADMAP.md](ROADMAP.md). The live to-do list is the [issues](../../issues).
@@ -42,7 +42,7 @@ The plan is in [ROADMAP.md](ROADMAP.md). The live to-do list is the [issues](../
 
 ```
 ┌──────────────────────┐   ┌──────────────────────┐
-│  Android app         │   │  iOS app             │
+│  Android app         │   │  iOS app (after 1.0) │
 │  Kotlin · Compose M3 │   │  Swift · SwiftUI     │
 └──────────┬───────────┘   └──────────┬───────────┘
            │   generated bindings (UniFFI)
@@ -108,7 +108,7 @@ See [design/README.md](design/README.md) for where each file goes and how to reb
 
 > These commands work once M0 is finished.
 
-**You need:** Rust (stable, via `rustup`). For the apps, Android Studio with the NDK, and Xcode 16+ on a Mac for iOS. No Docker or test accounts needed: tests use built-in fake mail servers.
+**You need:** Rust (stable, via `rustup`). For the app, Android Studio with the NDK. Xcode 16+ on a Mac is only needed for the iOS shell, which is paused until after the Android release. No Docker or test accounts needed: tests use built-in fake mail servers.
 
 ```bash
 git clone https://github.com/level-98/mailcrane.git
@@ -116,7 +116,7 @@ cd mailcrane
 
 cargo xtask ci          # every check CI runs, in one command
 cd android && ./gradlew assembleDebug                    # Android
-cd ios && xcodebuild -scheme Mailcrane build             # iOS (macOS only)
+cd ios && xcodebuild -scheme Mailcrane build             # iOS (macOS only, paused until M7)
 ```
 
 ## Want to help?
@@ -129,7 +129,7 @@ You don't need to be an expert, and AI tools are welcome. Three steps:
 
 Fixed a bug already? Just open the report and the PR together. More in **[CONTRIBUTING.md](CONTRIBUTING.md)**. Using an AI coding agent? Point it at **[AGENTS.md](AGENTS.md)**.
 
-We'd especially like Rust developers (sync and storage), Android and iOS developers, people who can test with lots of email providers, designers, translators and accessibility testers.
+We'd especially like Rust developers (sync and storage), Android developers (and iOS developers once M7 starts), people who can test with lots of email providers, designers, translators and accessibility testers.
 
 ## Security
 
