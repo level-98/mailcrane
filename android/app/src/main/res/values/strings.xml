@@ -153,4 +153,10 @@
     <string name="compose_error_refused_temporary">The server couldn’t take the message right now. Try again later.</string>
     <string name="compose_error_refused_permanent">The server refused the message.</string>
     <string name="compose_error_unexpected">Something went wrong, and the message wasn’t sent.</string>
+
+    <!-- Settings -->
+    <string name="settings_title">Settings</string>
+    <string name="settings_back">Back</string>
+    <string name="settings_clean_links">Remove tracking from links</string>
+    <string name="settings_clean_links_summary">Strip tracking parameters such as utm_source from links before opening them</string>
 </resources>

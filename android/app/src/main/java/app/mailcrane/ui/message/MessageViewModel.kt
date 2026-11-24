@@ -3,19 +3,23 @@ package app.mailcrane.ui.message
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import app.mailcrane.core.InlinePart
+import app.mailcrane.core.LinkCleaner
 import app.mailcrane.core.MessageBody
 import app.mailcrane.core.MessageCore
 import app.mailcrane.core.MessageDetail
 import app.mailcrane.core.SyncErrorKind
 import app.mailcrane.core.SyncFailure
+import app.mailcrane.settings.AppSettings
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedFactory
 import dagger.assisted.AssistedInject
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
 sealed interface MessageState {
@@ -46,6 +50,8 @@ class MessageViewModel
     @AssistedInject
     constructor(
         private val core: MessageCore,
+        settings: AppSettings,
+        private val linkCleaner: LinkCleaner,
         @Assisted private val messageId: Long,
     ) : ViewModel() {
         @AssistedFactory
@@ -55,6 +61,9 @@ class MessageViewModel
 
         private val _state = MutableStateFlow<MessageState>(MessageState.Loading)
         val state: StateFlow<MessageState> = _state.asStateFlow()
+
+        // Until the setting is read, links are cleaned: the safe choice, and the default.
+        private val cleanLinks = settings.cleanLinks.stateIn(viewModelScope, SharingStarted.Eagerly, true)
 
         private var remoteAllowed = false
         private var markedRead = false
@@ -99,6 +108,9 @@ class MessageViewModel
                     }
                 }
         }
+
+        /** The link to open for a tapped [url]: without tracking parameters when the setting is on. */
+        fun linkToOpen(url: String): String = if (cleanLinks.value) linkCleaner.clean(url) else url
 
         /** Serves `mailcrane-cid:` images. Called on the web view's background thread. */
         fun inlinePart(contentId: String): InlinePart? =

@@ -82,7 +82,7 @@ fun MessageScreen(
         onRetry = viewModel::load,
         onLoadRemoteImages = viewModel::loadRemoteImages,
         inlinePart = viewModel::inlinePart,
-        onOpenLink = { openLink(context, it) },
+        onOpenLink = { openLink(context, Uri.parse(viewModel.linkToOpen(it.toString()))) },
     )
 }
 
