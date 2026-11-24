@@ -7,7 +7,7 @@
 Mailcrane has one shared engine and two native apps.
 
 - **`core/` (Rust)** does all the mail work: accounts, IMAP/JMAP sync, SMTP sending, MIME parsing, HTML sanitising, the SQLite store and search.
-- **`android/` (Kotlin, Jetpack Compose, Material 3)** and **`ios/` (Swift, SwiftUI)** are the user interfaces. They call the core and draw screens. They don't speak mail protocols themselves.
+- **`android/` (Kotlin, Jetpack Compose, Material 3)** and **`ios/` (Swift, SwiftUI)** are the user interfaces. They call the core and draw screens. They don't speak mail protocols themselves. Android ships first; the iOS app stays a shell until after the Android 1.0 release (M7, [decision 0002](decisions/0002-android-first-ios-after-release.md)), but the core and its FFI stay platform-neutral so it can catch up without core changes.
 - **UniFFI** generates the Kotlin and Swift bindings from `mailcrane-ffi`.
 
 ## Why this design
@@ -34,7 +34,7 @@ Library choices are suggestions until an ADR confirms them.
 
 ## Portability
 
-The same core code runs on every platform. It is compiled separately for each: a `.so` for Android, an XCFramework for iOS, and a `.dll` for Windows. There is no Windows app and none is planned, but the core must keep building and passing its tests on Windows so that one (or another desktop app) could be added later without changing the core. CI checks this on every PR (task M0-17).
+The same core code runs on every platform. It is compiled separately for each: a `.so` for Android, an XCFramework for iOS, and a `.dll` for Windows. There is no Windows app and none is planned, but the core must keep building and passing its tests on Windows so that one (or another desktop app) could be added later without changing the core. CI checks this on every PR (task M0-17). The iOS build is checked by hand until M7-02 puts it back on every PR.
 
 To keep it portable, the core never reaches into the operating system for anything that differs between platforms. The app passes it in instead:
 
@@ -54,5 +54,5 @@ Platform-specific code (`#[cfg(target_os = …)]`, `std::os::unix`, crates that 
 
 ## Open questions
 
-- **Push notifications on iOS.** iOS doesn't allow a permanent IMAP connection in the background. Options are background fetch only, or an optional self-hostable push relay. Needs an ADR (M4-05).
+- **Push notifications on iOS.** iOS doesn't allow a permanent IMAP connection in the background. Options are background fetch only, or an optional self-hostable push relay. Needs an ADR (M7-10).
 - **Licence check.** MPL-2.0 is proposed because it works with the App Store, unlike GPL.

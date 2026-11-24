@@ -6,6 +6,12 @@ Rules for anyone working in the Mailcrane repository: AI coding agents (Claude C
 
 Mailcrane is an open-source email app for Android and iOS. One Rust engine (`core/`) handles accounts, sync, sending, storage and search. Two native apps (`android/` in Kotlin and Compose, `ios/` in Swift and SwiftUI) call it through UniFFI bindings. Read [docs/architecture.md](docs/architecture.md) before changing anything across those boundaries.
 
+**Android first.** The iOS app is paused at its M0 shell until after the Android 1.0 release; it catches up in milestone M7 of [ROADMAP.md](ROADMAP.md) ([decision 0002](docs/decisions/0002-android-first-ios-after-release.md)). Until then:
+
+- App work in M1–M6 means the Android app. Don't add iOS screens or Swift code unless the issue is in M7.
+- Keep the core and `mailcrane-ffi` usable from Swift (simple FFI types, no Android-only assumptions in the core), but you don't need matching Swift changes. If a core change breaks the iOS shell, say so in the PR; it gets fixed in M7-02.
+- CI runs the iOS check only when a maintainer starts it by hand.
+
 The project is **pre-alpha**. Some of the layout below is planned rather than built. If a folder or command doesn't exist yet, there is an issue to create it. Don't invent a different structure.
 
 ## 2. Picking up work
@@ -72,7 +78,7 @@ It runs `fmt`, `clippy -D warnings`, the tests, `cargo deny`, the no-panic lint,
 - For protocol code, cite the RFC section in a comment, e.g. `// RFC 9051 §6.4.4`. Key RFCs: IMAP 9051 and 3501, IDLE 2177, CONDSTORE/QRESYNC 7162, SMTP 5321, message format 5322, MIME 2045–2049, JMAP 8620 and 8621, OAuth 6749 and PKCE 7636.
 - Provider workarounds go behind a named quirk (`ServerQuirk::GmailLabels`) with a test.
 - For UI changes, check light mode, dark mode and large text, and attach screenshots to the PR.
-- If you can't run something (e.g. iOS on Linux), say so in the PR. Never claim a check passed if you didn't run it.
+- If you can't run something (e.g. the iOS check on Linux or Windows), say so in the PR. Never claim a check passed if you didn't run it.
 - Running several agents at once? Give each its own `CARGO_TARGET_DIR` and its own branch, and keep them to separate files.
 
 ## 8. Pull requests

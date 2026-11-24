@@ -1,13 +1,12 @@
+# The iOS app is paused until after the Android 1.0 release (ROADMAP.md, M7;
+# docs/decisions/0002-android-first-ios-after-release.md). Until then this
+# workflow runs only when started by hand (Actions → iOS → Run workflow), so
+# PRs don't wait for a macOS runner. Task M7-02 puts the `pull_request` and
+# `push` triggers back.
 name: iOS
 
 on:
-  pull_request:
-  push:
-    branches: [main]
-    paths:
-      - "core/**"
-      - "ios/**"
-      - ".github/workflows/ios.yml"
+  workflow_dispatch:
 
 permissions:
   contents: read
