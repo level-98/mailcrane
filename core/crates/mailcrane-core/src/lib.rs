@@ -6,6 +6,7 @@
 
 pub mod account;
 pub mod events;
+pub mod links;
 pub mod secrets;
 pub mod sync;
 
