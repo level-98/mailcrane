@@ -3,13 +3,16 @@
 # When a roadmap issue ("[M1-04] …") is closed, reopened or retitled, once a
 # day, or when run by hand, this runs scripts/sync_roadmap.py. If ROADMAP.md
 # needs changing it opens (or refreshes) one PR from the `bot/roadmap-sync`
-# branch for a maintainer to merge. It never pushes to `main`.
+# branch and squash-merges it straight away. It never pushes to `main`, so
+# branch protection still applies.
 #
 # Setup: Settings → Actions → General → Workflow permissions →
 # tick "Allow GitHub Actions to create and approve pull requests".
 #
-# PRs opened with the built-in token don't trigger other workflows, so once
-# CI is a required check, close and reopen the sync PR (or push to it) to run CI.
+# If the merge is refused, the PR stays open for a maintainer and the run logs
+# a warning. That will happen once CI is a required check, because PRs opened
+# with the built-in token don't trigger other workflows: then close and reopen
+# the sync PR (or push to it) to run CI, and merge it by hand.
 name: Sync roadmap
 
 on:
@@ -65,9 +68,20 @@ jobs:
           git push --force origin "$BRANCH"
 
           if [ -z "$open_pr" ]; then
-            gh pr create --base main --head "$BRANCH" \
+            pr_url=$(gh pr create --base main --head "$BRANCH" \
               --title "docs: sync roadmap with issues" \
-              --body "Automated by \`.github/workflows/roadmap-sync.yml\`: ticks or unticks task boxes in \`ROADMAP.md\` to match the issues (\`scripts/sync_roadmap.py\`). This branch is rebuilt from \`main\` on every run, so don't push your own changes to it."
+              --body "Automated by \`.github/workflows/roadmap-sync.yml\`: ticks or unticks task boxes in \`ROADMAP.md\` to match the issues (\`scripts/sync_roadmap.py\`). The workflow merges this PR itself; if it's still open, the merge was refused (see the run log). This branch is rebuilt from \`main\` on every run, so don't push your own changes to it.")
+            pr="${pr_url##*/}"
+            echo "Opened PR #$pr."
           else
-            echo "Refreshed PR #$open_pr."
+            pr="$open_pr"
+            echo "Refreshed PR #$pr."
+          fi
+
+          # Merge only the commit pushed above, so nothing else can slip in.
+          if gh pr merge "$pr" --squash --delete-branch \
+               --match-head-commit "$(git rev-parse HEAD)"; then
+            echo "Merged PR #$pr."
+          else
+            echo "::warning::Couldn't merge PR #$pr (branch protection may need a review or a CI check). It's left open for a maintainer."
           fi
