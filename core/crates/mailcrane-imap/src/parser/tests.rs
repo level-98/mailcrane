@@ -108,13 +108,81 @@ fn list_forms() {
 fn unknown_responses_are_framed_over_literals() {
     let input = b"* 1 FETCH (BODY[] {6}\r\nab\r\ncd)\r\n* 2 EXISTS\r\n";
     let (r, used) = parse_response(input).expect("parses");
+    let Response::Untagged(Untagged::Fetch(data)) = r else {
+        panic!("expected a FETCH response");
+    };
+    assert_eq!(data.body.as_deref(), Some(&b"ab\r\ncd"[..]));
+    assert_eq!(&input[used..], b"* 2 EXISTS\r\n");
     assert_eq!(
-        r,
+        parse(b"* 2 EXISTS\r\n"),
+        Response::Untagged(Untagged::Exists(2))
+    );
+    assert_eq!(
+        parse(b"* 1 RECENT\r\n"),
         Response::Untagged(Untagged::Other {
-            name: "FETCH".into()
+            name: "RECENT".into()
         })
     );
-    assert_eq!(&input[used..], b"* 2 EXISTS\r\n");
+}
+
+const ENV: &str = "ENVELOPE (\"Wed, 24 Nov 2026 10:46:51 +0000\" \"Hi\" ((\"A\" NIL \"a\" \"example.org\")) NIL NIL ((NIL NIL \"b\" \"example.net\")) NIL NIL NIL \"<1@example.org>\")";
+
+fn fetch(input: &str) -> Untagged {
+    match parse(input.as_bytes()) {
+        Response::Untagged(u) => u,
+        other => panic!("not untagged: {other:?}"),
+    }
+}
+
+#[test]
+fn fetch_headers_are_read() {
+    let line = format!(
+        "* 3 FETCH (UID 7 FLAGS (\\Seen $x) INTERNALDATE \"24-Nov-2026 10:46:51 +0000\" RFC822.SIZE 99 {ENV} BODYSTRUCTURE ((\"TEXT\" \"PLAIN\" NIL NIL NIL \"7BIT\" 1 1)(\"APPLICATION\" \"PDF\" NIL NIL NIL \"BASE64\" 4 NIL (\"ATTACHMENT\" (\"FILENAME\" \"a.pdf\")) NIL) \"MIXED\") BODY[HEADER.FIELDS (REFERENCES)] {{4}}\r\nX: y)\r\n"
+    );
+    let Untagged::Fetch(d) = fetch(&line) else {
+        panic!("expected FETCH");
+    };
+    assert_eq!((d.seq, d.uid, d.size), (3, Some(7), Some(99)));
+    assert_eq!(d.flags, Some(vec!["\\Seen".to_string(), "$x".to_string()]));
+    assert_eq!(d.has_attachment, Some(true));
+    assert_eq!(d.header_fields.as_deref(), Some(&b"X: y"[..]));
+    let env = d.envelope.expect("envelope");
+    assert_eq!(env.subject.as_deref(), Some(&b"Hi"[..]));
+    assert_eq!(env.from.len(), 1);
+    assert_eq!(env.to.first().and_then(|a| a.name.clone()), None);
+    assert_eq!(env.message_id.as_deref(), Some(&b"<1@example.org>"[..]));
+}
+
+#[test]
+fn malformed_envelope_or_structure_is_flagged_with_its_uid() {
+    for bad in [
+        "* 1 FETCH (UID 9 ENVELOPE (\"x\" \"y\"))\r\n",
+        "* 1 FETCH (UID 9 ENVELOPE ((((\r\n",
+        "* 1 FETCH (UID 9 BODYSTRUCTURE (1 2 3))\r\n",
+        "* 1 FETCH (UID 9 BODYSTRUCTURE ((\"TEXT\" \"PLAIN\" NIL NIL NIL \"7BIT\" 1 1)))\r\n",
+    ] {
+        assert_eq!(
+            fetch(bad),
+            Untagged::FetchMalformed { uid: Some(9) },
+            "{bad}"
+        );
+    }
+}
+
+#[test]
+fn deeply_nested_structure_is_rejected_not_overflowed() {
+    let nested = "(".repeat(5000);
+    let line = format!("* 1 FETCH (UID 4 BODYSTRUCTURE {nested}\r\n");
+    assert_eq!(fetch(&line), Untagged::FetchMalformed { uid: Some(4) });
+}
+
+#[test]
+fn search_lists_uids() {
+    assert_eq!(
+        fetch("* SEARCH 1 20 300\r\n"),
+        Untagged::Search(vec![1, 20, 300])
+    );
+    assert_eq!(fetch("* SEARCH\r\n"), Untagged::Search(Vec::new()));
 }
 
 #[test]
@@ -291,6 +359,15 @@ fn encode(r: &Response) -> Vec<u8> {
                     encode_astring(&item.name, &mut out);
                 }
                 Untagged::Other { name } => out.extend_from_slice(name.as_bytes()),
+                Untagged::Exists(n) => out.extend_from_slice(format!("{n} EXISTS").as_bytes()),
+                Untagged::Search(uids) => {
+                    out.extend_from_slice(b"SEARCH");
+                    for uid in uids {
+                        out.extend_from_slice(format!(" {uid}").as_bytes());
+                    }
+                }
+                // Not produced by the generators below.
+                Untagged::Fetch(_) | Untagged::FetchMalformed { .. } => {}
             }
         }
     }

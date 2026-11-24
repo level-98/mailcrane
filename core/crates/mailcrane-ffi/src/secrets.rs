@@ -92,8 +92,6 @@ pub fn install_secret_store(store: Arc<dyn PlatformSecretStore>) {
 
 /// The store installed by the app, for the rest of the core to use.
 /// `Unavailable` if the app hasn't installed one yet.
-// Not called outside tests until account setup (M1-03) reads credentials.
-#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn secret_store() -> Result<Arc<dyn SecretStore>, SecretError> {
     let slot = match SECRET_STORE.read() {
         Ok(slot) => slot,

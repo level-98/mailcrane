@@ -8,6 +8,7 @@
 uniffi::setup_scaffolding!();
 
 pub mod secrets;
+pub mod sync;
 
 /// The name of this crate.
 pub const CRATE_NAME: &str = env!("CARGO_PKG_NAME");

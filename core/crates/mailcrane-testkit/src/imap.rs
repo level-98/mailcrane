@@ -175,7 +175,9 @@ async fn handle_connection(
     let command_count = Arc::new(AtomicUsize::new(0));
     let mut first = [0u8; 1];
     let implicit_tls =
-        match tokio::time::timeout(Duration::from_millis(10), stream.peek(&mut first)).await {
+        // A TLS client sends its hello first, but may be slow to start (it
+        // loads certificates); a STARTTLS client waits for our greeting.
+        match tokio::time::timeout(Duration::from_millis(150), stream.peek(&mut first)).await {
             Ok(result) => result.unwrap_or(0) > 0 && first[0] == 0x16,
             Err(_) => false,
         };
@@ -241,6 +243,7 @@ async fn handle_connection(
                     &shared,
                     false,
                     &command_count,
+                    &mut None,
                 )
                 .await?;
             } else {
@@ -252,6 +255,7 @@ async fn handle_connection(
         }
     };
 
+    let mut selected: Option<String> = None;
     loop {
         let mut line = Vec::new();
         let mut byte = [0u8; 1];
@@ -273,6 +277,7 @@ async fn handle_connection(
             &shared,
             true,
             &command_count,
+            &mut selected,
         )
         .await
         .is_err()
@@ -289,6 +294,7 @@ async fn handle_imap_command(
     shared: &Shared,
     secure: bool,
     command_count: &AtomicUsize,
+    selected: &mut Option<String>,
 ) -> Result<(), String> {
     let (mailbox, faults, quirks, user) = (
         &shared.mailbox,
@@ -417,10 +423,22 @@ async fn handle_imap_command(
         }
         "SELECT" | "EXAMINE" => {
             let folder = parts.get(2).copied().unwrap_or("INBOX").trim_matches('"');
-            let count = mailbox.exists(folder).await;
-            format!("* {count} EXISTS\r\n* OK [UIDVALIDITY 1]\r\n* OK [UIDNEXT {}]\r\n* OK [HIGHESTMODSEQ 1]\r\n{tag} OK {command} completed\r\n", count + 1)
+            if folder != "INBOX" && !mailbox.folder_names().await.iter().any(|n| n == folder) {
+                format!("{tag} NO [NONEXISTENT] no such folder\r\n")
+            } else {
+                *selected = Some(folder.to_string());
+                let count = mailbox.exists(folder).await;
+                format!(
+                    "* {count} EXISTS\r\n* OK [UIDVALIDITY {}]\r\n* OK [UIDNEXT {}]\r\n* OK [HIGHESTMODSEQ 1]\r\n{tag} OK {command} completed\r\n",
+                    mailbox.uidvalidity(),
+                    mailbox.uidnext(folder).await
+                )
+            }
         }
-        "UID" => handle_uid_command(parts, mailbox, quirks).await,
+        "UID" => {
+            let folder = selected.as_deref().unwrap_or("INBOX");
+            handle_uid_command(parts, mailbox, quirks, folder).await
+        }
         "ENABLE" => format!("{tag} ENABLED\r\n"),
         "NOOP" => "* 0 RECENT\r\n".to_string() + &format!("{tag} OK NOOP completed\r\n"),
         "LOGOUT" => format!("{tag} OK LOGOUT completed\r\n"),
@@ -460,7 +478,8 @@ async fn handle_imap_command(
     for fault in faults {
         if let Fault::DropAfterCommands(limit) = fault {
             if count >= *limit {
-                return Ok(());
+                // Close the connection without answering this command.
+                return Err("dropped after commands".into());
             }
         }
     }
@@ -501,20 +520,168 @@ fn decode_base64(text: &str) -> Option<Vec<u8>> {
     Some(out)
 }
 
-async fn handle_uid_command(parts: &[&str], mailbox: &Mailbox, quirks: &[Quirk]) -> String {
+/// Parses an IMAP set such as `1:5,9,12:*` against the UIDs present.
+fn in_uid_set(set: &str, uid: u32, max: u32) -> bool {
+    set.split(',').any(|item| {
+        let bound = |text: &str| {
+            if text == "*" {
+                Some(max)
+            } else {
+                text.parse::<u32>().ok()
+            }
+        };
+        match item.split_once(':') {
+            Some((a, b)) => match (bound(a), bound(b)) {
+                (Some(a), Some(b)) => (a.min(b)..=a.max(b)).contains(&uid),
+                _ => false,
+            },
+            None => bound(item) == Some(uid),
+        }
+    })
+}
+
+fn quoted(text: &str) -> String {
+    text.replace('\\', "\\\\").replace('"', "\\\"")
+}
+
+/// The header lines the client asked for with `HEADER.FIELDS`.
+fn header_fields(raw: &[u8], wanted: &[&str]) -> Vec<u8> {
+    let text = String::from_utf8_lossy(raw);
+    let mut out = Vec::new();
+    for line in text.split("\r\n") {
+        if line.is_empty() {
+            break;
+        }
+        let name = line.split(':').next().unwrap_or("").to_ascii_uppercase();
+        if wanted.contains(&name.as_str()) {
+            out.extend_from_slice(line.as_bytes());
+            out.extend_from_slice(b"\r\n");
+        }
+    }
+    out.extend_from_slice(b"\r\n");
+    out
+}
+
+fn subject_of(raw: &[u8]) -> String {
+    String::from_utf8_lossy(raw)
+        .split("\r\n")
+        .take_while(|line| !line.is_empty())
+        .find_map(|line| line.strip_prefix("Subject: ").map(str::to_string))
+        .unwrap_or_else(|| "Test".to_string())
+}
+
+fn body_structure(raw: &[u8]) -> String {
+    let text = String::from_utf8_lossy(raw);
+    if text.contains("Content-Disposition: attachment") {
+        "BODYSTRUCTURE ((\"TEXT\" \"PLAIN\" (\"CHARSET\" \"UTF-8\") NIL NIL \"7BIT\" 4 1)(\"APPLICATION\" \"PDF\" (\"NAME\" \"a.pdf\") NIL NIL \"BASE64\" 8 NIL (\"ATTACHMENT\" (\"FILENAME\" \"a.pdf\")) NIL) \"MIXED\")".to_string()
+    } else {
+        format!(
+            "BODYSTRUCTURE (\"TEXT\" \"PLAIN\" (\"CHARSET\" \"UTF-8\") NIL NIL \"7BIT\" {} 1)",
+            raw.len()
+        )
+    }
+}
+
+async fn handle_uid_command(
+    parts: &[&str],
+    mailbox: &Mailbox,
+    quirks: &[Quirk],
+    folder: &str,
+) -> String {
     let tag = parts.first().copied().unwrap_or("*");
     let subcommand = parts.get(2).copied().unwrap_or("").to_ascii_uppercase();
     match subcommand.as_str() {
         "FETCH" => {
-            let messages = mailbox.messages("INBOX").await;
-            let mut out = String::new();
-            for message in messages {
-                out.push_str(&format!("* {} FETCH (UID {} FLAGS (\\Seen) RFC822.SIZE {} ENVELOPE (\"Wed, 24 Nov 2026 10:46:51 +0000\" \"Test\" ((\"Alice\" NIL \"alice\" \"example.org\")) ((\"Alice\" NIL \"alice\" \"example.org\")) ((\"Alice\" NIL \"alice\" \"example.org\")) ((\"Recipient\" NIL \"recipient\" \"example.net\")) NIL NIL NIL NIL) BODYSTRUCTURE (\"TEXT\" \"PLAIN\" (\"CHARSET\" \"UTF-8\") NIL NIL \"7BIT\" {} 0))\r\n", message.uid, message.uid, message.raw.len(), message.raw.len()));
+            let set = parts.get(3).copied().unwrap_or("");
+            let items = parts
+                .get(4..)
+                .unwrap_or_default()
+                .join(" ")
+                .to_ascii_uppercase();
+            let messages = mailbox.messages(folder).await;
+            let max = messages.iter().map(|m| m.uid).max().unwrap_or(0);
+            let mut out: Vec<u8> = Vec::new();
+            for (index, message) in messages.iter().enumerate() {
+                if !in_uid_set(set, message.uid, max) {
+                    continue;
+                }
+                let mut line = format!("* {} FETCH (UID {}", index + 1, message.uid);
+                let marks_seen = items.contains("BODY[]") || items.contains("RFC822 ");
+                if marks_seen {
+                    mailbox.add_flag(folder, message.uid, "\\Seen").await;
+                }
+                if items.contains("FLAGS") {
+                    let mut flags = message.flags.clone();
+                    if marks_seen && !flags.iter().any(|f| f == "\\Seen") {
+                        flags.push("\\Seen".to_string());
+                    }
+                    line.push_str(&format!(" FLAGS ({})", flags.join(" ")));
+                }
+                if items.contains("INTERNALDATE") {
+                    line.push_str(" INTERNALDATE \"24-Nov-2026 10:46:51 +0000\"");
+                }
+                if items.contains("RFC822.SIZE") {
+                    line.push_str(&format!(" RFC822.SIZE {}", message.raw.len()));
+                }
+                if items.contains("ENVELOPE") {
+                    if message.corrupt_envelope {
+                        line.push_str(" ENVELOPE (\"only\" \"two\")");
+                    } else {
+                        line.push_str(&format!(" ENVELOPE (\"Wed, 24 Nov 2026 10:46:51 +0000\" \"{}\" ((\"Alice\" NIL \"alice\" \"example.org\")) ((\"Alice\" NIL \"alice\" \"example.org\")) ((\"Alice\" NIL \"alice\" \"example.org\")) ((\"Recipient\" NIL \"recipient\" \"example.net\")) NIL NIL NIL \"<{}@example.org>\")", quoted(&subject_of(&message.raw)), message.uid));
+                    }
+                }
+                if items.contains("BODYSTRUCTURE") {
+                    line.push(' ');
+                    line.push_str(&body_structure(&message.raw));
+                }
+                out.extend_from_slice(line.as_bytes());
+                if items.contains("HEADER.FIELDS") {
+                    let fields = header_fields(
+                        &message.raw,
+                        &[
+                            "REFERENCES",
+                            "IN-REPLY-TO",
+                            "LIST-UNSUBSCRIBE",
+                            "LIST-UNSUBSCRIBE-POST",
+                        ],
+                    );
+                    out.extend_from_slice(
+                        format!(" BODY[HEADER.FIELDS (REFERENCES IN-REPLY-TO LIST-UNSUBSCRIBE LIST-UNSUBSCRIBE-POST)] {{{}}}\r\n", fields.len()).as_bytes(),
+                    );
+                    out.extend_from_slice(&fields);
+                }
+                if items.contains("BODY[]") || items.contains("BODY.PEEK[]") {
+                    out.extend_from_slice(
+                        format!(" BODY[] {{{}}}\r\n", message.raw.len()).as_bytes(),
+                    );
+                    out.extend_from_slice(&message.raw);
+                }
+                out.extend_from_slice(b")\r\n");
             }
-            out.push_str(&format!("{tag} OK UID FETCH completed\r\n"));
-            out
+            out.extend_from_slice(format!("{tag} OK UID FETCH completed\r\n").as_bytes());
+            // The fake's messages are ASCII, so nothing is lost here.
+            String::from_utf8_lossy(&out).into_owned()
         }
-        "SEARCH" => format!("* SEARCH 1\r\n{tag} OK UID SEARCH completed\r\n"),
+        "SEARCH" => {
+            let messages = mailbox.messages(folder).await;
+            let max = messages.iter().map(|m| m.uid).max().unwrap_or(0);
+            let uids: Vec<String> = messages
+                .iter()
+                .filter(
+                    |m| match parts.get(3).map(|p| p.to_ascii_uppercase()).as_deref() {
+                        Some("UID") => in_uid_set(parts.get(4).copied().unwrap_or(""), m.uid, max),
+                        _ => true,
+                    },
+                )
+                .map(|m| m.uid.to_string())
+                .collect();
+            let list = if uids.is_empty() {
+                String::new()
+            } else {
+                format!(" {}", uids.join(" "))
+            };
+            format!("* SEARCH{list}\r\n{tag} OK UID SEARCH completed\r\n")
+        }
         "STORE" => format!("{tag} OK UID STORE completed\r\n"),
         "COPY" => format!("{tag} OK UID COPY completed\r\n"),
         "MOVE" => {

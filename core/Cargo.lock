@@ -805,8 +805,13 @@ dependencies = [
 name = "mailcrane-core"
 version = "0.0.0"
 dependencies = [
+ "mailcrane-imap",
+ "mailcrane-mime",
+ "mailcrane-store",
  "mailcrane-testkit",
  "thiserror",
+ "tokio",
+ "tracing",
  "zeroize",
 ]
 
@@ -815,7 +820,11 @@ name = "mailcrane-ffi"
 version = "0.0.0"
 dependencies = [
  "mailcrane-core",
+ "mailcrane-imap",
+ "mailcrane-store",
+ "mailcrane-testkit",
  "thiserror",
+ "tokio",
  "uniffi",
 ]
 

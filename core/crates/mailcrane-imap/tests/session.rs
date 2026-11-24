@@ -321,3 +321,101 @@ async fn saving_again_keeps_sync_state() {
     assert_eq!(inbox.details.highestmodseq, Some(99));
     assert!(!inbox.details.is_subscribed);
 }
+
+fn raw_messages(count: usize) -> Vec<Vec<u8>> {
+    (1..=count)
+        .map(|n| format!("Subject: Message {n}\r\n\r\nBody {n}\r\n").into_bytes())
+        .collect()
+}
+
+async fn fake_with_messages(count: usize, faults: &[Fault]) -> FakeImap {
+    let mut builder = FakeImap::builder()
+        .user(USER, PASSWORD)
+        .folder("INBOX", raw_messages(count));
+    for fault in faults {
+        builder = builder.fault(fault.clone());
+    }
+    builder.start().await.expect("fake imap starts")
+}
+
+#[tokio::test]
+async fn fetch_select_reports_uidvalidity_and_uidnext() {
+    let imap = fake_with_messages(3, &[]).await;
+    let mut session = connect(&config(&imap, ImapSecurity::ImplicitTls), PASSWORD)
+        .await
+        .expect("logged in");
+    let info = session.select("INBOX").await.expect("selects");
+    assert_eq!((info.exists, info.uidvalidity, info.uidnext), (3, 1, 4));
+    // A folder that does not exist is an error, not a panic.
+    assert!(matches!(
+        session.select("Nope").await,
+        Err(ImapError::CommandFailed)
+    ));
+}
+
+#[tokio::test]
+async fn fetch_search_range_and_headers() {
+    let imap = fake_with_messages(5, &[]).await;
+    let mut session = connect(&config(&imap, ImapSecurity::ImplicitTls), PASSWORD)
+        .await
+        .expect("logged in");
+    session.select("INBOX").await.expect("selects");
+    assert_eq!(
+        session.uid_search_range(2, 4).await.expect("search"),
+        [2, 3, 4]
+    );
+    assert!(session
+        .uid_search_range(9, 5)
+        .await
+        .expect("empty")
+        .is_empty());
+
+    let fetched = session.uid_fetch_headers(&[1, 5]).await.expect("fetch");
+    assert!(fetched.skipped.is_empty());
+    let uids: Vec<_> = fetched.messages.iter().filter_map(|m| m.uid).collect();
+    assert_eq!(uids, [1, 5]);
+    let first = fetched.messages.first().expect("one");
+    assert!(first.envelope.is_some());
+    assert_eq!(first.has_attachment, Some(false));
+    assert!(first.body.is_none());
+}
+
+#[tokio::test]
+async fn fetch_malformed_envelope_is_reported_by_uid_and_others_are_kept() {
+    let imap = fake_with_messages(3, &[]).await;
+    imap.mailbox().corrupt_envelope("INBOX", 2).await;
+    let mut session = connect(&config(&imap, ImapSecurity::ImplicitTls), PASSWORD)
+        .await
+        .expect("logged in");
+    session.select("INBOX").await.expect("selects");
+    let fetched = session.uid_fetch_headers(&[1, 2, 3]).await.expect("fetch");
+    assert_eq!(fetched.skipped, [Some(2)]);
+    let uids: Vec<_> = fetched.messages.iter().filter_map(|m| m.uid).collect();
+    assert_eq!(uids, [1, 3]);
+}
+
+#[tokio::test]
+async fn fetch_body_returns_the_raw_message_and_leaves_flags_alone() {
+    let imap = fake_with_messages(2, &[]).await;
+    let mut session = connect(&config(&imap, ImapSecurity::ImplicitTls), PASSWORD)
+        .await
+        .expect("logged in");
+    session.select("INBOX").await.expect("selects");
+    let body = session.uid_fetch_body(2).await.expect("fetch");
+    assert_eq!(body, raw_messages(2).get(1).cloned());
+    assert_eq!(session.uid_fetch_body(99).await.expect("none"), None);
+    assert_eq!(imap.mailbox().flags("INBOX", 2).await, Some(Vec::new()));
+}
+
+#[tokio::test]
+async fn fetch_on_a_dropped_connection_is_an_error_not_a_hang() {
+    let imap = fake_with_messages(3, &[Fault::DropAfterCommands(5)]).await;
+    let mut session = connect(&config(&imap, ImapSecurity::ImplicitTls), PASSWORD)
+        .await
+        .expect("logged in");
+    session.select("INBOX").await.expect("selects");
+    let result = tokio::time::timeout(Duration::from_secs(5), session.uid_fetch_headers(&[1]))
+        .await
+        .expect("must not hang");
+    assert!(result.is_err());
+}

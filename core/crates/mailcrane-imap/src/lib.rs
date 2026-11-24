@@ -26,6 +26,7 @@ mod b64;
 mod command;
 mod connection;
 mod error;
+mod fetch;
 pub mod mutf7;
 pub mod parser;
 mod roles;
@@ -33,7 +34,8 @@ mod session;
 mod tls;
 
 pub use error::ImapError;
-pub use parser::{parse_response, Limits};
+pub use fetch::{parse_internal_date, FetchedHeaders, SelectInfo};
+pub use parser::{parse_response, Envelope, EnvelopeAddress, FetchData, Limits};
 pub use session::{save_folders, ImapConfig, ImapFolder, ImapSecurity, Session};
 
 use std::fmt;

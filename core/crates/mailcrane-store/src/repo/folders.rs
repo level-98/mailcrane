@@ -61,6 +61,40 @@ impl Store {
         Ok(ids)
     }
 
+    /// Returns the folder, or `None` if it doesn't exist.
+    pub fn get_folder(&self, id: FolderId) -> Result<Option<Folder>, StoreError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, account_id, remote_name, display_name, delimiter, role, uidvalidity, \
+             uidnext, highestmodseq, is_subscribed FROM folders WHERE id = ?1",
+        )?;
+        let mut rows = stmt.query(params![id.0])?;
+        rows.next()?.map(from_row).transpose()
+    }
+
+    /// Deletes every cached message of the folder (with their bodies and
+    /// attachment metadata) and records the server's new `UIDVALIDITY` and
+    /// `UIDNEXT`, in one transaction (RFC 9051 §2.3.1.1). Returns whether
+    /// the folder exists; if not, nothing is changed.
+    pub fn reset_folder(
+        &self,
+        id: FolderId,
+        uidvalidity: i64,
+        uidnext: i64,
+    ) -> Result<bool, StoreError> {
+        let tx = self.conn.unchecked_transaction()?;
+        tx.execute("DELETE FROM messages WHERE folder_id = ?1", params![id.0])?;
+        let n = tx.execute(
+            "UPDATE folders SET uidvalidity = ?2, uidnext = ?3, highestmodseq = NULL \
+             WHERE id = ?1",
+            params![id.0, uidvalidity, uidnext],
+        )?;
+        if n == 0 {
+            return Ok(false);
+        }
+        tx.commit()?;
+        Ok(true)
+    }
+
     /// Lists an account's folders ordered by remote name.
     pub fn list_folders(&self, account: AccountId) -> Result<Vec<Folder>, StoreError> {
         let mut stmt = self.conn.prepare(
