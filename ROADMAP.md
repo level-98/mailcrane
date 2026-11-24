@@ -21,11 +21,12 @@ Goal: anyone can clone, build an empty app on both platforms and run CI.
 - [x] **M0-09** `cargo deny` config allowing only MPL-2.0-compatible licences 🟢🤖
 - [ ] **M0-10** Generate the Compose theme and SwiftUI colour assets from `design/colors.json` (the brand pack itself is already in `design/`) 🤖
 - [ ] **M0-11** `mailcrane-testkit`: in-process fake IMAP, SMTP and JMAP servers that can misbehave on purpose (drop connections, malformed replies, Gmail-style quirks) 🤖
-- [ ] **M0-12** Write `docs/decisions/0001-tech-stack.md` recording the Rust core + native UI decision 🧑
+- [ ] **M0-12** Write `docs/decisions/0001-tech-stack.md` recording the Rust core + native UI decision, including the portability rule in `docs/architecture.md` (the core must also build on Windows) 🧑
 - [ ] **M0-13** Dependabot or Renovate for Cargo, Gradle and Swift packages 🟢🤖
 - [ ] **M0-14** Fuzz targets (`cargo fuzz`) for the MIME and IMAP parsers, run nightly in CI 🤖
 - [x] **M0-15** Release script that gathers `docs/changelog.d/` fragments into release notes 🟢🤖
 - [ ] **M0-16** TestFlight internal builds from CI (macOS runner), so iOS can be tested on real devices without a Mac 🔒🧑
+- [ ] **M0-17** Cross-platform CI on every PR, building on M0-06, M0-07 and M0-08: a Linux job (all `cargo xtask ci` checks, plus the core cross-compiled for Android and the Android app built), a macOS job (the core built as an XCFramework and the iOS app built for the simulator), and a Windows job (the core crates built and tested on `windows-latest`). No Windows app is planned. The Windows job only keeps the core portable so one could be added later 🤖
 
 ## M1 — Read mail
 
