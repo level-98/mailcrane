@@ -1,0 +1,8 @@
+base_url = "https://mailcrane.app"
+title = "Mailcrane"
+description = "A free, open-source email app for Android and iOS. Private by default and built in the open."
+default_language = "en"
+compile_sass = false
+minify_html = true
+generate_feeds = false
+build_search_index = false

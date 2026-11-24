@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block content %}
+<main class="page-wrap section-wrap">
+  <p class="eyebrow">Mailcrane docs</p>
+  <h1 class="page-title">{{ section.title }}</h1>
+  {% if section.description %}<p class="page-intro">{{ section.description }}</p>{% endif %}
+  <article class="prose">{{ section.content | safe }}</article>
+  <div class="doc-card-grid">
+    {% for item in section.pages %}
+    <a class="doc-card" href="{{ item.permalink }}">
+      <h2>{{ item.title }}</h2>
+      <p>{{ item.description | default(value="Read this guide.") }}</p>
+      <span class="text-link">Read guide <span aria-hidden="true">→</span></span>
+    </a>
+    {% endfor %}
+  </div>
+  {% if section.subsections %}
+  <div class="doc-card-grid">
+    {% for subsection_path in section.subsections %}
+    {% set subsection = get_section(path=subsection_path) %}
+    <a class="doc-card" href="{{ subsection.permalink }}">
+      <h2>{{ subsection.title }}</h2>
+      <p>{{ subsection.description | default(value="Browse this guide.") }}</p>
+      <span class="text-link">Open section <span aria-hidden="true">→</span></span>
+    </a>
+    {% endfor %}
+  </div>
+  {% endif %}
+</main>
+{% endblock content %}

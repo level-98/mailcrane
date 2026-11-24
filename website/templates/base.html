@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="{{ lang | default(value='en') }}" data-theme="light">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#f4f6fb">
+    {% if page %}
+    <meta name="description" content="{{ page.description | default(value=config.description) }}">
+    <title>{{ page.title }} · {{ config.title }}</title>
+    {% elif section %}
+    <meta name="description" content="{{ section.description | default(value=config.description) }}">
+    <title>{{ section.title }} · {{ config.title }}</title>
+    {% else %}
+    <meta name="description" content="{{ config.description }}">
+    <title>{{ config.title }}</title>
+    {% endif %}
+    {% if page %}
+    <link rel="canonical" href="{{ page.permalink }}">
+    {% elif section %}
+    <link rel="canonical" href="{{ section.permalink }}">
+    {% else %}
+    <link rel="canonical" href="{{ config.base_url }}">
+    {% endif %}
+    <link rel="icon" href="{{ get_url(path='brand/mark-color.svg') }}" type="image/svg+xml">
+    <link rel="stylesheet" href="{{ get_url(path='css/site.css') }}">
+    <script>
+      const savedTheme = localStorage.getItem("mailcrane-theme");
+      const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+      document.documentElement.dataset.theme =
+        savedTheme === "light" || savedTheme === "dark"
+          ? savedTheme
+          : prefersDark ? "dark" : "light";
+    </script>
+    <script src="{{ get_url(path='js/site.js') }}" defer></script>
+  </head>
+  <body>
+    {% set home_url = get_url(path='@/_index.md') %}
+    <header class="site-header">
+      <a class="brand" href="{{ home_url }}" aria-label="Mailcrane home">
+        <img class="brand-wordmark" src="{{ get_url(path='brand/wordmark.svg') }}" data-light-src="{{ get_url(path='brand/wordmark.svg') }}" data-dark-src="{{ get_url(path='brand/wordmark-white.svg') }}" alt="Mailcrane" width="148" height="32">
+      </a>
+      <nav class="main-nav" aria-label="Main navigation">
+        <a href="{{ get_url(path='@/features.md') }}">Features</a>
+        <a href="{{ home_url }}#app-concepts">Screens</a>
+        <a href="{{ home_url }}#roadmap">Roadmap</a>
+        <a href="{{ get_url(path='@/docs/_index.md') }}">Docs</a>
+      </nav>
+      <details class="mobile-nav">
+        <summary class="mobile-nav-toggle">Menu</summary>
+        <nav class="mobile-nav-panel" aria-label="Main navigation">
+          <a href="{{ get_url(path='@/features.md') }}">Features</a>
+          <a href="{{ home_url }}#app-concepts">Screens</a>
+          <a href="{{ home_url }}#roadmap">Roadmap</a>
+          <a href="{{ get_url(path='@/docs/_index.md') }}">Docs</a>
+          <a href="{{ get_url(path='@/contribute.md') }}">Contribute</a>
+        </nav>
+      </details>
+      <button id="theme-toggle" class="theme-toggle" type="button" aria-label="Switch to dark theme" aria-pressed="false" title="Switch theme">
+        <svg class="theme-icon moon-icon" viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M20.2 15.4A8.6 8.6 0 0 1 8.6 3.8 8.7 8.7 0 1 0 20.2 15.4Z"/>
+        </svg>
+        <svg class="theme-icon sun-icon" viewBox="0 0 24 24" aria-hidden="true">
+          <circle cx="12" cy="12" r="4"/>
+          <path d="M12 2v2m0 16v2M4.93 4.93l1.42 1.42m11.3 11.3 1.42 1.42M2 12h2m16 0h2M4.93 19.07l1.42-1.42m11.3-11.3 1.42-1.42"/>
+        </svg>
+      </button>
+      <a class="button button-small button-outline header-cta" href="https://github.com/level-98/mailcrane" aria-label="View on GitHub"><span class="header-cta-label">View on GitHub</span> <span aria-hidden="true">↗</span></a>
+    </header>
+
+    {% block content %}{% endblock %}
+
+    <footer class="site-footer section-wrap">
+      <a class="brand footer-brand" href="{{ home_url }}" aria-label="Mailcrane home">
+        <img class="brand-wordmark" src="{{ get_url(path='brand/wordmark.svg') }}" data-light-src="{{ get_url(path='brand/wordmark.svg') }}" data-dark-src="{{ get_url(path='brand/wordmark-white.svg') }}" alt="Mailcrane" width="126" height="28">
+      </a>
+      <p>Free and open-source. Made with care, in the open.</p>
+      <nav aria-label="Footer navigation">
+        <a href="https://github.com/level-98/mailcrane">GitHub</a>
+        <a href="{{ get_url(path='@/privacy.md') }}">Privacy</a>
+        <a href="{{ get_url(path='@/contribute.md') }}">Contribute</a>
+        <a href="https://github.com/level-98/mailcrane/blob/main/LICENSE">License</a>
+      </nav>
+    </footer>
+  </body>
+</html>

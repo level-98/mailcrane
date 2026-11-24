@@ -1,0 +1,162 @@
+{% extends "base.html" %}
+{% block content %}
+{% set roadmap = load_data(path="data/roadmap.json") %}
+{% set screens = load_data(path="data/screens.json") %}
+{% set home_url = get_url(path='@/_index.md') %}
+<main id="top">
+  <section class="hero section-wrap">
+    <div class="hero-copy">
+      <p class="eyebrow"><span class="status-dot"></span> A calmer kind of email</p>
+      <h1>Email should<br>feel like <span>yours.</span></h1>
+      <p class="hero-intro">A free, open-source email app for Android and iOS. Private by default, thoughtfully made, and built in the open.</p>
+      <div class="hero-actions">
+        <a class="button button-primary" href="#roadmap">See what’s in progress <span aria-hidden="true">↓</span></a>
+        <a class="text-link" href="https://github.com/level-98/mailcrane/issues">Find a task <span aria-hidden="true">↗</span></a>
+      </div>
+      <p class="alpha-note"><span class="note-icon" aria-hidden="true">i</span> Early development — there isn’t an app to download yet.</p>
+    </div>
+    <div class="hero-art" aria-label="Mailcrane welcome illustration">
+      <div class="art-orbit orbit-one"></div>
+      <div class="art-orbit orbit-two"></div>
+      <img src="{{ get_url(path='images/welcome.svg') }}" alt="" width="420" height="360">
+      <div class="art-caption"><span class="caption-mark">✳</span> Your inbox. Your rules.</div>
+    </div>
+  </section>
+
+  <section class="promise-strip" aria-label="Mailcrane principles">
+    <div class="section-wrap promise-grid">
+      <p><span class="promise-icon" aria-hidden="true">◈</span> No ads. No tracking.</p>
+      <p><span class="promise-icon" aria-hidden="true">⌁</span> Works with your email provider.</p>
+      <p><span class="promise-icon" aria-hidden="true">↗</span> Open source, built together.</p>
+    </div>
+  </section>
+
+  <section class="section-wrap why-section" id="why-mailcrane">
+    <div class="section-heading">
+      <p class="eyebrow">A better everyday inbox</p>
+      <h2>All the useful.<br><span>None of the baggage.</span></h2>
+    </div>
+    <div class="feature-grid">
+      <article class="feature-card">
+        <span class="feature-number">01</span>
+        <div class="feature-icon feature-icon-blue" aria-hidden="true">⌕</div>
+        <h3>Your email, your choice</h3>
+        <p>Connect with IMAP and SMTP, with JMAP and guided sign-in for supported providers planned along the way.</p>
+      </article>
+      <article class="feature-card">
+        <span class="feature-number">02</span>
+        <div class="feature-icon feature-icon-peach" aria-hidden="true">◉</div>
+        <h3>Private from the start</h3>
+        <p>No ads, analytics, or Mailcrane servers reading your mail. Remote images stay blocked until you choose otherwise.</p>
+      </article>
+      <article class="feature-card">
+        <span class="feature-number">03</span>
+        <div class="feature-icon feature-icon-green" aria-hidden="true">⌘</div>
+        <h3>Made for real life</h3>
+        <p>Native Android and iOS experiences, backed by one shared engine and designed to work offline.</p>
+      </article>
+    </div>
+  </section>
+
+  <section class="concepts-section" id="app-concepts">
+    <div class="section-wrap">
+      <div class="concepts-heading">
+        <div class="section-heading">
+          <p class="eyebrow">Proposed app screens</p>
+          <h2>Thoughtful screens.<br><span>From first hello to daily inbox.</span></h2>
+          <p class="section-intro">A look at the visual direction for Mailcrane across Android and iOS. These are design concepts, not screenshots of a released app.</p>
+        </div>
+        <a class="text-link concepts-link" href="#roadmap">See what’s in progress <span aria-hidden="true">↓</span></a>
+      </div>
+      <div class="concept-grid">
+        {% for screen in screens %}
+        {% set image_path = "images/app-concepts/" ~ screen.image %}
+        <figure class="concept-card">
+          <a class="concept-image" href="{{ get_url(path=image_path) }}" target="_blank" rel="noopener noreferrer" aria-label="Open the {{ screen.title }} concept image">
+            <img src="{{ get_url(path=image_path) }}" alt="{{ screen.alt }}" loading="lazy" decoding="async" width="780" height="1688">
+          </a>
+          <figcaption><span class="concept-number">{{ screen.number }}</span><div><h3>{{ screen.title }}</h3><p>{{ screen.description }}</p></div></figcaption>
+        </figure>
+        {% endfor %}
+      </div>
+      <p class="concept-note">These concepts communicate the intended direction; the app is still in early development.</p>
+    </div>
+  </section>
+
+  <section class="roadmap-section" id="roadmap">
+    <div class="section-wrap">
+      <div class="roadmap-heading">
+        <div class="section-heading">
+          <p class="eyebrow">Open progress</p>
+          <h2>Building in the open,<br><span>one milestone at a time.</span></h2>
+          <p class="section-intro">A snapshot of the GitHub issue tracker, updated when the website is built. Each milestone shows completed tasks against its tracked issues.</p>
+        </div>
+        <a class="text-link roadmap-link" href="https://github.com/level-98/mailcrane/issues">Browse all issues <span aria-hidden="true">↗</span></a>
+      </div>
+
+      <div class="progress-overview">
+        <div class="overview-copy">
+          <span class="overview-label">Overall roadmap</span>
+          <strong>{{ roadmap.completed }} of {{ roadmap.total }} tasks complete</strong>
+        </div>
+        <div class="overview-bar" role="progressbar" aria-label="Overall roadmap progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="{{ roadmap.percent }}">
+          <span style="width: {{ roadmap.percent }}%"></span>
+        </div>
+        <div class="overview-meta">
+          <span id="overall-percent">{{ roadmap.percent }}%</span>
+          <span id="updated-at">Snapshot: {{ roadmap.generated_at | date(format="%Y-%m-%d") }}</span>
+        </div>
+      </div>
+
+      <div class="milestone-grid">
+        {% for milestone in roadmap.groups %}
+        <article class="milestone-card">
+          <div class="milestone-topline">
+            <div class="milestone-name">
+              <span class="milestone-id">{{ milestone.id }}</span>
+              <h3>{{ milestone.title }}</h3>
+            </div>
+            <span class="milestone-count">{{ milestone.completed }}/{{ milestone.total }} · {{ milestone.percent }}%</span>
+          </div>
+          <p class="milestone-description">{{ milestone.description }}</p>
+          <div class="milestone-bar" role="progressbar" aria-label="{{ milestone.title }} progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="{{ milestone.percent }}">
+            <span style="width: {{ milestone.percent }}%"></span>
+          </div>
+          <details class="milestone-details">
+            <summary>Show tracked issues</summary>
+            <ul class="task-list">
+              {% for task in milestone.tasks %}
+              <li>
+                <span class="task-state{% if task.state == 'closed' %} is-done{% endif %}" aria-label="{{ task.state | title }}">{{ task.state | title }}</span>
+                <a href="{{ task.url }}">{{ task.title }}</a>
+              </li>
+              {% endfor %}
+            </ul>
+          </details>
+        </article>
+        {% endfor %}
+      </div>
+      <div class="roadmap-footer">
+        <p>Closed GitHub issues count as complete. Last generated {{ roadmap.generated_at | date(format="%Y-%m-%d") }}.</p>
+        <a class="refresh-button" href="https://github.com/level-98/mailcrane/issues">View issue tracker <span aria-hidden="true">↗</span></a>
+      </div>
+    </div>
+  </section>
+
+  <section class="section-wrap community-section" id="community">
+    <div class="community-card">
+      <div class="community-copy">
+        <p class="eyebrow">Made better together</p>
+        <h2>There’s room<br>on the wing.</h2>
+        <p>Mailcrane is built by contributors and curious people like you. Pick an issue, share an idea, or help test what’s next.</p>
+        <a class="button button-light" href="https://github.com/level-98/mailcrane/issues">Explore open tasks <span aria-hidden="true">↗</span></a>
+      </div>
+      <div class="community-art">
+        <img src="{{ get_url(path='brand/mark-white.svg') }}" alt="" width="240" height="240">
+        <span class="community-spark spark-one" aria-hidden="true">✳</span>
+        <span class="community-spark spark-two" aria-hidden="true">✦</span>
+      </div>
+    </div>
+  </section>
+</main>
+{% endblock content %}

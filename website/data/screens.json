@@ -1,0 +1,58 @@
+[
+  {
+    "number": "01",
+    "image": "welcome-add-account.png",
+    "alt": "Welcome screen with privacy promises and email provider choices",
+    "title": "Welcome & account setup",
+    "description": "Start with privacy, then choose a provider."
+  },
+  {
+    "number": "02",
+    "image": "unified-inbox-android.png",
+    "alt": "Android unified inbox with filters, message list, and compose button",
+    "title": "Unified inbox · Android",
+    "description": "See all your accounts in one calm inbox."
+  },
+  {
+    "number": "03",
+    "image": "message-view-privacy-first.png",
+    "alt": "Message view showing removed trackers and blocked remote images",
+    "title": "Privacy-first message",
+    "description": "Blocked remote content stays your choice."
+  },
+  {
+    "number": "04",
+    "image": "compose-schedule-send.png",
+    "alt": "Compose screen with schedule-send options and formatting controls",
+    "title": "Compose & schedule",
+    "description": "Drafts, attachments, and send-later options."
+  },
+  {
+    "number": "05",
+    "image": "accounts-and-folders.png",
+    "alt": "Accounts drawer with unified inbox and email folders",
+    "title": "Accounts & folders",
+    "description": "Move between inboxes and familiar folders."
+  },
+  {
+    "number": "06",
+    "image": "snooze-sheet.png",
+    "alt": "Snooze sheet with suggested times and date picker",
+    "title": "Snooze",
+    "description": "Bring a message back when you need it."
+  },
+  {
+    "number": "07",
+    "image": "inbox-dark-mode.png",
+    "alt": "Dark mode inbox with message previews and compose button",
+    "title": "Dark inbox",
+    "description": "Low-glare surfaces with clear, readable mail."
+  },
+  {
+    "number": "08",
+    "image": "inbox-ios.png",
+    "alt": "iOS all inboxes screen with search and message list",
+    "title": "Inbox · iOS",
+    "description": "A native SwiftUI take on the shared inbox."
+  }
+]
