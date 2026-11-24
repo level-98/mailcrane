@@ -94,7 +94,9 @@ def prepend_changelog(changelog, section):
     new = f"{heading}\n\n{section}"
     if rest:
         new += f"\n{rest}"
-    changelog.write_text(new, encoding="utf-8")
+    # Always LF (AGENTS.md §9), even on Windows, where text mode writes CRLF.
+    with changelog.open("w", encoding="utf-8", newline="\n") as f:
+        f.write(new)
 
 
 def remove_fragments(paths, cwd):

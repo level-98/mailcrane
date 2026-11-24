@@ -70,6 +70,8 @@ class ReleaseNotesTest(unittest.TestCase):
         self.assertTrue(text.startswith("# Changelog\n\n## 0.1.0 (2026-01-02)\n"))
         self.assertNotIn("Refactor", text)
         self.assertEqual(self.files(), ["README.md"])
+        # LF line endings on every platform.
+        self.assertNotIn(b"\r", (self.root / "CHANGELOG.md").read_bytes())
 
     def test_apply_prepends_to_existing(self):
         (self.root / "CHANGELOG.md").write_text(
