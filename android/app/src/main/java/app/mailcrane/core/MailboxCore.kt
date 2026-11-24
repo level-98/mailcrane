@@ -59,7 +59,8 @@ private class EventHub : CoreEventListener {
 class UniffiMailboxCore(
     private val dbPath: String,
     private val io: CoroutineDispatcher = Dispatchers.IO,
-) : MailboxCore {
+) : MailboxCore,
+    MessageCore {
     private val hub = EventHub()
 
     // Created on first use, so the native library loads only when mail is needed.
@@ -89,4 +90,22 @@ class UniffiMailboxCore(
         }
 
     override suspend fun refreshFolders(accountId: Long): Long? = withContext(io) { engine.refreshFolders(accountId) }
+
+    override suspend fun getMessage(
+        messageId: Long,
+        allowRemote: Boolean,
+    ): MessageDetail = withContext(io) { getMessage(dbPath, messageId, allowRemote) }
+
+    override suspend fun fetchBody(messageId: Long) {
+        withContext(io) { engine.fetchBody(messageId) }
+    }
+
+    override suspend fun markRead(messageId: Long) {
+        withContext(io) { engine.markRead(messageId) }
+    }
+
+    override fun inlinePart(
+        messageId: Long,
+        contentId: String,
+    ): InlinePart? = getInlinePart(dbPath, messageId, contentId)
 }

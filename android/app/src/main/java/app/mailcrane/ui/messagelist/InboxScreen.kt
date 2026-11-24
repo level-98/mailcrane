@@ -1,5 +1,6 @@
 package app.mailcrane.ui.messagelist
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
@@ -9,6 +10,10 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
@@ -21,6 +26,7 @@ import app.mailcrane.R
 import app.mailcrane.core.MailboxCore
 import app.mailcrane.core.SyncErrorKind
 import app.mailcrane.core.SyncFailure
+import app.mailcrane.ui.message.MessageScreen
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedFactory
 import dagger.assisted.AssistedInject
@@ -89,11 +95,25 @@ fun InboxScreen(
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     when (val s = state) {
-        is InboxState.Ready ->
-            MessageListScreen(
-                folderId = s.folderId,
-                title = stringResource(R.string.message_list_inbox),
-            )
+        is InboxState.Ready -> {
+            // Until navigation arrives with the folder drawer, the open message is kept here. The
+            // list keeps its scroll position while a message is open.
+            var openMessage by rememberSaveable { mutableStateOf<Long?>(null) }
+            val saved = rememberSaveableStateHolder()
+            val messageId = openMessage
+            if (messageId != null) {
+                BackHandler { openMessage = null }
+                MessageScreen(messageId = messageId, onBack = { openMessage = null })
+            } else {
+                saved.SaveableStateProvider("folder-${s.folderId}") {
+                    MessageListScreen(
+                        folderId = s.folderId,
+                        title = stringResource(R.string.message_list_inbox),
+                        onOpenMessage = { openMessage = it },
+                    )
+                }
+            }
+        }
         InboxState.Loading ->
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
         InboxState.NoInbox -> Message(stringResource(R.string.message_list_no_inbox), onRetry = null)

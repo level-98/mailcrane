@@ -63,6 +63,16 @@
     <string name="message_a11y_date">%1$s.</string>
     <string name="message_a11y_attachment">Has attachment.</string>
 
+    <!-- Message view (M1-12) -->
+    <string name="message_back">Back</string>
+    <string name="message_header_from">From</string>
+    <string name="message_header_to">To</string>
+    <string name="message_header_cc">Cc</string>
+    <string name="message_remote_hidden">Remote images are hidden</string>
+    <string name="message_remote_load">Load remote images</string>
+    <string name="message_attachments">Attachments</string>
+    <string name="message_attachment_unnamed">Unnamed file</string>
+
     <!-- Sync failures, shown in a snackbar -->
     <string name="sync_error_network">Couldn’t reach the mail server. Check your connection.</string>
     <string name="sync_error_tls">Couldn’t make a secure connection to the mail server.</string>
