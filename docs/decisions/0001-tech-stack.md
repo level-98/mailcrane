@@ -22,7 +22,7 @@ The apps must ship on the App Store, Google Play and F-Droid. That rules out GPL
 - **Storage:** SQLite through `rusqlite`, with FTS5 for offline search and numbered migrations.
 - **TLS:** `rustls` only. Never OpenSSL or the platform TLS stack from inside the core.
 - **Licences:** dependencies must be MPL-2.0-compatible (MIT, Apache-2.0, BSD, ISC, MPL-2.0, Zlib and the other licences in `core/deny.toml`). No GPL, LGPL or AGPL. `cargo deny` enforces this.
-- **Portability:** the core must keep building and passing its tests on Windows as well as the mobile targets, and never reaches into the OS for things that differ between platforms; the apps pass in file locations, secret storage, OAuth redirects and scheduling, as described in [`docs/architecture.md`](../architecture.md#portability). CI checks the Windows build on every PR.
+- **Portability:** the core must keep building and passing its tests on Windows as well as the mobile targets, and never reaches into the OS for things that differ between platforms; the apps pass in file locations, secret storage, OAuth redirects and scheduling, as described in [`docs/architecture.md`](../architecture.md#portability). A CI check for the Windows build is planned (task M0-17).
 
 ## Alternatives considered
 
