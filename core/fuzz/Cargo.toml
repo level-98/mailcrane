@@ -1,0 +1,45 @@
+# Fuzz targets for the parsers. Needs nightly and cargo-fuzz, so this crate is
+# excluded from the stable workspace (`exclude = ["fuzz"]` in core/Cargo.toml).
+# Run a target with `cargo xtask fuzz <target>`; see README.md.
+[package]
+name = "mailcrane-fuzz"
+version = "0.0.0"
+edition = "2021"
+license = "MPL-2.0"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+mailcrane-imap = { path = "../crates/mailcrane-imap" }
+mailcrane-mime = { path = "../crates/mailcrane-mime" }
+
+# Its own workspace, so Cargo never treats it as part of core/.
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "mime_parse"
+path = "fuzz_targets/mime_parse.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "imap_response"
+path = "fuzz_targets/imap_response.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "html_sanitize"
+path = "fuzz_targets/html_sanitize.rs"
+test = false
+doc = false
+bench = false
+
+[profile.release]
+debug = 1
