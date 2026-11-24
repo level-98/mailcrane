@@ -288,7 +288,7 @@ for name, entries in ICONS.items():
           '<vector xmlns:android="http://schemas.android.com/apk/res/android"\n'
           '    android:width="24dp" android:height="24dp"\n'
           '    android:viewportWidth="24" android:viewportHeight="24"\n'
-          '    android:tint="?attr/colorControlNormal">\n' + "\n".join(vd) + "\n</vector>\n")
+          '    android:tint="?android:attr/colorControlNormal">\n' + "\n".join(vd) + "\n</vector>\n")
 
 # ---------------------------------------------------------------- illustrations
 def illo(name, extra):

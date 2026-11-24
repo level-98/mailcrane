@@ -44,6 +44,11 @@ android {
         compose = true
     }
 
+    // Robolectric (Compose UI tests on the JVM) needs the app's resources.
+    testOptions {
+        unitTests.isIncludeAndroidResources = true
+    }
+
     sourceSets.getByName("main") {
         jniLibs.directories.add(rustJniLibsDir.get().asFile.path)
         kotlin.directories.add(uniffiDir.get().asFile.path)
@@ -156,6 +161,10 @@ dependencies {
 
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
+    testImplementation(platform(libs.androidx.compose.bom))
+    testImplementation(libs.androidx.compose.ui.test.junit4)
+    testImplementation(libs.robolectric)
+    debugImplementation(libs.androidx.compose.ui.test.manifest)
     androidTestImplementation(libs.androidx.test.ext.junit)
     androidTestImplementation(libs.androidx.test.runner)
 }

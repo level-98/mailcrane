@@ -6,8 +6,8 @@ use std::sync::{Arc, Mutex};
 use mailcrane_core::events::{self, EventListener};
 use mailcrane_core::secrets::SecretKey;
 use mailcrane_core::sync::{FolderSyncer, SyncConfig, SyncError as CoreSyncError};
-use mailcrane_imap::{ImapConfig, ImapError, ImapSecurity, Secret, Session};
-use mailcrane_store::{AccountId, FolderId, MessageId, Security, Store};
+use mailcrane_imap::{save_folders, ImapConfig, ImapError, ImapSecurity, Secret, Session};
+use mailcrane_store::{AccountId, FolderId, FolderRole, MessageId, Security, Store};
 
 /// Why a sync failed. Never carries server text.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
@@ -190,6 +190,27 @@ impl SyncEngine {
             Box::pin(async move { syncer.fetch_body(MessageId(message_id)).await })
         })
     }
+
+    /// Lists the account's folders on the server and saves them, keeping
+    /// each folder's sync state. Returns the inbox's folder id, or `None` if
+    /// the server has no inbox. On failure the saved folders are unchanged.
+    pub fn refresh_folders(&self, account_id: i64) -> Result<Option<i64>, SyncFailure> {
+        let _guard = self.busy.lock().unwrap_or_else(|p| p.into_inner());
+        let account = AccountId(account_id);
+        let store = self.open_store()?;
+        let report = |kind| self.report(account, kind);
+        let runtime = runtime().map_err(report)?;
+        runtime.block_on(async {
+            let mut session = self.connect(&store, account).await.map_err(report)?;
+            let listed = session.list_folders().await;
+            session.logout().await;
+            let folders = listed.map_err(|e| report(CoreSyncError::from(e).kind()))?;
+            save_folders(&store, account, &folders)
+                .map_err(|e| report(CoreSyncError::from(e).kind()))?;
+            Ok::<(), SyncFailure>(())
+        })?;
+        Ok(inbox_of(&store, account)?.map(|f| f.0))
+    }
 }
 
 type SyncFuture<'a, T> =
@@ -217,17 +238,8 @@ impl SyncEngine {
             .details
             .account_id;
         let listener = ListenerAdapter(self.listener.clone());
-        let report = |kind| {
-            listener.on_event(events::CoreEvent::SyncError {
-                account_id: account,
-                kind,
-            });
-            failed(kind)
-        };
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .map_err(|_| report(events::SyncErrorKind::Network))?;
+        let report = |kind| self.report(account, kind);
+        let runtime = runtime().map_err(report)?;
         runtime.block_on(async {
             let mut session = self.connect(&store, account).await.map_err(report)?;
             // The syncer borrows the session; end that borrow before logout.
@@ -239,6 +251,18 @@ impl SyncEngine {
             session.logout().await;
             result.map_err(SyncFailure::from)
         })
+    }
+
+    /// Sends a `SyncError` event and returns the matching failure.
+    fn report(&self, account: AccountId, kind: events::SyncErrorKind) -> SyncFailure {
+        self.listener.on_event(
+            events::CoreEvent::SyncError {
+                account_id: account,
+                kind,
+            }
+            .into(),
+        );
+        failed(kind)
     }
 
     async fn connect(
@@ -276,6 +300,30 @@ impl SyncEngine {
             .await
             .map_err(|e: ImapError| CoreSyncError::from(e).kind())
     }
+}
+
+fn runtime() -> Result<tokio::runtime::Runtime, events::SyncErrorKind> {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|_| events::SyncErrorKind::Network)
+}
+
+/// The account's inbox: the folder with the inbox role, otherwise the one
+/// named `INBOX` in any case (RFC 9051 §5.1).
+fn inbox_of(store: &Store, account: AccountId) -> Result<Option<FolderId>, SyncFailure> {
+    let folders = store
+        .list_folders(account)
+        .map_err(|_| failed(events::SyncErrorKind::Storage))?;
+    let by_role = folders
+        .iter()
+        .find(|f| f.details.role == Some(FolderRole::Inbox));
+    let by_name = || {
+        folders
+            .iter()
+            .find(|f| f.details.remote_name.eq_ignore_ascii_case("INBOX"))
+    };
+    Ok(by_role.or_else(by_name).map(|f| f.id))
 }
 
 #[cfg(test)]
