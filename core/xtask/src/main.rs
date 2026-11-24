@@ -26,7 +26,11 @@ struct Step {
 }
 
 /// Steps in the order `ci` runs them. `bindings` is not part of `ci`.
-const CI_STEPS: [Step; 6] = [
+const CI_STEPS: [Step; 7] = [
+    Step {
+        name: "design",
+        run: design,
+    },
     Step {
         name: "fmt",
         run: fmt,
@@ -63,6 +67,7 @@ Usage: cargo xtask <command> [--strict] [--only <step>]... [--skip <step>]...
 
 Commands:
   ci        every step below except bindings, then a summary table
+  design    generated theme check and unit tests
   fmt       cargo fmt --all --check
   lint      cargo clippy --workspace --all-targets -- -D warnings
   test      cargo test --workspace
@@ -256,6 +261,28 @@ fn cargo() -> String {
 }
 
 // ------------------------------------------------------------------ steps
+
+fn design(ctx: &Ctx) -> Result<Outcome, Error> {
+    // On Windows `python3` is often missing; the `py -3` launcher is the
+    // reliable way to start Python 3 there.
+    let (python, prefix): (&str, &[&str]) = if cfg!(windows) {
+        ("py", &["-3"])
+    } else {
+        ("python3", &[])
+    };
+    if !has_tool(python, "--version") {
+        return Ok(Outcome::Skipped(format!("{python} is not installed")));
+    }
+    let check: Vec<&str> = [prefix, &["design/gen_theme.py", "--check"]].concat();
+    if !run(&ctx.root, python, &check)? {
+        return Ok(Outcome::Failed(
+            "`design/gen_theme.py --check` failed".into(),
+        ));
+    }
+    let tests: Vec<&str> = [prefix, &["-m", "unittest", "design/test_gen_theme.py"]].concat();
+    let ok = run(&ctx.root, python, &tests)?;
+    Ok(outcome(ok, "python -m unittest design/test_gen_theme.py"))
+}
 
 fn fmt(ctx: &Ctx) -> Result<Outcome, Error> {
     let ok = run(&ctx.core, &cargo(), &["fmt", "--all", "--check"])?;

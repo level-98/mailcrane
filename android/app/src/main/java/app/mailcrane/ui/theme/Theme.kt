@@ -5,15 +5,14 @@ import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.MaterialExpressiveTheme
 import androidx.compose.material3.MotionScheme
-import androidx.compose.material3.darkColorScheme
-import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.platform.LocalContext
 
-// Placeholder colours; the generated brand theme comes in M0-10.
-private val LightColors = lightColorScheme()
-private val DarkColors = darkColorScheme()
+val LocalMailcraneExtendedColors =
+    compositionLocalOf { MailcraneLightExtendedColors }
 
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
@@ -28,8 +27,13 @@ fun MailcraneTheme(
             Settings.Global.getFloat(resolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f
         }
     MaterialExpressiveTheme(
-        colorScheme = if (darkTheme) DarkColors else LightColors,
+        colorScheme = if (darkTheme) MailcraneDarkColors else MailcraneLightColors,
         motionScheme = if (reducedMotion) MotionScheme.standard() else MotionScheme.expressive(),
-        content = content,
-    )
+    ) {
+        CompositionLocalProvider(
+            LocalMailcraneExtendedColors provides
+                if (darkTheme) MailcraneDarkExtendedColors else MailcraneLightExtendedColors,
+            content = content,
+        )
+    }
 }
