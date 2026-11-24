@@ -103,7 +103,7 @@ The colours live in [`design/colors.json`](design/colors.json), and apps read th
 | Android adaptive icon, themed-icon layer, legacy PNGs | `design/app-icon/android/res/` |
 | Play Store icon (512 px) | `design/app-icon/android/playstore-icon-512.png` |
 | Splash icons (Android 12+, iOS @1x/2x/3x) | `design/splash/` |
-| 24 UI icons (SVG and Android VectorDrawable) | `design/ui-icons/` |
+| 25 UI icons (SVG and Android VectorDrawable) | `design/ui-icons/` |
 | Empty-state illustrations | `design/illustrations/` |
 
 See [design/README.md](design/README.md) for where each file goes and how to rebuild them.

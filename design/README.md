@@ -56,7 +56,7 @@ Change a brand colour in `colors.json`, then run `python3 design/gen_theme.py` t
 | `ui-icons/android-vector/` | The same icons as tintable VectorDrawables, `ic_mc_*.xml` | `android/app/src/main/res/drawable` |
 | `illustrations/` | Empty inbox, no results, welcome (SVG, and PNG @3x) | Empty states |
 
-The 24 UI icons: account, archive, attach, back, check, close, compose, drafts, folder, forward, inbox, label, mail, menu, more, refresh, reply, search, sent, settings, snooze, spam, star, trash.
+The 25 UI icons: account, archive, attach, back, check, close, compose, drafts, error, folder, forward, inbox, label, mail, menu, more, refresh, reply, search, sent, settings, snooze, spam, star, trash.
 
 ## Splash screens
 

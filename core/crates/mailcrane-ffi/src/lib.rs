@@ -8,6 +8,7 @@
 uniffi::setup_scaffolding!();
 
 pub mod account;
+pub mod compose;
 pub mod messages;
 pub mod secrets;
 pub mod sync;

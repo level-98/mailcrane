@@ -7,8 +7,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import app.mailcrane.ui.MailHome
 import app.mailcrane.ui.account.ManualSetupScreen
-import app.mailcrane.ui.messagelist.InboxScreen
 import app.mailcrane.ui.theme.MailcraneTheme
 import dagger.hilt.android.AndroidEntryPoint
 
@@ -23,7 +23,7 @@ class MainActivity : ComponentActivity() {
                 var accountId by rememberSaveable { mutableStateOf<Long?>(null) }
                 val id = accountId
                 if (id != null) {
-                    InboxScreen(accountId = id)
+                    MailHome(accountId = id)
                 } else {
                     ManualSetupScreen(onAccountAdded = { accountId = it })
                 }

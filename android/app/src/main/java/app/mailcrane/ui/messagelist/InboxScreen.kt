@@ -77,10 +77,14 @@ class InboxViewModel
         }
     }
 
-/** The inbox of account [accountId]. */
+/** The inbox of account [accountId]. The compose parameters are passed to [MessageListScreen]. */
 @Composable
 fun InboxScreen(
     accountId: Long,
+    onCompose: (() -> Unit)? = null,
+    composeFabModifier: Modifier = Modifier,
+    notice: String? = null,
+    onNoticeShown: () -> Unit = {},
     viewModel: InboxViewModel =
         hiltViewModel<InboxViewModel, InboxViewModel.Factory>(
             key = "inbox-$accountId",
@@ -93,6 +97,10 @@ fun InboxScreen(
             MessageListScreen(
                 folderId = s.folderId,
                 title = stringResource(R.string.message_list_inbox),
+                onCompose = onCompose,
+                composeFabModifier = composeFabModifier,
+                notice = notice,
+                onNoticeShown = onNoticeShown,
             )
         InboxState.Loading ->
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }

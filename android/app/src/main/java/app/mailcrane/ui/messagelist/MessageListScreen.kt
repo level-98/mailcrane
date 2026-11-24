@@ -11,7 +11,9 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
@@ -31,6 +33,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalResources
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
@@ -40,11 +43,19 @@ import app.mailcrane.core.SyncErrorKind
 import kotlinx.coroutines.delay
 import java.time.ZonedDateTime
 
-/** The messages of folder [folderId], newest first. */
+/**
+ * The messages of folder [folderId], newest first. [onCompose] adds a compose button, which carries
+ * [composeFabModifier] (for the shared transition into the compose screen). [notice] is shown once
+ * in a snackbar, then [onNoticeShown] is called.
+ */
 @Composable
 fun MessageListScreen(
     folderId: Long,
     title: String,
+    onCompose: (() -> Unit)? = null,
+    composeFabModifier: Modifier = Modifier,
+    notice: String? = null,
+    onNoticeShown: () -> Unit = {},
     viewModel: MessageListViewModel =
         hiltViewModel<MessageListViewModel, MessageListViewModel.Factory>(
             key = "folder-$folderId",
@@ -57,12 +68,21 @@ fun MessageListScreen(
     LaunchedEffect(viewModel) {
         viewModel.errors.collect { kind -> snackbar.showSnackbar(resources.getString(errorText(kind))) }
     }
+    val noticeShown by rememberUpdatedState(onNoticeShown)
+    LaunchedEffect(notice) {
+        if (notice != null) {
+            snackbar.showSnackbar(notice)
+            noticeShown()
+        }
+    }
     MessageListContent(
         state = state,
         title = title,
         snackbar = snackbar,
         onRefresh = viewModel::refresh,
         onLoadMore = viewModel::loadMore,
+        onCompose = onCompose,
+        fabModifier = composeFabModifier,
     )
 }
 
@@ -75,10 +95,25 @@ fun MessageListContent(
     onRefresh: () -> Unit,
     onLoadMore: () -> Unit,
     listState: LazyListState = rememberLazyListState(),
+    onCompose: (() -> Unit)? = null,
+    fabModifier: Modifier = Modifier,
 ) {
     Scaffold(
         topBar = { TopAppBar(title = { Text(title) }) },
         snackbarHost = { SnackbarHost(snackbar) },
+        floatingActionButton = {
+            if (onCompose != null) {
+                val label = stringResource(R.string.compose_fab)
+                ExtendedFloatingActionButton(
+                    onClick = onCompose,
+                    icon = { Icon(painterResource(R.drawable.ic_mc_compose), contentDescription = null) },
+                    text = { Text(label) },
+                    // Collapses to the icon while scrolling down, so it covers less of the list.
+                    expanded = !listState.canScrollBackward,
+                    modifier = fabModifier,
+                )
+            }
+        },
     ) { padding ->
         PullToRefreshBox(
             isRefreshing = state.isRefreshing,

@@ -1,10 +1,14 @@
-//! Parsing messages into a safe, simple structure.
+//! Parsing messages into a safe, simple structure, and building new ones.
 //!
 //! [`parse_message`] turns raw message bytes into a [`ParsedMessage`]. It
-//! never panics and enforces the limits in [`limits`].
+//! never panics and enforces the limits in [`limits`]. [`build_message`]
+//! builds a new plain-text message, and [`parse_address_list`] parses the
+//! recipient lists people type.
 
 #![forbid(unsafe_code)]
 
+pub mod address;
+pub mod build;
 mod headers;
 pub mod limits;
 mod model;
@@ -13,6 +17,10 @@ mod snippet;
 
 use mail_parser::{MessageParser, PartFlags, PartKind};
 
+pub use address::{
+    parse_address_list, split_address_list, AddressEntry, AddressProblem, InvalidAddress, SplitList,
+};
+pub use build::{build_message, AddressField, BuildError, OutgoingMessage, TransferEncoding};
 pub use model::{Address, AttachmentInfo, Disposition, ParsedMessage, UnsanitisedHtml};
 pub use sanitize::{sanitize_html, SanitizeOptions, SanitizedHtml};
 

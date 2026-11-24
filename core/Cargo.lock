@@ -1013,6 +1013,7 @@ version = "0.0.0"
 dependencies = [
  "mailcrane-core",
  "mailcrane-imap",
+ "mailcrane-mime",
  "mailcrane-store",
  "mailcrane-testkit",
  "tempfile",
@@ -1045,6 +1046,7 @@ name = "mailcrane-mime"
 version = "0.0.0"
 dependencies = [
  "ammonia",
+ "getrandom 0.4.3",
  "mail-parser",
  "proptest",
  "thiserror",
