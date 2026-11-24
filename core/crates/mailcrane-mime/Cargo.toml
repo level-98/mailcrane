@@ -9,3 +9,10 @@ repository.workspace = true
 
 [lints]
 workspace = true
+
+[dependencies]
+mail-parser = { version = "1.0.2", features = ["full_encoding"] }
+thiserror = "2.0.21"
+
+[dev-dependencies]
+proptest = "1.12.0"
