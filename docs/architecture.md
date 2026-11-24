@@ -32,6 +32,19 @@ Mailcrane has one shared engine and two native apps.
 
 Library choices are suggestions until an ADR confirms them.
 
+## Portability
+
+The same core code runs on every platform. It is compiled separately for each: a `.so` for Android, an XCFramework for iOS, and a `.dll` for Windows. There is no Windows app and none is planned, but the core must keep building and passing its tests on Windows so that one (or another desktop app) could be added later without changing the core. CI checks this on every PR (task M0-17).
+
+To keep it portable, the core never reaches into the operating system for anything that differs between platforms. The app passes it in instead:
+
+- **File locations:** the app gives the core the folders for the database and cache.
+- **Secrets:** the core defines one interface for storing credentials, and each app implements it with the Android Keystore, the iOS Keychain, or the Windows Credential Manager.
+- **OAuth sign-in:** the core builds the sign-in URL and does the PKCE exchange. The app opens the system browser and returns the redirect.
+- **Background work and notifications:** the core exposes "sync now" and change events. Each app decides when to call it and how to notify.
+
+Platform-specific code (`#[cfg(target_os = …)]`, `std::os::unix`, crates that only work on mobile) stays out of the core crates. If it is unavoidable, it goes behind a feature or a trait with an implementation for every platform, and it needs a decision record first.
+
 ## Data flow
 
 1. The app asks the core to sync an account.
