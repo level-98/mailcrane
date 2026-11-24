@@ -66,6 +66,7 @@ class UniffiMailboxCore(
     private val dbPath: String,
     private val io: CoroutineDispatcher = Dispatchers.IO,
 ) : MailboxCore,
+    MessageCore,
     LiveUpdatesEngine {
     private val hub = EventHub()
 
@@ -96,6 +97,24 @@ class UniffiMailboxCore(
         }
 
     override suspend fun refreshFolders(accountId: Long): Long? = withContext(io) { engine.refreshFolders(accountId) }
+
+    override suspend fun getMessage(
+        messageId: Long,
+        allowRemote: Boolean,
+    ): MessageDetail = withContext(io) { getMessage(dbPath, messageId, allowRemote) }
+
+    override suspend fun fetchBody(messageId: Long) {
+        withContext(io) { engine.fetchBody(messageId) }
+    }
+
+    override suspend fun markRead(messageId: Long) {
+        withContext(io) { engine.markRead(messageId) }
+    }
+
+    override fun inlinePart(
+        messageId: Long,
+        contentId: String,
+    ): InlinePart? = getInlinePart(dbPath, messageId, contentId)
 
     override suspend fun listFolders(accountId: Long): List<FolderSummary> =
         withContext(io) { listFolders(dbPath, accountId) }

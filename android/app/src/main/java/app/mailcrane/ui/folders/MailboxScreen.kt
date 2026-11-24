@@ -13,7 +13,11 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
@@ -21,6 +25,7 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.mailcrane.R
+import app.mailcrane.ui.message.MessageScreen
 import app.mailcrane.ui.messagelist.MessageListScreen
 import app.mailcrane.ui.messagelist.errorText
 import kotlinx.coroutines.launch
@@ -40,6 +45,16 @@ fun MailboxScreen(
     val loadError = state.loadError
     when {
         selected != null -> {
+            // The open message is kept here until there is app-wide navigation. The list keeps its
+            // scroll position while a message is open.
+            var openMessage by rememberSaveable { mutableStateOf<Long?>(null) }
+            val saved = rememberSaveableStateHolder()
+            val messageId = openMessage
+            if (messageId != null) {
+                BackHandler { openMessage = null }
+                MessageScreen(messageId = messageId, onBack = { openMessage = null })
+                return
+            }
             val drawerState = rememberDrawerState(DrawerValue.Closed)
             val scope = rememberCoroutineScope()
             BackHandler(enabled = drawerState.isOpen) { scope.launch { drawerState.close() } }
@@ -56,11 +71,14 @@ fun MailboxScreen(
                     )
                 },
             ) {
-                MessageListScreen(
-                    folderId = selected.id,
-                    title = folderName(selected),
-                    onOpenFolders = { scope.launch { drawerState.open() } },
-                )
+                saved.SaveableStateProvider("folder-${selected.id}") {
+                    MessageListScreen(
+                        folderId = selected.id,
+                        title = folderName(selected),
+                        onOpenMessage = { openMessage = it },
+                        onOpenFolders = { scope.launch { drawerState.open() } },
+                    )
+                }
             }
         }
         state.isLoading ->

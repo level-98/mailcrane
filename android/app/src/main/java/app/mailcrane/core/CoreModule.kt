@@ -21,8 +21,8 @@ object CoreModule {
         @ApplicationContext context: Context,
     ): MailcraneCore = UniffiMailcraneCore(dbPath = dbPath(context))
 
-    // One sync engine for the app: live updates send their events to the same listeners as the
-    // screens' own syncs.
+    // One instance serves every interface: the message screen's changes (mark as read) and live
+    // updates reach the message list through the same event listener.
     @Provides
     @Singleton
     fun provideUniffiMailboxCore(
@@ -31,6 +31,9 @@ object CoreModule {
 
     @Provides
     fun provideMailboxCore(core: UniffiMailboxCore): MailboxCore = core
+
+    @Provides
+    fun provideMessageCore(core: UniffiMailboxCore): MessageCore = core
 
     @Provides
     fun provideLiveUpdatesEngine(core: UniffiMailboxCore): LiveUpdatesEngine = core

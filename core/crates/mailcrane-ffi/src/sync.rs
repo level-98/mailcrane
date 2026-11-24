@@ -213,6 +213,35 @@ impl SyncEngine {
         })
     }
 
+    /// Marks the message as read. For now this changes only the local copy
+    /// (until read state is synced back to the server, M1-14), so a later
+    /// sync that reports the server's flags can undo it. Sends
+    /// `MessagesChanged` for its folder when something changed. Doesn't wait
+    /// for a running sync.
+    pub fn mark_read(&self, message_id: i64) -> Result<(), SyncFailure> {
+        let store = self.open_store()?;
+        let id = MessageId(message_id);
+        let header = store
+            .get_message_header(id)
+            .map_err(|_| failed(events::SyncErrorKind::Storage))?
+            .ok_or_else(|| failed(events::SyncErrorKind::NotFound))?;
+        let mut flags = header.details.flags;
+        if flags.seen {
+            return Ok(());
+        }
+        flags.seen = true;
+        let changed = store
+            .set_flags(id, flags)
+            .map_err(|_| failed(events::SyncErrorKind::Storage))?;
+        if !changed {
+            return Err(failed(events::SyncErrorKind::NotFound));
+        }
+        self.listener.on_event(CoreEvent::MessagesChanged {
+            folder_id: header.details.folder_id.0,
+        });
+        Ok(())
+    }
+
     /// Lists the account's folders on the server and saves them, keeping
     /// each folder's sync state. Returns the inbox's folder id, or `None` if
     /// the server has no inbox. On failure the saved folders are unchanged.
