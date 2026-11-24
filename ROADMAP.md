@@ -27,7 +27,7 @@ Goal: anyone can clone, build an empty Android app and run CI. (The iOS shell fr
 - [x] **M0-11** `mailcrane-testkit`: in-process fake IMAP, SMTP and JMAP servers that can misbehave on purpose (drop connections, malformed replies, Gmail-style quirks) 🤖
 - [x] **M0-12** Write `docs/decisions/0001-tech-stack.md` recording the Rust core + native UI decision, including the portability rule in `docs/architecture.md` (the core must also build on Windows) 🧑
 - [x] **M0-13** Dependabot or Renovate for Cargo, Gradle and Swift packages 🟢🤖
-- [ ] **M0-14** Fuzz targets (`cargo fuzz`) for the MIME and IMAP parsers, run nightly in CI 🤖
+- [x] **M0-14** Fuzz targets (`cargo fuzz`) for the MIME and IMAP parsers, run nightly in CI 🤖
 - [x] **M0-15** Release script that gathers `docs/changelog.d/` fragments into release notes 🟢🤖
 - [ ] **M0-17** Cross-platform CI on every PR: Android on Linux and the core on Windows (iOS on macOS comes back in M7-02) 🤖
 
