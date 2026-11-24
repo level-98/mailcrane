@@ -7,9 +7,10 @@
 # branch protection still applies.
 #
 # The website job checks out the separate `website` branch, refreshes its local
-# issue snapshot and deploys through Pages. Keeping this trigger on the default
-# branch lets issue and scheduled events update the site without browser calls
-# to GitHub or site content being added to `main`.
+# issue snapshot and uploads the built site; the deploy job then publishes it
+# through Pages. Keeping this trigger on the default branch lets issue and
+# scheduled events update the site without browser calls to GitHub or site
+# content being added to `main`.
 #
 # Setup: Settings → Actions → General → Workflow permissions →
 # tick "Allow GitHub Actions to create and approve pull requests".
@@ -46,14 +47,9 @@ jobs:
     permissions:
       contents: read
       issues: read
-      pages: write
-      id-token: write
     defaults:
       run:
         working-directory: website
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -86,6 +82,23 @@ jobs:
         uses: actions/upload-pages-artifact@v5
         with:
           path: website/public
+
+  # Deploy in its own job, as website.yml does. Run in the same job straight
+  # after the upload, deploy-pages sometimes looks the artifact up before
+  # GitHub lists it and fails with 'No artifacts named "github-pages"'.
+  deploy:
+    needs: website
+    runs-on: ubuntu-latest
+    concurrency:
+      group: website-refs/heads/website
+      cancel-in-progress: false
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v5
