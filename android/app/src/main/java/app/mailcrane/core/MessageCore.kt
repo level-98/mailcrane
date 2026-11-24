@@ -17,8 +17,18 @@ interface MessageCore {
     /** Downloads the body once, for offline reading. Doesn't mark the message as read. */
     suspend fun fetchBody(messageId: Long)
 
-    /** Marks the message as read (on this device only until M1-14 syncs it to the server). */
+    /** Marks the message as read, at once on this device and then on the server. */
     suspend fun markRead(messageId: Long)
+
+    /**
+     * Applies [action] to the message: the change shows at once and is sent to the server in the
+     * background, retried while the app runs. Throws [ActionFailure] when it can't be applied (for
+     * example [ActionFailure.NoArchiveFolder]); nothing is changed then.
+     */
+    suspend fun applyAction(
+        messageId: Long,
+        action: MessageAction,
+    )
 
     /**
      * The inline image with Content-ID [contentId] from this message's stored body, or null.

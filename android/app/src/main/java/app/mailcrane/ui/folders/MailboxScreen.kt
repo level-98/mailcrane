@@ -66,7 +66,7 @@ fun MailboxScreen(
             val messageId = openMessage
             if (messageId != null) {
                 BackHandler { openMessage = null }
-                MessageScreen(messageId = messageId, onBack = { openMessage = null })
+                MessageScreen(messageId = messageId, onBack = { openMessage = null }, folders = state.folders)
                 return
             }
             val drawerState = rememberDrawerState(DrawerValue.Closed)

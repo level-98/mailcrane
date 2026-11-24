@@ -354,7 +354,15 @@ async fn handle_imap_command(
     }
     let response = match command.as_str() {
         "CAPABILITY" => {
-            let mut caps = "IMAP4rev2 IMAP4rev1".to_string();
+            // IMAP4rev2 includes MOVE and UID EXPUNGE (RFC 9051 §1), so a server
+            // without either speaks only IMAP4rev1; it keeps SPECIAL-USE through
+            // LIST-EXTENDED (RFC 6154 §5.1).
+            let mut caps = if quirks.contains(&Quirk::NoMove) || quirks.contains(&Quirk::NoUidplus)
+            {
+                "IMAP4rev1 LIST-EXTENDED".to_string()
+            } else {
+                "IMAP4rev2 IMAP4rev1".to_string()
+            };
             if secure {
                 caps.push_str(" AUTH=PLAIN");
             } else {
@@ -376,6 +384,9 @@ async fn handle_imap_command(
             }
             if !quirks.contains(&Quirk::NoUidplus) {
                 caps.push_str(" UIDPLUS");
+            }
+            if !quirks.contains(&Quirk::NoMove) {
+                caps.push_str(" MOVE");
             }
             if quirks.contains(&Quirk::GmailLabels) {
                 caps.push_str(" X-GM-EXT-1");
@@ -496,6 +507,12 @@ async fn handle_imap_command(
             }
             let list: String = enabled.iter().map(|e| format!(" {e}")).collect();
             format!("* ENABLED{list}\r\n{tag} OK ENABLE completed\r\n")
+        }
+        "EXPUNGE" => {
+            // A plain EXPUNGE removes every \Deleted message (RFC 9051 §6.4.3).
+            let folder = state.selected.as_deref().unwrap_or("INBOX");
+            mailbox.expunge_deleted(folder, |_| true).await;
+            format!("{tag} OK EXPUNGE completed\r\n")
         }
         "NOOP" => "* 0 RECENT\r\n".to_string() + &format!("{tag} OK NOOP completed\r\n"),
         "LOGOUT" => format!("{tag} OK LOGOUT completed\r\n"),
@@ -717,6 +734,16 @@ fn body_structure(raw: &[u8]) -> String {
     }
 }
 
+async fn max_uid(mailbox: &Mailbox, folder: &str) -> u32 {
+    mailbox
+        .messages(folder)
+        .await
+        .iter()
+        .map(|m| m.uid)
+        .max()
+        .unwrap_or(0)
+}
+
 async fn handle_uid_command(
     parts: &[&str],
     mailbox: &Mailbox,
@@ -833,16 +860,57 @@ async fn handle_uid_command(
             };
             format!("* SEARCH{list}\r\n{tag} OK UID SEARCH completed\r\n")
         }
-        "STORE" => format!("{tag} OK UID STORE completed\r\n"),
-        "COPY" => format!("{tag} OK UID COPY completed\r\n"),
-        "MOVE" => {
-            if quirks.contains(&Quirk::NoMove) {
-                format!("{tag} BAD UID MOVE unsupported\r\n")
-            } else {
-                format!("{tag} OK UID MOVE completed\r\n")
+        "STORE" => {
+            // `UID STORE <set> (+|-)FLAGS[.SILENT] (<flags>)` (RFC 9051 §6.4.6).
+            let set = parts.get(3).copied().unwrap_or("");
+            let op = parts.get(4).copied().unwrap_or("").to_ascii_uppercase();
+            let flags = parts.get(5..).unwrap_or_default().join(" ");
+            let flags: Vec<&str> = flags
+                .trim_matches(|c| c == '(' || c == ')')
+                .split_whitespace()
+                .collect();
+            let add = op.starts_with('+');
+            if !(add || op.starts_with('-')) || !op.contains("FLAGS") {
+                return format!("{tag} BAD unsupported STORE\r\n");
             }
+            let max = max_uid(mailbox, folder).await;
+            for flag in flags {
+                mailbox
+                    .store_flag(folder, |uid| in_uid_set(set, uid, max), flag, add)
+                    .await;
+            }
+            format!("{tag} OK UID STORE completed\r\n")
         }
-        "EXPUNGE" => format!("{tag} OK UID EXPUNGE completed\r\n"),
+        "COPY" | "MOVE" => {
+            let set = parts.get(3).copied().unwrap_or("");
+            let to = parts.get(4).copied().unwrap_or("").trim_matches('"');
+            if subcommand == "MOVE" && quirks.contains(&Quirk::NoMove) {
+                return format!("{tag} BAD UID MOVE unsupported\r\n");
+            }
+            if !mailbox.folder_names().await.iter().any(|n| n == to) {
+                // RFC 9051 §6.4.7: the target doesn't exist.
+                return format!("{tag} NO [TRYCREATE] no such folder\r\n");
+            }
+            let max = max_uid(mailbox, folder).await;
+            let pick = |uid| in_uid_set(set, uid, max);
+            if subcommand == "MOVE" {
+                mailbox.move_messages(folder, pick, to).await;
+            } else {
+                mailbox.copy(folder, pick, to).await;
+            }
+            format!("{tag} OK UID {subcommand} completed\r\n")
+        }
+        "EXPUNGE" => {
+            if quirks.contains(&Quirk::NoUidplus) {
+                return format!("{tag} BAD UID EXPUNGE unsupported\r\n");
+            }
+            let set = parts.get(3).copied().unwrap_or("");
+            let max = max_uid(mailbox, folder).await;
+            mailbox
+                .expunge_deleted(folder, |uid| in_uid_set(set, uid, max))
+                .await;
+            format!("{tag} OK UID EXPUNGE completed\r\n")
+        }
         _ => format!("{tag} BAD unknown UID command\r\n"),
     }
 }
