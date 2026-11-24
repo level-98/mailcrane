@@ -9,7 +9,7 @@
     <title>{{ page.title }} · {{ config.title }}</title>
     {% elif section %}
     <meta name="description" content="{{ section.description | default(value=config.description) }}">
-    <title>{{ section.title }} · {{ config.title }}</title>
+    <title>{% if section.path == "/" %}{{ config.title }} · Private, open-source email{% else %}{{ section.title }} · {{ config.title }}{% endif %}</title>
     {% else %}
     <meta name="description" content="{{ config.description }}">
     <title>{{ config.title }}</title>
@@ -21,19 +21,44 @@
     {% else %}
     <link rel="canonical" href="{{ config.base_url }}">
     {% endif %}
+    {% if page %}{% set meta_title = page.title ~ " · " ~ config.title %}{% set meta_description = page.description | default(value=config.description) %}{% set meta_url = page.permalink %}
+    {% elif section and section.path != "/" %}{% set meta_title = section.title ~ " · " ~ config.title %}{% set meta_description = section.description | default(value=config.description) %}{% set meta_url = section.permalink %}
+    {% elif section %}{% set meta_title = config.title %}{% set meta_description = section.description | default(value=config.description) %}{% set meta_url = config.base_url ~ "/" %}
+    {% else %}{% set meta_title = config.title %}{% set meta_description = config.description %}{% set meta_url = config.base_url ~ "/" %}{% endif %}
+    <meta property="og:type" content="website">
+    <meta property="og:site_name" content="{{ config.title }}">
+    <meta property="og:title" content="{{ meta_title }}">
+    <meta property="og:description" content="{{ meta_description }}">
+    <meta property="og:url" content="{{ meta_url }}">
+    <meta property="og:image" content="{{ get_url(path='brand/app-icon-512.png') }}">
+    <meta property="og:image:width" content="512">
+    <meta property="og:image:height" content="512">
+    <meta property="og:image:alt" content="The Mailcrane app icon: a white origami crane on blue">
+    <meta name="twitter:card" content="summary">
     <link rel="icon" href="{{ get_url(path='brand/mark-color.svg') }}" type="image/svg+xml">
+    <link rel="apple-touch-icon" href="{{ get_url(path='brand/app-icon-512.png') }}">
     <link rel="stylesheet" href="{{ get_url(path='css/site.css') }}">
     <script>
-      const savedTheme = localStorage.getItem("mailcrane-theme");
-      const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
-      document.documentElement.dataset.theme =
-        savedTheme === "light" || savedTheme === "dark"
-          ? savedTheme
-          : prefersDark ? "dark" : "light";
+      (function () {
+        let savedTheme = null;
+        try {
+          savedTheme = localStorage.getItem("mailcrane-theme");
+        } catch (error) {}
+        const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+        const theme =
+          savedTheme === "light" || savedTheme === "dark"
+            ? savedTheme
+            : prefersDark ? "dark" : "light";
+        document.documentElement.dataset.theme = theme;
+        document.documentElement.style.colorScheme = theme;
+        document.querySelector('meta[name="theme-color"]').content =
+          theme === "dark" ? "#0F1424" : "#F4F6FB";
+      })();
     </script>
     <script src="{{ get_url(path='js/site.js') }}" defer></script>
   </head>
   <body>
+    <a class="skip-link" href="#main">Skip to content</a>
     {% set home_url = get_url(path='@/_index.md') %}
     <header class="site-header">
       <a class="brand" href="{{ home_url }}" aria-label="Mailcrane home">

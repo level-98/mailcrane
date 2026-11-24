@@ -15,7 +15,11 @@ function applyTheme(theme, persist = false) {
   });
 
   if (persist) {
-    localStorage.setItem("mailcrane-theme", theme);
+    try {
+      localStorage.setItem("mailcrane-theme", theme);
+    } catch (error) {
+      // Storage can be blocked (private browsing, strict settings); the theme still applies for this page.
+    }
   }
 }
 
@@ -25,9 +29,18 @@ themeToggle.addEventListener("click", () => {
 });
 
 const systemColorScheme = window.matchMedia("(prefers-color-scheme: dark)");
-const themePreference = localStorage.getItem("mailcrane-theme");
-if (themePreference !== "light" && themePreference !== "dark") {
-  systemColorScheme.addEventListener("change", (event) => {
-    applyTheme(event.matches ? "dark" : "light");
-  });
+let userChoseTheme = false;
+try {
+  const saved = localStorage.getItem("mailcrane-theme");
+  userChoseTheme = saved === "light" || saved === "dark";
+} catch (error) {
+  // Storage is unavailable, so follow the system setting.
 }
+themeToggle.addEventListener("click", () => {
+  userChoseTheme = true;
+});
+systemColorScheme.addEventListener("change", (event) => {
+  if (!userChoseTheme) {
+    applyTheme(event.matches ? "dark" : "light");
+  }
+});
