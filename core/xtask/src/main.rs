@@ -263,42 +263,25 @@ fn cargo() -> String {
 // ------------------------------------------------------------------ steps
 
 fn design(ctx: &Ctx) -> Result<Outcome, Error> {
-    let (python, check_args) = if cfg!(windows) {
-        (
-            "py",
-            vec![
-                "-3".to_string(),
-                "design/gen_theme.py".to_string(),
-                "--check".to_string(),
-            ],
-        )
+    // On Windows `python3` is often missing; the `py -3` launcher is the
+    // reliable way to start Python 3 there.
+    let (python, prefix): (&str, &[&str]) = if cfg!(windows) {
+        ("py", &["-3"])
     } else {
-        (
-            "python3",
-            vec!["design/gen_theme.py".to_string(), "--check".to_string()],
-        )
+        ("python3", &[])
     };
-    if !run(&ctx.root, python, &check_args)? {
+    if !has_tool(python, "--version") {
+        return Ok(Outcome::Skipped(format!("{python} is not installed")));
+    }
+    let check: Vec<&str> = [prefix, &["design/gen_theme.py", "--check"]].concat();
+    if !run(&ctx.root, python, &check)? {
         return Ok(Outcome::Failed(
-            "`python3 design/gen_theme.py --check` failed".into(),
+            "`design/gen_theme.py --check` failed".into(),
         ));
     }
-    let test_args = if cfg!(windows) {
-        vec![
-            "-3".to_string(),
-            "-m".to_string(),
-            "unittest".to_string(),
-            "design/test_gen_theme.py".to_string(),
-        ]
-    } else {
-        vec![
-            "-m".to_string(),
-            "unittest".to_string(),
-            "design/test_gen_theme.py".to_string(),
-        ]
-    };
-    let ok = run(&ctx.root, python, &test_args)?;
-    Ok(outcome(ok, "python3 -m unittest design/test_gen_theme.py"))
+    let tests: Vec<&str> = [prefix, &["-m", "unittest", "design/test_gen_theme.py"]].concat();
+    let ok = run(&ctx.root, python, &tests)?;
+    Ok(outcome(ok, "python -m unittest design/test_gen_theme.py"))
 }
 
 fn fmt(ctx: &Ctx) -> Result<Outcome, Error> {

@@ -2,7 +2,6 @@ import json
 import sys
 import unittest
 from pathlib import Path
-from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).parent))
 import gen_theme
@@ -27,6 +26,11 @@ class ThemeGeneratorTests(unittest.TestCase):
         failures = gen_theme.check_contrast(bad)
         self.assertTrue(any("OnPrimary/Primary=" in failure for failure in failures))
         self.assertTrue(any("4.5:1" in failure for failure in failures))
+
+    def test_brand_folder_provides_namespace(self):
+        outputs = gen_theme.expected_outputs(self.data)
+        folder = json.loads(outputs[gen_theme.IOS_ASSETS / "Contents.json"])
+        self.assertTrue(folder["properties"]["provides-namespace"])
 
     def test_generated_output_is_stable(self):
         outputs = gen_theme.expected_outputs(self.data)

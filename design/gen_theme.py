@@ -3,6 +3,7 @@
 
 import argparse
 import json
+import shutil
 import sys
 from pathlib import Path
 
@@ -162,34 +163,10 @@ def android_source(mapped):
         scheme = "light" if name == "Light" else "dark"
         lines.append(f"val Mailcrane{name}Colors =")
         lines.append(f"    {scheme}ColorScheme(")
-        for index, (role, ios_name) in enumerate(role_arguments):
+        for role, ios_name in role_arguments:
             lines.append(f"        {role} = Color({kotlin_hex(values[ios_name])}),")
         lines.extend(["    )", ""])
     return "\n".join(lines)
-
-
-def ios_color_set(value):
-    r, g, b = hex_rgb(value)
-    return {
-        "info": {"author": "xcode", "version": 1},
-        "colors": [
-            {
-                "idiom": "universal",
-                "appearances": [{"appearance": "luminosity", "value": "dark"}],
-                "color": {
-                    "color-space": "srgb",
-                    "components": {"alpha": "1.000", "red": f"{r:.3f}", "green": f"{g:.3f}", "blue": f"{b:.3f}"},
-                },
-            },
-            {
-                "idiom": "universal",
-                "color": {
-                    "color-space": "srgb",
-                    "components": {"alpha": "1.000", "red": f"{r:.3f}", "green": f"{g:.3f}", "blue": f"{b:.3f}"},
-                },
-            },
-        ],
-    }
 
 
 def ios_asset_json(light, dark):
@@ -228,6 +205,11 @@ def ios_swift_source(mapped):
 def expected_outputs(data):
     mapped = mapped_colours(data)
     outputs = {ANDROID_PATH: android_source(mapped), IOS_THEME_PATH: ios_swift_source(mapped)}
+    # "provides-namespace" makes Xcode name the colours "Brand/<Name>", which
+    # is what BrandColors.swift looks up. Without it they are plain "<Name>".
+    outputs[IOS_ASSETS / "Contents.json"] = json.dumps(
+        {"info": {"author": "xcode", "version": 1}, "properties": {"provides-namespace": True}}, indent=2
+    ) + "\n"
     for ios_name, _, _ in ROLES:
         path = IOS_ASSETS / ios_name / "Contents.json"
         outputs[path] = json.dumps(ios_asset_json(mapped["light"][ios_name], mapped["dark"][ios_name]), indent=2) + "\n"
@@ -253,7 +235,6 @@ def remove_stale_brand_sets(valid_names):
         return
     for child in IOS_ASSETS.iterdir():
         if child.is_dir() and child.name not in valid_names:
-            import shutil
             shutil.rmtree(child)
 
 
