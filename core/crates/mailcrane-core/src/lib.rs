@@ -4,6 +4,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod account;
 pub mod events;
 pub mod secrets;
 pub mod sync;
