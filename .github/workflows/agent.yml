@@ -35,7 +35,7 @@ jobs:
     # The token is an `agent` environment secret, usable from `main` only.
     environment: agent
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 1
 
