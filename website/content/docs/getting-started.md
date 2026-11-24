@@ -5,7 +5,7 @@ template = "page.html"
 weight = 1
 +++
 
-Mailcrane is currently in early development. There is no public Android or iOS build to install yet.
+Mailcrane is currently in early development. There is no public build to install yet. Android comes first; the iOS app is planned for after the Android release.
 
 To follow progress:
 

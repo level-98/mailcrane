@@ -17,7 +17,7 @@ The project is being built around open mail standards: IMAP and SMTP, with JMAP 
 
 ## Native and offline-minded
 
-Mailcrane is planned for Android and iOS with native interfaces and a shared Rust engine. Local storage and offline access are core design goals.
+Mailcrane is coming to Android first, with an iOS app planned after the Android release. Both use native interfaces and a shared Rust engine. Local storage and offline access are core design goals.
 
 ## Thoughtful everyday tools
 

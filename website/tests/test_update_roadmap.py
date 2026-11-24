@@ -41,6 +41,34 @@ class BuildSnapshotTests(unittest.TestCase):
             [1, 2],
         )
 
+    def test_ios_milestone_collects_moved_tasks_in_roadmap_order(self):
+        titles = {
+            1: "[M7-02] iOS check on every PR",
+            2: "[M6-06] TestFlight beta and App Store release",
+            3: "[M1-11] Message list screen, iOS",
+            4: "[M7-01] Decide how iOS gets built",
+            5: "[M0-16] TestFlight internal builds from CI",
+            6: "[M7-03] Message view screen, iOS",
+            7: "[M1-10] Message list screen, Android",
+        }
+        issues = [
+            {
+                "number": number,
+                "title": title,
+                "state": "open",
+                "html_url": f"https://github.com/level-98/mailcrane/issues/{number}",
+            }
+            for number, title in titles.items()
+        ]
+
+        snapshot = build_snapshot(issues)
+
+        self.assertEqual([group["id"] for group in snapshot["groups"]], ["M1", "M7"])
+        self.assertEqual(
+            [task["id"] for task in snapshot["groups"][1]["tasks"]],
+            ["M7-01", "M7-02", "M0-16", "M1-11", "M7-03", "M6-06"],
+        )
+
     def test_empty_issue_list_has_zero_progress(self):
         snapshot = build_snapshot([])
 
