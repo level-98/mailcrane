@@ -8,6 +8,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::{Mutex, RwLock};
+use tokio::task::AbortHandle;
 
 /// Per-server settings shared by every connection.
 struct Shared {
@@ -36,6 +37,8 @@ pub struct FakeImap {
     mailbox: Mailbox,
     received: Arc<Mutex<Vec<String>>>,
     shutdown: Arc<RwLock<Option<JoinHandle<()>>>>,
+    connections: Arc<std::sync::Mutex<Vec<AbortHandle>>>,
+    accepted: Arc<AtomicUsize>,
 }
 
 pub struct FakeImapBuilder {
@@ -84,8 +87,10 @@ impl FakeImapBuilder {
     }
 
     pub async fn start(self) -> Result<FakeImap, String> {
-        let started = Instant::now();
+        // The certificate is made once per process (see tls::generate);
+        // the time limit is for starting the server itself.
         let tls = tls::generate()?;
+        let started = Instant::now();
         // Like a real server (993 and 143), one port is implicit TLS and the
         // other starts in plain text for STARTTLS. Guessing the mode from
         // whether a TLS hello arrives in time fails when the client is slow
@@ -116,6 +121,9 @@ impl FakeImapBuilder {
             special_use: self.special_use,
             received: received.clone(),
         });
+        let connections = Arc::new(std::sync::Mutex::new(Vec::<AbortHandle>::new()));
+        let accepted = Arc::new(AtomicUsize::new(0));
+        let (loop_connections, loop_accepted) = (connections.clone(), accepted.clone());
         let handle = tokio::spawn(async move {
             loop {
                 let accepted = tokio::select! {
@@ -127,9 +135,14 @@ impl FakeImapBuilder {
                 };
                 let tls_config = tls.config.clone();
                 let shared = shared.clone();
-                tokio::spawn(async move {
+                loop_accepted.fetch_add(1, Ordering::SeqCst);
+                let task = tokio::spawn(async move {
                     let _ = handle_connection(stream, implicit_tls, tls_config, shared).await;
                 });
+                if let Ok(mut open) = loop_connections.lock() {
+                    open.retain(|h| !h.is_finished());
+                    open.push(task.abort_handle());
+                }
             }
         });
         if started.elapsed() >= Duration::from_millis(100) {
@@ -142,6 +155,8 @@ impl FakeImapBuilder {
             mailbox,
             received,
             shutdown: Arc::new(RwLock::new(Some(handle))),
+            connections,
+            accepted,
         })
     }
 }
@@ -178,6 +193,21 @@ impl FakeImap {
     /// commands include their subcommand, e.g. `UID FETCH`.
     pub async fn received_commands(&self) -> Vec<String> {
         self.received.lock().await.clone()
+    }
+
+    /// How many connections the server has accepted so far, on either port.
+    pub fn connections_accepted(&self) -> usize {
+        self.accepted.load(Ordering::SeqCst)
+    }
+
+    /// Closes every open connection at once, without a `BYE`, as a network
+    /// drop or a server restart would. The server keeps accepting new ones.
+    pub fn drop_connections(&self) {
+        if let Ok(mut open) = self.connections.lock() {
+            for handle in open.drain(..) {
+                handle.abort();
+            }
+        }
     }
 
     pub async fn shutdown(&self) {
@@ -377,6 +407,9 @@ async fn handle_imap_command(
             if !quirks.contains(&Quirk::NoUidplus) {
                 caps.push_str(" UIDPLUS");
             }
+            if !quirks.contains(&Quirk::NoIdle) {
+                caps.push_str(" IDLE");
+            }
             if quirks.contains(&Quirk::GmailLabels) {
                 caps.push_str(" X-GM-EXT-1");
             }
@@ -504,22 +537,10 @@ async fn handle_imap_command(
             if quirks.contains(&Quirk::NoIdle) {
                 format!("{tag} BAD IDLE disabled\r\n")
             } else {
-                stream
-                    .write_all(b"+ idling\r\n")
-                    .await
-                    .map_err(|error| error.to_string())?;
-                let notified = mailbox.notify.notified();
-                tokio::pin!(notified);
-                match tokio::time::timeout(Duration::from_millis(900), notified.as_mut()).await {
-                    Ok(()) => {
-                        let count = mailbox.exists("INBOX").await;
-                        format!("* {count} EXISTS\r\n")
-                    }
-                    Err(_) => String::new(),
-                }
+                let folder = state.selected.clone().unwrap_or_else(|| "INBOX".into());
+                idle(stream, tag, shared, &folder).await?
             }
         }
-        "DONE" => format!("{tag} OK IDLE completed\r\n"),
         _ => format!("{tag} BAD unknown command\r\n"),
     };
     if faults.contains(&Fault::DropMidResponse) {
@@ -551,6 +572,97 @@ async fn handle_imap_command(
         .write_all(response.as_bytes())
         .await
         .map_err(|error| error.to_string())
+}
+
+/// `IDLE` (RFC 2177): answers `+`, then reports deliveries (`EXISTS`),
+/// expunges (`EXPUNGE`) and flag changes (`FETCH`) in `folder` as they
+/// happen, until the client sends `DONE`. Returns the tagged reply.
+async fn idle(
+    stream: &mut (impl AsyncReadExt + AsyncWriteExt + Unpin),
+    tag: &str,
+    shared: &Shared,
+    folder: &str,
+) -> Result<String, String> {
+    let mailbox = &shared.mailbox;
+    stream
+        .write_all(b"+ idling\r\n")
+        .await
+        .map_err(|error| error.to_string())?;
+    // What the client knows: UIDs in sequence order, with mod-sequences.
+    let mut known: Vec<(u32, u64)> = mailbox
+        .messages(folder)
+        .await
+        .iter()
+        .map(|m| (m.uid, m.modseq))
+        .collect();
+    let mut line = Vec::new();
+    loop {
+        // Register before looking, so no change slips between the two.
+        let notified = mailbox.notify.notified();
+        tokio::pin!(notified);
+        notified.as_mut().enable();
+        let now = mailbox.messages(folder).await;
+        let mut out = String::new();
+        // RFC 9051 §7.5.1: each EXPUNGE renumbers the ones after it.
+        let mut index = 0;
+        while let Some((uid, _)) = known.get(index).copied() {
+            if now.iter().any(|m| m.uid == uid) {
+                index += 1;
+            } else {
+                out.push_str(&format!("* {} EXPUNGE\r\n", index + 1));
+                known.remove(index);
+            }
+        }
+        for (index, (uid, modseq)) in known.iter_mut().enumerate() {
+            if let Some(message) = now.iter().find(|m| m.uid == *uid) {
+                if message.modseq != *modseq {
+                    *modseq = message.modseq;
+                    out.push_str(&format!(
+                        "* {} FETCH (UID {} FLAGS ({}))\r\n",
+                        index + 1,
+                        uid,
+                        message.flags.join(" ")
+                    ));
+                }
+            }
+        }
+        let before = known.len();
+        for message in &now {
+            if !known.iter().any(|(uid, _)| *uid == message.uid) {
+                known.push((message.uid, message.modseq));
+            }
+        }
+        if known.len() != before {
+            out.push_str(&format!("* {} EXISTS\r\n", known.len()));
+        }
+        if !out.is_empty() {
+            stream
+                .write_all(out.as_bytes())
+                .await
+                .map_err(|error| error.to_string())?;
+        }
+        let mut byte = [0u8; 1];
+        tokio::select! {
+            () = &mut notified => {}
+            read = stream.read(&mut byte) => match read {
+                Ok(1) => {
+                    line.push(byte[0]);
+                    if line.ends_with(b"\r\n") {
+                        let done = line.trim_ascii().eq_ignore_ascii_case(b"DONE");
+                        shared.received.lock().await.push(
+                            String::from_utf8_lossy(line.trim_ascii()).to_ascii_uppercase(),
+                        );
+                        return Ok(if done {
+                            format!("{tag} OK IDLE terminated\r\n")
+                        } else {
+                            format!("{tag} BAD expected DONE\r\n")
+                        });
+                    }
+                }
+                _ => return Err("connection closed during IDLE".into()),
+            },
+        }
+    }
 }
 
 /// `(QRESYNC (uidvalidity modseq [known-uids]))` (RFC 7162 §3.2.5) from

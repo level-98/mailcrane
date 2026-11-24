@@ -39,8 +39,10 @@ impl FakeSmtpBuilder {
         self
     }
     pub async fn start(self) -> Result<FakeSmtp, String> {
-        let started = std::time::Instant::now();
+        // The certificate is made once per process (see tls::generate);
+        // the time limit is for starting the server itself.
         let tls = tls::generate()?;
+        let started = std::time::Instant::now();
         // Like a real server (465 and 587), one port is implicit TLS and the
         // other starts in plain text for STARTTLS. Guessing the mode from
         // whether a TLS hello arrives in time fails when the client is slow

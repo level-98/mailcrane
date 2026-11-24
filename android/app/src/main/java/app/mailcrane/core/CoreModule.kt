@@ -12,18 +12,26 @@ import javax.inject.Singleton
 @Module
 @InstallIn(SingletonComponent::class)
 object CoreModule {
+    // The database lives in app-private storage that is never backed up.
+    private fun dbPath(context: Context): String = File(context.noBackupFilesDir, "mailcrane.sqlite").path
+
     @Provides
     @Singleton
     fun provideMailcraneCore(
         @ApplicationContext context: Context,
     ): MailcraneCore = UniffiMailcraneCore(dbPath = dbPath(context))
 
+    // One sync engine for the app: live updates send their events to the same listeners as the
+    // screens' own syncs.
     @Provides
     @Singleton
-    fun provideMailboxCore(
+    fun provideUniffiMailboxCore(
         @ApplicationContext context: Context,
-    ): MailboxCore = UniffiMailboxCore(dbPath = dbPath(context))
+    ): UniffiMailboxCore = UniffiMailboxCore(dbPath = dbPath(context))
 
-    // The database lives in app-private storage that is never backed up.
-    private fun dbPath(context: Context): String = File(context.noBackupFilesDir, "mailcrane.sqlite").path
+    @Provides
+    fun provideMailboxCore(core: UniffiMailboxCore): MailboxCore = core
+
+    @Provides
+    fun provideLiveUpdatesEngine(core: UniffiMailboxCore): LiveUpdatesEngine = core
 }

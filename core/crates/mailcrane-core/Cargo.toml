@@ -16,12 +16,12 @@ mailcrane-mime = { path = "../mailcrane-mime" }
 mailcrane-smtp = { path = "../mailcrane-smtp" }
 mailcrane-store = { path = "../mailcrane-store" }
 thiserror = "2.0.21"
-tokio = { version = "1.54.1", features = ["time", "macros"] }
+tokio = { version = "1.54.1", features = ["time", "macros", "sync"] }
 tracing = "0.1"
 url = "2.5.9"
 zeroize = "1.9.2"
 
 [dev-dependencies]
-tokio = { version = "1.54.1", features = ["macros", "rt-multi-thread", "time"] }
+tokio = { version = "1.54.1", features = ["macros", "rt-multi-thread", "time", "test-util"] }
 mailcrane-testkit = { path = "../mailcrane-testkit" }
 proptest = "1"

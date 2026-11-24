@@ -1,11 +1,19 @@
 //! Syncing, as the apps call it: `sync_folder`, `load_older`, `fetch_body`,
-//! and a listener that receives events instead of the apps polling.
+//! live updates while the app is open (`start_live_updates`,
+//! `stop_live_updates`), and a listener that receives events instead of the
+//! apps polling.
 
-use std::sync::{Arc, Mutex};
+use std::collections::HashMap;
+use std::sync::{mpsc, Arc, Mutex};
+use std::thread::JoinHandle;
+use std::time::Duration;
 
 use mailcrane_core::events::{self, EventListener};
 use mailcrane_core::secrets::SecretKey;
-use mailcrane_core::sync::{FolderSyncer, SyncConfig, SyncError as CoreSyncError};
+use mailcrane_core::sync::{
+    live_stop, run_live_updates, FolderSyncer, ImapLogin, LiveConfig, LiveStop, SyncConfig,
+    SyncError as CoreSyncError,
+};
 use mailcrane_imap::{save_folders, ImapConfig, ImapError, ImapSecurity, Secret, Session};
 use mailcrane_store::{AccountId, FolderId, FolderRole, MessageId, Security, Store};
 
@@ -121,16 +129,28 @@ impl From<CoreSyncError> for SyncFailure {
     }
 }
 
+/// A running live-updates thread for one account.
+struct LiveThread {
+    stop: LiveStop,
+    /// Receives once the thread's loop has returned.
+    done: mpsc::Receiver<()>,
+    thread: JoinHandle<()>,
+}
+
 /// Syncs folders of the accounts in one database. Calls are blocking: call
 /// them from a background thread or dispatcher. Only one runs at a time, so
-/// only one folder syncs at a time.
+/// only one folder syncs at a time. Live updates run on threads of their
+/// own, with their own connections, and never wait for these calls.
 #[derive(uniffi::Object)]
 pub struct SyncEngine {
     db_path: String,
     listener: Arc<dyn CoreEventListener>,
     config: SyncConfig,
+    live_config: LiveConfig,
     /// Serialises sync calls.
     busy: Mutex<()>,
+    /// Live updates, by account id.
+    live: Mutex<HashMap<i64, LiveThread>>,
     #[cfg(test)]
     extra_root_cert: Mutex<Option<Vec<u8>>>,
 }
@@ -144,7 +164,9 @@ impl SyncEngine {
             db_path,
             listener,
             config: SyncConfig::default(),
+            live_config: LiveConfig::default(),
             busy: Mutex::new(()),
+            live: Mutex::new(HashMap::new()),
             #[cfg(test)]
             extra_root_cert: Mutex::new(None),
         })
@@ -211,6 +233,109 @@ impl SyncEngine {
         })?;
         Ok(inbox_of(&store, account)?.map(|f| f.0))
     }
+
+    /// The ids of every account in the database, for starting and stopping
+    /// live updates.
+    pub fn account_ids(&self) -> Result<Vec<i64>, SyncFailure> {
+        let store = self.open_store()?;
+        let accounts = store
+            .list_accounts()
+            .map_err(|_| failed(events::SyncErrorKind::Storage))?;
+        Ok(accounts.into_iter().map(|a| a.id.0).collect())
+    }
+
+    /// Starts keeping the account's inbox up to date while the app is open:
+    /// IMAP IDLE on a connection of its own, or polling every 5 minutes if
+    /// the server has no IDLE. Changes arrive as `MessagesChanged` events;
+    /// failures as `SyncError` events, retried with back-off. Returns at
+    /// once. Calling it again while it runs does nothing.
+    pub fn start_live_updates(&self, account_id: i64) -> Result<(), SyncFailure> {
+        let mut live = self.live.lock().unwrap_or_else(|p| p.into_inner());
+        if live
+            .get(&account_id)
+            .is_some_and(|running| !running.thread.is_finished())
+        {
+            return Ok(());
+        }
+        let store = self.open_store()?;
+        let account = AccountId(account_id);
+        store
+            .get_account(account)
+            .map_err(|_| failed(events::SyncErrorKind::Storage))?
+            .ok_or_else(|| failed(events::SyncErrorKind::NotFound))?;
+        drop(store);
+
+        let (stop, signal) = live_stop();
+        let (done_tx, done) = mpsc::channel();
+        let db_path = self.db_path.clone();
+        let listener = ListenerAdapter(self.listener.clone());
+        let (sync_config, live_config) = (self.config, self.live_config);
+        let extra_root_cert = self.extra_root_cert();
+        let thread = std::thread::Builder::new()
+            .name(format!("mailcrane-live-{account_id}"))
+            .spawn(move || {
+                let report = |kind| {
+                    listener.on_event(events::CoreEvent::SyncError {
+                        account_id: account,
+                        kind,
+                    })
+                };
+                let runtime = match runtime() {
+                    Ok(runtime) => runtime,
+                    Err(kind) => return report(kind),
+                };
+                let store = match Store::open(&db_path) {
+                    Ok(store) => store,
+                    Err(_) => return report(events::SyncErrorKind::Storage),
+                };
+                let login = || imap_login(&store, account, extra_root_cert.as_deref());
+                runtime.block_on(run_live_updates(
+                    &store,
+                    account,
+                    &listener,
+                    login,
+                    sync_config,
+                    live_config,
+                    signal,
+                ));
+                let _ = done_tx.send(());
+            })
+            .map_err(|_| failed(events::SyncErrorKind::Network))?;
+        // A finished thread for this account (it could not open the
+        // database, say) is replaced.
+        live.insert(account_id, LiveThread { stop, done, thread });
+        Ok(())
+    }
+
+    /// Stops live updates for the account: ends IDLE and logs out, within
+    /// about 2 seconds. Does nothing if they are not running.
+    pub fn stop_live_updates(&self, account_id: i64) {
+        let running = self
+            .live
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .remove(&account_id);
+        let Some(running) = running else {
+            return;
+        };
+        running.stop.stop();
+        // The loop gives DONE and LOGOUT `stop_within`; allow a little more
+        // for the thread to finish, but never block forever.
+        let limit = self.live_config.stop_within + Duration::from_millis(500);
+        match running.done.recv_timeout(limit) {
+            Ok(()) | Err(mpsc::RecvTimeoutError::Disconnected) => {
+                let _ = running.thread.join();
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+        }
+    }
+}
+
+impl Drop for SyncEngine {
+    fn drop(&mut self) {
+        // Dropping each `LiveStop` tells its thread to stop.
+        self.live.lock().unwrap_or_else(|p| p.into_inner()).clear();
+    }
 }
 
 type SyncFuture<'a, T> =
@@ -265,38 +390,28 @@ impl SyncEngine {
         failed(kind)
     }
 
+    /// The test root certificate, if one was set.
+    fn extra_root_cert(&self) -> Option<Vec<u8>> {
+        #[cfg(test)]
+        {
+            self.extra_root_cert
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .clone()
+        }
+        #[cfg(not(test))]
+        {
+            None
+        }
+    }
+
     async fn connect(
         &self,
         store: &Store,
         account: AccountId,
     ) -> Result<Session, events::SyncErrorKind> {
-        let row = store
-            .get_account(account)
-            .map_err(|_| events::SyncErrorKind::Storage)?
-            .ok_or(events::SyncErrorKind::NotFound)?;
-        let password = crate::secrets::secret_store()
-            .and_then(|s| s.get(&SecretKey::account_password(account.0)))
-            .map_err(|_| events::SyncErrorKind::Auth)?
-            .ok_or(events::SyncErrorKind::Auth)?;
-        let password = std::str::from_utf8(password.expose())
-            .map_err(|_| events::SyncErrorKind::Auth)?
-            .to_owned();
-        let security = match row.details.imap_security {
-            Security::Tls => ImapSecurity::ImplicitTls,
-            Security::Starttls => ImapSecurity::StartTls,
-        };
-        #[allow(unused_mut)]
-        let mut config = ImapConfig::new(row.details.imap_host, row.details.imap_port, security);
-        #[cfg(test)]
-        if let Some(der) = self
-            .extra_root_cert
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .clone()
-        {
-            config = config.with_extra_root_cert(der);
-        }
-        Session::connect(&config, &row.details.username, &Secret::new(password))
+        let login = imap_login(store, account, self.extra_root_cert().as_deref())?;
+        Session::connect(&login.config, &login.username, &login.password)
             .await
             .map_err(|e: ImapError| CoreSyncError::from(e).kind())
     }
@@ -324,6 +439,39 @@ fn inbox_of(store: &Store, account: AccountId) -> Result<Option<FolderId>, SyncF
             .find(|f| f.details.remote_name.eq_ignore_ascii_case("INBOX"))
     };
     Ok(by_role.or_else(by_name).map(|f| f.id))
+}
+
+/// The account's IMAP server and credentials, from the store and the
+/// platform's secret store. `extra_root_cert` is only ever set by tests.
+fn imap_login(
+    store: &Store,
+    account: AccountId,
+    extra_root_cert: Option<&[u8]>,
+) -> Result<ImapLogin, events::SyncErrorKind> {
+    let row = store
+        .get_account(account)
+        .map_err(|_| events::SyncErrorKind::Storage)?
+        .ok_or(events::SyncErrorKind::NotFound)?;
+    let password = crate::secrets::secret_store()
+        .and_then(|s| s.get(&SecretKey::account_password(account.0)))
+        .map_err(|_| events::SyncErrorKind::Auth)?
+        .ok_or(events::SyncErrorKind::Auth)?;
+    let password = std::str::from_utf8(password.expose())
+        .map_err(|_| events::SyncErrorKind::Auth)?
+        .to_owned();
+    let security = match row.details.imap_security {
+        Security::Tls => ImapSecurity::ImplicitTls,
+        Security::Starttls => ImapSecurity::StartTls,
+    };
+    let mut config = ImapConfig::new(row.details.imap_host, row.details.imap_port, security);
+    if let Some(der) = extra_root_cert {
+        config = config.with_extra_root_cert(der.to_vec());
+    }
+    Ok(ImapLogin {
+        config,
+        username: row.details.username,
+        password: Secret::new(password),
+    })
 }
 
 #[cfg(test)]

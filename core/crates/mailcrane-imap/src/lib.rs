@@ -1,4 +1,5 @@
-//! IMAP client: connecting over TLS, logging in and listing folders.
+//! IMAP client: connecting over TLS, logging in, listing folders, syncing
+//! and waiting for changes with IDLE.
 //!
 //! Connections always use TLS: implicit TLS (RFC 8314, port 993) or
 //! STARTTLS (RFC 9051 §6.2.1, port 143). There is no plain-text mode and no
@@ -28,6 +29,7 @@ mod condstore;
 mod connection;
 mod error;
 mod fetch;
+mod idle;
 pub mod mutf7;
 pub mod parser;
 mod roles;
@@ -37,6 +39,7 @@ mod tls;
 pub use condstore::{FetchedFlags, FlagUpdate, QresyncParams, QresyncSelect};
 pub use error::ImapError;
 pub use fetch::{parse_internal_date, FetchedHeaders, SelectInfo};
+pub use idle::IdleOutcome;
 pub use parser::{parse_response, Envelope, EnvelopeAddress, FetchData, Limits};
 pub use session::{save_folders, ImapConfig, ImapFolder, ImapSecurity, Session};
 

@@ -77,10 +77,10 @@ pub struct ImapFolder {
 
 /// An authenticated IMAP session over TLS.
 pub struct Session {
-    conn: Connection,
+    pub(crate) conn: Connection,
     caps: Vec<String>,
-    tags: Tags,
-    command_timeout: Duration,
+    pub(crate) tags: Tags,
+    pub(crate) command_timeout: Duration,
     host: String,
     /// Whether `ENABLE QRESYNC` succeeded (RFC 7162 §3.2.3).
     pub(crate) qresync_enabled: bool,
@@ -174,6 +174,19 @@ impl Session {
         session.login(username, password).await?;
         tracing::debug!(host, "IMAP logged in");
         Ok(session)
+    }
+
+    /// A logged-in session over `io`, for tests that script the server.
+    #[cfg(test)]
+    pub(crate) fn from_io(io: Box<dyn Io>, caps: &[&str], command_timeout: Duration) -> Session {
+        Session {
+            conn: Connection::new(io, Limits::default()),
+            caps: caps.iter().map(|c| (*c).to_string()).collect(),
+            tags: Tags::default(),
+            command_timeout,
+            host: "test.example.org".into(),
+            qresync_enabled: false,
+        }
     }
 
     /// The server's capabilities, as last reported.
