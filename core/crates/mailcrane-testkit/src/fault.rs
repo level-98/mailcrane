@@ -4,6 +4,10 @@ use std::time::Duration;
 pub enum Fault {
     DropAfterCommands(usize),
     DropMidResponse,
+    /// SMTP only: close the connection right after `354`, before the message ends.
+    DropMidData,
+    /// SMTP only: answer `RCPT TO` for exactly this address with `550`.
+    RejectRecipient(String),
     Delay(Duration),
     MalformedResponse,
     RejectLogin,
