@@ -18,6 +18,8 @@ fn draft() -> OutgoingMessage {
         subject: "Lunch".into(),
         body_text: "Hello Bob,\nsee you at noon.\n".into(),
         encoding: TransferEncoding::QuotedPrintable,
+        in_reply_to: None,
+        references: vec![],
     }
 }
 
@@ -364,4 +366,46 @@ fn matches_golden_fixture() {
     }
     let want = std::fs::read(&path).expect("fixture exists");
     assert_eq!(text(&built), text(&want));
+}
+
+#[test]
+fn reply_headers_round_trip_through_the_parser() {
+    let mut d = draft();
+    d.in_reply_to = Some("parent@example.net".into());
+    d.references = (1..=20).map(|n| format!("id{n}@example.net")).collect();
+    let bytes = build(&d);
+    assert_wire_format(&bytes);
+    let head = header_block(&bytes);
+    assert!(head.contains("In-Reply-To: <parent@example.net>\r\n"));
+    let parsed = crate::parse_message(&bytes).expect("parses");
+    assert_eq!(parsed.in_reply_to, ["parent@example.net"]);
+    assert_eq!(parsed.references, d.references);
+}
+
+#[test]
+fn hostile_message_ids_are_left_out() {
+    let mut d = draft();
+    d.in_reply_to = Some("bad\r\nBcc: x@example.net".into());
+    d.references = vec![
+        "ok@example.net".into(),
+        "no-at-sign".into(),
+        "has space@example.net".into(),
+        "<angle@example.net>".into(),
+        String::new(),
+        format!("{}@example.net", "a".repeat(300)),
+        "caf\u{e9}@example.net".into(),
+    ];
+    let bytes = build(&d);
+    assert_wire_format(&bytes);
+    let head = header_block(&bytes);
+    assert!(!head.contains("In-Reply-To"));
+    assert!(!head.contains("Bcc"));
+    assert!(head.contains("References: <ok@example.net>\r\n"));
+}
+
+#[test]
+fn no_reply_headers_without_ids() {
+    let head = header_block(&build(&draft()));
+    assert!(!head.contains("In-Reply-To"));
+    assert!(!head.contains("References"));
 }

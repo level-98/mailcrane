@@ -321,6 +321,8 @@ mod tests {
             bcc: vec!["carol@example.com".into()],
             subject: "Hi".into(),
             body_text: "Hello".into(),
+            in_reply_to: None,
+            references: vec![],
         }
     }
 
