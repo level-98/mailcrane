@@ -104,7 +104,7 @@ Goal: add an IMAP account and read your inbox, online and offline.
 - [ ] **M6-04** F-Droid listing (fully free build, no Google services) 🧑
 - [ ] **M6-05** Google Play beta and release 🧑
 - [ ] **M6-06** TestFlight beta and App Store release 🧑
-- [ ] **M6-07** Website and user docs (mailcrane.app) 🤖
+- [x] **M6-07** Website and user docs (mailcrane.app) 🤖
 - [ ] **M6-08** Privacy policy (short and honest: we collect nothing) 🧑
 
 ## Before going public (from the name decision)
