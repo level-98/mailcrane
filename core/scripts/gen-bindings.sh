@@ -12,6 +12,7 @@ cargo build -p mailcrane-ffi --features bindgen
 
 case "$(uname -s)" in
     Darwin) lib="$target_dir/debug/libmailcrane_ffi.dylib" ;;
+    MINGW* | MSYS* | CYGWIN*) lib="$target_dir/debug/mailcrane_ffi.dll" ;;
     *) lib="$target_dir/debug/libmailcrane_ffi.so" ;;
 esac
 

@@ -1,9 +1,9 @@
 //! The only API the apps see; the UniFFI boundary.
 
-// UniFFI's generated scaffolding contains `unsafe` code, so `forbid` and
-// `deny` cannot be used here. Hand-written code in this crate must still
-// contain no `unsafe`.
-#![allow(unsafe_code)]
+// `deny`, not `forbid`: UniFFI's generated scaffolding contains `unsafe` code
+// and allows it locally, which `forbid` would reject. `deny` still rejects any
+// `unsafe` in hand-written code here.
+#![deny(unsafe_code)]
 
 uniffi::setup_scaffolding!();
 
