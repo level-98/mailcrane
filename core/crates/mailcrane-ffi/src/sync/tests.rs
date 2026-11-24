@@ -110,6 +110,15 @@ fn sync_load_older_and_fetch_body_through_the_ffi() {
     let engine = SyncEngine::new(path.to_string_lossy().into_owned(), collect.clone());
     *engine.extra_root_cert.lock().expect("lock") = Some(imap.root_cert_der().to_vec());
 
+    // Listing folders keeps the existing row (and its id) for INBOX.
+    assert_eq!(engine.refresh_folders(account.0), Ok(Some(folder.0)));
+    assert_eq!(
+        engine.refresh_folders(9999),
+        Err(SyncFailure::Failed {
+            kind: SyncErrorKind::NotFound
+        })
+    );
+
     assert_eq!(engine.sync_folder(folder.0), Ok(200));
     assert_eq!(engine.load_older(folder.0, 200), Ok(100));
     let store = Store::open(&path).expect("store");

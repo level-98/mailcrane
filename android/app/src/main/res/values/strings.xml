@@ -46,4 +46,30 @@
     <string name="setup_error_timeout_smtp">The outgoing mail server took too long to answer. Check the server name and port, or try again later.</string>
     <string name="setup_error_save_failed">Both servers accepted the sign-in, but the account couldn’t be saved on this device. Try again.</string>
     <string name="setup_error_unexpected">Something went wrong while checking the settings. Nothing was saved.</string>
+
+    <!-- Message list (M1-10) -->
+    <string name="message_list_inbox">Inbox</string>
+    <string name="message_list_empty">No messages in this folder</string>
+    <string name="message_list_loading">Checking for mail…</string>
+    <string name="message_list_retry">Try again</string>
+    <string name="message_list_no_inbox">This account has no inbox on the server.</string>
+    <string name="message_no_subject">(No subject)</string>
+    <string name="message_unknown_sender">Unknown sender</string>
+    <!-- TalkBack reads one row as these parts joined by spaces, e.g. "Unread. From Ana. Subject: Lunch. 10:42. Has attachment." -->
+    <string name="message_a11y_unread">Unread.</string>
+    <string name="message_a11y_flagged">Flagged.</string>
+    <string name="message_a11y_from">From %1$s.</string>
+    <string name="message_a11y_subject">Subject: %1$s.</string>
+    <string name="message_a11y_date">%1$s.</string>
+    <string name="message_a11y_attachment">Has attachment.</string>
+
+    <!-- Sync failures, shown in a snackbar -->
+    <string name="sync_error_network">Couldn’t reach the mail server. Check your connection.</string>
+    <string name="sync_error_tls">Couldn’t make a secure connection to the mail server.</string>
+    <string name="sync_error_auth">The mail server didn’t accept your login details.</string>
+    <string name="sync_error_protocol">The mail server sent something unexpected.</string>
+    <string name="sync_error_timeout">The mail server took too long to answer.</string>
+    <string name="sync_error_storage">Couldn’t read or save mail on this device.</string>
+    <string name="sync_error_not_found">This folder no longer exists.</string>
+    <string name="sync_error_folder_reset">The folder changed on the server. Pull to refresh again.</string>
 </resources>
