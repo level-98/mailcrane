@@ -54,7 +54,7 @@ Goal: add an IMAP account and read your inbox, online and offline.
 ## M2 — Send mail
 
 - [x] **M2-01** SMTP sending with STARTTLS and implicit TLS 🔒🤖
-- [ ] **M2-02** Compose screen: to/cc/bcc, subject, plain-text body 🤖
+- [x] **M2-02** Compose screen: to/cc/bcc, subject, plain-text body 🤖
 - [ ] **M2-03** Reply, reply-all and forward, with correct `In-Reply-To` and `References` headers 🤖
 - [ ] **M2-04** Attachments: add, send, preview and save 🤖
 - [ ] **M2-05** Drafts: autosave locally and to the server's Drafts folder 🤖
@@ -92,7 +92,7 @@ Goal: add an IMAP account and read your inbox, online and offline.
 ## M5 — Privacy and security
 
 - [ ] **M5-01** Tracking-pixel detection and a "trackers blocked" indicator 🤖
-- [ ] **M5-02** Strip tracking parameters from links (utm_ and similar) before opening 🟢🤖
+- [x] **M5-02** Strip tracking parameters from links (utm_ and similar) before opening 🟢🤖
 - [ ] **M5-03** App lock with biometrics or PIN, Android 🔒
 - [ ] **M5-04** OpenPGP: read and send encrypted and signed mail, Autocrypt, key management 🔒
 - [ ] **M5-05** S/MIME 🔒
