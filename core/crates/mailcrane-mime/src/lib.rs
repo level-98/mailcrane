@@ -8,11 +8,13 @@
 mod headers;
 pub mod limits;
 mod model;
+mod sanitize;
 mod snippet;
 
 use mail_parser::{MessageParser, PartFlags, PartKind};
 
 pub use model::{Address, AttachmentInfo, Disposition, ParsedMessage, UnsanitisedHtml};
+pub use sanitize::{sanitize_html, SanitizeOptions, SanitizedHtml};
 
 /// The name of this crate.
 pub const CRATE_NAME: &str = env!("CARGO_PKG_NAME");

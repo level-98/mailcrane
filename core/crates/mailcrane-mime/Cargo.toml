@@ -11,6 +11,7 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
+ammonia = "4.2.5"
 mail-parser = { version = "1.0.2", features = ["full_encoding"] }
 thiserror = "2.0.21"
 
