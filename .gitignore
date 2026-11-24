@@ -10,3 +10,6 @@ build/
 xcuserdata/
 *.xcuserstate
 .env
+ios/build/
+ios/*.xcodeproj
+ios/MailcraneCore/Sources/MailcraneCore/MailcraneCore.swift
