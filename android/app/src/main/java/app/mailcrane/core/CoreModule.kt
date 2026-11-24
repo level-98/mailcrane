@@ -37,4 +37,10 @@ object CoreModule {
 
     @Provides
     fun provideLiveUpdatesEngine(core: UniffiMailboxCore): LiveUpdatesEngine = core
+
+    @Provides
+    @Singleton
+    fun provideComposeCore(
+        @ApplicationContext context: Context,
+    ): ComposeCore = UniffiComposeCore(dbPath = dbPath(context))
 }

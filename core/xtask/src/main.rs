@@ -77,7 +77,7 @@ Commands:
   bindings  generate Kotlin and Swift bindings into core/target/bindings/
   fuzz <target> [--seconds N]
             run a fuzz target (default 60 s); needs nightly and cargo-fuzz.
-            Not part of ci. Targets: mime_parse, imap_response, html_sanitize
+            Not part of ci. Targets: mime_parse, imap_response, html_sanitize, address_list
 
 Flags (for ci):
   --strict       a skipped step counts as a failure
@@ -412,10 +412,11 @@ fn target_dir(ctx: &Ctx) -> PathBuf {
 
 /// Fuzz targets in `core/fuzz/fuzz_targets/`, each with the fixture folder
 /// (under `tests/fixtures/`) and file extension its seed corpus comes from.
-const FUZZ_TARGETS: [(&str, &str, &str); 3] = [
+const FUZZ_TARGETS: [(&str, &str, &str); 4] = [
     ("mime_parse", "mime", "eml"),
     ("imap_response", "imap", "imap"),
     ("html_sanitize", "html", "html"),
+    ("address_list", "address", "txt"),
 ];
 
 /// `cargo xtask fuzz <target> [--seconds N]`. Seeds `core/fuzz/corpus/<target>/`

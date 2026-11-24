@@ -11,6 +11,7 @@ target for 10 minutes and keeps the corpus between runs.
 | `mime_parse` | `mailcrane_mime::parse_message` | `tests/fixtures/mime/*.eml` |
 | `imap_response` | `mailcrane_imap::parse_response`, over a stream of responses | `tests/fixtures/imap/*.imap` |
 | `html_sanitize` | `mailcrane_mime::sanitize_html`, on input wrapped in a `text/html` message | `tests/fixtures/html/*.html` |
+| `address_list` | `mailcrane_mime::parse_address_list` and `split_address_list`, on the input as lossy UTF-8 | `tests/fixtures/address/*.txt` |
 
 ## Running a target
 

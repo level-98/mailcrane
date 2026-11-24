@@ -41,5 +41,12 @@ test = false
 doc = false
 bench = false
 
+[[bin]]
+name = "address_list"
+path = "fuzz_targets/address_list.rs"
+test = false
+doc = false
+bench = false
+
 [profile.release]
 debug = 1

@@ -5,6 +5,7 @@
 #![forbid(unsafe_code)]
 
 pub mod account;
+pub mod compose;
 pub mod events;
 pub mod links;
 pub mod secrets;

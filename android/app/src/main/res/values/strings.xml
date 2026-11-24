@@ -109,4 +109,48 @@
     <string name="sync_error_storage">Couldn’t read or save mail on this device.</string>
     <string name="sync_error_not_found">This folder no longer exists.</string>
     <string name="sync_error_folder_reset">The folder changed on the server. Pull to refresh again.</string>
+    <!-- Compose (M2-02) -->
+    <string name="compose_fab">Compose</string>
+    <string name="compose_title">New message</string>
+    <string name="compose_close">Close</string>
+    <string name="compose_send">Send</string>
+    <string name="compose_sending">Sending…</string>
+    <string name="compose_from">From</string>
+    <string name="compose_to">To</string>
+    <string name="compose_cc">Cc</string>
+    <string name="compose_bcc">Bcc</string>
+    <!-- Shows the Cc and Bcc fields -->
+    <string name="compose_cc_bcc">Cc/Bcc</string>
+    <string name="compose_subject">Subject</string>
+    <string name="compose_body">Message</string>
+    <string name="compose_remove_recipient">Remove %1$s</string>
+    <!-- TalkBack description of a chip whose address can't be used -->
+    <string name="compose_recipient_invalid">%1$s, not a valid email address</string>
+    <string name="compose_discard_title">Discard draft?</string>
+    <string name="compose_discard_text">This message hasn’t been saved and will be lost.</string>
+    <string name="compose_discard_confirm">Discard</string>
+    <string name="compose_discard_keep">Keep editing</string>
+    <string name="compose_sent">Message sent</string>
+    <string name="compose_sent_partly">Message sent, but these addresses were refused: %1$s</string>
+
+    <!-- Send failures, shown above the message. Nothing was sent in any of these cases. -->
+    <string name="compose_error_kept">Your message is still here.</string>
+    <string name="compose_error_dismiss">Dismiss</string>
+    <string name="compose_error_invalid_recipients">Some addresses aren’t valid. Fix or remove the ones marked with the warning icon.</string>
+    <string name="compose_error_no_recipients">Add at least one recipient.</string>
+    <string name="compose_error_too_many_recipients">There are too many recipients for one message.</string>
+    <string name="compose_error_too_large">This message is too large to send.</string>
+    <string name="compose_error_account_not_found">This account no longer exists on this device.</string>
+    <string name="compose_error_invalid_sender">This account’s email address can’t be used to send mail.</string>
+    <string name="compose_error_missing_credentials">The login details for this account are missing on this device.</string>
+    <string name="compose_error_storage">Couldn’t read this account’s settings on this device.</string>
+    <string name="compose_error_cannot_connect">Couldn’t reach the outgoing mail server. Check your connection.</string>
+    <string name="compose_error_tls">Couldn’t make a secure connection to the outgoing mail server.</string>
+    <string name="compose_error_starttls">The outgoing mail server doesn’t offer STARTTLS, so nothing was sent.</string>
+    <string name="compose_error_auth">The outgoing mail server didn’t accept your login details.</string>
+    <string name="compose_error_timeout">The outgoing mail server took too long to answer.</string>
+    <string name="compose_error_all_rejected">The server refused every recipient: %1$s</string>
+    <string name="compose_error_refused_temporary">The server couldn’t take the message right now. Try again later.</string>
+    <string name="compose_error_refused_permanent">The server refused the message.</string>
+    <string name="compose_error_unexpected">Something went wrong, and the message wasn’t sent.</string>
 </resources>
