@@ -18,7 +18,7 @@ zola build
 lychee --offline public/
 ```
 
-The roadmap refresh happens during CI builds and deploys. Because the site and workflow stay on the non-default `website` branch, GitHub does not run issue-event or scheduled workflows from this branch; an issue status change by itself does not trigger a deployment. The browser reads only the generated local data and does not call GitHub.
+After [PR #131](https://github.com/level-98/mailcrane/pull/131) is merged into `main`, its issue and nightly triggers will check out this `website` branch, regenerate the roadmap, build the site, and deploy it. A manual run is available from the `Sync roadmap` workflow in GitHub Actions. Until that companion change is merged, pushes to `website` still refresh the snapshot through the site workflow. The browser reads only generated local data and does not call GitHub.
 
 ## Deployment
 
