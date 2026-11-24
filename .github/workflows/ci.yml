@@ -52,34 +52,7 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v6
 
-      # The ios step always skips on Linux; the ios job below runs it.
+      # iOS checks run only in the dedicated ios.yml workflow.
       - run: cargo xtask ci --strict --skip ios
         env:
           ANDROID_NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/${{ env.NDK_VERSION }}
-
-  ios:
-    runs-on: macos-latest
-    timeout-minutes: 60
-    steps:
-      - uses: actions/checkout@v7
-
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: aarch64-apple-ios,aarch64-apple-ios-sim
-
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: core
-
-      - name: Install XcodeGen and SwiftLint
-        run: brew install xcodegen swiftlint
-
-      - run: cargo xtask ci --only ios --strict
-
-      # The owner has no Mac, so this artifact is how iOS UI gets reviewed.
-      - uses: actions/upload-artifact@v7
-        if: always()
-        with:
-          name: ios-screenshots
-          path: ios/build/screenshots
-          if-no-files-found: ignore

@@ -358,7 +358,7 @@ fn ios(ctx: &Ctx) -> Result<Outcome, Error> {
         "-scheme".to_string(),
         "Mailcrane".to_string(),
         "-destination".to_string(),
-        "platform=iOS Simulator,OS=latest".to_string(),
+        "platform=iOS Simulator,name=iPhone 17".to_string(),
         "-resultBundlePath".to_string(),
         result_bundle.display().to_string(),
     ];

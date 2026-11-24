@@ -24,7 +24,7 @@ sh scripts/build-xcframework.sh
 xcodegen
 swiftlint --strict
 xcodebuild test -project Mailcrane.xcodeproj -scheme Mailcrane \
-  -destination 'platform=iOS Simulator,OS=latest'
+  -destination 'platform=iOS Simulator,name=iPhone 17'
 ```
 
 The XCFramework is generated at `ios/build/MailcraneFFI.xcframework`. Generated
