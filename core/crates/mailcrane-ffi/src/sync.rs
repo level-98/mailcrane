@@ -294,11 +294,7 @@ impl SyncEngine {
     pub(crate) fn with_session<T>(
         &self,
         account: AccountId,
-        job: impl for<'a> FnOnce(
-            &'a Store,
-            &'a mut Session,
-            &'a ListenerAdapter,
-        ) -> SyncFuture<'a, T>,
+        job: impl for<'a> FnOnce(&'a Store, &'a mut Session, &'a ListenerAdapter) -> SyncFuture<'a, T>,
     ) -> Result<T, SyncFailure> {
         let _guard = self.busy.lock().unwrap_or_else(|p| p.into_inner());
         let store = self.open_store()?;

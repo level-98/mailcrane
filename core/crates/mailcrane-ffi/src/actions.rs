@@ -148,9 +148,7 @@ impl SyncEngine {
             return Ok(0);
         }
         let report = self.with_session(account, |store, session, listener| {
-            Box::pin(async move {
-                actions::replay(store, session, listener, account, now()).await
-            })
+            Box::pin(async move { actions::replay(store, session, listener, account, now()).await })
         })?;
         Ok(u32::try_from(report.remaining).unwrap_or(u32::MAX))
     }

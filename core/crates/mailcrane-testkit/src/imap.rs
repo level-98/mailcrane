@@ -357,7 +357,8 @@ async fn handle_imap_command(
             // IMAP4rev2 includes MOVE and UID EXPUNGE (RFC 9051 §1), so a server
             // without either speaks only IMAP4rev1; it keeps SPECIAL-USE through
             // LIST-EXTENDED (RFC 6154 §5.1).
-            let mut caps = if quirks.contains(&Quirk::NoMove) || quirks.contains(&Quirk::NoUidplus) {
+            let mut caps = if quirks.contains(&Quirk::NoMove) || quirks.contains(&Quirk::NoUidplus)
+            {
                 "IMAP4rev1 LIST-EXTENDED".to_string()
             } else {
                 "IMAP4rev2 IMAP4rev1".to_string()

@@ -159,4 +159,18 @@
     <string name="settings_back">Back</string>
     <string name="settings_clean_links">Remove tracking from links</string>
     <string name="settings_clean_links_summary">Strip tracking parameters such as utm_source from links before opening them</string>
+
+    <!-- Message actions (M1-14) -->
+    <string name="message_archive">Archive</string>
+    <string name="message_delete">Delete</string>
+    <string name="message_mark_unread">Mark as unread</string>
+    <string name="message_flag">Flag</string>
+    <string name="message_unflag">Remove flag</string>
+    <string name="message_more">More options</string>
+    <string name="message_move">Move to…</string>
+    <string name="message_move_title">Move to folder</string>
+    <string name="message_move_cancel">Cancel</string>
+    <string name="action_no_archive_folder">This account has no Archive folder</string>
+    <string name="action_not_applied">Couldn’t change this message</string>
+    <string name="action_undone">The server didn’t accept a change, so it was undone</string>
 </resources>

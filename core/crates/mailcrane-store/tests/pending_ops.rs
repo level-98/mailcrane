@@ -225,7 +225,10 @@ fn deferring_and_steps_are_saved_and_survive_a_reopen() -> R {
     let store = Store::open(&path)?;
     let ops = store.pending_ops(account)?;
     assert_eq!(ops.len(), 1);
-    assert_eq!((ops[0].step, ops[0].attempts, ops[0].next_attempt_at), (1, 3, 140));
+    assert_eq!(
+        (ops[0].step, ops[0].attempts, ops[0].next_attempt_at),
+        (1, 3, 140)
+    );
     assert_eq!(ops[0].messages.len(), 3);
     assert_eq!(store.count_pending_ops(account)?, 1);
     Ok(())
@@ -257,10 +260,18 @@ fn a_sync_does_not_undo_a_queued_flag_change() -> R {
 fn queueing_for_an_unknown_account_changes_nothing() -> R {
     let f = fixture(Store::open_in_memory()?)?;
     let first = f.messages[0];
-    let result = f
-        .store
-        .queue_op(AccountId(999), OpKind::MarkRead, f.inbox, None, &[first], 100);
+    let result = f.store.queue_op(
+        AccountId(999),
+        OpKind::MarkRead,
+        f.inbox,
+        None,
+        &[first],
+        100,
+    );
     assert!(result.is_err());
-    assert!(!seen(&f.store, first)?, "rolled back with the failed insert");
+    assert!(
+        !seen(&f.store, first)?,
+        "rolled back with the failed insert"
+    );
     Ok(())
 }

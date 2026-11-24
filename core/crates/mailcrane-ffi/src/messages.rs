@@ -172,6 +172,8 @@ pub struct MessageDetail {
     pub subject: String,
     /// Whether the message has been read (`\Seen`).
     pub is_seen: bool,
+    /// Whether the message is flagged (`\Flagged`).
+    pub is_flagged: bool,
     /// The body.
     pub body: MessageBody,
     /// Attached files, not counting inline images shown in the body.
@@ -296,6 +298,7 @@ pub fn get_message(
         date: d.date,
         subject: one_line(&d.subject),
         is_seen: d.flags.seen,
+        is_flagged: d.flags.flagged,
         body: MessageBody::NotDownloaded,
         attachments: Vec::new(),
     };

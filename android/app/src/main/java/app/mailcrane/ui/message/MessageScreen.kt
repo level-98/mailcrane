@@ -23,17 +23,22 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
@@ -51,6 +56,7 @@ import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.mailcrane.R
 import app.mailcrane.core.AttachmentInfo
+import app.mailcrane.core.FolderSummary
 import app.mailcrane.core.InlinePart
 import app.mailcrane.core.MessageAddress
 import app.mailcrane.core.MessageBody
@@ -68,6 +74,7 @@ import java.util.Locale
 fun MessageScreen(
     messageId: Long,
     onBack: () -> Unit,
+    folders: List<FolderSummary> = emptyList(),
     viewModel: MessageViewModel =
         hiltViewModel<MessageViewModel, MessageViewModel.Factory>(
             key = "message-$messageId",
@@ -76,9 +83,38 @@ fun MessageScreen(
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
+    val snackbar = remember { SnackbarHostState() }
+    val resources = LocalResources.current
+    val back by rememberUpdatedState(onBack)
+    LaunchedEffect(viewModel) {
+        viewModel.effects.collect { effect ->
+            when (effect) {
+                MessageEffect.Close -> back()
+                is MessageEffect.ActionRefused ->
+                    snackbar.showSnackbar(
+                        resources.getString(
+                            when (effect.reason) {
+                                ActionRefusal.NO_ARCHIVE_FOLDER -> R.string.action_no_archive_folder
+                                ActionRefusal.FAILED -> R.string.action_not_applied
+                            },
+                        ),
+                    )
+            }
+        }
+    }
     MessageContent(
         state = state,
         onBack = onBack,
+        snackbar = snackbar,
+        folders = folders,
+        actions =
+            MessageActions(
+                onArchive = viewModel::archive,
+                onDelete = viewModel::delete,
+                onMarkUnread = viewModel::markUnread,
+                onToggleFlag = viewModel::toggleFlag,
+                onMove = viewModel::moveTo,
+            ),
         onRetry = viewModel::load,
         onLoadRemoteImages = viewModel::loadRemoteImages,
         inlinePart = viewModel::inlinePart,
@@ -95,11 +131,24 @@ fun MessageContent(
     onLoadRemoteImages: () -> Unit,
     inlinePart: (String) -> InlinePart?,
     onOpenLink: (Uri) -> Unit,
+    snackbar: SnackbarHostState = remember { SnackbarHostState() },
+    folders: List<FolderSummary> = emptyList(),
+    actions: MessageActions = MessageActions(),
 ) {
     Scaffold(
+        snackbarHost = { SnackbarHost(snackbar) },
         topBar = {
             TopAppBar(
                 title = {},
+                actions = {
+                    if (state is MessageState.Ready) {
+                        MessageToolbarActions(
+                            flagged = state.message.isFlagged,
+                            moveTargets = folders.filter { it.id != state.message.folderId },
+                            actions = actions,
+                        )
+                    }
+                },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(

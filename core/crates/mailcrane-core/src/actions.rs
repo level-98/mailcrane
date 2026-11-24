@@ -157,7 +157,12 @@ pub fn apply_action(
     }
     let op = store.queue_op(account, kind, folder_id, dest, &needed, now)?;
     listener.on_event(CoreEvent::MessagesChanged { folder_id });
-    tracing::debug!(?kind, count = needed.len(), queued = op.is_some(), "message action applied");
+    tracing::debug!(
+        ?kind,
+        count = needed.len(),
+        queued = op.is_some(),
+        "message action applied"
+    );
     Ok(Some(Applied {
         account,
         queued: op.is_some(),

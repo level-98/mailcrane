@@ -120,11 +120,8 @@ async fn setup(imap: &FakeImap, store: Store) -> Setup {
     let mut session = connect(imap).await;
     let listed = session.list_folders().await.expect("list");
     let ids = save_folders(&store, account, &listed).expect("save");
-    let folders: Vec<(String, FolderId)> = listed
-        .iter()
-        .map(|f| f.raw_name.clone())
-        .zip(ids)
-        .collect();
+    let folders: Vec<(String, FolderId)> =
+        listed.iter().map(|f| f.raw_name.clone()).zip(ids).collect();
     let inbox = folders
         .iter()
         .find(|(n, _)| n == "INBOX")
@@ -132,8 +129,13 @@ async fn setup(imap: &FakeImap, store: Store) -> Setup {
         .expect("inbox");
     {
         let listener = Events::default();
-        let mut syncer =
-            FolderSyncer::new(&store, &mut session, &listener, account, SyncConfig::default());
+        let mut syncer = FolderSyncer::new(
+            &store,
+            &mut session,
+            &listener,
+            account,
+            SyncConfig::default(),
+        );
         syncer.sync_folder(inbox).await.expect("sync");
     }
     session.logout().await;
@@ -197,7 +199,10 @@ async fn flag_actions_apply_locally_then_reach_the_server() {
     assert!(events
         .all()
         .contains(&CoreEvent::MessagesChanged { folder_id: s.inbox }));
-    assert!(server_flags(&imap, "INBOX", 1).await.is_empty(), "not yet sent");
+    assert!(
+        server_flags(&imap, "INBOX", 1).await.is_empty(),
+        "not yet sent"
+    );
 
     let report = replay_now(&imap, &s, &events, NOW).await;
     assert_eq!((report.done, report.failed, report.remaining), (2, 0, 0));
@@ -251,8 +256,13 @@ async fn delete_in_trash_deletes_for_good_with_uid_expunge() {
     {
         let mut session = connect(&imap).await;
         let listener = Events::default();
-        let mut syncer =
-            FolderSyncer::new(&s.store, &mut session, &listener, s.account, SyncConfig::default());
+        let mut syncer = FolderSyncer::new(
+            &s.store,
+            &mut session,
+            &listener,
+            s.account,
+            SyncConfig::default(),
+        );
         syncer.sync_folder(trash).await.expect("sync trash");
     }
     let id = s.store.list_messages(trash, 10, 0).expect("list")[0].id;
@@ -441,7 +451,11 @@ async fn a_copy_fallback_interrupted_after_copy_does_not_copy_again() {
 
     let second = replay_now(&imap, &s, &events, NOW + 60).await;
     assert_eq!(second.done, 1);
-    assert_eq!(server_uids(&imap, "Archive").await.len(), 1, "not copied twice");
+    assert_eq!(
+        server_uids(&imap, "Archive").await.len(),
+        1,
+        "not copied twice"
+    );
     assert_eq!(server_uids(&imap, "INBOX").await, [2, 3]);
 }
 

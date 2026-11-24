@@ -108,16 +108,18 @@ fn revert_local(tx: &Transaction<'_>, kind: OpKind, id: MessageId) -> Result<(),
     match kind.opposite() {
         Some(opposite) => apply_local(tx, opposite, id),
         None => {
-            tx.execute("UPDATE messages SET hidden = 0 WHERE id = ?1", params![id.0])?;
+            tx.execute(
+                "UPDATE messages SET hidden = 0 WHERE id = ?1",
+                params![id.0],
+            )?;
             Ok(())
         }
     }
 }
 
 fn load_messages(tx: &rusqlite::Connection, op: OpId) -> Result<Vec<OpMessage>, StoreError> {
-    let mut stmt = tx.prepare(
-        "SELECT message_id, uid FROM pending_op_messages WHERE op_id = ?1 ORDER BY uid",
-    )?;
+    let mut stmt = tx
+        .prepare("SELECT message_id, uid FROM pending_op_messages WHERE op_id = ?1 ORDER BY uid")?;
     let mut rows = stmt.query(params![op.0])?;
     let mut out = Vec::new();
     while let Some(r) = rows.next()? {
@@ -189,13 +191,7 @@ impl Store {
             tx.execute(
                 "INSERT INTO pending_ops (account_id, kind, folder_id, dest_folder_id, \
                  next_attempt_at, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?5)",
-                params![
-                    account.0,
-                    kind.as_str(),
-                    folder.0,
-                    dest.map(|d| d.0),
-                    now
-                ],
+                params![account.0, kind.as_str(), folder.0, dest.map(|d| d.0), now],
             )?;
             let op = tx.last_insert_rowid();
             let mut insert = tx.prepare(

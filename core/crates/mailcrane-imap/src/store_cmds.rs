@@ -43,9 +43,9 @@ impl ChangeError {
             Self::Refused { transient } => *transient,
             // A refused SELECT (the folder is gone), bad input or a local
             // database failure won't get better by waiting.
-            Self::Imap(ImapError::CommandFailed | ImapError::InvalidInput | ImapError::Store(_)) => {
-                false
-            }
+            Self::Imap(
+                ImapError::CommandFailed | ImapError::InvalidInput | ImapError::Store(_),
+            ) => false,
             Self::Imap(_) => true,
         }
     }
