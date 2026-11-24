@@ -39,7 +39,7 @@ Goal: add an IMAP account and read your inbox, online and offline.
 - [ ] **M1-05** Initial sync: fetch headers for recent messages, paginate older ones on demand 🤖
 - [ ] **M1-06** Incremental sync with CONDSTORE/QRESYNC, falling back to UID comparison 🤖
 - [ ] **M1-07** IMAP IDLE for near-real-time updates while the app is open 🤖
-- [ ] **M1-08** MIME parsing: multipart, charsets, encoded words, inline and attached files, with fixtures 🤖
+- [x] **M1-08** MIME parsing: multipart, charsets, encoded words, inline and attached files, with fixtures 🤖
 - [ ] **M1-09** HTML sanitiser: strip scripts and trackers, block remote content by default 🔒🤖
 - [ ] **M1-10** Message list screen, Android 🤖
 - [ ] **M1-11** Message list screen, iOS 🤖
