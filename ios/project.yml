@@ -22,6 +22,7 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: app.mailcrane
         SWIFT_VERSION: "5.10"
+        GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_KEY_CFBundleDisplayName: Mailcrane
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
     buildPhases:
@@ -41,6 +42,9 @@ targets:
       - MailcraneTests
     dependencies:
       - target: Mailcrane
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
 
   MailcraneUITests:
     type: bundle.ui-testing
@@ -49,6 +53,9 @@ targets:
       - MailcraneUITests
     dependencies:
       - target: Mailcrane
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
 
 schemes:
   Mailcrane:
