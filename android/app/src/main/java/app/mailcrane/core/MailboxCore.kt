@@ -1,13 +1,19 @@
 package app.mailcrane.core
 
 import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.channels.awaitClose
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.buffer
 import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArraySet
 
 /**
@@ -104,7 +110,53 @@ class UniffiMailboxCore(
     }
 
     override suspend fun markRead(messageId: Long) {
-        withContext(io) { engine.markRead(messageId) }
+        try {
+            applyAction(messageId, MessageAction.MarkRead)
+        } catch (_: ActionFailure.NotFound) {
+            throw SyncFailure.Failed(SyncErrorKind.NOT_FOUND)
+        } catch (_: ActionFailure) {
+            throw SyncFailure.Failed(SyncErrorKind.STORAGE)
+        }
+    }
+
+    override suspend fun applyAction(
+        messageId: Long,
+        action: MessageAction,
+    ) {
+        val account = withContext(io) { engine.applyAction(listOf(messageId), action) }
+        if (account != null) replaySoon(account)
+    }
+
+    // Replays outlive the screen that started them (an archived message's screen closes at once).
+    private val background = CoroutineScope(SupervisorJob() + io)
+    private val replays = ConcurrentHashMap<Long, Job>()
+
+    /**
+     * Sends the account's queued actions to the server now, then again with back-off while some are
+     * left (offline, or the server busy). One loop per account; a newer action restarts it.
+     */
+    private fun replaySoon(accountId: Long) {
+        replays[accountId]?.cancel()
+        replays[accountId] =
+            background.launch {
+                var wait = FIRST_RETRY_MS
+                while (true) {
+                    val left =
+                        try {
+                            engine.replayActions(accountId).toInt()
+                        } catch (_: SyncFailure) {
+                            -1
+                        }
+                    if (left == 0) break
+                    delay(wait)
+                    wait = (wait * 2).coerceAtMost(MAX_RETRY_MS)
+                }
+            }
+    }
+
+    private companion object {
+        const val FIRST_RETRY_MS = 5_000L
+        const val MAX_RETRY_MS = 600_000L
     }
 
     override fun inlinePart(

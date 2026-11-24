@@ -1,5 +1,6 @@
 package app.mailcrane.ui.messagelist
 
+import app.mailcrane.core.ActionKind
 import app.mailcrane.core.CoreEvent
 import app.mailcrane.core.FolderSummary
 import app.mailcrane.core.MailboxCore
@@ -190,6 +191,16 @@ class MessageListViewModelTest {
         assertEquals(500L, messages.first().id)
         assertTrue(messages.first { it.id == 119L }.isSeen)
     }
+
+    @Test
+    fun anUndoneActionIsReportedOnce() =
+        runTest {
+            val core = FakeMailbox(stored = 3)
+            val vm = MessageListViewModel(core, FOLDER)
+            core.events.tryEmit(CoreEvent.ActionFailed(1, ActionKind.MOVE, listOf(7L), SyncErrorKind.PROTOCOL))
+            vm.actionsUndone.first()
+            assertEquals(3, vm.state.value.messages.size)
+        }
 
     @Test
     fun eventsForOtherFoldersAreIgnored() {

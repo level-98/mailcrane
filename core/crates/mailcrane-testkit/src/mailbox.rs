@@ -280,6 +280,135 @@ impl Mailbox {
         }
     }
 
+    /// Adds (`add`) or removes `flag` on every message of `folder` whose UID
+    /// `selected` accepts, raising mod-sequences of messages that changed.
+    /// Returns false if the folder doesn't exist.
+    pub async fn store_flag(
+        &self,
+        folder: &str,
+        selected: impl Fn(u32) -> bool,
+        flag: &str,
+        add: bool,
+    ) -> bool {
+        let mut inner = self.inner.lock().await;
+        let Some(target) = inner.folders.get_mut(folder) else {
+            return false;
+        };
+        let mut highest = target.highest_modseq;
+        for message in target.messages.iter_mut().filter(|m| selected(m.uid)) {
+            let has = message.flags.iter().any(|f| f.eq_ignore_ascii_case(flag));
+            if add && !has {
+                message.flags.push(flag.to_string());
+            } else if !add && has {
+                message.flags.retain(|f| !f.eq_ignore_ascii_case(flag));
+            } else {
+                continue;
+            }
+            highest = highest.saturating_add(1);
+            message.modseq = highest;
+        }
+        target.highest_modseq = highest;
+        true
+    }
+
+    /// Copies the messages of `from` whose UID `selected` accepts to `to`,
+    /// with new UIDs and the same flags, as `COPY` does. Returns false (and
+    /// copies nothing) if either folder doesn't exist.
+    pub async fn copy(&self, from: &str, selected: impl Fn(u32) -> bool, to: &str) -> bool {
+        let mut inner = self.inner.lock().await;
+        if !inner.folders.contains_key(to) {
+            return false;
+        }
+        let Some(source) = inner.folders.get(from) else {
+            return false;
+        };
+        let picked: Vec<Message> = source
+            .messages
+            .iter()
+            .filter(|m| selected(m.uid))
+            .cloned()
+            .collect();
+        let Some(target) = inner.folders.get_mut(to) else {
+            return false;
+        };
+        for mut message in picked {
+            message.uid = target.next_uid;
+            target.next_uid = target.next_uid.saturating_add(1);
+            message.modseq = target.bump();
+            target.messages.push(message);
+        }
+        drop(inner);
+        self.notify.notify_waiters();
+        true
+    }
+
+    /// Removes the messages of `folder` that have `\Deleted` and whose UID
+    /// `selected` accepts, remembering them for `VANISHED`. Returns the
+    /// removed UIDs.
+    pub async fn expunge_deleted(&self, folder: &str, selected: impl Fn(u32) -> bool) -> Vec<u32> {
+        let mut inner = self.inner.lock().await;
+        let Some(target) = inner.folders.get_mut(folder) else {
+            return Vec::new();
+        };
+        let gone: Vec<u32> = target
+            .messages
+            .iter()
+            .filter(|m| {
+                selected(m.uid) && m.flags.iter().any(|f| f.eq_ignore_ascii_case("\\Deleted"))
+            })
+            .map(|m| m.uid)
+            .collect();
+        target.messages.retain(|m| !gone.contains(&m.uid));
+        for uid in &gone {
+            let modseq = target.bump();
+            target.vanished.push((*uid, modseq));
+        }
+        gone
+    }
+
+    /// Moves messages from `from` to `to`, as `MOVE` does: a copy, then an
+    /// expunge of the originals. Returns false if either folder doesn't exist.
+    pub async fn move_messages(
+        &self,
+        from: &str,
+        selected: impl Fn(u32) -> bool + Copy,
+        to: &str,
+    ) -> bool {
+        if !self.copy(from, selected, to).await {
+            return false;
+        }
+        let mut inner = self.inner.lock().await;
+        if let Some(source) = inner.folders.get_mut(from) {
+            let gone: Vec<u32> = source
+                .messages
+                .iter()
+                .filter(|m| selected(m.uid))
+                .map(|m| m.uid)
+                .collect();
+            source.messages.retain(|m| !gone.contains(&m.uid));
+            for uid in gone {
+                let modseq = source.bump();
+                source.vanished.push((uid, modseq));
+            }
+        }
+        true
+    }
+
+    /// Creates an empty folder if it doesn't exist.
+    pub async fn create_folder(&self, folder: &str) {
+        let mut inner = self.inner.lock().await;
+        inner
+            .folders
+            .entry(folder.to_string())
+            .or_insert_with(|| Folder::new(Vec::new()));
+    }
+
+    /// Deletes a folder and its messages, as another client would.
+    pub async fn delete_folder(&self, folder: &str) {
+        let mut inner = self.inner.lock().await;
+        inner.folders.remove(folder);
+    }
+
     pub async fn messages(&self, folder: &str) -> Vec<Message> {
         let inner = self.inner.lock().await;
         inner

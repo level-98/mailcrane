@@ -1,7 +1,9 @@
 package app.mailcrane.ui.message
 
+import app.mailcrane.core.ActionFailure
 import app.mailcrane.core.InlinePart
 import app.mailcrane.core.LinkCleaner
+import app.mailcrane.core.MessageAction
 import app.mailcrane.core.MessageAddress
 import app.mailcrane.core.MessageBody
 import app.mailcrane.core.MessageCore
@@ -11,6 +13,7 @@ import app.mailcrane.core.SyncFailure
 import app.mailcrane.settings.FakeAppSettings
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
@@ -39,6 +42,7 @@ private fun messageViewModel(
 private fun detail(
     body: MessageBody,
     isSeen: Boolean = false,
+    isFlagged: Boolean = false,
 ) = MessageDetail(
     id = ID,
     folderId = 7,
@@ -48,6 +52,7 @@ private fun detail(
     date = 1_772_445_600,
     subject = "Hi",
     isSeen = isSeen,
+    isFlagged = isFlagged,
     body = body,
     attachments = emptyList(),
 )
@@ -99,6 +104,18 @@ private class FakeMessageCore(
         messageId: Long,
         contentId: String,
     ): InlinePart? = parts[contentId]
+
+    val actions = mutableListOf<MessageAction>()
+    var actionFailure: ActionFailure? = null
+
+    override suspend fun applyAction(
+        messageId: Long,
+        action: MessageAction,
+    ) {
+        assertEquals(ID, messageId)
+        actionFailure?.let { throw it }
+        actions += action
+    }
 }
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -224,5 +241,51 @@ class MessageViewModelTest {
 
             settings.setCleanLinks(true)
             assertEquals("cleaned:https://example.com/", vm.linkToOpen("https://example.com/"))
+        }
+
+    @Test
+    fun archiveDeleteMoveAndUnreadCloseTheMessage() =
+        runTest {
+            val core = FakeMessageCore()
+            val vm = messageViewModel(core)
+            vm.archive()
+            assertEquals(MessageEffect.Close, vm.effects.first())
+            vm.delete()
+            assertEquals(MessageEffect.Close, vm.effects.first())
+            vm.moveTo(9)
+            assertEquals(MessageEffect.Close, vm.effects.first())
+            vm.markUnread()
+            assertEquals(MessageEffect.Close, vm.effects.first())
+            assertEquals(
+                listOf(MessageAction.Archive, MessageAction.Delete, MessageAction.Move(9), MessageAction.MarkUnread),
+                core.actions,
+            )
+        }
+
+    @Test
+    fun archiveWithoutAnArchiveFolderExplainsAndStaysOpen() =
+        runTest {
+            val core = FakeMessageCore().apply { actionFailure = ActionFailure.NoArchiveFolder() }
+            val vm = messageViewModel(core)
+            vm.archive()
+            assertEquals(MessageEffect.ActionRefused(ActionRefusal.NO_ARCHIVE_FOLDER), vm.effects.first())
+            assertTrue(vm.state.value is MessageState.Ready)
+        }
+
+    @Test
+    fun flagShowsAtOnceAndIsUndoneWhenRefused() =
+        runTest {
+            val core = FakeMessageCore()
+            val vm = messageViewModel(core)
+            vm.toggleFlag()
+            assertTrue(ready(vm).message.isFlagged)
+            vm.toggleFlag()
+            assertFalse(ready(vm).message.isFlagged)
+            assertEquals(listOf(MessageAction.Flag, MessageAction.Unflag), core.actions)
+
+            core.actionFailure = ActionFailure.NotFound()
+            vm.toggleFlag()
+            assertFalse(ready(vm).message.isFlagged)
+            assertEquals(MessageEffect.ActionRefused(ActionRefusal.FAILED), vm.effects.first())
         }
 }

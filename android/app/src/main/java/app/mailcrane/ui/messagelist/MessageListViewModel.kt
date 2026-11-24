@@ -62,6 +62,11 @@ class MessageListViewModel
         /** One-off sync failures, shown in a snackbar. */
         val errors: Flow<SyncErrorKind> = _errors.receiveAsFlow()
 
+        private val _actionsUndone = Channel<Unit>(Channel.CONFLATED)
+
+        /** The server refused a message action and it was undone; shown in a snackbar. */
+        val actionsUndone: Flow<Unit> = _actionsUndone.receiveAsFlow()
+
         /** How many of the newest messages the list holds; grows as you scroll. */
         private var window = PAGE_SIZE
         private val reading = Mutex()
@@ -71,6 +76,11 @@ class MessageListViewModel
                 core.events
                     .filter { it.isAbout(folderId) }
                     .collect { reload() }
+            }
+            viewModelScope.launch {
+                core.events
+                    .filter { it is CoreEvent.ActionFailed }
+                    .collect { _actionsUndone.send(Unit) }
             }
             viewModelScope.launch {
                 reload()
@@ -183,4 +193,5 @@ private fun CoreEvent.isAbout(folderId: Long): Boolean =
         is CoreEvent.MessagesChanged -> this.folderId == folderId
         is CoreEvent.FolderChanged -> this.folderId == folderId
         is CoreEvent.SyncError -> false
+        is CoreEvent.ActionFailed -> false
     }

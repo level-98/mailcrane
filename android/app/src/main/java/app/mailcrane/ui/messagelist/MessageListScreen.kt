@@ -74,6 +74,9 @@ fun MessageListScreen(
     LaunchedEffect(viewModel) {
         viewModel.errors.collect { kind -> snackbar.showSnackbar(resources.getString(errorText(kind))) }
     }
+    LaunchedEffect(viewModel) {
+        viewModel.actionsUndone.collect { snackbar.showSnackbar(resources.getString(R.string.action_undone)) }
+    }
     val noticeShown by rememberUpdatedState(onNoticeShown)
     LaunchedEffect(notice) {
         if (notice != null) {

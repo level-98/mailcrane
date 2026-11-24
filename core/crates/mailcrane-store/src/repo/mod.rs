@@ -4,6 +4,9 @@ mod accounts;
 mod attachments;
 mod folders;
 mod messages;
+mod pending_ops;
+
+pub use pending_ops::{OpId, OpKind, OpMessage, PendingOp};
 
 use crate::error::StoreError;
 

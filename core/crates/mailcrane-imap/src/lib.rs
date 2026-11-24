@@ -32,6 +32,7 @@ pub mod mutf7;
 pub mod parser;
 mod roles;
 mod session;
+mod store_cmds;
 mod tls;
 
 pub use condstore::{FetchedFlags, FlagUpdate, QresyncParams, QresyncSelect};
@@ -39,6 +40,7 @@ pub use error::ImapError;
 pub use fetch::{parse_internal_date, FetchedHeaders, SelectInfo};
 pub use parser::{parse_response, Envelope, EnvelopeAddress, FetchData, Limits};
 pub use session::{save_folders, ImapConfig, ImapFolder, ImapSecurity, Session};
+pub use store_cmds::{ChangeError, SystemFlag};
 
 use std::fmt;
 
