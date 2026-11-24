@@ -7,7 +7,17 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
-use tokio::sync::RwLock;
+use tokio::sync::{Mutex, RwLock};
+
+/// Per-server settings shared by every connection.
+struct Shared {
+    mailbox: Mailbox,
+    faults: Vec<Fault>,
+    quirks: Vec<Quirk>,
+    user: (String, String),
+    special_use: Vec<(String, String)>,
+    received: Arc<Mutex<Vec<String>>>,
+}
 use tokio::task::JoinHandle;
 
 #[derive(Debug, Clone)]
@@ -15,6 +25,7 @@ pub struct FakeImap {
     addr: SocketAddr,
     root_cert_der: Vec<u8>,
     mailbox: Mailbox,
+    received: Arc<Mutex<Vec<String>>>,
     shutdown: Arc<RwLock<Option<JoinHandle<()>>>>,
 }
 
@@ -23,9 +34,17 @@ pub struct FakeImapBuilder {
     folders: Vec<(String, Vec<Vec<u8>>)>,
     faults: Vec<Fault>,
     quirks: Vec<Quirk>,
+    special_use: Vec<(String, String)>,
 }
 
 impl FakeImapBuilder {
+    /// Marks folder `name` with a SPECIAL-USE attribute such as `\Sent`
+    /// (RFC 6154). Not sent when [`Quirk::NoSpecialUse`] is set.
+    pub fn special_use(mut self, name: impl Into<String>, attribute: impl Into<String>) -> Self {
+        self.special_use.push((name.into(), attribute.into()));
+        self
+    }
+
     pub fn user(mut self, username: impl Into<String>, password: impl Into<String>) -> Self {
         self.user = Some((username.into(), password.into()));
         self
@@ -64,21 +83,24 @@ impl FakeImapBuilder {
         let user = self
             .user
             .unwrap_or_else(|| ("alice@example.org".into(), "password".into()));
-        let faults = Arc::new(self.faults);
-        let quirks = Arc::new(self.quirks);
+        let received = Arc::new(Mutex::new(Vec::new()));
+        let shared = Arc::new(Shared {
+            mailbox: mailbox_for_server,
+            faults: self.faults,
+            quirks: self.quirks,
+            user,
+            special_use: self.special_use,
+            received: received.clone(),
+        });
         let handle = tokio::spawn(async move {
             loop {
                 let Ok((stream, _)) = listener.accept().await else {
                     break;
                 };
                 let tls_config = tls.config.clone();
-                let mailbox = mailbox_for_server.clone();
-                let faults = faults.clone();
-                let quirks = quirks.clone();
-                let user = user.clone();
+                let shared = shared.clone();
                 tokio::spawn(async move {
-                    let _ =
-                        handle_connection(stream, tls_config, mailbox, faults, quirks, user).await;
+                    let _ = handle_connection(stream, tls_config, shared).await;
                 });
             }
         });
@@ -89,6 +111,7 @@ impl FakeImapBuilder {
             addr,
             root_cert_der: tls.cert_der,
             mailbox,
+            received,
             shutdown: Arc::new(RwLock::new(Some(handle))),
         })
     }
@@ -101,6 +124,7 @@ impl FakeImap {
             folders: Vec::new(),
             faults: Vec::new(),
             quirks: Vec::new(),
+            special_use: Vec::new(),
         }
     }
 
@@ -112,6 +136,12 @@ impl FakeImap {
     }
     pub fn mailbox(&self) -> Mailbox {
         self.mailbox.clone()
+    }
+
+    /// The command names (upper case, without arguments) the server has
+    /// received on any connection, in order, including refused ones.
+    pub async fn received_commands(&self) -> Vec<String> {
+        self.received.lock().await.clone()
     }
 
     pub async fn shutdown(&self) {
@@ -131,14 +161,17 @@ impl Drop for FakeImap {
     }
 }
 
+async fn record(shared: &Shared, parts: &[&str]) {
+    let command = parts.get(1).copied().unwrap_or("").to_ascii_uppercase();
+    shared.received.lock().await.push(command);
+}
+
 async fn handle_connection(
     mut stream: tokio::net::TcpStream,
     tls_config: Arc<rustls::ServerConfig>,
-    mailbox: Mailbox,
-    faults: Arc<Vec<Fault>>,
-    quirks: Arc<Vec<Quirk>>,
-    user: (String, String),
+    shared: Arc<Shared>,
 ) -> Result<(), String> {
+    let faults = &shared.faults;
     let command_count = Arc::new(AtomicUsize::new(0));
     let mut first = [0u8; 1];
     let implicit_tls =
@@ -177,6 +210,7 @@ async fn handle_connection(
             let parts: Vec<&str> = text.split_whitespace().collect();
             let tag = parts.first().copied().unwrap_or("");
             let command = parts.get(1).copied().unwrap_or("").to_ascii_uppercase();
+            record(&shared, &parts).await;
             if parts
                 .get(1)
                 .is_some_and(|value| value.eq_ignore_ascii_case("STARTTLS"))
@@ -204,10 +238,8 @@ async fn handle_connection(
                 handle_imap_command(
                     &mut stream,
                     parts.as_slice(),
-                    &mailbox,
-                    &faults,
-                    &quirks,
-                    &user,
+                    &shared,
+                    false,
                     &command_count,
                 )
                 .await?;
@@ -234,13 +266,12 @@ async fn handle_connection(
         }
         let text = String::from_utf8_lossy(&line);
         let parts: Vec<&str> = text.split_whitespace().collect();
+        record(&shared, &parts).await;
         if handle_imap_command(
             &mut tls_stream,
             parts.as_slice(),
-            &mailbox,
-            &faults,
-            &quirks,
-            &user,
+            &shared,
+            true,
             &command_count,
         )
         .await
@@ -255,12 +286,16 @@ async fn handle_connection(
 async fn handle_imap_command(
     stream: &mut (impl AsyncReadExt + AsyncWriteExt + Unpin),
     parts: &[&str],
-    mailbox: &Mailbox,
-    faults: &[Fault],
-    quirks: &[Quirk],
-    user: &(String, String),
+    shared: &Shared,
+    secure: bool,
     command_count: &AtomicUsize,
 ) -> Result<(), String> {
+    let (mailbox, faults, quirks, user) = (
+        &shared.mailbox,
+        &shared.faults,
+        &shared.quirks,
+        &shared.user,
+    );
     let count = command_count.fetch_add(1, Ordering::SeqCst) + 1;
     let tag = parts.first().copied().unwrap_or("*");
     let command = parts.get(1).copied().unwrap_or("").to_ascii_uppercase();
@@ -278,7 +313,16 @@ async fn handle_imap_command(
     }
     let response = match command.as_str() {
         "CAPABILITY" => {
-            let mut caps = "IMAP4rev2 IMAP4rev1 AUTH=PLAIN".to_string();
+            let mut caps = "IMAP4rev2 IMAP4rev1".to_string();
+            if secure {
+                caps.push_str(" AUTH=PLAIN");
+            } else {
+                // RFC 9051 §6.2.1 and §7.2.2: offer STARTTLS, refuse login.
+                if !faults.contains(&Fault::NoStartTls) {
+                    caps.push_str(" STARTTLS");
+                }
+                caps.push_str(" LOGINDISABLED");
+            }
             if !quirks.contains(&Quirk::NoCondstore) {
                 caps.push_str(" CONDSTORE");
             }
@@ -323,17 +367,50 @@ async fn handle_imap_command(
                 if read == 0 {
                     return Err("AUTHENTICATE PLAIN closed before challenge".into());
                 }
-                format!("{tag} OK AUTHENTICATE completed\r\n")
+                // RFC 4616: authzid NUL authcid NUL passwd, base64 encoded.
+                let line = String::from_utf8_lossy(response.get(..read).unwrap_or_default());
+                let decoded = decode_base64(line.trim()).unwrap_or_default();
+                let mut fields = decoded.split(|byte| *byte == 0).skip(1);
+                let ok = fields.next() == Some(user.0.as_bytes())
+                    && fields.next() == Some(user.1.as_bytes());
+                if ok {
+                    format!("{tag} OK AUTHENTICATE completed\r\n")
+                } else {
+                    format!("{tag} NO [AUTHENTICATIONFAILED] authentication failed\r\n")
+                }
             }
         }
         "LIST" => {
-            let mut output = "* LIST (\\HasNoChildren) \"/\" INBOX\r\n".to_string();
+            let mut listed = vec!["INBOX".to_string()];
+            listed.extend(
+                mailbox
+                    .folder_names()
+                    .await
+                    .into_iter()
+                    .filter(|name| name != "INBOX"),
+            );
+            let mut output = String::new();
+            for name in &listed {
+                let prefix = format!("{name}/");
+                let mut attributes = if listed.iter().any(|other| other.starts_with(&prefix)) {
+                    "\\HasChildren".to_string()
+                } else {
+                    "\\HasNoChildren".to_string()
+                };
+                if !quirks.contains(&Quirk::NoSpecialUse) {
+                    for (folder, attribute) in &shared.special_use {
+                        if folder == name {
+                            attributes.push(' ');
+                            attributes.push_str(attribute);
+                        }
+                    }
+                }
+                let quoted = name.replace('\\', "\\\\").replace('"', "\\\"");
+                output.push_str(&format!("* LIST ({attributes}) \"/\" \"{quoted}\"\r\n"));
+            }
             if quirks.contains(&Quirk::GmailLabels) {
                 output.push_str("* LIST (\\All) \"/\" \"[Gmail]/All Mail\"\r\n");
                 output.push_str("* XLIST (\\HasNoChildren) \"/\" \"[Gmail]/All Mail\"\r\n");
-            }
-            if !quirks.contains(&Quirk::NoSpecialUse) {
-                output.push_str("* LIST (\\HasNoChildren \\Sent) \"/\" Sent\r\n");
             }
             output.push_str(&format!("{tag} OK LIST completed\r\n"));
             output
@@ -373,10 +450,11 @@ async fn handle_imap_command(
     if faults.contains(&Fault::DropMidResponse) {
         if let Some(split) = response.len().checked_div(2) {
             stream
-                .write_all(&response.as_bytes()[..split])
+                .write_all(response.as_bytes().get(..split).unwrap_or_default())
                 .await
                 .map_err(|error| error.to_string())?;
-            return Ok(());
+            // Close the connection with the response unfinished.
+            return Err("dropped mid-response".into());
         }
     }
     for fault in faults {
@@ -397,6 +475,30 @@ async fn handle_imap_command(
         .write_all(response.as_bytes())
         .await
         .map_err(|error| error.to_string())
+}
+
+/// Decodes standard base64 (RFC 4648 §4); `None` if it is not valid.
+fn decode_base64(text: &str) -> Option<Vec<u8>> {
+    let mut out = Vec::new();
+    let mut acc: u32 = 0;
+    let mut bits = 0;
+    for byte in text.bytes().filter(|byte| *byte != b'=') {
+        let value = match byte {
+            b'A'..=b'Z' => byte - b'A',
+            b'a'..=b'z' => byte - b'a' + 26,
+            b'0'..=b'9' => byte - b'0' + 52,
+            b'+' => 62,
+            b'/' => 63,
+            _ => return None,
+        };
+        acc = ((acc << 6) | u32::from(value)) & 0xFFFF;
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            out.push(((acc >> bits) & 0xFF) as u8);
+        }
+    }
+    Some(out)
 }
 
 async fn handle_uid_command(parts: &[&str], mailbox: &Mailbox, quirks: &[Quirk]) -> String {

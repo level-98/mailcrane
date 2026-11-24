@@ -32,6 +32,25 @@ fn folder(account_id: AccountId, name: &str) -> NewFolder {
     }
 }
 
+#[test]
+fn upsert_folders_is_all_or_nothing() -> R {
+    let s = Store::open_in_memory()?;
+    let acc = s.insert_account(&account())?;
+    let ids = s.upsert_folders(&[folder(acc, "INBOX"), folder(acc, "Sent")])?;
+    assert_eq!(ids.len(), 2);
+    // The second folder belongs to an account that does not exist, so the
+    // foreign key fails and the first one must not be saved either.
+    let err = s.upsert_folders(&[folder(acc, "Drafts"), folder(AccountId(9999), "X")]);
+    assert!(err.is_err());
+    let names: Vec<String> = s
+        .list_folders(acc)?
+        .into_iter()
+        .map(|f| f.details.remote_name)
+        .collect();
+    assert_eq!(names, ["INBOX", "Sent"]);
+    Ok(())
+}
+
 fn header(folder_id: FolderId, uid: u32, date: i64) -> NewMessageHeader {
     NewMessageHeader {
         folder_id,

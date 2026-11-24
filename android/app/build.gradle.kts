@@ -26,6 +26,7 @@ android {
         targetSdk = 37
         versionCode = 1
         versionName = "0.0.0"
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
     buildTypes {
@@ -99,6 +100,8 @@ val buildRust by tasks.registering(Exec::class) {
     dependsOn(cargoNdkBuild)
     workingDir = coreDir.asFile
     inputs.dir(rustJniLibsDir)
+    // Binding options (package name, Android mode) change the generated code.
+    inputs.file(coreDir.file("crates/mailcrane-ffi/uniffi.toml"))
     outputs.dir(uniffiDir)
     commandLine(
         "cargo",
@@ -149,7 +152,10 @@ dependencies {
     implementation(libs.hilt.navigation.compose)
     ksp(libs.hilt.compiler)
     implementation("${libs.jna.get()}@aar")
+    implementation(libs.androidx.datastore.preferences)
 
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
+    androidTestImplementation(libs.androidx.test.ext.junit)
+    androidTestImplementation(libs.androidx.test.runner)
 }

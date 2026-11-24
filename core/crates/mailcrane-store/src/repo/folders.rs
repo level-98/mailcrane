@@ -49,6 +49,18 @@ impl Store {
         Ok(FolderId(id))
     }
 
+    /// Upserts every folder in one transaction: either all are saved or,
+    /// on error, none are.
+    pub fn upsert_folders(&self, folders: &[NewFolder]) -> Result<Vec<FolderId>, StoreError> {
+        let tx = self.conn.unchecked_transaction()?;
+        let mut ids = Vec::with_capacity(folders.len());
+        for f in folders {
+            ids.push(self.upsert_folder(f)?);
+        }
+        tx.commit()?;
+        Ok(ids)
+    }
+
     /// Lists an account's folders ordered by remote name.
     pub fn list_folders(&self, account: AccountId) -> Result<Vec<Folder>, StoreError> {
         let mut stmt = self.conn.prepare(
