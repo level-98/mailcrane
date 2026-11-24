@@ -2,7 +2,7 @@
 //! subjects, addresses or body text.
 
 use mailcrane_imap::{parse_internal_date, EnvelopeAddress, FetchData};
-use mailcrane_store::{Flags, FolderId, NewMessageHeader};
+use mailcrane_store::{Flags, FolderId, NewMessageHeader, RemoteFlags};
 
 /// Decodes header text with RFC 2047 encoded words by running it through the
 /// MIME parser as a `Subject` header. CR, LF and NUL never get through.
@@ -120,6 +120,16 @@ fn flags(list: &[String]) -> (Flags, Vec<String>) {
         }
     }
     (f, keywords)
+}
+
+/// The store's view of the flags the server sent for `uid`.
+pub(crate) fn remote_flags(uid: u32, list: &[String]) -> RemoteFlags {
+    let (flags, keywords) = flags(list);
+    RemoteFlags {
+        uid,
+        flags,
+        keywords_json: json_strings(&keywords),
+    }
 }
 
 /// Builds the store row, or `None` if the response lacks the UID or the

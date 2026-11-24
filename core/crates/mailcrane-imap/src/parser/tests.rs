@@ -186,6 +186,50 @@ fn search_lists_uids() {
 }
 
 #[test]
+fn modseq_is_read_from_fetch() {
+    // RFC 7162 §3.1.4.1
+    let Untagged::Fetch(d) = fetch("* 4 FETCH (UID 12 FLAGS (\\Seen) MODSEQ (624140003))\r\n")
+    else {
+        panic!("expected FETCH");
+    };
+    assert_eq!((d.uid, d.modseq), (Some(12), Some(624_140_003)));
+    assert_eq!(
+        fetch("* 4 FETCH (UID 12 MODSEQ 5)\r\n"),
+        Untagged::FetchMalformed { uid: Some(12) }
+    );
+}
+
+#[test]
+fn vanished_is_read_as_ranges() {
+    // RFC 7162 §3.2.10
+    assert_eq!(
+        fetch("* VANISHED (EARLIER) 41,43:116,118,120:119\r\n"),
+        Untagged::Vanished {
+            earlier: true,
+            uids: vec![(41, 41), (43, 116), (118, 118), (119, 120)],
+        }
+    );
+    // A huge range stays one range, never a list of four billion UIDs.
+    assert_eq!(
+        fetch("* VANISHED 1:4294967295\r\n"),
+        Untagged::Vanished {
+            earlier: false,
+            uids: vec![(1, u32::MAX)],
+        }
+    );
+    for bad in [
+        "* VANISHED\r\n",
+        "* VANISHED 0\r\n",
+        "* VANISHED 1:*\r\n",
+        "* VANISHED (LATER) 1\r\n",
+        "* VANISHED 4294967296\r\n",
+        "* VANISHED 1,,2\r\n",
+    ] {
+        assert!(parse_response(bad.as_bytes()).is_err(), "{bad}");
+    }
+}
+
+#[test]
 fn continuation() {
     assert_eq!(
         parse(b"+ \r\n"),
@@ -366,6 +410,23 @@ fn encode(r: &Response) -> Vec<u8> {
                         out.extend_from_slice(format!(" {uid}").as_bytes());
                     }
                 }
+                Untagged::Vanished { earlier, uids } => {
+                    out.extend_from_slice(b"VANISHED ");
+                    if *earlier {
+                        out.extend_from_slice(b"(EARLIER) ");
+                    }
+                    let set: Vec<String> = uids
+                        .iter()
+                        .map(|(a, b)| {
+                            if a == b {
+                                a.to_string()
+                            } else {
+                                format!("{a}:{b}")
+                            }
+                        })
+                        .collect();
+                    out.extend_from_slice(set.join(",").as_bytes());
+                }
                 // Not produced by the generators below.
                 Untagged::Fetch(_) | Untagged::FetchMalformed { .. } => {}
             }
@@ -435,6 +496,14 @@ fn response() -> impl Strategy<Value = Response> {
             .prop_map(|c| Response::Untagged(Untagged::Capability(c))),
         prop::collection::vec(atom(), 0..6).prop_map(|c| Response::Untagged(Untagged::Enabled(c))),
         list,
+        (
+            any::<bool>(),
+            prop::collection::vec((1u32.., 1u32..), 1..6).prop_map(|ranges| ranges
+                .into_iter()
+                .map(|(a, b)| (a.min(b), a.max(b)))
+                .collect::<Vec<_>>())
+        )
+            .prop_map(|(earlier, uids)| Response::Untagged(Untagged::Vanished { earlier, uids })),
     ]
 }
 

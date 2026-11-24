@@ -224,6 +224,18 @@ pub struct NewMessageHeader {
     pub snippet: String,
 }
 
+/// The flags the server now reports for a stored message, keyed by
+/// `(folder, uid)`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RemoteFlags {
+    /// IMAP UID.
+    pub uid: u32,
+    /// System flags.
+    pub flags: Flags,
+    /// JSON array of keywords.
+    pub keywords_json: String,
+}
+
 /// Whether the raw body is cached.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BodyState {

@@ -1000,6 +1000,7 @@ dependencies = [
  "mailcrane-smtp",
  "mailcrane-store",
  "mailcrane-testkit",
+ "proptest",
  "thiserror",
  "tokio",
  "tracing",

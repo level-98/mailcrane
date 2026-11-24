@@ -95,6 +95,23 @@ impl Store {
         Ok(true)
     }
 
+    /// Records the folder's `UIDNEXT` and `HIGHESTMODSEQ` after a sync.
+    /// Call it only once the changes up to that `HIGHESTMODSEQ` are stored
+    /// (RFC 7162 §3.1.2.1), so a failure never skips changes. Returns
+    /// whether the folder exists.
+    pub fn set_folder_sync_state(
+        &self,
+        id: FolderId,
+        uidnext: i64,
+        highestmodseq: Option<i64>,
+    ) -> Result<bool, StoreError> {
+        let n = self.conn.execute(
+            "UPDATE folders SET uidnext = ?2, highestmodseq = ?3 WHERE id = ?1",
+            params![id.0, uidnext, highestmodseq],
+        )?;
+        Ok(n > 0)
+    }
+
     /// Lists an account's folders ordered by remote name.
     pub fn list_folders(&self, account: AccountId) -> Result<Vec<Folder>, StoreError> {
         let mut stmt = self.conn.prepare(

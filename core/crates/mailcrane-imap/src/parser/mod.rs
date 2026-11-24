@@ -128,6 +128,14 @@ pub enum Untagged {
     Exists(u32),
     /// `* SEARCH ...` (RFC 9051 §7.3.2): UIDs or sequence numbers.
     Search(Vec<u32>),
+    /// `* VANISHED [(EARLIER)] <uids>` (RFC 7162 §3.2.10): UIDs that were
+    /// expunged, as inclusive ranges `(low, high)` with `low <= high`. Kept
+    /// as ranges so a hostile `1:4294967295` costs nothing.
+    Vanished {
+        /// `(EARLIER)`: an answer to QRESYNC rather than a new expunge.
+        earlier: bool,
+        uids: Vec<(u32, u32)>,
+    },
     /// Something this parser does not interpret yet, named by its keyword.
     Other {
         name: String,
@@ -406,6 +414,8 @@ impl Cursor<'_> {
             }
             // RFC 9051 §7.3.2
             "SEARCH" => self.search_response(),
+            // RFC 7162 §3.2.10
+            "VANISHED" => self.vanished_response(),
             // RFC 9051 §7.3.1
             "LIST" => {
                 self.expect(b' ')?;

@@ -81,9 +81,9 @@ impl SyncError {
 /// Syncs the folders of one account over one connection. Holding the
 /// session mutably means only one folder syncs at a time.
 pub struct FolderSyncer<'a> {
-    store: &'a Store,
-    session: &'a mut Session,
-    listener: &'a dyn EventListener,
+    pub(super) store: &'a Store,
+    pub(super) session: &'a mut Session,
+    pub(super) listener: &'a dyn EventListener,
     account: AccountId,
     config: SyncConfig,
 }
@@ -132,7 +132,7 @@ impl<'a> FolderSyncer<'a> {
         self.report(result)
     }
 
-    fn report<T>(&self, result: Result<T, SyncError>) -> Result<T, SyncError> {
+    pub(super) fn report<T>(&self, result: Result<T, SyncError>) -> Result<T, SyncError> {
         if let Err(error) = &result {
             tracing::warn!(kind = ?error.kind(), "sync failed");
             self.listener.on_event(CoreEvent::SyncError {
@@ -144,15 +144,30 @@ impl<'a> FolderSyncer<'a> {
     }
 
     /// Selects the folder and clears its cache if `UIDVALIDITY` changed.
-    async fn select(&mut self, folder: FolderId) -> Result<(String, SelectInfo, bool), SyncError> {
+    pub(super) async fn select(
+        &mut self,
+        folder: FolderId,
+    ) -> Result<(String, SelectInfo, bool), SyncError> {
         let row = self
             .store
             .get_folder(folder)?
             .ok_or(SyncError::UnknownFolder)?;
         let info = self.session.select(&row.details.remote_name).await?;
-        let changed = row.details.uidvalidity != Some(i64::from(info.uidvalidity));
+        let changed = self.reset_if_renumbered(folder, row.details.uidvalidity, &info)?;
+        Ok((row.details.remote_name, info, changed))
+    }
+
+    /// Clears the folder's cache if the server's `UIDVALIDITY` is not the
+    /// stored one (RFC 9051 §2.3.1.1). Returns whether it did.
+    pub(super) fn reset_if_renumbered(
+        &self,
+        folder: FolderId,
+        stored: Option<i64>,
+        info: &SelectInfo,
+    ) -> Result<bool, SyncError> {
+        let changed = stored != Some(i64::from(info.uidvalidity));
         if changed {
-            if row.details.uidvalidity.is_some() {
+            if stored.is_some() {
                 tracing::info!(
                     folder = folder.0,
                     "UIDVALIDITY changed, clearing the folder"
@@ -166,11 +181,21 @@ impl<'a> FolderSyncer<'a> {
             self.listener
                 .on_event(CoreEvent::FolderChanged { folder_id: folder });
         }
-        Ok((row.details.remote_name, info, changed))
+        Ok(changed)
     }
 
     async fn sync_folder_inner(&mut self, folder: FolderId) -> Result<usize, SyncError> {
         let (_, info, _) = self.select(folder).await?;
+        self.fill_newest(folder, &info).await
+    }
+
+    /// With the folder selected: fetches the newest `initial_count`
+    /// messages that are not stored yet.
+    pub(super) async fn fill_newest(
+        &mut self,
+        folder: FolderId,
+        info: &SelectInfo,
+    ) -> Result<usize, SyncError> {
         let newest = self.newest_uids(info.uidnext.saturating_sub(1)).await?;
         let stored: HashSet<u32> = self.store.list_uids(folder)?.into_iter().collect();
         let wanted: Vec<u32> = newest
@@ -211,8 +236,12 @@ impl<'a> FolderSyncer<'a> {
         Ok(uids)
     }
 
-    /// Fetches and stores `uids` (already newest first) one batch at a time.
-    async fn fetch_batches(&mut self, folder: FolderId, uids: &[u32]) -> Result<usize, SyncError> {
+    /// Fetches and stores `uids` one batch at a time, in the order given.
+    pub(super) async fn fetch_batches(
+        &mut self,
+        folder: FolderId,
+        uids: &[u32],
+    ) -> Result<usize, SyncError> {
         let mut total = 0usize;
         for batch in uids.chunks(self.config.batch_size.max(1)) {
             let fetched = self.session.uid_fetch_headers(batch).await?;
