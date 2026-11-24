@@ -75,6 +75,12 @@ AI-written contributions are welcome on the same terms as any other.
 
 Maintainers can also hand an `agent-ready` issue straight to the project's own agent by adding the `agent-go` label. It opens a draft PR for a human to review.
 
+The agent runs on a maintainer's Claude token, so:
+
+- **Read the issue before adding `agent-go`.** The agent reads the issue text, so only label issues you'd be happy to hand to a stranger's script.
+- New maintainers get **triage** access first. Anyone with triage can start runs; anyone with write can push workflows, so give write only to people you trust.
+- The token is stored as a secret of the `agent` environment, which only `main` can use. Don't move it back to a repository secret, and don't remove `environment: agent` from `.github/workflows/agent.yml`.
+
 ## Labels
 
 | Label | Meaning |

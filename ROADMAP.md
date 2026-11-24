@@ -12,7 +12,7 @@ Goal: anyone can clone, build an empty app on both platforms and run CI.
 
 - [ ] **M0-01** Add LICENSE (MPL-2.0), CODE_OF_CONDUCT.md (Contributor Covenant 2.1), branch protection on `main` 🧑
 - [ ] **M0-02** Run `scripts/roadmap_to_issues.py` to create the labels and one issue per task; enable Discussions 🧑
-- [ ] **M0-03** Add `ANTHROPIC_API_KEY` secret so the `agent-go` workflow works (or delete `.github/workflows/agent.yml`) 🧑
+- [ ] **M0-03** Add the agent's Claude token (`CLAUDE_CODE_OAUTH_TOKEN`, or `ANTHROPIC_API_KEY`) as a secret of the `main`-only `agent` environment so the `agent-go` workflow works (or delete `.github/workflows/agent.yml`) 🧑
 - [ ] **M0-04** Rust workspace skeleton in `core/` with empty crates: `mailcrane-core`, `-imap`, `-smtp`, `-jmap`, `-mime`, `-store`, `-ffi`, `-testkit`; `#![forbid(unsafe_code)]` and the no-panic clippy lints 🤖
 - [ ] **M0-05** UniFFI setup: expose a `hello()` function, generate Kotlin and Swift bindings 🤖
 - [ ] **M0-06** Android app shell: Compose + Material 3, Hilt, calls `hello()` through the bindings, ktlint 🤖

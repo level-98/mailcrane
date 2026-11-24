@@ -1,12 +1,20 @@
 # The project's own AI agent. A maintainer adds the `agent-go` label to an
 # `agent-ready` issue, and Claude opens a draft PR for a human to review.
 #
-# Only people with triage access or above can add labels, so random
-# commenters can't spend the API key.
+# Who can use the token:
+# - Only people with triage access or above can add labels, so random
+#   commenters can't start a run or spend the maintainer's Claude usage.
+# - The token lives in the `agent` environment, which only `main` may use.
+#   A workflow pushed on any other branch can't read it, even by someone
+#   with write access. Keep that environment rule when editing this file.
+# - Read an issue before labelling it: the agent reads the issue text.
 #
-# Setup: add an ANTHROPIC_API_KEY repository secret
-# (Settings → Secrets and variables → Actions), or run /install-github-app
-# from Claude Code. Remove this file if you don't want an agent.
+# Setup: runs on the maintainer's Claude subscription. Make a token with
+# `claude setup-token` and save it as the CLAUDE_CODE_OAUTH_TOKEN secret of
+# the `agent` environment (Settings → Environments → agent), not as a
+# repository secret. To bill the API instead, store ANTHROPIC_API_KEY there
+# and swap the input below for `anthropic_api_key`.
+# Remove this file if you don't want an agent.
 name: Agent
 
 on:
@@ -24,6 +32,8 @@ jobs:
     if: github.event.label.name == 'agent-go'
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    # The token is an `agent` environment secret, usable from `main` only.
+    environment: agent
     steps:
       - uses: actions/checkout@v4
         with:
@@ -35,7 +45,7 @@ jobs:
 
       - uses: anthropics/claude-code-action@v1
         with:
-          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           label_trigger: agent-go
           prompt: |
             You are working on issue #${{ github.event.issue.number }} in ${{ github.repository }}.
