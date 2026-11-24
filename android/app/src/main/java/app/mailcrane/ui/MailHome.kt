@@ -20,10 +20,10 @@ import androidx.compose.ui.platform.LocalResources
 import app.mailcrane.R
 import app.mailcrane.ui.compose.ComposeResult
 import app.mailcrane.ui.compose.ComposeScreen
-import app.mailcrane.ui.messagelist.InboxScreen
+import app.mailcrane.ui.folders.MailboxScreen
 
 /**
- * The signed-in part of the app: the inbox, and the compose screen, which grows out of the compose
+ * The signed-in part of the app: the mailbox, and the compose screen, which grows out of the compose
  * button with the theme's expressive spring (standard motion when the system asks for less motion).
  */
 @OptIn(ExperimentalSharedTransitionApi::class, ExperimentalMaterial3ExpressiveApi::class)
@@ -69,7 +69,7 @@ fun MailHome(accountId: Long) {
                     modifier = shared,
                 )
             } else {
-                InboxScreen(
+                MailboxScreen(
                     accountId = accountId,
                     onCompose = { composing = true },
                     composeFabModifier = shared,

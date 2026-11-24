@@ -14,6 +14,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
@@ -35,11 +36,13 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.mailcrane.R
 import app.mailcrane.core.SyncErrorKind
+import app.mailcrane.ui.components.EmptyFolderState
 import kotlinx.coroutines.delay
 import java.time.ZonedDateTime
 
@@ -56,6 +59,7 @@ fun MessageListScreen(
     composeFabModifier: Modifier = Modifier,
     notice: String? = null,
     onNoticeShown: () -> Unit = {},
+    onOpenFolders: (() -> Unit)? = null,
     viewModel: MessageListViewModel =
         hiltViewModel<MessageListViewModel, MessageListViewModel.Factory>(
             key = "folder-$folderId",
@@ -83,6 +87,7 @@ fun MessageListScreen(
         onLoadMore = viewModel::loadMore,
         onCompose = onCompose,
         fabModifier = composeFabModifier,
+        onOpenFolders = onOpenFolders,
     )
 }
 
@@ -94,12 +99,27 @@ fun MessageListContent(
     snackbar: SnackbarHostState,
     onRefresh: () -> Unit,
     onLoadMore: () -> Unit,
+    onOpenFolders: (() -> Unit)? = null,
     listState: LazyListState = rememberLazyListState(),
     onCompose: (() -> Unit)? = null,
     fabModifier: Modifier = Modifier,
 ) {
     Scaffold(
-        topBar = { TopAppBar(title = { Text(title) }) },
+        topBar = {
+            TopAppBar(
+                title = { Text(title, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                navigationIcon = {
+                    if (onOpenFolders != null) {
+                        IconButton(onClick = onOpenFolders) {
+                            Icon(
+                                painter = painterResource(R.drawable.ic_mc_menu),
+                                contentDescription = stringResource(R.string.folders_open),
+                            )
+                        }
+                    }
+                },
+            )
+        },
         snackbarHost = { SnackbarHost(snackbar) },
         floatingActionButton = {
             if (onCompose != null) {
@@ -129,15 +149,14 @@ fun MessageListContent(
                             TextButton(onClick = onRefresh) { Text(stringResource(R.string.message_list_retry)) }
                         }
                     }
-                state.messages.isEmpty() ->
+                state.messages.isEmpty() && state.isRefreshing ->
                     Centered {
-                        val text =
-                            if (state.isRefreshing) R.string.message_list_loading else R.string.message_list_empty
                         Text(
-                            text = stringResource(text),
+                            text = stringResource(R.string.message_list_loading),
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
+                state.messages.isEmpty() -> EmptyFolderState()
                 else -> Messages(state, listState, onLoadMore)
             }
         }
