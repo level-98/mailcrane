@@ -15,7 +15,7 @@ The site is hosted with GitHub Pages. When your browser requests a page, GitHub 
 
 ## The app
 
-There is no Mailcrane app available to download yet. The project intends to avoid ads and analytics and to connect mail directly to the provider you add. Sign-in may involve your provider's authentication service; loading remote message images would contact the image host only after you choose to load them. These details will be checked against the released app before this page is finalized.
+There is no Mailcrane app available to download yet; a beta is planned for December 2026. The project intends to avoid ads and analytics and to connect mail directly to the provider you add. Sign-in may involve your provider's authentication service; loading remote message images would contact the image host only after you choose to load them. These details will be checked against the released app before this page is finalized.
 
 The final policy will describe every network destination, permission, and exception in plain language. See [issue #75](https://github.com/level-98/mailcrane/issues/75) for the owner review and release checklist.
 
