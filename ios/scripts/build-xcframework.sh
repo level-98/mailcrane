@@ -39,18 +39,14 @@ cargo run -p mailcrane-ffi --features bindgen --bin uniffi-bindgen -- \
 
 SWIFT_FILE=$(find "$BINDINGS" -name '*.swift' -print -quit)
 HEADER_FILE=$(find "$BINDINGS" -name '*.h' -print -quit)
-if [ -z "$SWIFT_FILE" ] || [ -z "$HEADER_FILE" ]; then
-  echo "UniFFI did not produce Swift and C header files" >&2
+MODULEMAP_FILE=$(find "$BINDINGS" -name '*.modulemap' -print -quit)
+if [ -z "$SWIFT_FILE" ] || [ -z "$HEADER_FILE" ] || [ -z "$MODULEMAP_FILE" ]; then
+  echo "UniFFI did not produce Swift, C header, and module map files" >&2
   exit 1
 fi
 cp "$SWIFT_FILE" "$IOS_DIR/MailcraneCore/Sources/MailcraneCore/MailcraneCore.swift"
-cp "$HEADER_FILE" "$HEADERS/MailcraneFFI.h"
-cat > "$HEADERS/module.modulemap" <<'EOF'
-module MailcraneFFI {
-    header "MailcraneFFI.h"
-    export *
-}
-EOF
+cp "$HEADER_FILE" "$HEADERS/"
+cp "$MODULEMAP_FILE" "$HEADERS/module.modulemap"
 
 rm -rf "$XCFRAMEWORK"
 xcodebuild -create-xcframework \

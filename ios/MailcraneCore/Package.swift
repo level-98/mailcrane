@@ -14,12 +14,12 @@ let package = Package(
     ],
     targets: [
         .binaryTarget(
-            name: "MailcraneFFI",
+            name: "MailcraneCoreFFI",
             path: "../build/MailcraneFFI.xcframework"
         ),
         .target(
             name: "MailcraneCore",
-            dependencies: ["MailcraneFFI"],
+            dependencies: ["MailcraneCoreFFI"],
             path: "Sources/MailcraneCore"
         )
     ]
