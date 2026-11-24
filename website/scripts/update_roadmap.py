@@ -16,7 +16,7 @@ from urllib.request import Request, urlopen
 
 REPOSITORY = "level-98/mailcrane"
 API_URL = f"https://api.github.com/repos/{REPOSITORY}/issues"
-TASK_PATTERN = re.compile(r"^\[((?:M[0-6])|P)-(\d{2})\]\s+(.+)$", re.IGNORECASE)
+TASK_PATTERN = re.compile(r"^\[((?:M[0-7])|P)-(\d{2})\]\s+(.+)$", re.IGNORECASE)
 MILESTONES = {
     "M0": {
         "title": "Foundations",
@@ -44,12 +44,27 @@ MILESTONES = {
     },
     "M6": {
         "title": "Release",
-        "description": "Test, package, and bring Mailcrane to its first users.",
+        "description": "Test, package, and bring Mailcrane to its first users on Android.",
+    },
+    "M7": {
+        "title": "iOS app",
+        "description": "Bring the iOS app up to the Android release and ship it on the App Store.",
     },
     "P": {
         "title": "Before public launch",
         "description": "Resolve the project, store, domain, and naming checks before going public.",
     },
+}
+
+# Tasks that moved milestone keep their ID (and issue title), so they are
+# placed by this map instead: task ID -> (new milestone, position). The
+# position sorts the task among the new milestone's own numbered tasks, in the
+# order ROADMAP.md on `main` lists them. Keep the two in step.
+MOVED_TASKS = {
+    # Android first; the iOS work follows after the release (decision 0002).
+    "M0-16": ("M7", 2.1),
+    "M1-11": ("M7", 2.2),
+    "M6-06": ("M7", 99.0),
 }
 
 
@@ -108,8 +123,12 @@ def build_snapshot(issues: list[dict]) -> dict:
 
         group_id, sequence, task_title = match.groups()
         group_id = group_id.upper()
+        task_id = f"{group_id}-{sequence}"
+        group_id, position = MOVED_TASKS.get(task_id, (group_id, float(sequence)))
         tasks_by_group[group_id].append(
             {
+                "id": task_id,
+                "position": position,
                 "number": int(sequence),
                 "issue_number": number,
                 "title": task_title,
@@ -122,7 +141,7 @@ def build_snapshot(issues: list[dict]) -> dict:
     for group_id, details in MILESTONES.items():
         tasks = sorted(
             tasks_by_group[group_id],
-            key=lambda task: (task["number"], task["issue_number"]),
+            key=lambda task: (task["position"], task["issue_number"]),
         )
         if not tasks:
             continue
