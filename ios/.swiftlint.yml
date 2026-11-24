@@ -1,0 +1,10 @@
+disabled_rules:
+  - trailing_comma
+opt_in_rules:
+  - empty_count
+  - force_unwrapping
+included:
+  - Mailcrane
+  - MailcraneCore
+  - MailcraneTests
+  - MailcraneUITests

@@ -74,9 +74,7 @@ jobs:
       - name: Install XcodeGen and SwiftLint
         run: brew install xcodegen swiftlint
 
-      # Add --strict once ios/ exists (M0-07). Until then the step skips with
-      # the reason "ios/project.yml does not exist yet".
-      - run: cargo xtask ci --only ios
+      - run: cargo xtask ci --only ios --strict
 
       # The owner has no Mac, so this artifact is how iOS UI gets reviewed.
       - uses: actions/upload-artifact@v7

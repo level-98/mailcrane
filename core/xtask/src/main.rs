@@ -339,37 +339,9 @@ fn ios(ctx: &Ctx) -> Result<Outcome, Error> {
         }
     }
 
-    // The XCFramework wraps the static library for the device and simulator.
-    let targets = ["aarch64-apple-ios", "aarch64-apple-ios-sim"];
-    for target in targets {
-        let args = ["build", "-p", "mailcrane-ffi", "--target", target];
-        if !run(&ctx.core, &cargo(), &args)? {
-            return Ok(Outcome::Failed(format!(
-                "building mailcrane-ffi for {target} failed"
-            )));
-        }
-    }
-    let target_dir = target_dir(ctx);
-    let xcframework = target_dir.join("MailcraneCore.xcframework");
-    // Remove a stale output so `-create-xcframework` does not refuse to run.
-    if xcframework.exists() {
-        std::fs::remove_dir_all(&xcframework)
-            .map_err(|e| format!("could not remove old XCFramework: {e}"))?;
-    }
-    let mut args: Vec<String> = vec!["-create-xcframework".into()];
-    for target in targets {
-        let lib = target_dir
-            .join(target)
-            .join("debug")
-            .join("libmailcrane_ffi.a");
-        args.push("-library".into());
-        args.push(lib.display().to_string());
-    }
-    args.push("-output".into());
-    args.push(xcframework.display().to_string());
-    if !run(&dir, "xcodebuild", &args)? {
+    if !run(&dir, "sh", &["scripts/build-xcframework.sh"])? {
         return Ok(Outcome::Failed(
-            "`xcodebuild -create-xcframework` failed".into(),
+            "`scripts/build-xcframework.sh` failed".into(),
         ));
     }
 
@@ -379,12 +351,16 @@ fn ios(ctx: &Ctx) -> Result<Outcome, Error> {
     if !run(&dir, "swiftlint", &["--strict"])? {
         return Ok(Outcome::Failed("`swiftlint --strict` failed".into()));
     }
-    let test_args = [
-        "test",
-        "-scheme",
-        "Mailcrane",
-        "-destination",
-        "platform=iOS Simulator,name=iPhone 15",
+
+    let result_bundle = dir.join("build").join("Mailcrane.xcresult");
+    let test_args = vec![
+        "test".to_string(),
+        "-scheme".to_string(),
+        "Mailcrane".to_string(),
+        "-destination".to_string(),
+        "platform=iOS Simulator,name=iPhone 16".to_string(),
+        "-resultBundlePath".to_string(),
+        result_bundle.display().to_string(),
     ];
     let ok = run(&dir, "xcodebuild", &test_args)?;
     Ok(outcome(ok, "xcodebuild test"))
