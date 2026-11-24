@@ -20,7 +20,10 @@ final class ScreenshotTests: XCTestCase {
 
     func testLargeTextScreenshot() throws {
         let app = XCUIApplication()
-        app.launchArguments = ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityExtraExtraExtraLarge"]
+        app.launchArguments = [
+            "-UIPreferredContentSizeCategoryName",
+            "UICTContentSizeCategoryAccessibilityExtraExtraExtraLarge"
+        ]
         app.launch()
         attachScreenshot(app)
     }
