@@ -22,7 +22,7 @@ Goal: anyone can clone, build an empty app on both platforms and run CI.
 - [ ] **M0-10** Generate the Compose theme and SwiftUI colour assets from `design/colors.json` (the brand pack itself is already in `design/`) 🤖
 - [x] **M0-11** `mailcrane-testkit`: in-process fake IMAP, SMTP and JMAP servers that can misbehave on purpose (drop connections, malformed replies, Gmail-style quirks) 🤖
 - [ ] **M0-12** Write `docs/decisions/0001-tech-stack.md` recording the Rust core + native UI decision, including the portability rule in `docs/architecture.md` (the core must also build on Windows) 🧑
-- [ ] **M0-13** Dependabot or Renovate for Cargo, Gradle and Swift packages 🟢🤖
+- [x] **M0-13** Dependabot or Renovate for Cargo, Gradle and Swift packages 🟢🤖
 - [ ] **M0-14** Fuzz targets (`cargo fuzz`) for the MIME and IMAP parsers, run nightly in CI 🤖
 - [x] **M0-15** Release script that gathers `docs/changelog.d/` fragments into release notes 🟢🤖
 - [ ] **M0-16** TestFlight internal builds from CI (macOS runner), so iOS can be tested on real devices without a Mac 🔒🧑
