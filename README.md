@@ -1,24 +1,19 @@
 # Mailcrane website
 
-This is the GitHub Pages branch for the Mailcrane project website. The static site lives in `index.html`, `styles.css`, and `script.js`; roadmap progress is fetched from the public GitHub issues and refreshed automatically.
+The Zola website and user documentation live in [`website/`](website/). The site uses the `mailcrane.app` domain, self-hosts its fonts and design assets, and has no analytics, cookies, or browser-side third-party requests.
 
-The app source and full project documentation are maintained on [`main`](https://github.com/level-98/mailcrane/tree/main). This branch keeps the Markdown project documents and the brand assets used by the site.
+## Local development
+
+Install Zola 0.23.6 or later. See [`website/README.md`](website/README.md) for local preview, roadmap refresh, and offline link-check commands.
+
+## Deployment
+
+The `website` branch is the Pages source. Pull requests targeting it build the Zola site and check generated links offline; merges to `website` deploy through GitHub Pages Actions. The roadmap snapshot is refreshed from public GitHub issues during each build, so the browser only loads a local JSON file.
+
+The site artifact includes `CNAME` for `mailcrane.app`. A repository owner still needs to set the Pages source to **GitHub Actions** and configure DNS at the domain registrar.
 
 ## Project
 
-Mailcrane is a free, open-source email app for Android and iOS. It is in early development; there is no app to download yet. The project is designed around:
+Mailcrane is a free, open-source email app for Android and iOS. It is in early development; there is no app to download yet. Read the [roadmap](ROADMAP.md), [architecture](docs/architecture.md), and [contributor guide](CONTRIBUTING.md), or [browse open issues](https://github.com/level-98/mailcrane/issues).
 
-- IMAP and SMTP for broad provider support, with JMAP and guided sign-in planned.
-- Privacy by default: no ads, analytics, or Mailcrane servers reading your mail.
-- Native Android and iOS apps backed by a shared Rust engine.
-- Offline access and a public, issue-driven roadmap.
-
-Read the [roadmap](ROADMAP.md), [architecture](docs/architecture.md), and [contributor guide](CONTRIBUTING.md), or [browse open issues](https://github.com/level-98/mailcrane/issues).
-
-## Website deployment
-
-The site has no build step or external runtime dependencies. In the repository’s GitHub Pages settings, publish the `website` branch from the repository root. The live progress tracker uses the public GitHub REST API and will show an error instead of stale data if that service is unavailable.
-
-## Brand
-
-The website uses the original Mailcrane wordmark, crane mark, and colour palette from [`design/`](design/). The brand assets and project are licensed under the [Mozilla Public License 2.0](LICENSE).
+The site reuses the project brand from [`design/`](design/) and includes the proposed app screens. Its light/dark theme follows the system preference by default and remembers a manual selection.

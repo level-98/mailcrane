@@ -1,0 +1,16 @@
++++
+title = "Getting started"
+description = "What to expect before trying Mailcrane."
+template = "page.html"
+weight = 1
++++
+
+Mailcrane is currently in early development. There is no public Android or iOS build to install yet.
+
+To follow progress:
+
+1. Check the [live roadmap](@/_index.md).
+2. Read about the [proposed features](@/features.md).
+3. When a release is available, use the official store links published here.
+
+Do not install unofficial builds or share mail credentials in GitHub issues. The team will publish provider-specific setup steps as those flows are implemented and tested.
