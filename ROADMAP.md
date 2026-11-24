@@ -92,7 +92,7 @@ Goal: add an IMAP account and read your inbox, online and offline.
 ## M5 — Privacy and security
 
 - [ ] **M5-01** Tracking-pixel detection and a "trackers blocked" indicator 🤖
-- [x] **M5-02** Strip tracking parameters from links (utm_ and similar) before opening 🟢🤖
+- [ ] **M5-02** Strip tracking parameters from links (utm_ and similar) before opening 🟢🤖
 - [ ] **M5-03** App lock with biometrics or PIN, Android 🔒
 - [ ] **M5-04** OpenPGP: read and send encrypted and signed mail, Autocrypt, key management 🔒
 - [ ] **M5-05** S/MIME 🔒
