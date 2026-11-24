@@ -1,0 +1,22 @@
+# Mailcrane for Android
+
+Kotlin and Jetpack Compose (Material 3 Expressive) app that calls the Rust core through UniFFI bindings.
+
+## Prerequisites
+
+- JDK 17 or newer
+- Android SDK (platform 37.2) and NDK; set `ANDROID_HOME` and `ANDROID_NDK_HOME`
+- Rust (stable) with the Android targets: `rustup target add aarch64-linux-android x86_64-linux-android`
+- `cargo install cargo-ndk`
+
+## Build
+
+```bash
+cd android
+./gradlew ktlintCheck lintDebug testDebugUnitTest assembleDebug
+./gradlew installDebug   # with an emulator running
+```
+
+The `buildRust` Gradle task (run by `preBuild`) builds `mailcrane-ffi` for arm64-v8a and x86_64 into
+`app/build/rustJniLibs` and generates the Kotlin bindings into `app/build/generated/uniffi`.
+Release builds use the Rust release profile. Nothing generated is committed.
