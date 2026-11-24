@@ -2,15 +2,42 @@
 
 #![forbid(unsafe_code)]
 
-/// The name of this crate.
+pub mod fault;
+pub mod imap;
+pub mod jmap;
+pub mod mailbox;
+pub mod smtp;
+mod tls;
+
+pub use fault::{Fault, Quirk};
+pub use imap::FakeImap;
+pub use jmap::{FakeJmap, JmapSentRequest};
+pub use mailbox::{Mailbox, Message};
+pub use smtp::{FakeSmtp, SentMessage};
+
+/// Start a fake IMAP server, deliver a synthetic message, and inspect the mailbox.
+///
+/// ```no_run
+/// # #[tokio::main]
+/// # async fn main() -> Result<(), String> {
+/// use mailcrane_testkit::{FakeImap, Fault};
+///
+/// let imap = FakeImap::builder()
+///     .user("alice@example.org", "password")
+///     .folder("INBOX", Vec::new())
+///     .fault(Fault::Delay(std::time::Duration::from_millis(10)))
+///     .start()
+///     .await?;
+///
+/// imap.mailbox()
+///     .deliver("INBOX", b"From: sender@example.com\r\n\r\nHello".to_vec())
+///     .await;
+/// assert_eq!(imap.mailbox().exists("INBOX").await, 1);
+/// imap.shutdown().await;
+/// # Ok(())
+/// # }
+/// ```
 pub const CRATE_NAME: &str = env!("CARGO_PKG_NAME");
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn crate_name_matches() {
-        assert_eq!(CRATE_NAME, "mailcrane-testkit");
-    }
-}
+mod tests;
