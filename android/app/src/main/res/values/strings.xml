@@ -48,7 +48,6 @@
     <string name="setup_error_unexpected">Something went wrong while checking the settings. Nothing was saved.</string>
 
     <!-- Message list (M1-10) -->
-    <string name="message_list_empty">No messages in this folder</string>
     <string name="message_list_loading">Checking for mail…</string>
     <string name="message_list_retry">Try again</string>
     <string name="message_no_subject">(No subject)</string>
@@ -60,6 +59,15 @@
     <string name="message_a11y_subject">Subject: %1$s.</string>
     <string name="message_a11y_date">%1$s.</string>
     <string name="message_a11y_attachment">Has attachment.</string>
+
+    <!-- Empty states (M1-16) -->
+    <string name="empty_folder_title">All caught up</string>
+    <string name="empty_folder_body">No messages in this folder.</string>
+    <string name="no_results_title">No results</string>
+    <string name="no_results_body">Try different words or check your spelling.</string>
+    <string name="welcome_title">Welcome to Mailcrane</string>
+    <string name="welcome_body">Add an email account to get started.</string>
+    <string name="welcome_add_account">Add account</string>
 
     <!-- Folder drawer (M1-13) -->
     <string name="folders_title">Folders</string>

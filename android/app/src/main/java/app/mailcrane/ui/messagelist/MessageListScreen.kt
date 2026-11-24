@@ -41,6 +41,7 @@ import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.mailcrane.R
 import app.mailcrane.core.SyncErrorKind
+import app.mailcrane.ui.components.EmptyFolderState
 import kotlinx.coroutines.delay
 import java.time.ZonedDateTime
 
@@ -115,15 +116,14 @@ fun MessageListContent(
                             TextButton(onClick = onRefresh) { Text(stringResource(R.string.message_list_retry)) }
                         }
                     }
-                state.messages.isEmpty() ->
+                state.messages.isEmpty() && state.isRefreshing ->
                     Centered {
-                        val text =
-                            if (state.isRefreshing) R.string.message_list_loading else R.string.message_list_empty
                         Text(
-                            text = stringResource(text),
+                            text = stringResource(R.string.message_list_loading),
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
+                state.messages.isEmpty() -> EmptyFolderState()
                 else -> Messages(state, listState, onLoadMore)
             }
         }
