@@ -1,0 +1,9 @@
+* 1 FETCH (UID 9 BODY[] {50}
+Subject: Hi
+From: a@example.org
+
+Hello there.
+)
+* 2 EXISTS
+* 1 EXPUNGE
+a5 OK FETCH completed

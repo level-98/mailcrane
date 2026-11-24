@@ -1,0 +1,6 @@
++ idling
+* 4 EXISTS
+* 2 FETCH (FLAGS (\Seen))
+* BYE server shutting down
+a6 NO [UNAVAILABLE] try later
+a7 BAD command unknown
