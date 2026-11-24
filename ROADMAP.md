@@ -26,7 +26,7 @@ Goal: anyone can clone, build an empty app on both platforms and run CI.
 - [ ] **M0-14** Fuzz targets (`cargo fuzz`) for the MIME and IMAP parsers, run nightly in CI 🤖
 - [x] **M0-15** Release script that gathers `docs/changelog.d/` fragments into release notes 🟢🤖
 - [ ] **M0-16** TestFlight internal builds from CI (macOS runner), so iOS can be tested on real devices without a Mac 🔒🧑
-- [ ] **M0-17** Cross-platform CI on every PR, building on M0-06, M0-07 and M0-08: a Linux job (all `cargo xtask ci` checks, plus the core cross-compiled for Android and the Android app built), a macOS job (the core built as an XCFramework and the iOS app built for the simulator), and a Windows job (the core crates built and tested on `windows-latest`). No Windows app is planned. The Windows job only keeps the core portable so one could be added later 🤖
+- [ ] **M0-17** Cross-platform CI on every PR: Android on Linux, iOS on macOS, the core on Windows 🤖
 
 ## M1 — Read mail
 
