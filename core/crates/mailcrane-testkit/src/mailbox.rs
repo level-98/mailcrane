@@ -79,6 +79,14 @@ impl Mailbox {
             .unwrap_or_default()
     }
 
+    /// Names of all folders, sorted.
+    pub async fn folder_names(&self) -> Vec<String> {
+        let inner = self.inner.lock().await;
+        let mut names: Vec<String> = inner.folders.keys().cloned().collect();
+        names.sort();
+        names
+    }
+
     pub async fn exists(&self, folder: &str) -> usize {
         self.messages(folder).await.len()
     }
