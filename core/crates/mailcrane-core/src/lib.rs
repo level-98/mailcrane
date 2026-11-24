@@ -1,8 +1,12 @@
 //! Accounts, sync scheduling and the public API of the Mailcrane engine.
+//!
+//! Changes reach the apps as [`events::CoreEvent`]s; the apps do not poll.
 
 #![forbid(unsafe_code)]
 
+pub mod events;
 pub mod secrets;
+pub mod sync;
 
 /// The name of this crate.
 pub const CRATE_NAME: &str = env!("CARGO_PKG_NAME");

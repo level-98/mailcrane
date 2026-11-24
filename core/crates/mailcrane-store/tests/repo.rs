@@ -216,3 +216,67 @@ fn attachments_for_missing_message_insert_nothing_and_error() -> R {
     assert!(r.is_err());
     Ok(())
 }
+
+#[test]
+fn upsert_message_headers_is_all_or_nothing() -> R {
+    let s = Store::open_in_memory()?;
+    let acc = s.insert_account(&account())?;
+    let f = s.upsert_folder(&folder(acc, "INBOX"))?;
+    // The second header names a folder that does not exist.
+    let bad = s.upsert_message_headers(&[header(f, 1, 100), header(FolderId(999), 2, 100)]);
+    assert!(bad.is_err());
+    assert!(s.list_uids(f)?.is_empty());
+    let ids = s.upsert_message_headers(&[header(f, 2, 100), header(f, 1, 100)])?;
+    assert_eq!(ids.len(), 2);
+    assert_eq!(s.list_uids(f)?, [1, 2]);
+    assert_eq!(s.oldest_uid(f)?, Some(1));
+    assert_eq!(s.oldest_uid(FolderId(999))?, None);
+    Ok(())
+}
+
+#[test]
+fn reset_folder_clears_messages_and_sets_uid_state() -> R {
+    let s = Store::open_in_memory()?;
+    let acc = s.insert_account(&account())?;
+    let f = s.upsert_folder(&folder(acc, "INBOX"))?;
+    let m = s.upsert_message_header(&header(f, 1, 100))?;
+    s.store_body(m, b"x", 5)?;
+    s.insert_attachments(m, &[attachment()])?;
+
+    assert!(s.reset_folder(f, 7, 9)?);
+    assert!(s.list_uids(f)?.is_empty());
+    assert!(s.get_body(m)?.is_none());
+    assert!(s.list_attachments(m)?.is_empty());
+    let got = s.get_folder(f)?.ok_or("missing")?;
+    assert_eq!(
+        (got.details.uidvalidity, got.details.uidnext),
+        (Some(7), Some(9))
+    );
+
+    // An unknown folder changes nothing.
+    let other = s.upsert_folder(&folder(acc, "Sent"))?;
+    s.upsert_message_header(&header(other, 1, 100))?;
+    assert!(!s.reset_folder(FolderId(999), 1, 1)?);
+    assert_eq!(s.list_uids(other)?, [1]);
+    Ok(())
+}
+
+#[test]
+fn store_parsed_body_replaces_attachments_and_is_atomic() -> R {
+    let s = Store::open_in_memory()?;
+    let acc = s.insert_account(&account())?;
+    let f = s.upsert_folder(&folder(acc, "INBOX"))?;
+    let m = s.upsert_message_header(&header(f, 1, 100))?;
+
+    assert!(s.store_parsed_body(m, b"raw", 5, "snip", &[attachment()])?);
+    assert!(s.store_parsed_body(m, b"raw", 6, "snip", &[attachment()])?);
+    let got = s.get_message_header(m)?.ok_or("missing")?;
+    assert_eq!(got.body_state, BodyState::Fetched);
+    assert_eq!(got.details.snippet, "snip");
+    assert!(got.details.has_attachments);
+    assert_eq!(s.list_attachments(m)?.len(), 1);
+
+    // An unknown message stores nothing.
+    assert!(!s.store_parsed_body(MessageId(999), b"raw", 5, "x", &[])?);
+    Ok(())
+}

@@ -9,6 +9,9 @@
 
 use std::fmt;
 
+mod fetch;
+pub use fetch::{Envelope, EnvelopeAddress, FetchData};
+
 /// Size limits applied while reading responses.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Limits {
@@ -114,6 +117,17 @@ pub enum Untagged {
     Capability(Vec<String>),
     Enabled(Vec<String>),
     List(ListItem),
+    /// `* n FETCH (...)` (RFC 9051 §7.5.2).
+    Fetch(Box<FetchData>),
+    /// A `FETCH` response that could not be read. `uid` is set when it
+    /// could still be found. The rest of the command's responses are fine.
+    FetchMalformed {
+        uid: Option<u32>,
+    },
+    /// `* n EXISTS` (RFC 9051 §7.4.1).
+    Exists(u32),
+    /// `* SEARCH ...` (RFC 9051 §7.3.2): UIDs or sequence numbers.
+    Search(Vec<u32>),
     /// Something this parser does not interpret yet, named by its keyword.
     Other {
         name: String,
@@ -348,9 +362,17 @@ impl Cursor<'_> {
     fn untagged(&mut self) -> Result<Untagged, ParseError> {
         if self.peek().is_some_and(|b| b.is_ascii_digit()) {
             // "* 3 EXISTS", "* 1 FETCH (...)" and the like.
-            self.take_while(|b| b.is_ascii_digit());
+            let digits = self.take_while(|b| b.is_ascii_digit());
+            let seq = String::from_utf8_lossy(digits).parse::<u32>().unwrap_or(0);
             self.expect(b' ')?;
             let name = self.atom()?.to_ascii_uppercase();
+            if name == "FETCH" {
+                return self.fetch_response(seq);
+            }
+            if name == "EXISTS" {
+                self.skip_to_end();
+                return Ok(Untagged::Exists(seq));
+            }
             self.skip_to_end();
             return Ok(Untagged::Other { name });
         }
@@ -382,6 +404,8 @@ impl Cursor<'_> {
                 self.crlf()?;
                 Ok(Untagged::Enabled(caps))
             }
+            // RFC 9051 §7.3.2
+            "SEARCH" => self.search_response(),
             // RFC 9051 §7.3.1
             "LIST" => {
                 self.expect(b' ')?;

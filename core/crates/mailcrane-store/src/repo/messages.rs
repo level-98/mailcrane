@@ -1,7 +1,7 @@
 use super::narrow;
 use crate::{
-    BodyState, Flags, FolderId, MessageHeader, MessageId, NewMessageHeader, Store, StoreError,
-    ThreadId,
+    BodyState, Flags, FolderId, MessageHeader, MessageId, NewAttachment, NewMessageHeader, Store,
+    StoreError, ThreadId,
 };
 use rusqlite::{params, OptionalExtension, Row};
 
@@ -107,6 +107,44 @@ impl Store {
         Ok(MessageId(id))
     }
 
+    /// Upserts every header in one transaction: either all are saved or, on
+    /// error, none are. Returns the row ids in the same order.
+    pub fn upsert_message_headers(
+        &self,
+        headers: &[NewMessageHeader],
+    ) -> Result<Vec<MessageId>, StoreError> {
+        let tx = self.conn.unchecked_transaction()?;
+        let mut ids = Vec::with_capacity(headers.len());
+        for h in headers {
+            ids.push(self.upsert_message_header(h)?);
+        }
+        tx.commit()?;
+        Ok(ids)
+    }
+
+    /// The UIDs stored for the folder, ascending.
+    pub fn list_uids(&self, folder: FolderId) -> Result<Vec<u32>, StoreError> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT uid FROM messages WHERE folder_id = ?1 ORDER BY uid")?;
+        let mut rows = stmt.query(params![folder.0])?;
+        let mut out = Vec::new();
+        while let Some(r) = rows.next()? {
+            out.push(narrow(r.get(0)?, "uid")?);
+        }
+        Ok(out)
+    }
+
+    /// The lowest UID stored for the folder, if it has any messages.
+    pub fn oldest_uid(&self, folder: FolderId) -> Result<Option<u32>, StoreError> {
+        let uid: Option<i64> = self.conn.query_row(
+            "SELECT min(uid) FROM messages WHERE folder_id = ?1",
+            params![folder.0],
+            |r| r.get(0),
+        )?;
+        uid.map(|u| narrow(u, "uid")).transpose()
+    }
+
     /// Returns the header, or `None` if it doesn't exist.
     pub fn get_message_header(&self, id: MessageId) -> Result<Option<MessageHeader>, StoreError> {
         let sql = format!("SELECT {COLS} FROM messages WHERE id = ?1");
@@ -168,6 +206,56 @@ impl Store {
              fetched_at = excluded.fetched_at",
             params![id.0, raw, fetched_at],
         )?;
+        tx.commit()?;
+        Ok(true)
+    }
+
+    /// Like [`Store::store_body`], and in the same transaction sets the
+    /// snippet and `has_attachments` and replaces the message's attachment
+    /// metadata. Returns whether the message exists; if not, nothing is
+    /// stored. On error nothing is stored.
+    pub fn store_parsed_body(
+        &self,
+        id: MessageId,
+        raw: &[u8],
+        fetched_at: i64,
+        snippet: &str,
+        attachments: &[NewAttachment],
+    ) -> Result<bool, StoreError> {
+        let tx = self.conn.unchecked_transaction()?;
+        let n = tx.execute(
+            "UPDATE messages SET body_state = 'fetched', snippet = ?2, has_attachments = ?3 \
+             WHERE id = ?1",
+            params![id.0, snippet, !attachments.is_empty()],
+        )?;
+        if n == 0 {
+            return Ok(false);
+        }
+        tx.execute(
+            "INSERT INTO message_bodies (message_id, raw, fetched_at) VALUES (?1,?2,?3) \
+             ON CONFLICT (message_id) DO UPDATE SET raw = excluded.raw, \
+             fetched_at = excluded.fetched_at",
+            params![id.0, raw, fetched_at],
+        )?;
+        tx.execute(
+            "DELETE FROM attachments WHERE message_id = ?1",
+            params![id.0],
+        )?;
+        for a in attachments {
+            tx.execute(
+                "INSERT INTO attachments (message_id, part_id, filename, mime_type, size, \
+                 content_id, is_inline) VALUES (?1,?2,?3,?4,?5,?6,?7)",
+                params![
+                    id.0,
+                    a.part_id,
+                    a.filename,
+                    a.mime_type,
+                    a.size,
+                    a.content_id,
+                    a.is_inline
+                ],
+            )?;
+        }
         tx.commit()?;
         Ok(true)
     }

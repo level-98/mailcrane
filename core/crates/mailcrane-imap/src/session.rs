@@ -94,10 +94,10 @@ impl std::fmt::Debug for Session {
 }
 
 /// The untagged responses and the tagged result of one command.
-struct Done {
-    untagged: Vec<Untagged>,
-    status: StatusKind,
-    text: RespText,
+pub(crate) struct Done {
+    pub(crate) untagged: Vec<Untagged>,
+    pub(crate) status: StatusKind,
+    pub(crate) text: RespText,
 }
 
 fn valid_credential(value: &str) -> bool {
@@ -184,6 +184,14 @@ impl Session {
         let cmd = command::build(self.tags.next(), name, args)?;
         let limit = self.command_timeout;
         within(limit, exchange(&mut self.conn, cmd.tag, cmd.segments)).await?
+    }
+
+    pub(crate) async fn run_command(
+        &mut self,
+        name: &str,
+        args: &[Arg<'_>],
+    ) -> Result<Done, ImapError> {
+        self.run(name, args).await
     }
 
     /// `CAPABILITY` (RFC 9051 §6.1.1).
@@ -356,7 +364,7 @@ pub fn save_folders(
     Ok(store.upsert_folders(&rows)?)
 }
 
-fn expect_ok(done: &Done) -> Result<(), ImapError> {
+pub(crate) fn expect_ok(done: &Done) -> Result<(), ImapError> {
     if done.status == StatusKind::Ok {
         Ok(())
     } else {

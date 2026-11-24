@@ -13,6 +13,12 @@ SIM_ARM_LIB="$BUILD_DIR/libmailcrane_ffi-sim-arm64.a"
 SIM_X86_LIB="$BUILD_DIR/libmailcrane_ffi-sim-x86_64.a"
 SIM_LIB="$BUILD_DIR/libmailcrane_ffi-simulator.a"
 
+# Build and link the Rust core for the app's minimum iOS version (ios/project.yml,
+# MailcraneCore/Package.swift). Without this, rustc links for iOS 10.0 while C
+# dependencies such as aws-lc-sys are compiled for the SDK version, and the link
+# fails on symbols that iOS 10 lacks (for example ___chkstk_darwin).
+export IPHONEOS_DEPLOYMENT_TARGET="${IPHONEOS_DEPLOYMENT_TARGET:-17.0}"
+
 rustup target add aarch64-apple-ios aarch64-apple-ios-sim x86_64-apple-ios
 
 cd "$CORE_DIR"
