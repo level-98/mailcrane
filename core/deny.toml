@@ -1,0 +1,49 @@
+# cargo-deny configuration. Run from `core/`: `cargo deny check`.
+
+[graph]
+all-features = true
+
+[licenses]
+# Only MPL-2.0-compatible licences. No GPL, LGPL or AGPL, and no exceptions
+# for them: they would block App Store distribution (AGENTS.md §5).
+allow = [
+    "MIT",
+    "Apache-2.0",
+    # Apache-2.0 with the LLVM exception; common in the Rust ecosystem (e.g. rustix, wasm crates).
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "MPL-2.0",
+    # Permissive; used by some compression crates (e.g. miniz_oxide).
+    "Zlib",
+    # Needed by `unicode-ident` and the ICU crates.
+    "Unicode-3.0",
+    # Public-domain dedication; used by data-only crates.
+    "CC0-1.0",
+]
+confidence-threshold = 0.93
+
+[licenses.private]
+# Our own `publish = false` workspace crates.
+ignore = true
+
+[bans]
+multiple-versions = "warn"
+# Path dependencies inside the workspace are allowed.
+wildcards = "deny"
+allow-wildcard-paths = true
+deny = [
+    { crate = "openssl", reason = "use rustls (AGENTS.md §9)" },
+    { crate = "openssl-sys", reason = "use rustls (AGENTS.md §9)" },
+    { crate = "native-tls", reason = "use rustls (AGENTS.md §9)" },
+]
+
+[advisories]
+yanked = "deny"
+ignore = []
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
