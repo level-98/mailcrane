@@ -25,6 +25,7 @@ Goal: anyone can clone, build an empty app on both platforms and run CI.
 - [ ] **M0-13** Dependabot or Renovate for Cargo, Gradle and Swift packages 🟢🤖
 - [ ] **M0-14** Fuzz targets (`cargo fuzz`) for the MIME and IMAP parsers, run nightly in CI 🤖
 - [ ] **M0-15** Release script that gathers `docs/changelog.d/` fragments into release notes 🟢🤖
+- [ ] **M0-16** TestFlight internal builds from CI (macOS runner), so iOS can be tested on real devices without a Mac 🔒🧑
 
 ## M1 — Read mail
 
