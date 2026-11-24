@@ -19,6 +19,8 @@ Read the [roadmap](ROADMAP.md), [architecture](docs/architecture.md), and [contr
 
 The site has no build step or external runtime dependencies. In the repository’s GitHub Pages settings, publish the `website` branch from the repository root. The live progress tracker uses the public GitHub REST API and will show an error instead of stale data if that service is unavailable.
 
+The home page also includes the eight proposed app screens in `assets/app-concepts/`. The theme toggle follows the system preference by default and remembers a manual light or dark selection.
+
 ## Brand
 
 The website uses the original Mailcrane wordmark, crane mark, and colour palette from [`design/`](design/). The brand assets and project are licensed under the [Mozilla Public License 2.0](LICENSE).

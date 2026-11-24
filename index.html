@@ -6,6 +6,14 @@
     <meta name="theme-color" content="#f4f6fb">
     <meta name="description" content="Mailcrane is a free, open-source email app for Android and iOS, built for privacy and designed in the open.">
     <title>Mailcrane — email, on your terms</title>
+    <script>
+      const savedTheme = localStorage.getItem("mailcrane-theme");
+      const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+      document.documentElement.dataset.theme =
+        savedTheme === "light" || savedTheme === "dark"
+          ? savedTheme
+          : prefersDark ? "dark" : "light";
+    </script>
     <link rel="icon" href="design/brand/mark-color.svg" type="image/svg+xml">
     <link rel="stylesheet" href="styles.css">
     <script src="script.js" defer></script>
@@ -13,14 +21,24 @@
   <body>
     <header class="site-header">
       <a class="brand" href="#top" aria-label="Mailcrane home">
-        <img class="brand-wordmark" src="design/brand/wordmark.svg" alt="Mailcrane" width="148" height="32">
+        <img class="brand-wordmark" src="design/brand/wordmark.svg" data-light-src="design/brand/wordmark.svg" data-dark-src="design/brand/wordmark-white.svg" alt="Mailcrane" width="148" height="32">
       </a>
       <nav class="main-nav" aria-label="Main navigation">
         <a href="#why-mailcrane">Why Mailcrane</a>
+        <a href="#app-concepts">Screens</a>
         <a href="#roadmap">Roadmap</a>
         <a href="#community">Community</a>
       </nav>
-      <a class="button button-small button-outline header-cta" href="https://github.com/level-98/mailcrane">View on GitHub <span aria-hidden="true">↗</span></a>
+      <button id="theme-toggle" class="theme-toggle" type="button" aria-label="Switch to dark theme" aria-pressed="false" title="Switch theme">
+        <svg class="theme-icon moon-icon" viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M20.2 15.4A8.6 8.6 0 0 1 8.6 3.8 8.7 8.7 0 1 0 20.2 15.4Z"/>
+        </svg>
+        <svg class="theme-icon sun-icon" viewBox="0 0 24 24" aria-hidden="true">
+          <circle cx="12" cy="12" r="4"/>
+          <path d="M12 2v2m0 16v2M4.93 4.93l1.42 1.42m11.3 11.3 1.42 1.42M2 12h2m16 0h2M4.93 19.07l1.42-1.42m11.3-11.3 1.42-1.42"/>
+        </svg>
+      </button>
+      <a class="button button-small button-outline header-cta" href="https://github.com/level-98/mailcrane" aria-label="View on GitHub"><span class="header-cta-label">View on GitHub</span> <span aria-hidden="true">↗</span></a>
     </header>
 
     <main id="top">
@@ -75,6 +93,70 @@
             <h3>Made for real life</h3>
             <p>Native Android and iOS experiences, backed by one shared engine and designed to work offline.</p>
           </article>
+        </div>
+      </section>
+
+      <section class="concepts-section" id="app-concepts">
+        <div class="section-wrap">
+          <div class="concepts-heading">
+            <div class="section-heading">
+              <p class="eyebrow">Proposed app screens</p>
+              <h2>Thoughtful screens.<br><span>From first hello to daily inbox.</span></h2>
+              <p class="section-intro">A look at the visual direction for Mailcrane across Android and iOS. These are design concepts, not screenshots of a released app.</p>
+            </div>
+            <a class="text-link concepts-link" href="#roadmap">See what’s in progress <span aria-hidden="true">↓</span></a>
+          </div>
+          <div class="concept-grid">
+            <figure class="concept-card">
+              <a class="concept-image" href="assets/app-concepts/welcome-add-account.png" target="_blank" rel="noopener noreferrer" aria-label="Open the welcome and add account concept image">
+                <img src="assets/app-concepts/welcome-add-account.png" alt="Welcome screen with privacy promises and email provider choices" loading="lazy" decoding="async" width="780" height="1688">
+              </a>
+              <figcaption><span class="concept-number">01</span><div><h3>Welcome & account setup</h3><p>Start with privacy, then choose a provider.</p></div></figcaption>
+            </figure>
+            <figure class="concept-card">
+              <a class="concept-image" href="assets/app-concepts/unified-inbox-android.png" target="_blank" rel="noopener noreferrer" aria-label="Open the Android unified inbox concept image">
+                <img src="assets/app-concepts/unified-inbox-android.png" alt="Android unified inbox with filters, message list, and compose button" loading="lazy" decoding="async" width="780" height="1688">
+              </a>
+              <figcaption><span class="concept-number">02</span><div><h3>Unified inbox · Android</h3><p>See all your accounts in one calm inbox.</p></div></figcaption>
+            </figure>
+            <figure class="concept-card">
+              <a class="concept-image" href="assets/app-concepts/message-view-privacy-first.png" target="_blank" rel="noopener noreferrer" aria-label="Open the privacy-first message view concept image">
+                <img src="assets/app-concepts/message-view-privacy-first.png" alt="Message view showing removed trackers and blocked remote images" loading="lazy" decoding="async" width="780" height="1688">
+              </a>
+              <figcaption><span class="concept-number">03</span><div><h3>Privacy-first message</h3><p>Blocked remote content stays your choice.</p></div></figcaption>
+            </figure>
+            <figure class="concept-card">
+              <a class="concept-image" href="assets/app-concepts/compose-schedule-send.png" target="_blank" rel="noopener noreferrer" aria-label="Open the compose and schedule send concept image">
+                <img src="assets/app-concepts/compose-schedule-send.png" alt="Compose screen with schedule-send options and formatting controls" loading="lazy" decoding="async" width="780" height="1688">
+              </a>
+              <figcaption><span class="concept-number">04</span><div><h3>Compose & schedule</h3><p>Drafts, attachments, and send-later options.</p></div></figcaption>
+            </figure>
+            <figure class="concept-card">
+              <a class="concept-image" href="assets/app-concepts/accounts-and-folders.png" target="_blank" rel="noopener noreferrer" aria-label="Open the accounts and folders concept image">
+                <img src="assets/app-concepts/accounts-and-folders.png" alt="Accounts drawer with unified inbox and email folders" loading="lazy" decoding="async" width="780" height="1688">
+              </a>
+              <figcaption><span class="concept-number">05</span><div><h3>Accounts & folders</h3><p>Move between inboxes and familiar folders.</p></div></figcaption>
+            </figure>
+            <figure class="concept-card">
+              <a class="concept-image" href="assets/app-concepts/snooze-sheet.png" target="_blank" rel="noopener noreferrer" aria-label="Open the snooze sheet concept image">
+                <img src="assets/app-concepts/snooze-sheet.png" alt="Snooze sheet with suggested times and date picker" loading="lazy" decoding="async" width="780" height="1688">
+              </a>
+              <figcaption><span class="concept-number">06</span><div><h3>Snooze</h3><p>Bring a message back when you need it.</p></div></figcaption>
+            </figure>
+            <figure class="concept-card">
+              <a class="concept-image" href="assets/app-concepts/inbox-dark-mode.png" target="_blank" rel="noopener noreferrer" aria-label="Open the dark mode inbox concept image">
+                <img src="assets/app-concepts/inbox-dark-mode.png" alt="Dark mode inbox with message previews and compose button" loading="lazy" decoding="async" width="780" height="1688">
+              </a>
+              <figcaption><span class="concept-number">07</span><div><h3>Dark inbox</h3><p>Low-glare surfaces with clear, readable mail.</p></div></figcaption>
+            </figure>
+            <figure class="concept-card">
+              <a class="concept-image" href="assets/app-concepts/inbox-ios.png" target="_blank" rel="noopener noreferrer" aria-label="Open the iOS inbox concept image">
+                <img src="assets/app-concepts/inbox-ios.png" alt="iOS all inboxes screen with search and message list" loading="lazy" decoding="async" width="780" height="1688">
+              </a>
+              <figcaption><span class="concept-number">08</span><div><h3>Inbox · iOS</h3><p>A native SwiftUI take on the shared inbox.</p></div></figcaption>
+            </figure>
+          </div>
+          <p class="concept-note">These concepts communicate the intended direction; the app is still in early development.</p>
         </div>
       </section>
 
@@ -133,7 +215,7 @@
 
     <footer class="site-footer section-wrap">
       <a class="brand footer-brand" href="#top" aria-label="Mailcrane home">
-        <img class="brand-wordmark" src="design/brand/wordmark.svg" alt="Mailcrane" width="126" height="28">
+        <img class="brand-wordmark" src="design/brand/wordmark.svg" data-light-src="design/brand/wordmark.svg" data-dark-src="design/brand/wordmark-white.svg" alt="Mailcrane" width="126" height="28">
       </a>
       <p>Free and open-source. Made with care, in the open.</p>
       <nav aria-label="Footer navigation">
