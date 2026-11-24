@@ -44,7 +44,7 @@ Goal: add an IMAP account and read your inbox, online and offline.
 - [ ] **M1-07** IMAP IDLE for near-real-time updates while the app is open 🤖
 - [x] **M1-08** MIME parsing: multipart, charsets, encoded words, inline and attached files, with fixtures 🤖
 - [x] **M1-09** HTML sanitiser: strip scripts and trackers, block remote content by default 🔒🤖
-- [ ] **M1-10** Message list screen, Android 🤖
+- [x] **M1-10** Message list screen, Android 🤖
 - [ ] **M1-12** Message view screen with "load remote images" button, Android 🤖
 - [ ] **M1-13** Folder drawer, Android 🟢🤖
 - [ ] **M1-14** Read, unread, flag, archive, delete and move, synced back to the server 🤖
