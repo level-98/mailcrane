@@ -111,6 +111,7 @@ class UniffiMailboxCore(
         messageId: Long,
         contentId: String,
     ): InlinePart? = getInlinePart(dbPath, messageId, contentId)
+
     override suspend fun listFolders(accountId: Long): List<FolderSummary> =
         withContext(io) { listFolders(dbPath, accountId) }
 }
