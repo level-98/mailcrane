@@ -986,9 +986,11 @@ dependencies = [
  "mailcrane-mime",
  "mailcrane-store",
  "mailcrane-testkit",
+ "proptest",
  "thiserror",
  "tokio",
  "tracing",
+ "url",
  "zeroize",
 ]
 
