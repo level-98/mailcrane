@@ -28,14 +28,14 @@ body:
     id: platform
     attributes:
       label: Platform
-      options: [Android, iOS, Both, Core / not sure]
+      options: [Android, Core / not sure, iOS (paused until after the Android release)]
     validations:
       required: true
   - type: input
     id: device
     attributes:
       label: Device and OS version
-      placeholder: Pixel 8, Android 15 / iPhone 15, iOS 18.2
+      placeholder: Pixel 8, Android 15
   - type: input
     id: provider
     attributes:

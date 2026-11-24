@@ -82,6 +82,8 @@ pub struct Session {
     tags: Tags,
     command_timeout: Duration,
     host: String,
+    /// Whether `ENABLE QRESYNC` succeeded (RFC 7162 §3.2.3).
+    pub(crate) qresync_enabled: bool,
 }
 
 impl std::fmt::Debug for Session {
@@ -104,7 +106,7 @@ fn valid_credential(value: &str) -> bool {
     !value.is_empty() && !value.contains(['\0', '\r', '\n'])
 }
 
-fn has_cap(caps: &[String], name: &str) -> bool {
+pub(crate) fn has_cap(caps: &[String], name: &str) -> bool {
     caps.iter().any(|c| c.eq_ignore_ascii_case(name))
 }
 
@@ -156,6 +158,7 @@ impl Session {
             tags: Tags::default(),
             command_timeout: timeout,
             host: config.host.clone(),
+            qresync_enabled: false,
         };
         let (condition, greeting_text) = greeting;
         // RFC 9051 §6.2.1: after STARTTLS, forget anything learned before;

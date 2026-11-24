@@ -22,6 +22,10 @@ pub(crate) enum Arg<'a> {
     /// Protocol syntax written exactly as given, e.g. `RETURN (SPECIAL-USE)`.
     /// Only for fixed strings in our own code, never for user data.
     Raw(&'static str),
+    /// Protocol syntax our own code built from numbers and fixed keywords,
+    /// e.g. `(CHANGEDSINCE 42)`. Checked before sending: only letters,
+    /// digits, space, `:`, `,`, `(` and `)` are allowed.
+    Built(&'a str),
     /// A string from data: sent as an atom, a quoted string or a literal,
     /// whichever fits.
     Str(&'a [u8]),
@@ -47,6 +51,16 @@ pub(crate) fn build(tag: String, name: &str, args: &[Arg<'_>]) -> Result<Command
         current.push(b' ');
         match arg {
             Arg::Raw(text) => current.extend_from_slice(text.as_bytes()),
+            Arg::Built(text) => {
+                let safe = !text.is_empty()
+                    && text
+                        .bytes()
+                        .all(|b| b.is_ascii_alphanumeric() || b" :,()".contains(&b));
+                if !safe {
+                    return Err(ImapError::InvalidInput);
+                }
+                current.extend_from_slice(text.as_bytes());
+            }
             Arg::Str(bytes) => {
                 if let Some(literal) = push_string(bytes, &mut current)? {
                     current.extend_from_slice(format!("{{{}}}\r\n", literal.len()).as_bytes());
@@ -125,6 +139,20 @@ mod tests {
             one(&[Arg::Str(b"a\r\nb")]),
             [b"A0001 LOGIN {4}\r\n".to_vec(), b"a\r\nb\r\n".to_vec()]
         );
+    }
+
+    #[test]
+    fn built_syntax_is_checked() {
+        assert_eq!(
+            one(&[Arg::Built("(CHANGEDSINCE 42)")]),
+            [b"A0001 LOGIN (CHANGEDSINCE 42)\r\n".to_vec()]
+        );
+        for bad in ["", "1\r\nA2 LOGOUT", "\"x\"", "{5}"] {
+            assert!(matches!(
+                build("A1".into(), "X", &[Arg::Built(bad)]),
+                Err(ImapError::InvalidInput)
+            ));
+        }
     }
 
     #[test]

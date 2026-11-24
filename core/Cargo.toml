@@ -1,6 +1,8 @@
 [workspace]
 resolver = "2"
 members = ["crates/*", "xtask"]
+# Needs nightly and cargo-fuzz; run it with `cargo xtask fuzz <target>`.
+exclude = ["fuzz"]
 
 [workspace.package]
 version = "0.0.0"

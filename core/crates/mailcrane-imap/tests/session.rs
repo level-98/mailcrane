@@ -13,8 +13,17 @@ const USER: &str = "alice@example.org";
 const PASSWORD: &str = "s3cret-value";
 const BOTH: [ImapSecurity; 2] = [ImapSecurity::ImplicitTls, ImapSecurity::StartTls];
 
+/// The fake server's port for `security`: implicit TLS and STARTTLS are
+/// separate ports, as on a real server.
+fn port(imap: &FakeImap, security: ImapSecurity) -> u16 {
+    match security {
+        ImapSecurity::ImplicitTls => imap.addr().port(),
+        ImapSecurity::StartTls => imap.starttls_addr().port(),
+    }
+}
+
 fn config(imap: &FakeImap, security: ImapSecurity) -> ImapConfig {
-    let mut config = ImapConfig::new("localhost", imap.addr().port(), security)
+    let mut config = ImapConfig::new("localhost", port(imap, security), security)
         .with_extra_root_cert(imap.root_cert_der().to_vec());
     config.command_timeout = Duration::from_millis(500);
     config.connect_timeout = Duration::from_secs(5);
@@ -95,7 +104,7 @@ async fn untrusted_certificate_is_a_tls_failure() {
     for security in BOTH {
         let imap = fake(&[], &[]).await;
         // The same server, without trusting the testkit's root.
-        let mut config = ImapConfig::new("localhost", imap.addr().port(), security);
+        let mut config = ImapConfig::new("localhost", port(&imap, security), security);
         config.command_timeout = Duration::from_millis(500);
         let result = connect(&config, PASSWORD).await;
         assert!(matches!(result, Err(ImapError::TlsFailure)), "{result:?}");

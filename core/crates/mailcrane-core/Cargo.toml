@@ -13,13 +13,15 @@ workspace = true
 [dependencies]
 mailcrane-imap = { path = "../mailcrane-imap" }
 mailcrane-mime = { path = "../mailcrane-mime" }
+mailcrane-smtp = { path = "../mailcrane-smtp" }
 mailcrane-store = { path = "../mailcrane-store" }
 thiserror = "2.0.21"
+tokio = { version = "1.54.1", features = ["time", "macros"] }
 tracing = "0.1"
 url = "2.5.9"
 zeroize = "1.9.2"
 
 [dev-dependencies]
-proptest = "1.12.0"
 tokio = { version = "1.54.1", features = ["macros", "rt-multi-thread", "time"] }
 mailcrane-testkit = { path = "../mailcrane-testkit" }
+proptest = "1"

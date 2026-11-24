@@ -1,0 +1,76 @@
+# Fuzzes the parsers every night: each target runs for 10 minutes, keeping
+# its corpus between runs. A crash fails the job and uploads the input.
+# The commands live in `cargo xtask fuzz`; this file only installs tools.
+name: Fuzz
+
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+    inputs:
+      seconds:
+        description: Seconds per target
+        default: "600"
+  # A short smoke run when the fuzzing setup itself changes.
+  pull_request:
+    paths:
+      - core/fuzz/**
+      - core/xtask/**
+      - .github/workflows/fuzz.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fuzz-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  fuzz:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [mime_parse, imap_response, html_sanitize]
+    steps:
+      - uses: actions/checkout@v7
+
+      # xtask itself builds on stable; the targets need nightly.
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@nightly
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-fuzz
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            core
+            core/fuzz
+
+      # Each run saves a new cache entry and restores the newest one, so the
+      # corpus keeps growing from night to night.
+      - uses: actions/cache@v6
+        with:
+          path: core/fuzz/corpus/${{ matrix.target }}
+          key: fuzz-corpus-${{ matrix.target }}-${{ github.run_id }}
+          restore-keys: fuzz-corpus-${{ matrix.target }}-
+
+      - name: Fuzz ${{ matrix.target }}
+        working-directory: core
+        env:
+          SECONDS_PER_TARGET: ${{ github.event_name == 'pull_request' && '60' || inputs.seconds || '600' }}
+        run: cargo +stable xtask fuzz "${{ matrix.target }}" --seconds "$SECONDS_PER_TARGET"
+
+      - name: Upload crashing inputs
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: fuzz-crash-${{ matrix.target }}
+          path: core/fuzz/artifacts/${{ matrix.target }}/
+          if-no-files-found: ignore

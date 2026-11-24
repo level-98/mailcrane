@@ -52,7 +52,8 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v6
 
-      # iOS checks run only in the dedicated ios.yml workflow.
+      # iOS checks run only in the dedicated ios.yml workflow, which is
+      # started by hand until the iOS app resumes (ROADMAP.md, M7).
       - run: cargo xtask ci --strict --skip ios
         env:
           ANDROID_NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/${{ env.NDK_VERSION }}

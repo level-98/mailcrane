@@ -1,0 +1,7 @@
+* LIST (\HasNoChildren) "/" INBOX
+* LIST (\HasNoChildren \Sent) "/" Sent
+* LIST (\Noselect \HasChildren) "/" Archive
+* LIST () "/" {13}
+Archive/&AOk-
+* LIST () "." INBOX ("CHILDINFO" ("SUBSCRIBED"))
+a2 OK LIST completed

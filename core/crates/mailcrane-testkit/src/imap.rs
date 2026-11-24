@@ -1,4 +1,5 @@
 use crate::fault::{Fault, Quirk};
+use crate::loopback::Loopback;
 use crate::mailbox::Mailbox;
 use crate::tls;
 use std::net::SocketAddr;
@@ -6,7 +7,6 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::TcpListener;
 use tokio::sync::{Mutex, RwLock};
 
 /// Per-server settings shared by every connection.
@@ -20,9 +20,18 @@ struct Shared {
 }
 use tokio::task::JoinHandle;
 
+/// What one connection has selected and enabled.
+#[derive(Debug, Default)]
+struct ConnState {
+    selected: Option<String>,
+    /// `ENABLE QRESYNC` succeeded (RFC 7162 §3.2.3).
+    qresync: bool,
+}
+
 #[derive(Debug, Clone)]
 pub struct FakeImap {
     addr: SocketAddr,
+    starttls_addr: SocketAddr,
     root_cert_der: Vec<u8>,
     mailbox: Mailbox,
     received: Arc<Mutex<Vec<String>>>,
@@ -35,9 +44,18 @@ pub struct FakeImapBuilder {
     faults: Vec<Fault>,
     quirks: Vec<Quirk>,
     special_use: Vec<(String, String)>,
+    mailbox: Option<Mailbox>,
 }
 
 impl FakeImapBuilder {
+    /// Serves an existing mailbox, for example another server's, instead of
+    /// one built from [`FakeImapBuilder::folder`]. Two servers with
+    /// different faults can then share the same messages.
+    pub fn mailbox(mut self, mailbox: Mailbox) -> Self {
+        self.mailbox = Some(mailbox);
+        self
+    }
+
     /// Marks folder `name` with a SPECIAL-USE attribute such as `\Sent`
     /// (RFC 6154). Not sent when [`Quirk::NoSpecialUse`] is set.
     pub fn special_use(mut self, name: impl Into<String>, attribute: impl Into<String>) -> Self {
@@ -68,17 +86,23 @@ impl FakeImapBuilder {
     pub async fn start(self) -> Result<FakeImap, String> {
         let started = Instant::now();
         let tls = tls::generate()?;
-        let listener = TcpListener::bind("127.0.0.1:0")
-            .await
-            .map_err(|error| error.to_string())?;
-        let addr = listener.local_addr().map_err(|error| error.to_string())?;
-        let mailbox = Mailbox::new(
-            &self
-                .folders
-                .iter()
-                .map(|(name, messages)| (name.as_str(), messages.clone()))
-                .collect::<Vec<_>>(),
-        );
+        // Like a real server (993 and 143), one port is implicit TLS and the
+        // other starts in plain text for STARTTLS. Guessing the mode from
+        // whether a TLS hello arrives in time fails when the client is slow
+        // to build its TLS config (Windows' verifier often is).
+        let tls_listener = Loopback::bind().await?;
+        let plain_listener = Loopback::bind().await?;
+        let addr = tls_listener.addr();
+        let starttls_addr = plain_listener.addr();
+        let mailbox = self.mailbox.unwrap_or_else(|| {
+            Mailbox::new(
+                &self
+                    .folders
+                    .iter()
+                    .map(|(name, messages)| (name.as_str(), messages.clone()))
+                    .collect::<Vec<_>>(),
+            )
+        });
         let mailbox_for_server = mailbox.clone();
         let user = self
             .user
@@ -94,13 +118,17 @@ impl FakeImapBuilder {
         });
         let handle = tokio::spawn(async move {
             loop {
-                let Ok((stream, _)) = listener.accept().await else {
+                let accepted = tokio::select! {
+                    accepted = tls_listener.accept() => accepted.map(|(stream, _)| (stream, true)),
+                    accepted = plain_listener.accept() => accepted.map(|(stream, _)| (stream, false)),
+                };
+                let Ok((stream, implicit_tls)) = accepted else {
                     break;
                 };
                 let tls_config = tls.config.clone();
                 let shared = shared.clone();
                 tokio::spawn(async move {
-                    let _ = handle_connection(stream, tls_config, shared).await;
+                    let _ = handle_connection(stream, implicit_tls, tls_config, shared).await;
                 });
             }
         });
@@ -109,6 +137,7 @@ impl FakeImapBuilder {
         }
         Ok(FakeImap {
             addr,
+            starttls_addr,
             root_cert_der: tls.cert_der,
             mailbox,
             received,
@@ -125,11 +154,17 @@ impl FakeImap {
             faults: Vec::new(),
             quirks: Vec::new(),
             special_use: Vec::new(),
+            mailbox: None,
         }
     }
 
+    /// The implicit TLS port (like 993).
     pub fn addr(&self) -> SocketAddr {
         self.addr
+    }
+    /// The port that starts in plain text and offers STARTTLS (like 143).
+    pub fn starttls_addr(&self) -> SocketAddr {
+        self.starttls_addr
     }
     pub fn root_cert_der(&self) -> &[u8] {
         &self.root_cert_der
@@ -139,7 +174,8 @@ impl FakeImap {
     }
 
     /// The command names (upper case, without arguments) the server has
-    /// received on any connection, in order, including refused ones.
+    /// received on any connection, in order, including refused ones. `UID`
+    /// commands include their subcommand, e.g. `UID FETCH`.
     pub async fn received_commands(&self) -> Vec<String> {
         self.received.lock().await.clone()
     }
@@ -162,25 +198,24 @@ impl Drop for FakeImap {
 }
 
 async fn record(shared: &Shared, parts: &[&str]) {
-    let command = parts.get(1).copied().unwrap_or("").to_ascii_uppercase();
+    let mut command = parts.get(1).copied().unwrap_or("").to_ascii_uppercase();
+    if command == "UID" {
+        if let Some(sub) = parts.get(2) {
+            command.push(' ');
+            command.push_str(&sub.to_ascii_uppercase());
+        }
+    }
     shared.received.lock().await.push(command);
 }
 
 async fn handle_connection(
     mut stream: tokio::net::TcpStream,
+    implicit_tls: bool,
     tls_config: Arc<rustls::ServerConfig>,
     shared: Arc<Shared>,
 ) -> Result<(), String> {
     let faults = &shared.faults;
     let command_count = Arc::new(AtomicUsize::new(0));
-    let mut first = [0u8; 1];
-    let implicit_tls =
-        // A TLS client sends its hello first, but may be slow to start (it
-        // loads certificates); a STARTTLS client waits for our greeting.
-        match tokio::time::timeout(Duration::from_millis(150), stream.peek(&mut first)).await {
-            Ok(result) => result.unwrap_or(0) > 0 && first[0] == 0x16,
-            Err(_) => false,
-        };
     let mut tls_stream = if implicit_tls {
         let mut tls_stream = tokio_rustls::TlsAcceptor::from(tls_config.clone())
             .accept(stream)
@@ -243,7 +278,7 @@ async fn handle_connection(
                     &shared,
                     false,
                     &command_count,
-                    &mut None,
+                    &mut ConnState::default(),
                 )
                 .await?;
             } else {
@@ -255,7 +290,7 @@ async fn handle_connection(
         }
     };
 
-    let mut selected: Option<String> = None;
+    let mut state = ConnState::default();
     loop {
         let mut line = Vec::new();
         let mut byte = [0u8; 1];
@@ -277,7 +312,7 @@ async fn handle_connection(
             &shared,
             true,
             &command_count,
-            &mut selected,
+            &mut state,
         )
         .await
         .is_err()
@@ -294,7 +329,7 @@ async fn handle_imap_command(
     shared: &Shared,
     secure: bool,
     command_count: &AtomicUsize,
-    selected: &mut Option<String>,
+    state: &mut ConnState,
 ) -> Result<(), String> {
     let (mailbox, faults, quirks, user) = (
         &shared.mailbox,
@@ -332,7 +367,8 @@ async fn handle_imap_command(
             if !quirks.contains(&Quirk::NoCondstore) {
                 caps.push_str(" CONDSTORE");
             }
-            if !quirks.contains(&Quirk::NoQresync) {
+            // QRESYNC needs CONDSTORE (RFC 7162 §3.2).
+            if !quirks.contains(&Quirk::NoQresync) && !quirks.contains(&Quirk::NoCondstore) {
                 caps.push_str(" QRESYNC");
             }
             if !quirks.contains(&Quirk::NoSpecialUse) {
@@ -423,23 +459,44 @@ async fn handle_imap_command(
         }
         "SELECT" | "EXAMINE" => {
             let folder = parts.get(2).copied().unwrap_or("INBOX").trim_matches('"');
+            let params = parts.get(3..).unwrap_or_default().join(" ");
+            let qresync = qresync_params(&params);
             if folder != "INBOX" && !mailbox.folder_names().await.iter().any(|n| n == folder) {
                 format!("{tag} NO [NONEXISTENT] no such folder\r\n")
+            } else if !params.is_empty() && (qresync.is_none() || !state.qresync) {
+                // RFC 7162 §3.2.5: QRESYNC parameters need ENABLE first.
+                format!("{tag} BAD unexpected SELECT parameters\r\n")
             } else {
-                *selected = Some(folder.to_string());
-                let count = mailbox.exists(folder).await;
-                format!(
-                    "* {count} EXISTS\r\n* OK [UIDVALIDITY {}]\r\n* OK [UIDNEXT {}]\r\n* OK [HIGHESTMODSEQ 1]\r\n{tag} OK {command} completed\r\n",
-                    mailbox.uidvalidity(),
-                    mailbox.uidnext(folder).await
-                )
+                state.selected = Some(folder.to_string());
+                select_response(mailbox, quirks, folder, qresync, tag, &command).await
             }
         }
         "UID" => {
-            let folder = selected.as_deref().unwrap_or("INBOX");
+            let folder = state.selected.as_deref().unwrap_or("INBOX");
             handle_uid_command(parts, mailbox, quirks, folder).await
         }
-        "ENABLE" => format!("{tag} ENABLED\r\n"),
+        "ENABLE" => {
+            // RFC 5161 §3.1: list only the extensions that were enabled.
+            let can_qresync =
+                !quirks.contains(&Quirk::NoQresync) && !quirks.contains(&Quirk::NoCondstore);
+            let mut enabled = Vec::new();
+            for wanted in parts.get(2..).unwrap_or_default() {
+                let wanted = wanted.to_ascii_uppercase();
+                let ok = match wanted.as_str() {
+                    "QRESYNC" => can_qresync,
+                    "CONDSTORE" => !quirks.contains(&Quirk::NoCondstore),
+                    _ => false,
+                };
+                if ok {
+                    if wanted == "QRESYNC" {
+                        state.qresync = true;
+                    }
+                    enabled.push(wanted);
+                }
+            }
+            let list: String = enabled.iter().map(|e| format!(" {e}")).collect();
+            format!("* ENABLED{list}\r\n{tag} OK ENABLE completed\r\n")
+        }
         "NOOP" => "* 0 RECENT\r\n".to_string() + &format!("{tag} OK NOOP completed\r\n"),
         "LOGOUT" => format!("{tag} OK LOGOUT completed\r\n"),
         "APPEND" => format!("{tag} OK APPEND completed\r\n"),
@@ -494,6 +551,84 @@ async fn handle_imap_command(
         .write_all(response.as_bytes())
         .await
         .map_err(|error| error.to_string())
+}
+
+/// `(QRESYNC (uidvalidity modseq [known-uids]))` (RFC 7162 §3.2.5) from
+/// the text after the folder name.
+struct QresyncParams {
+    uidvalidity: u32,
+    modseq: u64,
+    known: Option<String>,
+}
+
+fn qresync_params(text: &str) -> Option<QresyncParams> {
+    let inner = text.trim().strip_prefix('(')?.strip_suffix(')')?.trim();
+    let keyword = inner.get(..7)?;
+    if !keyword.eq_ignore_ascii_case("QRESYNC") {
+        return None;
+    }
+    let inner = inner.get(7..)?.trim();
+    let inner = inner.strip_prefix('(')?.strip_suffix(')')?;
+    let mut words = inner.split_whitespace();
+    let uidvalidity = words.next()?.parse().ok()?;
+    let modseq = words.next()?.parse().ok()?;
+    let known = words.next().map(str::to_string);
+    Some(QresyncParams {
+        uidvalidity,
+        modseq,
+        known,
+    })
+}
+
+async fn select_response(
+    mailbox: &Mailbox,
+    quirks: &[Quirk],
+    folder: &str,
+    qresync: Option<QresyncParams>,
+    tag: &str,
+    command: &str,
+) -> String {
+    let count = mailbox.exists(folder).await;
+    let uidvalidity = mailbox.uidvalidity();
+    let mut out = format!(
+        "* {count} EXISTS\r\n* OK [UIDVALIDITY {uidvalidity}]\r\n* OK [UIDNEXT {}]\r\n",
+        mailbox.uidnext(folder).await
+    );
+    if quirks.contains(&Quirk::NoCondstore) {
+        return out + &format!("{tag} OK {command} completed\r\n");
+    }
+    let highest = mailbox.highest_modseq(folder).await;
+    match highest {
+        // RFC 7162 §3.1.2.1 and §3.1.2.2.
+        Some(highest) => out.push_str(&format!("* OK [HIGHESTMODSEQ {highest}]\r\n")),
+        None => out.push_str("* OK [NOMODSEQ]\r\n"),
+    }
+    // RFC 7162 §3.2.5.2: changes only when UIDVALIDITY still matches.
+    if let (Some(params), Some(_)) = (qresync, highest) {
+        if params.uidvalidity == uidvalidity {
+            let max = mailbox.uidnext(folder).await.saturating_sub(1);
+            let known = |uid: u32| {
+                params
+                    .known
+                    .as_deref()
+                    .is_none_or(|set| in_uid_set(set, uid, max))
+            };
+            let changes = mailbox.changes_since(folder, params.modseq, known).await;
+            if !changes.vanished.is_empty() {
+                let list: Vec<String> = changes.vanished.iter().map(u32::to_string).collect();
+                out.push_str(&format!("* VANISHED (EARLIER) {}\r\n", list.join(",")));
+            }
+            for (seq, message) in changes.changed {
+                out.push_str(&format!(
+                    "* {seq} FETCH (UID {} FLAGS ({}) MODSEQ ({}))\r\n",
+                    message.uid,
+                    message.flags.join(" "),
+                    message.modseq
+                ));
+            }
+        }
+    }
+    out + &format!("{tag} OK {command} completed\r\n")
 }
 
 /// Decodes standard base64 (RFC 4648 §4); `None` if it is not valid.
@@ -600,9 +735,22 @@ async fn handle_uid_command(
                 .to_ascii_uppercase();
             let messages = mailbox.messages(folder).await;
             let max = messages.iter().map(|m| m.uid).max().unwrap_or(0);
+            let condstore = !quirks.contains(&Quirk::NoCondstore);
+            // RFC 7162 §3.1.4: `(CHANGEDSINCE n)` limits the answer to
+            // messages with a higher mod-sequence and implies MODSEQ.
+            let changed_since: Option<u64> = items
+                .split_once("CHANGEDSINCE ")
+                .and_then(|(_, rest)| rest.trim_end_matches(')').trim().parse().ok());
+            if changed_since.is_some() && !condstore {
+                return format!("{tag} BAD CHANGEDSINCE unsupported\r\n");
+            }
+            let with_modseq = condstore && (changed_since.is_some() || items.contains("MODSEQ"));
             let mut out: Vec<u8> = Vec::new();
             for (index, message) in messages.iter().enumerate() {
                 if !in_uid_set(set, message.uid, max) {
+                    continue;
+                }
+                if changed_since.is_some_and(|m| message.modseq <= m) {
                     continue;
                 }
                 let mut line = format!("* {} FETCH (UID {}", index + 1, message.uid);
@@ -616,6 +764,9 @@ async fn handle_uid_command(
                         flags.push("\\Seen".to_string());
                     }
                     line.push_str(&format!(" FLAGS ({})", flags.join(" ")));
+                }
+                if with_modseq {
+                    line.push_str(&format!(" MODSEQ ({})", message.modseq));
                 }
                 if items.contains("INTERNALDATE") {
                     line.push_str(" INTERNALDATE \"24-Nov-2026 10:46:51 +0000\"");

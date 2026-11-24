@@ -2,4 +2,101 @@
 <resources>
     <string name="app_name">Mailcrane</string>
     <string name="hello_from_core">%1$s</string>
+
+    <!-- Manual account setup (M1-03) -->
+    <string name="setup_title">Add account</string>
+    <string name="setup_section_account">Account</string>
+    <string name="setup_section_imap">Incoming mail server (IMAP)</string>
+    <string name="setup_section_smtp">Outgoing mail server (SMTP)</string>
+    <string name="setup_section_sign_in">Login details</string>
+    <string name="setup_email">Email address</string>
+    <string name="setup_display_name">Your name (optional)</string>
+    <string name="setup_host">Server</string>
+    <string name="setup_port">Port</string>
+    <string name="setup_security">Security</string>
+    <!-- Connection security choices. There is deliberately no unencrypted option. -->
+    <string name="setup_security_tls">SSL/TLS</string>
+    <string name="setup_security_starttls">STARTTLS</string>
+    <string name="setup_username">Username</string>
+    <string name="setup_password">Password</string>
+    <string name="setup_password_show">Show</string>
+    <string name="setup_password_hide">Hide</string>
+    <string name="setup_submit">Sign in</string>
+    <string name="setup_checking">Checking…</string>
+    <string name="setup_account_added">Account added</string>
+
+    <!-- Field errors, shown under the field -->
+    <string name="setup_error_empty">Required</string>
+    <string name="setup_error_contains_space">Server names can’t contain spaces</string>
+    <string name="setup_error_has_scheme">Enter just the server name, without imaps:// or similar</string>
+    <string name="setup_error_invalid_characters">Contains characters that aren’t allowed here</string>
+    <string name="setup_error_port_out_of_range">Enter a port from 1 to 65535</string>
+    <string name="setup_error_malformed_email">Enter an email address like name@example.com</string>
+
+    <!-- Errors from checking the settings. Nothing was saved in any of these cases. -->
+    <string name="setup_error_cannot_connect_imap">Couldn’t reach the incoming mail server. Check the server name and port.</string>
+    <string name="setup_error_cannot_connect_smtp">Couldn’t reach the outgoing mail server. Check the server name and port.</string>
+    <string name="setup_error_tls_imap">Couldn’t set up a secure connection to the incoming mail server. Its certificate may not be trusted, or the security setting may be wrong.</string>
+    <string name="setup_error_tls_smtp">Couldn’t set up a secure connection to the outgoing mail server. Its certificate may not be trusted, or the security setting may be wrong.</string>
+    <string name="setup_error_starttls_imap">The incoming mail server doesn’t offer STARTTLS. Try SSL/TLS instead. Your password wasn’t sent.</string>
+    <string name="setup_error_starttls_smtp">The outgoing mail server doesn’t offer STARTTLS. Try SSL/TLS instead. Your password wasn’t sent.</string>
+    <string name="setup_error_auth_imap">The incoming mail server didn’t accept the username or password.</string>
+    <string name="setup_error_auth_smtp">The outgoing mail server didn’t accept the username or password.</string>
+    <string name="setup_error_timeout_imap">The incoming mail server took too long to answer. Check the server name and port, or try again later.</string>
+    <string name="setup_error_timeout_smtp">The outgoing mail server took too long to answer. Check the server name and port, or try again later.</string>
+    <string name="setup_error_save_failed">Both servers accepted the sign-in, but the account couldn’t be saved on this device. Try again.</string>
+    <string name="setup_error_unexpected">Something went wrong while checking the settings. Nothing was saved.</string>
+
+    <!-- Message list (M1-10) -->
+    <string name="message_list_loading">Checking for mail…</string>
+    <string name="message_list_retry">Try again</string>
+    <string name="message_no_subject">(No subject)</string>
+    <string name="message_unknown_sender">Unknown sender</string>
+    <!-- TalkBack reads one row as these parts joined by spaces, e.g. "Unread. From Ana. Subject: Lunch. 10:42. Has attachment." -->
+    <string name="message_a11y_unread">Unread.</string>
+    <string name="message_a11y_flagged">Flagged.</string>
+    <string name="message_a11y_from">From %1$s.</string>
+    <string name="message_a11y_subject">Subject: %1$s.</string>
+    <string name="message_a11y_date">%1$s.</string>
+    <string name="message_a11y_attachment">Has attachment.</string>
+
+    <!-- Empty states (M1-16) -->
+    <string name="empty_folder_title">All caught up</string>
+    <string name="empty_folder_body">No messages in this folder.</string>
+    <string name="no_results_title">No results</string>
+    <string name="no_results_body">Try different words or check your spelling.</string>
+    <string name="welcome_title">Welcome to Mailcrane</string>
+    <string name="welcome_body">Add an email account to get started.</string>
+    <string name="welcome_add_account">Add account</string>
+
+    <!-- Folder drawer (M1-13) -->
+    <string name="folders_title">Folders</string>
+    <string name="folders_open">Open folders</string>
+    <string name="folders_none">This account has no folders on the server.</string>
+    <!-- Standard folders show these names instead of the server's -->
+    <string name="folder_inbox">Inbox</string>
+    <string name="folder_drafts">Drafts</string>
+    <string name="folder_sent">Sent</string>
+    <string name="folder_archive">Archive</string>
+    <string name="folder_spam">Spam</string>
+    <string name="folder_trash">Trash</string>
+    <string name="folder_all_mail">All mail</string>
+    <!-- Unread badge next to a folder -->
+    <string name="folder_unread_count">%1$d</string>
+    <string name="folder_unread_overflow">%1$d+</string>
+    <!-- TalkBack reads a folder as its name and unread count, e.g. "Inbox, 3 unread" -->
+    <plurals name="folder_a11y_unread">
+        <item quantity="one">%1$s, %2$d unread</item>
+        <item quantity="other">%1$s, %2$d unread</item>
+    </plurals>
+
+    <!-- Sync failures, shown in a snackbar -->
+    <string name="sync_error_network">Couldn’t reach the mail server. Check your connection.</string>
+    <string name="sync_error_tls">Couldn’t make a secure connection to the mail server.</string>
+    <string name="sync_error_auth">The mail server didn’t accept your login details.</string>
+    <string name="sync_error_protocol">The mail server sent something unexpected.</string>
+    <string name="sync_error_timeout">The mail server took too long to answer.</string>
+    <string name="sync_error_storage">Couldn’t read or save mail on this device.</string>
+    <string name="sync_error_not_found">This folder no longer exists.</string>
+    <string name="sync_error_folder_reset">The folder changed on the server. Pull to refresh again.</string>
 </resources>

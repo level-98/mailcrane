@@ -16,7 +16,7 @@ That's it. There's no sign-up, CLA or coordination thread.
 
 1. **No real personal data.** Never put real email addresses, messages, passwords, tokens or keys in code, tests, logs, issues or PRs. Use `example.org` and the built-in fake servers.
 2. **Never crash on bad input.** Email is hostile input. See [AGENTS.md](AGENTS.md#3-never-crash).
-3. **Be honest about testing.** "Didn't test on iOS" is fine. Claiming you tested something you didn't is not.
+3. **Be honest about testing.** "Didn't test on a real device" is fine. Claiming you tested something you didn't is not.
 
 ## Claiming work
 

@@ -75,6 +75,9 @@ Commands:
   android   ktlintCheck, lintDebug and testDebugUnitTest through Gradle
   ios       XCFramework, xcodegen, swiftlint and xcodebuild test (macOS only)
   bindings  generate Kotlin and Swift bindings into core/target/bindings/
+  fuzz <target> [--seconds N]
+            run a fuzz target (default 60 s); needs nightly and cargo-fuzz.
+            Not part of ci. Targets: mime_parse, imap_response, html_sanitize
 
 Flags (for ci):
   --strict       a skipped step counts as a failure
@@ -120,6 +123,9 @@ fn real_main() -> Result<ExitCode, Error> {
     if command == "help" || command == "--help" || command == "-h" {
         say(USAGE);
         return Ok(ExitCode::SUCCESS);
+    }
+    if command == "fuzz" {
+        return fuzz(&context()?, args);
     }
     let options = parse_options(args)?;
     let ctx = context()?;
@@ -400,6 +406,176 @@ fn target_dir(ctx: &Ctx) -> PathBuf {
         Some(dir) => ctx.core.join(dir),
         None => ctx.core.join("target"),
     }
+}
+
+// ------------------------------------------------------------------- fuzz
+
+/// Fuzz targets in `core/fuzz/fuzz_targets/`, each with the fixture folder
+/// (under `tests/fixtures/`) and file extension its seed corpus comes from.
+const FUZZ_TARGETS: [(&str, &str, &str); 3] = [
+    ("mime_parse", "mime", "eml"),
+    ("imap_response", "imap", "imap"),
+    ("html_sanitize", "html", "html"),
+];
+
+/// `cargo xtask fuzz <target> [--seconds N]`. Seeds `core/fuzz/corpus/<target>/`
+/// from the fixtures (the corpus is never committed), then runs
+/// `cargo +nightly fuzz run` for N seconds. Exit code 0 only if no crash.
+fn fuzz(ctx: &Ctx, args: impl Iterator<Item = String>) -> Result<ExitCode, Error> {
+    let mut target = None;
+    let mut seconds: u64 = 60;
+    let mut args = args;
+    while let Some(arg) = args.next() {
+        if arg == "--seconds" {
+            let value = args.next().ok_or("--seconds needs a number")?;
+            seconds = value
+                .parse()
+                .map_err(|_| format!("--seconds needs a whole number, not `{value}`"))?;
+        } else if target.is_none() && !arg.starts_with('-') {
+            target = Some(arg);
+        } else {
+            return Err(format!("unknown argument `{arg}` (see `cargo xtask help`)"));
+        }
+    }
+    let names: Vec<&str> = FUZZ_TARGETS.iter().map(|t| t.0).collect();
+    let target = target.ok_or_else(|| format!("name a target: {}", names.join(", ")))?;
+    let (_, fixtures, ext) = FUZZ_TARGETS
+        .iter()
+        .find(|t| t.0 == target)
+        .ok_or_else(|| format!("unknown target `{target}` (targets: {})", names.join(", ")))?;
+
+    // Through the rustup proxy, not $CARGO: that points at the stable cargo
+    // running xtask, which ignores `+nightly`.
+    if !has_tool_args("cargo", &["+nightly", "--version"]) {
+        return Err(
+            "fuzzing needs the nightly toolchain: `rustup toolchain install nightly`".into(),
+        );
+    }
+    if !has_tool_args("cargo", &["+nightly", "fuzz", "--version"]) {
+        return Err("fuzzing needs cargo-fuzz: `cargo install cargo-fuzz`".into());
+    }
+
+    let fuzz_dir = ctx.core.join("fuzz");
+    let corpus = fuzz_dir.join("corpus").join(target.as_str());
+    let seeded = seed_corpus(
+        &ctx.root.join("tests").join("fixtures").join(fixtures),
+        ext,
+        &corpus,
+    )?;
+    say(format_args!(
+        "seeded {seeded} file(s) into core/fuzz/corpus/{target}/"
+    ));
+
+    // cargo-fuzz defaults `--target` to the platform it was itself built for.
+    // Prebuilt Linux copies (as `taiki-e/install-action` installs) are musl
+    // builds, and AddressSanitizer cannot link against static musl, so always
+    // build for the machine's own platform. Linux only: on Windows the nightly
+    // host can be `-gnu` while libFuzzer needs the MSVC target cargo-fuzz uses.
+    let mut run_args = vec!["+nightly".to_string(), "fuzz".into(), "run".into()];
+    if cfg!(target_os = "linux") {
+        run_args.extend(["--target".into(), nightly_host()?]);
+    }
+    run_args.extend([
+        target.clone(),
+        "--".into(),
+        format!("-max_total_time={seconds}"),
+        // A single input taking this long is a hang worth reporting.
+        "-timeout=10".into(),
+    ]);
+    // `cargo xtask` runs under stable, and the stable cargo and rustup set
+    // variables that would make the nightly build use the stable compiler.
+    let ok = Command::new("cargo")
+        .args(&run_args)
+        .current_dir(&fuzz_dir)
+        .env_remove("RUSTUP_TOOLCHAIN")
+        .env_remove("RUSTC")
+        .env_remove("RUSTDOC")
+        .env_remove("CARGO")
+        .env_remove("CARGO_TARGET_DIR")
+        .status()
+        .map_err(|e| format!("could not start `cargo +nightly fuzz`: {e}"))?
+        .success();
+    if ok {
+        say(format_args!("\n{target}: no crash in {seconds} s"));
+        Ok(ExitCode::SUCCESS)
+    } else {
+        if cfg!(windows) {
+            // libFuzzer on Windows only links with AddressSanitizer, whose
+            // runtime DLL ships with MSVC but is not on PATH by default.
+            say(
+                "\nOn Windows, exit code 0xc0000135 means clang_rt.asan_dynamic-x86_64.dll \
+                 is not on PATH. Add the MSVC folder that holds it, for example \
+                 <Visual Studio>\\VC\\Tools\\MSVC\\<version>\\bin\\Hostx64\\x64.",
+            );
+        }
+        let crashes = std::fs::read_dir(fuzz_dir.join("artifacts").join(target.as_str()))
+            .map(|entries| entries.count())
+            .unwrap_or(0);
+        if crashes > 0 {
+            say(format_args!(
+                "\n{target}: crash. {crashes} input(s) in core/fuzz/artifacts/{target}/; \
+                 see core/fuzz/README.md for turning one into a regression test."
+            ));
+        } else {
+            say(format_args!(
+                "\n{target}: `cargo fuzz run` failed without saving a crashing input; \
+                 see the build output above."
+            ));
+        }
+        Ok(ExitCode::FAILURE)
+    }
+}
+
+/// Copies `<fixtures>/*.<ext>` into `corpus`, creating it. Returns how many.
+fn seed_corpus(fixtures: &Path, ext: &str, corpus: &Path) -> Result<usize, Error> {
+    std::fs::create_dir_all(corpus)
+        .map_err(|e| format!("cannot create {}: {e}", corpus.display()))?;
+    let entries = std::fs::read_dir(fixtures)
+        .map_err(|e| format!("cannot read {}: {e}", fixtures.display()))?;
+    let mut count = 0;
+    for entry in entries {
+        let path = entry
+            .map_err(|e| format!("cannot read {}: {e}", fixtures.display()))?
+            .path();
+        if path.extension() != Some(OsStr::new(ext)) {
+            continue;
+        }
+        let Some(name) = path.file_name() else {
+            continue;
+        };
+        std::fs::copy(&path, corpus.join(name))
+            .map_err(|e| format!("cannot copy {}: {e}", path.display()))?;
+        count += 1;
+    }
+    Ok(count)
+}
+
+/// The host platform of the nightly compiler, e.g. `x86_64-unknown-linux-gnu`,
+/// from the `host:` line of `rustc +nightly -vV`.
+fn nightly_host() -> Result<String, Error> {
+    let out = Command::new("rustc")
+        .args(["+nightly", "-vV"])
+        .env_remove("RUSTUP_TOOLCHAIN")
+        .env_remove("RUSTC")
+        .output()
+        .map_err(|e| format!("could not start `rustc +nightly -vV`: {e}"))?;
+    if !out.status.success() {
+        return Err("`rustc +nightly -vV` failed".into());
+    }
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .find_map(|line| line.strip_prefix("host: "))
+        .map(|host| host.trim().to_string())
+        .ok_or_else(|| "`rustc +nightly -vV` printed no `host:` line".into())
+}
+
+/// Whether `program args...` runs and succeeds.
+fn has_tool_args(program: &str, args: &[&str]) -> bool {
+    Command::new(program)
+        .args(args)
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
 }
 
 fn bindings(ctx: &Ctx) -> Result<Outcome, Error> {

@@ -1,0 +1,5 @@
+* 3 FETCH (UID 7 FLAGS (\Seen $Forwarded) INTERNALDATE "24-Nov-2026 10:46:51 +0000" RFC822.SIZE 99 ENVELOPE ("Wed, 24 Nov 2026 10:46:51 +0000" "Hello" (("Alice" NIL "alice" "example.org")) NIL NIL ((NIL NIL "bob" "example.net")) NIL NIL NIL "<1@example.org>") BODYSTRUCTURE (("TEXT" "PLAIN" ("CHARSET" "UTF-8") NIL NIL "7BIT" 12 1)("APPLICATION" "PDF" NIL NIL NIL "BASE64" 4 NIL ("ATTACHMENT" ("FILENAME" "a.pdf")) NIL) "MIXED") BODY[HEADER.FIELDS (REFERENCES LIST-UNSUBSCRIBE)] {44}
+List-Unsubscribe: <mailto:u@example.com>
+
+)
+a4 OK FETCH completed
