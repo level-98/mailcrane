@@ -6,6 +6,11 @@
 # branch and squash-merges it straight away. It never pushes to `main`, so
 # branch protection still applies.
 #
+# The website job checks out the separate `website` branch, refreshes its local
+# issue snapshot and deploys through Pages. Keeping this trigger on the default
+# branch lets issue and scheduled events update the site without browser calls
+# to GitHub or site content being added to `main`.
+#
 # Setup: Settings → Actions → General → Workflow permissions →
 # tick "Allow GitHub Actions to create and approve pull requests".
 #
@@ -17,7 +22,7 @@ name: Sync roadmap
 
 on:
   issues:
-    types: [closed, reopened, edited]
+    types: [opened, closed, reopened, edited]
   schedule:
     - cron: "41 5 * * *"
   workflow_dispatch:
@@ -32,6 +37,59 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  website:
+    if: github.event_name != 'issues' || startsWith(github.event.issue.title, '[')
+    runs-on: ubuntu-latest
+    concurrency:
+      group: website-refs/heads/website
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      issues: read
+      pages: write
+      id-token: write
+    defaults:
+      run:
+        working-directory: website
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: website
+      - name: Install Zola
+        run: |
+          curl --fail --location --silent --show-error \
+            https://github.com/getzola/zola/releases/download/v0.23.6/zola-v0.23.6-x86_64-unknown-linux-gnu.tar.gz \
+            --output /tmp/zola.tar.gz
+          tar -xzf /tmp/zola.tar.gz -C /tmp
+          sudo install /tmp/zola /usr/local/bin/zola
+      - name: Install lychee
+        run: |
+          curl --fail --location --silent --show-error \
+            https://github.com/lycheeverse/lychee/releases/download/lychee-v0.24.2/lychee-x86_64-unknown-linux-gnu.tar.gz \
+            --output /tmp/lychee.tar.gz
+          tar -xzf /tmp/lychee.tar.gz -C /tmp
+          sudo install /tmp/lychee-x86_64-unknown-linux-gnu/lychee /usr/local/bin/lychee
+      - name: Refresh roadmap snapshot
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python3 scripts/update_roadmap.py
+      - name: Test roadmap generator
+        run: python3 -m unittest discover -s tests -v
+      - name: Build site
+        run: zola build
+      - name: Check links offline
+        run: lychee --offline public/
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v5
+        with:
+          path: website/public
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v5
+
   sync:
     if: github.event_name != 'issues' || startsWith(github.event.issue.title, '[')
     runs-on: ubuntu-latest
