@@ -14,7 +14,7 @@ Goal: anyone can clone, build an empty app on both platforms and run CI.
 - [x] **M0-02** Run `scripts/roadmap_to_issues.py` to create the labels and one issue per task; enable Discussions 🧑
 - [x] **M0-03** Add the agent's Claude token (`CLAUDE_CODE_OAUTH_TOKEN`, or `ANTHROPIC_API_KEY`) as a secret of the `main`-only `agent` environment so the `agent-go` workflow works (or delete `.github/workflows/agent.yml`) 🧑
 - [x] **M0-04** Rust workspace skeleton in `core/` with empty crates: `mailcrane-core`, `-imap`, `-smtp`, `-jmap`, `-mime`, `-store`, `-ffi`, `-testkit`; `#![forbid(unsafe_code)]` and the no-panic clippy lints 🤖
-- [ ] **M0-05** UniFFI setup: expose a `hello()` function, generate Kotlin and Swift bindings 🤖
+- [x] **M0-05** UniFFI setup: expose a `hello()` function, generate Kotlin and Swift bindings 🤖
 - [ ] **M0-06** Android app shell: Compose + Material 3, Hilt, calls `hello()` through the bindings, ktlint 🤖
 - [ ] **M0-07** iOS app shell: SwiftUI, XCFramework build of the core, calls `hello()`, SwiftLint 🤖
 - [ ] **M0-08** `cargo xtask ci`: one command for fmt, clippy, tests, cargo-deny, and Android/iOS checks when installed; CI (GitHub Actions) just runs it 🤖
@@ -24,7 +24,7 @@ Goal: anyone can clone, build an empty app on both platforms and run CI.
 - [ ] **M0-12** Write `docs/decisions/0001-tech-stack.md` recording the Rust core + native UI decision 🧑
 - [ ] **M0-13** Dependabot or Renovate for Cargo, Gradle and Swift packages 🟢🤖
 - [ ] **M0-14** Fuzz targets (`cargo fuzz`) for the MIME and IMAP parsers, run nightly in CI 🤖
-- [ ] **M0-15** Release script that gathers `docs/changelog.d/` fragments into release notes 🟢🤖
+- [x] **M0-15** Release script that gathers `docs/changelog.d/` fragments into release notes 🟢🤖
 - [ ] **M0-16** TestFlight internal builds from CI (macOS runner), so iOS can be tested on real devices without a Mac 🔒🧑
 
 ## M1 — Read mail
