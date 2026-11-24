@@ -7,6 +7,7 @@
 
 uniffi::setup_scaffolding!();
 
+pub mod account;
 pub mod secrets;
 pub mod sync;
 
