@@ -18,7 +18,7 @@ zola build
 lychee --offline public/
 ```
 
-After [PR #131](https://github.com/level-98/mailcrane/pull/131) is merged into `main`, its issue and nightly triggers will check out this `website` branch, regenerate the roadmap, build the site, and deploy it. A manual run is available from the `Sync roadmap` workflow in GitHub Actions. Until that companion change is merged, pushes to `website` still refresh the snapshot through the site workflow. The browser reads only generated local data and does not call GitHub.
+The companion workflow on `main` ([PR #131](https://github.com/level-98/mailcrane/pull/131)) rebuilds and redeploys the site when a roadmap issue changes, and nightly. It checks out this `website` branch, regenerates the roadmap and builds the site. A manual run is available from the `Sync roadmap` workflow in GitHub Actions. Pushes to `website` also refresh the snapshot through the site workflow. The browser reads only generated local data and does not call GitHub.
 
 ## Deployment
 

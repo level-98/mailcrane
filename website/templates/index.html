@@ -3,7 +3,7 @@
 {% set roadmap = load_data(path="data/roadmap.json") %}
 {% set screens = load_data(path="data/screens.json") %}
 {% set home_url = get_url(path='@/_index.md') %}
-<main id="top">
+<main id="main">
   <section class="hero section-wrap">
     <div class="hero-copy">
       <p class="eyebrow"><span class="status-dot"></span> A calmer kind of email</p>
@@ -15,7 +15,7 @@
       </div>
       <p class="alpha-note"><span class="note-icon" aria-hidden="true">i</span> Early development — there isn’t an app to download yet.</p>
     </div>
-    <div class="hero-art" aria-label="Mailcrane welcome illustration">
+    <div class="hero-art" role="img" aria-label="Mailcrane welcome illustration">
       <div class="art-orbit orbit-one"></div>
       <div class="art-orbit orbit-two"></div>
       <img src="{{ get_url(path='images/welcome.svg') }}" alt="" width="420" height="360">

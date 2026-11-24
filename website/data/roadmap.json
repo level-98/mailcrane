@@ -1,19 +1,21 @@
 {
   "repository": "level-98/mailcrane",
-  "generated_at": "2026-11-24T15:52:15Z",
-  "total": 80,
-  "completed": 21,
-  "percent": 26,
+  "generated_at": "2026-11-24T21:15:46Z",
+  "total": 95,
+  "completed": 28,
+  "percent": 29,
   "groups": [
     {
       "id": "M0",
       "title": "Foundations",
       "description": "Set up the shared core, app shells, and contributor workflow.",
-      "total": 17,
-      "completed": 14,
-      "percent": 82,
+      "total": 16,
+      "completed": 15,
+      "percent": 94,
       "tasks": [
         {
+          "id": "M0-01",
+          "position": 1.0,
           "number": 1,
           "issue_number": 2,
           "title": "Add LICENSE (MPL-2.0), CODE_OF_CONDUCT.md (Contributor Covenant 2.1), branch protection on `main`",
@@ -21,6 +23,8 @@
           "url": "https://github.com/level-98/mailcrane/issues/2"
         },
         {
+          "id": "M0-02",
+          "position": 2.0,
           "number": 2,
           "issue_number": 3,
           "title": "Run `scripts/roadmap_to_issues.py` to create the labels and one issue per task; enable Discussions",
@@ -28,6 +32,8 @@
           "url": "https://github.com/level-98/mailcrane/issues/3"
         },
         {
+          "id": "M0-03",
+          "position": 3.0,
           "number": 3,
           "issue_number": 4,
           "title": "Add `ANTHROPIC_API_KEY` secret so the `agent-go` workflow works (or delete `.github/workflows/agent.yml`)",
@@ -35,6 +41,8 @@
           "url": "https://github.com/level-98/mailcrane/issues/4"
         },
         {
+          "id": "M0-04",
+          "position": 4.0,
           "number": 4,
           "issue_number": 5,
           "title": "Rust workspace skeleton in `core/` with empty crates: `mailcrane-core`, `-imap`, `-smtp`, `-jmap`, `-mime`, `-store`, `-ffi`, `-testkit`; `#![forbid(unsafe_code)]` and the no-panic clippy lints",
@@ -42,6 +50,8 @@
           "url": "https://github.com/level-98/mailcrane/issues/5"
         },
         {
+          "id": "M0-05",
+          "position": 5.0,
           "number": 5,
           "issue_number": 6,
           "title": "UniFFI setup: expose a `hello()` function, generate Kotlin and Swift bindings",
@@ -49,6 +59,8 @@
           "url": "https://github.com/level-98/mailcrane/issues/6"
         },
         {
+          "id": "M0-06",
+          "position": 6.0,
           "number": 6,
           "issue_number": 7,
           "title": "Android app shell: Compose + Material 3, Hilt, calls `hello()` through the bindings, ktlint",
@@ -56,6 +68,8 @@
           "url": "https://github.com/level-98/mailcrane/issues/7"
         },
         {
+          "id": "M0-07",
+          "position": 7.0,
           "number": 7,
           "issue_number": 8,
           "title": "iOS app shell: SwiftUI, XCFramework build of the core, calls `hello()`, SwiftLint",
@@ -63,6 +77,8 @@
           "url": "https://github.com/level-98/mailcrane/issues/8"
         },
         {
+          "id": "M0-08",
+          "position": 8.0,
           "number": 8,
           "issue_number": 9,
           "title": "`cargo xtask ci`: one command for fmt, clippy, tests, cargo-deny, and Android/iOS checks when installed; CI (GitHub Actions) just runs it",
@@ -70,6 +86,8 @@
           "url": "https://github.com/level-98/mailcrane/issues/9"
         },
         {
+          "id": "M0-09",
+          "position": 9.0,
           "number": 9,
           "issue_number": 10,
           "title": "`cargo deny` config allowing only MPL-2.0-compatible licences",
@@ -77,6 +95,8 @@
           "url": "https://github.com/level-98/mailcrane/issues/10"
         },
         {
+          "id": "M0-10",
+          "position": 10.0,
           "number": 10,
           "issue_number": 11,
           "title": "Generate the Compose theme and SwiftUI colour assets from `design/colors.json` (the brand pack itself is already in `design/`)",
@@ -84,6 +104,8 @@
           "url": "https://github.com/level-98/mailcrane/issues/11"
         },
         {
+          "id": "M0-11",
+          "position": 11.0,
           "number": 11,
           "issue_number": 12,
           "title": "`mailcrane-testkit`: in-process fake IMAP, SMTP and JMAP servers that can misbehave on purpose (drop connections, malformed replies, Gmail-style quirks)",
@@ -91,6 +113,8 @@
           "url": "https://github.com/level-98/mailcrane/issues/12"
         },
         {
+          "id": "M0-12",
+          "position": 12.0,
           "number": 12,
           "issue_number": 13,
           "title": "Write `docs/decisions/0001-tech-stack.md` recording the Rust core + native UI decision",
@@ -98,6 +122,8 @@
           "url": "https://github.com/level-98/mailcrane/issues/13"
         },
         {
+          "id": "M0-13",
+          "position": 13.0,
           "number": 13,
           "issue_number": 14,
           "title": "Dependabot or Renovate for Cargo, Gradle and Swift packages",
@@ -105,13 +131,17 @@
           "url": "https://github.com/level-98/mailcrane/issues/14"
         },
         {
+          "id": "M0-14",
+          "position": 14.0,
           "number": 14,
           "issue_number": 15,
           "title": "Fuzz targets (`cargo fuzz`) for the MIME and IMAP parsers, run nightly in CI",
-          "state": "open",
+          "state": "closed",
           "url": "https://github.com/level-98/mailcrane/issues/15"
         },
         {
+          "id": "M0-15",
+          "position": 15.0,
           "number": 15,
           "issue_number": 16,
           "title": "Release script that gathers `docs/changelog.d/` fragments into release notes",
@@ -119,16 +149,11 @@
           "url": "https://github.com/level-98/mailcrane/issues/16"
         },
         {
-          "number": 16,
-          "issue_number": 91,
-          "title": "TestFlight internal builds from CI, so iOS can be tested on real devices without a Mac",
-          "state": "open",
-          "url": "https://github.com/level-98/mailcrane/issues/91"
-        },
-        {
+          "id": "M0-17",
+          "position": 17.0,
           "number": 17,
           "issue_number": 99,
-          "title": "Cross-platform CI on every PR: Android on Linux, iOS on macOS, the core on Windows",
+          "title": "Cross-platform CI on every PR: Android on Linux and the core on Windows (iOS on macOS comes back in M7-02)",
           "state": "open",
           "url": "https://github.com/level-98/mailcrane/issues/99"
         }
@@ -138,11 +163,13 @@
       "id": "M1",
       "title": "Read mail",
       "description": "Connect an account and read your inbox, online or offline.",
-      "total": 16,
-      "completed": 6,
-      "percent": 38,
+      "total": 15,
+      "completed": 8,
+      "percent": 53,
       "tasks": [
         {
+          "id": "M1-01",
+          "position": 1.0,
           "number": 1,
           "issue_number": 17,
           "title": "Store schema v1: accounts, folders, messages, threads, attachments metadata, with migrations",
@@ -150,6 +177,8 @@
           "url": "https://github.com/level-98/mailcrane/issues/17"
         },
         {
+          "id": "M1-02",
+          "position": 2.0,
           "number": 2,
           "issue_number": 18,
           "title": "Secure credential storage: Android Keystore and iOS Keychain, behind one FFI interface",
@@ -157,13 +186,17 @@
           "url": "https://github.com/level-98/mailcrane/issues/18"
         },
         {
+          "id": "M1-03",
+          "position": 3.0,
           "number": 3,
           "issue_number": 19,
           "title": "Manual account setup: IMAP/SMTP host, port, security, username, password",
-          "state": "open",
+          "state": "closed",
           "url": "https://github.com/level-98/mailcrane/issues/19"
         },
         {
+          "id": "M1-04",
+          "position": 4.0,
           "number": 4,
           "issue_number": 20,
           "title": "IMAP connection, login and folder list (TLS via rustls)",
@@ -171,6 +204,8 @@
           "url": "https://github.com/level-98/mailcrane/issues/20"
         },
         {
+          "id": "M1-05",
+          "position": 5.0,
           "number": 5,
           "issue_number": 21,
           "title": "Initial sync: fetch headers for recent messages, paginate older ones on demand",
@@ -178,13 +213,17 @@
           "url": "https://github.com/level-98/mailcrane/issues/21"
         },
         {
+          "id": "M1-06",
+          "position": 6.0,
           "number": 6,
           "issue_number": 22,
           "title": "Incremental sync with CONDSTORE/QRESYNC, falling back to UID comparison",
-          "state": "open",
+          "state": "closed",
           "url": "https://github.com/level-98/mailcrane/issues/22"
         },
         {
+          "id": "M1-07",
+          "position": 7.0,
           "number": 7,
           "issue_number": 23,
           "title": "IMAP IDLE for near-real-time updates while the app is open",
@@ -192,6 +231,8 @@
           "url": "https://github.com/level-98/mailcrane/issues/23"
         },
         {
+          "id": "M1-08",
+          "position": 8.0,
           "number": 8,
           "issue_number": 24,
           "title": "MIME parsing: multipart, charsets, encoded words, inline and attached files, with fixtures",
@@ -199,6 +240,8 @@
           "url": "https://github.com/level-98/mailcrane/issues/24"
         },
         {
+          "id": "M1-09",
+          "position": 9.0,
           "number": 9,
           "issue_number": 25,
           "title": "HTML sanitiser: strip scripts and trackers, block remote content by default",
@@ -206,6 +249,8 @@
           "url": "https://github.com/level-98/mailcrane/issues/25"
         },
         {
+          "id": "M1-10",
+          "position": 10.0,
           "number": 10,
           "issue_number": 26,
           "title": "Message list screen, Android",
@@ -213,27 +258,26 @@
           "url": "https://github.com/level-98/mailcrane/issues/26"
         },
         {
-          "number": 11,
-          "issue_number": 27,
-          "title": "Message list screen, iOS",
-          "state": "open",
-          "url": "https://github.com/level-98/mailcrane/issues/27"
-        },
-        {
+          "id": "M1-12",
+          "position": 12.0,
           "number": 12,
           "issue_number": 28,
-          "title": "Message view screen with \"load remote images\" button, both platforms",
+          "title": "Message view screen with \"load remote images\" button, Android",
           "state": "open",
           "url": "https://github.com/level-98/mailcrane/issues/28"
         },
         {
+          "id": "M1-13",
+          "position": 13.0,
           "number": 13,
           "issue_number": 29,
-          "title": "Folder drawer / sidebar, both platforms",
+          "title": "Folder drawer, Android",
           "state": "open",
           "url": "https://github.com/level-98/mailcrane/issues/29"
         },
         {
+          "id": "M1-14",
+          "position": 14.0,
           "number": 14,
           "issue_number": 30,
           "title": "Read, unread, flag, archive, delete and move, synced back to the server",
@@ -241,6 +285,8 @@
           "url": "https://github.com/level-98/mailcrane/issues/30"
         },
         {
+          "id": "M1-15",
+          "position": 15.0,
           "number": 15,
           "issue_number": 31,
           "title": "Automatic account setup: Mozilla ISPDB (Thunderbird autoconfig), `/.well-known/autoconfig`, SRV records",
@@ -248,6 +294,8 @@
           "url": "https://github.com/level-98/mailcrane/issues/31"
         },
         {
+          "id": "M1-16",
+          "position": 16.0,
           "number": 16,
           "issue_number": 32,
           "title": "Empty states using the illustrations in `design/`",
@@ -265,6 +313,8 @@
       "percent": 10,
       "tasks": [
         {
+          "id": "M2-01",
+          "position": 1.0,
           "number": 1,
           "issue_number": 33,
           "title": "SMTP sending with STARTTLS and implicit TLS",
@@ -272,6 +322,8 @@
           "url": "https://github.com/level-98/mailcrane/issues/33"
         },
         {
+          "id": "M2-02",
+          "position": 2.0,
           "number": 2,
           "issue_number": 34,
           "title": "Compose screen: to/cc/bcc, subject, plain-text body",
@@ -279,6 +331,8 @@
           "url": "https://github.com/level-98/mailcrane/issues/34"
         },
         {
+          "id": "M2-03",
+          "position": 3.0,
           "number": 3,
           "issue_number": 35,
           "title": "Reply, reply-all and forward, with correct `In-Reply-To` and `References` headers",
@@ -286,6 +340,8 @@
           "url": "https://github.com/level-98/mailcrane/issues/35"
         },
         {
+          "id": "M2-04",
+          "position": 4.0,
           "number": 4,
           "issue_number": 36,
           "title": "Attachments: add, send, preview and save",
@@ -293,6 +349,8 @@
           "url": "https://github.com/level-98/mailcrane/issues/36"
         },
         {
+          "id": "M2-05",
+          "position": 5.0,
           "number": 5,
           "issue_number": 37,
           "title": "Drafts: autosave locally and to the server's Drafts folder",
@@ -300,6 +358,8 @@
           "url": "https://github.com/level-98/mailcrane/issues/37"
         },
         {
+          "id": "M2-06",
+          "position": 6.0,
           "number": 6,
           "issue_number": 38,
           "title": "Offline outbox with retry",
@@ -307,6 +367,8 @@
           "url": "https://github.com/level-98/mailcrane/issues/38"
         },
         {
+          "id": "M2-07",
+          "position": 7.0,
           "number": 7,
           "issue_number": 39,
           "title": "Save sent messages to Sent (skip for providers that do it themselves, such as Gmail)",
@@ -314,6 +376,8 @@
           "url": "https://github.com/level-98/mailcrane/issues/39"
         },
         {
+          "id": "M2-08",
+          "position": 8.0,
           "number": 8,
           "issue_number": 40,
           "title": "Contact autocomplete from the device's contacts and past correspondents",
@@ -321,6 +385,8 @@
           "url": "https://github.com/level-98/mailcrane/issues/40"
         },
         {
+          "id": "M2-09",
+          "position": 9.0,
           "number": 9,
           "issue_number": 41,
           "title": "Rich-text compose (bold, italic, lists, links)",
@@ -328,6 +394,8 @@
           "url": "https://github.com/level-98/mailcrane/issues/41"
         },
         {
+          "id": "M2-10",
+          "position": 10.0,
           "number": 10,
           "issue_number": 42,
           "title": "Signatures, per account",
@@ -345,13 +413,17 @@
       "percent": 0,
       "tasks": [
         {
+          "id": "M3-01",
+          "position": 1.0,
           "number": 1,
           "issue_number": 43,
-          "title": "OAuth 2.0 framework with PKCE, using the system browser (AppAuth on Android, ASWebAuthenticationSession on iOS)",
+          "title": "OAuth 2.0 framework with PKCE, using the system browser (AppAuth on Android; iOS sign-in is M7-09)",
           "state": "open",
           "url": "https://github.com/level-98/mailcrane/issues/43"
         },
         {
+          "id": "M3-02",
+          "position": 2.0,
           "number": 2,
           "issue_number": 44,
           "title": "Gmail: OAuth, XOAUTH2, and labels mapped to folders (needs Google app verification)",
@@ -359,6 +431,8 @@
           "url": "https://github.com/level-98/mailcrane/issues/44"
         },
         {
+          "id": "M3-03",
+          "position": 3.0,
           "number": 3,
           "issue_number": 45,
           "title": "Microsoft 365 and Outlook.com: OAuth and XOAUTH2",
@@ -366,6 +440,8 @@
           "url": "https://github.com/level-98/mailcrane/issues/45"
         },
         {
+          "id": "M3-04",
+          "position": 4.0,
           "number": 4,
           "issue_number": 46,
           "title": "JMAP client (Fastmail, Stalwart and others)",
@@ -373,6 +449,8 @@
           "url": "https://github.com/level-98/mailcrane/issues/46"
         },
         {
+          "id": "M3-05",
+          "position": 5.0,
           "number": 5,
           "issue_number": 47,
           "title": "iCloud, Yahoo and AOL guided app-password setup",
@@ -380,6 +458,8 @@
           "url": "https://github.com/level-98/mailcrane/issues/47"
         },
         {
+          "id": "M3-06",
+          "position": 6.0,
           "number": 6,
           "issue_number": 48,
           "title": "Provider test matrix: a doc recording which providers have been tested, by whom, and when",
@@ -397,6 +477,8 @@
       "percent": 0,
       "tasks": [
         {
+          "id": "M4-01",
+          "position": 1.0,
           "number": 1,
           "issue_number": 49,
           "title": "Multiple accounts and a unified inbox",
@@ -404,6 +486,8 @@
           "url": "https://github.com/level-98/mailcrane/issues/49"
         },
         {
+          "id": "M4-02",
+          "position": 2.0,
           "number": 2,
           "issue_number": 50,
           "title": "Conversation threading (JWZ algorithm plus Gmail thread IDs)",
@@ -411,6 +495,8 @@
           "url": "https://github.com/level-98/mailcrane/issues/50"
         },
         {
+          "id": "M4-03",
+          "position": 3.0,
           "number": 3,
           "issue_number": 51,
           "title": "Offline full-text search (SQLite FTS5), plus server-side IMAP SEARCH",
@@ -418,6 +504,8 @@
           "url": "https://github.com/level-98/mailcrane/issues/51"
         },
         {
+          "id": "M4-04",
+          "position": 4.0,
           "number": 4,
           "issue_number": 52,
           "title": "Configurable swipe actions",
@@ -425,13 +513,17 @@
           "url": "https://github.com/level-98/mailcrane/issues/52"
         },
         {
+          "id": "M4-05",
+          "position": 5.0,
           "number": 5,
           "issue_number": 53,
-          "title": "Push notifications: Android foreground IDLE service and UnifiedPush; iOS background fetch. Write an ADR on whether iOS needs a self-hostable push relay first",
+          "title": "Push notifications on Android: foreground IDLE service and UnifiedPush (iOS is M7-10)",
           "state": "open",
           "url": "https://github.com/level-98/mailcrane/issues/53"
         },
         {
+          "id": "M4-06",
+          "position": 6.0,
           "number": 6,
           "issue_number": 54,
           "title": "Snooze (stored locally, synced via a hidden folder or IMAP keyword)",
@@ -439,6 +531,8 @@
           "url": "https://github.com/level-98/mailcrane/issues/54"
         },
         {
+          "id": "M4-07",
+          "position": 7.0,
           "number": 7,
           "issue_number": 55,
           "title": "Scheduled send",
@@ -446,6 +540,8 @@
           "url": "https://github.com/level-98/mailcrane/issues/55"
         },
         {
+          "id": "M4-08",
+          "position": 8.0,
           "number": 8,
           "issue_number": 56,
           "title": "Undo send (short delay before sending)",
@@ -453,6 +549,8 @@
           "url": "https://github.com/level-98/mailcrane/issues/56"
         },
         {
+          "id": "M4-09",
+          "position": 9.0,
           "number": 9,
           "issue_number": 57,
           "title": "Local rules and filters",
@@ -460,6 +558,8 @@
           "url": "https://github.com/level-98/mailcrane/issues/57"
         },
         {
+          "id": "M4-10",
+          "position": 10.0,
           "number": 10,
           "issue_number": 58,
           "title": "One-tap unsubscribe (`List-Unsubscribe`, RFC 8058)",
@@ -467,13 +567,17 @@
           "url": "https://github.com/level-98/mailcrane/issues/58"
         },
         {
+          "id": "M4-11",
+          "position": 11.0,
           "number": 11,
           "issue_number": 59,
-          "title": "Home-screen widgets (Android Glance, iOS WidgetKit)",
+          "title": "Home-screen widgets (Android Glance)",
           "state": "open",
           "url": "https://github.com/level-98/mailcrane/issues/59"
         },
         {
+          "id": "M4-12",
+          "position": 12.0,
           "number": 12,
           "issue_number": 60,
           "title": "Dark mode and dynamic colour (Material You)",
@@ -481,9 +585,11 @@
           "url": "https://github.com/level-98/mailcrane/issues/60"
         },
         {
+          "id": "M4-13",
+          "position": 13.0,
           "number": 13,
           "issue_number": 61,
-          "title": "Tablet and iPad layouts (list and detail side by side)",
+          "title": "Tablet layouts (list and detail side by side)",
           "state": "open",
           "url": "https://github.com/level-98/mailcrane/issues/61"
         }
@@ -498,6 +604,8 @@
       "percent": 0,
       "tasks": [
         {
+          "id": "M5-01",
+          "position": 1.0,
           "number": 1,
           "issue_number": 62,
           "title": "Tracking-pixel detection and a \"trackers blocked\" indicator",
@@ -505,6 +613,8 @@
           "url": "https://github.com/level-98/mailcrane/issues/62"
         },
         {
+          "id": "M5-02",
+          "position": 2.0,
           "number": 2,
           "issue_number": 63,
           "title": "Strip tracking parameters from links (utm_ and similar) before opening",
@@ -512,13 +622,17 @@
           "url": "https://github.com/level-98/mailcrane/issues/63"
         },
         {
+          "id": "M5-03",
+          "position": 3.0,
           "number": 3,
           "issue_number": 64,
-          "title": "App lock with biometrics or PIN",
+          "title": "App lock with biometrics or PIN, Android",
           "state": "open",
           "url": "https://github.com/level-98/mailcrane/issues/64"
         },
         {
+          "id": "M5-04",
+          "position": 4.0,
           "number": 4,
           "issue_number": 65,
           "title": "OpenPGP: read and send encrypted and signed mail, Autocrypt, key management",
@@ -526,6 +640,8 @@
           "url": "https://github.com/level-98/mailcrane/issues/65"
         },
         {
+          "id": "M5-05",
+          "position": 5.0,
           "number": 5,
           "issue_number": 66,
           "title": "S/MIME",
@@ -533,6 +649,8 @@
           "url": "https://github.com/level-98/mailcrane/issues/66"
         },
         {
+          "id": "M5-06",
+          "position": 6.0,
           "number": 6,
           "issue_number": 67,
           "title": "Independent security review before 1.0",
@@ -544,19 +662,23 @@
     {
       "id": "M6",
       "title": "Release",
-      "description": "Test, package, and bring Mailcrane to its first users.",
-      "total": 8,
-      "completed": 0,
-      "percent": 0,
+      "description": "Test, package, and bring Mailcrane to its first users on Android.",
+      "total": 7,
+      "completed": 1,
+      "percent": 14,
       "tasks": [
         {
+          "id": "M6-01",
+          "position": 1.0,
           "number": 1,
           "issue_number": 68,
-          "title": "Accessibility pass: TalkBack, VoiceOver, dynamic text sizes, contrast",
+          "title": "Accessibility pass on Android: TalkBack, font scaling, contrast",
           "state": "open",
           "url": "https://github.com/level-98/mailcrane/issues/68"
         },
         {
+          "id": "M6-02",
+          "position": 2.0,
           "number": 2,
           "issue_number": 69,
           "title": "Translations through Weblate",
@@ -564,13 +686,17 @@
           "url": "https://github.com/level-98/mailcrane/issues/69"
         },
         {
+          "id": "M6-03",
+          "position": 3.0,
           "number": 3,
           "issue_number": 70,
-          "title": "Release builds and signing in CI",
+          "title": "Android release builds and signing in CI",
           "state": "open",
           "url": "https://github.com/level-98/mailcrane/issues/70"
         },
         {
+          "id": "M6-04",
+          "position": 4.0,
           "number": 4,
           "issue_number": 71,
           "title": "F-Droid listing (fully free build, no Google services)",
@@ -578,6 +704,8 @@
           "url": "https://github.com/level-98/mailcrane/issues/71"
         },
         {
+          "id": "M6-05",
+          "position": 5.0,
           "number": 5,
           "issue_number": 72,
           "title": "Google Play beta and release",
@@ -585,20 +713,17 @@
           "url": "https://github.com/level-98/mailcrane/issues/72"
         },
         {
-          "number": 6,
-          "issue_number": 73,
-          "title": "TestFlight beta and App Store release",
-          "state": "open",
-          "url": "https://github.com/level-98/mailcrane/issues/73"
-        },
-        {
+          "id": "M6-07",
+          "position": 7.0,
           "number": 7,
           "issue_number": 74,
           "title": "Website and user docs (mailcrane.app)",
-          "state": "open",
+          "state": "closed",
           "url": "https://github.com/level-98/mailcrane/issues/74"
         },
         {
+          "id": "M6-08",
+          "position": 8.0,
           "number": 8,
           "issue_number": 75,
           "title": "Privacy policy (short and honest: we collect nothing)",
@@ -608,35 +733,215 @@
       ]
     },
     {
-      "id": "P",
-      "title": "Before public launch",
-      "description": "Resolve the project, store, domain, and naming checks before going public.",
-      "total": 4,
+      "id": "M7",
+      "title": "iOS app",
+      "description": "Bring the iOS app up to the Android release and ship it on the App Store.",
+      "total": 18,
       "completed": 0,
       "percent": 0,
       "tasks": [
         {
+          "id": "M7-01",
+          "position": 1.0,
+          "number": 1,
+          "issue_number": 143,
+          "title": "Decide how iOS gets built and tested (own Mac, cloud Mac, or CI only) and record it as an ADR",
+          "state": "open",
+          "url": "https://github.com/level-98/mailcrane/issues/143"
+        },
+        {
+          "id": "M7-02",
+          "position": 2.0,
+          "number": 2,
+          "issue_number": 144,
+          "title": "Turn the iOS check back on for every PR (`.github/workflows/ios.yml`) and bring the iOS shell up to date with the core: bindings, SwiftLint, tests",
+          "state": "open",
+          "url": "https://github.com/level-98/mailcrane/issues/144"
+        },
+        {
+          "id": "M0-16",
+          "position": 2.1,
+          "number": 16,
+          "issue_number": 91,
+          "title": "TestFlight internal builds from CI (macOS runner), so iOS can be tested on real devices without a Mac",
+          "state": "open",
+          "url": "https://github.com/level-98/mailcrane/issues/91"
+        },
+        {
+          "id": "M1-11",
+          "position": 2.2,
+          "number": 11,
+          "issue_number": 27,
+          "title": "Message list screen, iOS",
+          "state": "open",
+          "url": "https://github.com/level-98/mailcrane/issues/27"
+        },
+        {
+          "id": "M7-03",
+          "position": 3.0,
+          "number": 3,
+          "issue_number": 145,
+          "title": "Message view screen with \"load remote images\" button, iOS",
+          "state": "open",
+          "url": "https://github.com/level-98/mailcrane/issues/145"
+        },
+        {
+          "id": "M7-04",
+          "position": 4.0,
+          "number": 4,
+          "issue_number": 146,
+          "title": "Folder sidebar, iOS",
+          "state": "open",
+          "url": "https://github.com/level-98/mailcrane/issues/146"
+        },
+        {
+          "id": "M7-05",
+          "position": 5.0,
+          "number": 5,
+          "issue_number": 147,
+          "title": "Account setup screens, iOS: manual and automatic (the iOS side of M1-03 and M1-15)",
+          "state": "open",
+          "url": "https://github.com/level-98/mailcrane/issues/147"
+        },
+        {
+          "id": "M7-06",
+          "position": 6.0,
+          "number": 6,
+          "issue_number": 148,
+          "title": "Compose screens, iOS: compose, reply and forward, attachments, drafts, rich text and signatures (the iOS side of M2)",
+          "state": "open",
+          "url": "https://github.com/level-98/mailcrane/issues/148"
+        },
+        {
+          "id": "M7-07",
+          "position": 7.0,
+          "number": 7,
+          "issue_number": 149,
+          "title": "Everyday features, iOS: multiple accounts, threading, search, swipe actions, snooze, scheduled and undo send, rules, unsubscribe and empty states (the iOS side of M1 and M4)",
+          "state": "open",
+          "url": "https://github.com/level-98/mailcrane/issues/149"
+        },
+        {
+          "id": "M7-08",
+          "position": 8.0,
+          "number": 8,
+          "issue_number": 150,
+          "title": "Privacy features, iOS: trackers-blocked indicator, link cleaning, OpenPGP and S/MIME screens (the iOS side of M5)",
+          "state": "open",
+          "url": "https://github.com/level-98/mailcrane/issues/150"
+        },
+        {
+          "id": "M7-09",
+          "position": 9.0,
+          "number": 9,
+          "issue_number": 151,
+          "title": "OAuth sign-in on iOS with ASWebAuthenticationSession, using the M3-01 framework (Gmail and Microsoft)",
+          "state": "open",
+          "url": "https://github.com/level-98/mailcrane/issues/151"
+        },
+        {
+          "id": "M7-10",
+          "position": 10.0,
+          "number": 10,
+          "issue_number": 152,
+          "title": "Push notifications on iOS: background fetch. Write an ADR on whether iOS needs a self-hostable push relay first",
+          "state": "open",
+          "url": "https://github.com/level-98/mailcrane/issues/152"
+        },
+        {
+          "id": "M7-11",
+          "position": 11.0,
+          "number": 11,
+          "issue_number": 153,
+          "title": "App lock with Face ID, Touch ID or passcode, iOS",
+          "state": "open",
+          "url": "https://github.com/level-98/mailcrane/issues/153"
+        },
+        {
+          "id": "M7-12",
+          "position": 12.0,
+          "number": 12,
+          "issue_number": 154,
+          "title": "Home-screen widgets (WidgetKit)",
+          "state": "open",
+          "url": "https://github.com/level-98/mailcrane/issues/154"
+        },
+        {
+          "id": "M7-13",
+          "position": 13.0,
+          "number": 13,
+          "issue_number": 155,
+          "title": "iPad layout (list and detail side by side)",
+          "state": "open",
+          "url": "https://github.com/level-98/mailcrane/issues/155"
+        },
+        {
+          "id": "M7-14",
+          "position": 14.0,
+          "number": 14,
+          "issue_number": 156,
+          "title": "Accessibility pass on iOS: VoiceOver, Dynamic Type, contrast",
+          "state": "open",
+          "url": "https://github.com/level-98/mailcrane/issues/156"
+        },
+        {
+          "id": "M7-15",
+          "position": 15.0,
+          "number": 15,
+          "issue_number": 157,
+          "title": "iOS release builds and signing in CI",
+          "state": "open",
+          "url": "https://github.com/level-98/mailcrane/issues/157"
+        },
+        {
+          "id": "M6-06",
+          "position": 99.0,
+          "number": 6,
+          "issue_number": 73,
+          "title": "TestFlight beta and App Store release",
+          "state": "open",
+          "url": "https://github.com/level-98/mailcrane/issues/73"
+        }
+      ]
+    },
+    {
+      "id": "P",
+      "title": "Before public launch",
+      "description": "Resolve the project, store, domain, and naming checks before going public.",
+      "total": 4,
+      "completed": 3,
+      "percent": 75,
+      "tasks": [
+        {
+          "id": "P-01",
+          "position": 1.0,
           "number": 1,
           "issue_number": 76,
           "title": "Check and register domains: mailcrane.app / .com / .org / .dev",
-          "state": "open",
+          "state": "closed",
           "url": "https://github.com/level-98/mailcrane/issues/76"
         },
         {
+          "id": "P-03",
+          "position": 3.0,
           "number": 3,
           "issue_number": 77,
           "title": "Google Play and App Store name search",
-          "state": "open",
+          "state": "closed",
           "url": "https://github.com/level-98/mailcrane/issues/77"
         },
         {
+          "id": "P-04",
+          "position": 4.0,
           "number": 4,
           "issue_number": 78,
           "title": "Trademark search: UKIPO, USPTO, EUIPO (classes 9 and 38)",
-          "state": "open",
+          "state": "closed",
           "url": "https://github.com/level-98/mailcrane/issues/78"
         },
         {
+          "id": "P-05",
+          "position": 5.0,
           "number": 5,
           "issue_number": 79,
           "title": "Reserve app IDs (`app.mailcrane` / `org.mailcrane.android`) and the F-Droid package name",
