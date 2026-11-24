@@ -55,7 +55,7 @@ jobs:
 
       # Each run saves a new cache entry and restores the newest one, so the
       # corpus keeps growing from night to night.
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: core/fuzz/corpus/${{ matrix.target }}
           key: fuzz-corpus-${{ matrix.target }}-${{ github.run_id }}
