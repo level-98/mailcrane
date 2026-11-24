@@ -9,6 +9,7 @@ uniffi::setup_scaffolding!();
 
 pub mod account;
 pub mod folders;
+pub mod links;
 pub mod messages;
 pub mod secrets;
 pub mod sync;
