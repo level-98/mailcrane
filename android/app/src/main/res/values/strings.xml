@@ -2,4 +2,48 @@
 <resources>
     <string name="app_name">Mailcrane</string>
     <string name="hello_from_core">%1$s</string>
+
+    <!-- Manual account setup (M1-03) -->
+    <string name="setup_title">Add account</string>
+    <string name="setup_section_account">Account</string>
+    <string name="setup_section_imap">Incoming mail server (IMAP)</string>
+    <string name="setup_section_smtp">Outgoing mail server (SMTP)</string>
+    <string name="setup_section_sign_in">Login details</string>
+    <string name="setup_email">Email address</string>
+    <string name="setup_display_name">Your name (optional)</string>
+    <string name="setup_host">Server</string>
+    <string name="setup_port">Port</string>
+    <string name="setup_security">Security</string>
+    <!-- Connection security choices. There is deliberately no unencrypted option. -->
+    <string name="setup_security_tls">SSL/TLS</string>
+    <string name="setup_security_starttls">STARTTLS</string>
+    <string name="setup_username">Username</string>
+    <string name="setup_password">Password</string>
+    <string name="setup_password_show">Show</string>
+    <string name="setup_password_hide">Hide</string>
+    <string name="setup_submit">Sign in</string>
+    <string name="setup_checking">Checking…</string>
+    <string name="setup_account_added">Account added</string>
+
+    <!-- Field errors, shown under the field -->
+    <string name="setup_error_empty">Required</string>
+    <string name="setup_error_contains_space">Server names can’t contain spaces</string>
+    <string name="setup_error_has_scheme">Enter just the server name, without imaps:// or similar</string>
+    <string name="setup_error_invalid_characters">Contains characters that aren’t allowed here</string>
+    <string name="setup_error_port_out_of_range">Enter a port from 1 to 65535</string>
+    <string name="setup_error_malformed_email">Enter an email address like name@example.com</string>
+
+    <!-- Errors from checking the settings. Nothing was saved in any of these cases. -->
+    <string name="setup_error_cannot_connect_imap">Couldn’t reach the incoming mail server. Check the server name and port.</string>
+    <string name="setup_error_cannot_connect_smtp">Couldn’t reach the outgoing mail server. Check the server name and port.</string>
+    <string name="setup_error_tls_imap">Couldn’t set up a secure connection to the incoming mail server. Its certificate may not be trusted, or the security setting may be wrong.</string>
+    <string name="setup_error_tls_smtp">Couldn’t set up a secure connection to the outgoing mail server. Its certificate may not be trusted, or the security setting may be wrong.</string>
+    <string name="setup_error_starttls_imap">The incoming mail server doesn’t offer STARTTLS. Try SSL/TLS instead. Your password wasn’t sent.</string>
+    <string name="setup_error_starttls_smtp">The outgoing mail server doesn’t offer STARTTLS. Try SSL/TLS instead. Your password wasn’t sent.</string>
+    <string name="setup_error_auth_imap">The incoming mail server didn’t accept the username or password.</string>
+    <string name="setup_error_auth_smtp">The outgoing mail server didn’t accept the username or password.</string>
+    <string name="setup_error_timeout_imap">The incoming mail server took too long to answer. Check the server name and port, or try again later.</string>
+    <string name="setup_error_timeout_smtp">The outgoing mail server took too long to answer. Check the server name and port, or try again later.</string>
+    <string name="setup_error_save_failed">Both servers accepted the sign-in, but the account couldn’t be saved on this device. Try again.</string>
+    <string name="setup_error_unexpected">Something went wrong while checking the settings. Nothing was saved.</string>
 </resources>
