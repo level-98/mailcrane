@@ -48,19 +48,45 @@ TASK = re.compile(r"^- \[( |x)\] \*\*(?P<id>[A-Z]\d*-\d+)\*\* (?P<rest>.+)$")
 HEADING = re.compile(r"^## (?P<title>.+)$")
 
 
-def guess_area(text: str) -> str:
-    t = text.lower()
-    if "ios" in t and "android" not in t:
-        return "area:ios"
-    if "android" in t and "ios" not in t:
-        return "area:android"
-    if any(w in t for w in ("brand", "icon", "design", "illustration", "empty state")):
-        return "area:design"
-    if any(w in t for w in ("ci", "github", "dependabot", "renovate", "release", "secret", "label")):
-        return "area:ci"
-    if any(w in t for w in ("doc", "website", "policy", "readme")):
-        return "area:docs"
-    return "area:core"
+AREA_WORDS = {
+    # Matched as whole words or phrases, case-insensitive, so "ci" doesn't hit
+    # "decision" and "label" doesn't hit "Gmail labels".
+    "area:android": ["android", "jetpack compose", "compose theme", "material you",
+                     "talkback", "f-droid", "google play", "glance", "tablet", "keystore"],
+    "area:ios": ["ios", "ipad", "swiftui", "voiceover", "testflight", "app store",
+                 "widgetkit", "keychain", "xcframework"],
+    "area:design": ["brand", "brand pack", "design", "illustrations", "empty states"],
+    "area:ci": ["ci", "github actions", "dependabot", "renovate", "release builds",
+                "release script", "secret", "issue per task",
+                "branch protection"],
+    "area:docs": ["docs", "doc", "website", "policy", "readme"],
+}
+
+# UI work that lands in both apps even though neither platform is named.
+BOTH_APPS = ["both platforms", "dark mode", "swipe actions", "biometrics", "widgets",
+             "compose screen", "rich-text compose"]
+
+
+def _has(text: str, word: str) -> bool:
+    return re.search(rf"(?<![\w-]){re.escape(word)}(?![\w-])", text, re.IGNORECASE) is not None
+
+
+def guess_areas(text: str) -> set:
+    """Return one or more area labels: CI and tooling first, then the app
+    platforms (both, for work that lands in both apps), then design or docs,
+    and otherwise the Rust core."""
+    if any(_has(text, w) for w in AREA_WORDS["area:ci"]):
+        return {"area:ci"}
+    areas = {a for a in ("area:android", "area:ios")
+             if any(_has(text, w) for w in AREA_WORDS[a])}
+    if any(_has(text, w) for w in BOTH_APPS):
+        areas |= {"area:android", "area:ios"}
+    if areas:
+        return areas
+    for area in ("area:design", "area:docs"):
+        if any(_has(text, w) for w in AREA_WORDS[area]):
+            return {area}
+    return {"area:core"}
 
 
 def parse_roadmap(text: str):
@@ -86,7 +112,7 @@ def parse_roadmap(text: str):
         labels.discard("agent-ready")
         labels.add(milestone)
         if milestone != "pre-launch":
-            labels.add(guess_area(title))
+            labels |= guess_areas(title)
         tasks.append({
             "id": m["id"], "title": title, "section": section,
             "labels": sorted(labels), "agent_candidate": agent_candidate,
