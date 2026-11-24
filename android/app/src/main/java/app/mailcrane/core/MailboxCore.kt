@@ -36,6 +36,9 @@ interface MailboxCore {
 
     /** Lists and saves the account's folders; returns the inbox's folder id, if it has one. */
     suspend fun refreshFolders(accountId: Long): Long?
+
+    /** The account's stored folders in display order, with unread counts. */
+    suspend fun listFolders(accountId: Long): List<FolderSummary>
 }
 
 /** Forwards events from the core to every collector of [flow]. Called by the core on any thread. */
@@ -108,4 +111,6 @@ class UniffiMailboxCore(
         messageId: Long,
         contentId: String,
     ): InlinePart? = getInlinePart(dbPath, messageId, contentId)
+    override suspend fun listFolders(accountId: Long): List<FolderSummary> =
+        withContext(io) { listFolders(dbPath, accountId) }
 }

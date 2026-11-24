@@ -1,6 +1,7 @@
 package app.mailcrane.ui.messagelist
 
 import app.mailcrane.core.CoreEvent
+import app.mailcrane.core.FolderSummary
 import app.mailcrane.core.MailboxCore
 import app.mailcrane.core.MessageSummary
 import app.mailcrane.core.SyncErrorKind
@@ -83,6 +84,8 @@ private class FakeMailbox(
     }
 
     override suspend fun refreshFolders(accountId: Long): Long? = FOLDER
+
+    override suspend fun listFolders(accountId: Long): List<FolderSummary> = emptyList()
 }
 
 @OptIn(ExperimentalCoroutinesApi::class)
