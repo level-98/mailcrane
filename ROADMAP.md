@@ -109,7 +109,7 @@ Goal: add an IMAP account and read your inbox, online and offline.
 
 ## Before going public (from the name decision)
 
-- [ ] **P-01** Check and register domains: mailcrane.app / .com / .org / .dev 🧑
+- [x] **P-01** Check and register domains: mailcrane.app / .com / .org / .dev 🧑
 - [x] **P-02** GitHub repo created: `level-98/mailcrane` 🧑
 - [x] **P-03** Google Play and App Store name search 🧑
 - [x] **P-04** Trademark search: UKIPO, USPTO, EUIPO (classes 9 and 38) 🧑
