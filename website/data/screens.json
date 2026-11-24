@@ -47,12 +47,5 @@
     "alt": "Dark mode inbox with message previews and compose button",
     "title": "Dark inbox",
     "description": "Low-glare surfaces with clear, readable mail."
-  },
-  {
-    "number": "08",
-    "image": "inbox-ios.png",
-    "alt": "iOS all inboxes screen with search and message list",
-    "title": "Inbox · iOS",
-    "description": "A native SwiftUI take on the shared inbox."
   }
 ]

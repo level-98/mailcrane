@@ -5,7 +5,7 @@ template = "page.html"
 weight = 1
 +++
 
-Mailcrane is currently in early development. There is no public build to install yet. Android comes first; the iOS app is planned for after the Android release.
+Mailcrane is an Android email app built on a Rust core. There is no public build to install yet; a beta is planned for December 2026.
 
 To follow progress:
 

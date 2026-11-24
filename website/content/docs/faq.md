@@ -7,7 +7,7 @@ weight = 4
 
 ## Can I download Mailcrane?
 
-Not yet. The project is in early development. This site will link to official releases when they are available.
+Not yet. A beta for Android is planned for December 2026. This site will link to official releases when they are available.
 
 ## Which providers will work?
 

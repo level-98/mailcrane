@@ -5,7 +5,7 @@ template = "page.html"
 weight = 1
 +++
 
-Mailcrane is in early development. These are the goals guiding the project, not a claim that every feature is already available.
+Mailcrane is heading for a beta in December 2026. These are the goals guiding the project, not a claim that every feature is already available.
 
 ## Private by default
 
@@ -15,9 +15,9 @@ No ads, analytics, or Mailcrane-operated mail servers. Remote images are planned
 
 The project is being built around open mail standards: IMAP and SMTP, with JMAP and guided sign-in planned for supported providers. See the [provider guides](@/docs/providers/_index.md) for current status.
 
-## Native and offline-minded
+## A Rust core, native on Android
 
-Mailcrane is coming to Android first, with an iOS app planned after the Android release. Both use native interfaces and a shared Rust engine. Local storage and offline access are core design goals.
+Accounts, sync, sending, storage and search all run in one engine written in Rust, which is fast and memory-safe and built to treat every message as untrusted input. The Android app is a native interface on top of it. Local storage and offline access are core design goals.
 
 ## Thoughtful everyday tools
 
