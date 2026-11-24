@@ -38,6 +38,9 @@ object CoreModule {
         @ApplicationContext context: Context,
     ): ComposeCore = UniffiComposeCore(dbPath = dbPath(context))
 
+    @Provides
+    fun provideLinkCleaner(): LinkCleaner = CoreLinkCleaner
+
     // The database lives in app-private storage that is never backed up.
     private fun dbPath(context: Context): String = File(context.noBackupFilesDir, "mailcrane.sqlite").path
 }

@@ -1,12 +1,14 @@
 package app.mailcrane.ui.message
 
 import app.mailcrane.core.InlinePart
+import app.mailcrane.core.LinkCleaner
 import app.mailcrane.core.MessageAddress
 import app.mailcrane.core.MessageBody
 import app.mailcrane.core.MessageCore
 import app.mailcrane.core.MessageDetail
 import app.mailcrane.core.SyncErrorKind
 import app.mailcrane.core.SyncFailure
+import app.mailcrane.settings.FakeAppSettings
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
@@ -22,6 +24,17 @@ import org.junit.Before
 import org.junit.Test
 
 private const val ID = 42L
+
+private val NoCleaning = LinkCleaner { it }
+
+/** Stands in for the core: marks the link so the tests can see whether it was cleaned. */
+private val MarkingCleaner = LinkCleaner { "cleaned:$it" }
+
+private fun messageViewModel(
+    core: MessageCore = FakeMessageCore(),
+    settings: FakeAppSettings = FakeAppSettings(),
+    cleaner: LinkCleaner = NoCleaning,
+) = MessageViewModel(core, settings, cleaner, ID)
 
 private fun detail(
     body: MessageBody,
@@ -106,7 +119,7 @@ class MessageViewModelTest {
     fun opens_a_stored_message_with_remote_images_blocked_and_marks_it_read() =
         runTest {
             val core = FakeMessageCore()
-            val vm = MessageViewModel(core, ID)
+            val vm = messageViewModel(core)
             val state = ready(vm)
             assertFalse(state.remoteAllowed)
             assertTrue(state.showRemoteBanner)
@@ -117,7 +130,7 @@ class MessageViewModelTest {
     fun downloads_the_body_first_when_it_is_not_stored() =
         runTest {
             val core = FakeMessageCore(downloaded = false)
-            val vm = MessageViewModel(core, ID)
+            val vm = messageViewModel(core)
             assertTrue(ready(vm).message.body is MessageBody.Html)
             assertEquals(listOf("get(remote=false)", "fetch", "get(remote=false)", "markRead"), core.calls)
         }
@@ -126,7 +139,7 @@ class MessageViewModelTest {
     fun a_read_message_is_not_marked_again() =
         runTest {
             val core = FakeMessageCore(seen = true)
-            MessageViewModel(core, ID)
+            messageViewModel(core)
             assertFalse("markRead" in core.calls)
         }
 
@@ -134,7 +147,7 @@ class MessageViewModelTest {
     fun load_remote_images_refetches_with_remote_allowed_for_this_message() =
         runTest {
             val core = FakeMessageCore()
-            val vm = MessageViewModel(core, ID)
+            val vm = messageViewModel(core)
             vm.loadRemoteImages()
             val state = ready(vm)
             assertTrue(state.remoteAllowed)
@@ -148,15 +161,15 @@ class MessageViewModelTest {
             assertEquals("get(remote=true)", core.calls.last())
 
             // Another message starts blocked again.
-            val other = MessageViewModel(FakeMessageCore(), ID)
+            val other = messageViewModel(FakeMessageCore())
             assertFalse(ready(other).remoteAllowed)
         }
 
     @Test
     fun no_banner_when_nothing_was_blocked_or_for_plain_text() =
         runTest {
-            assertFalse(ready(MessageViewModel(FakeMessageCore(remoteBlocked = 0u), ID)).showRemoteBanner)
-            assertFalse(ready(MessageViewModel(FakeMessageCore(plain = true), ID)).showRemoteBanner)
+            assertFalse(ready(messageViewModel(FakeMessageCore(remoteBlocked = 0u))).showRemoteBanner)
+            assertFalse(ready(messageViewModel(FakeMessageCore(plain = true))).showRemoteBanner)
         }
 
     @Test
@@ -164,7 +177,7 @@ class MessageViewModelTest {
         runTest {
             val core = FakeMessageCore(downloaded = false)
             core.fetchFailure = SyncErrorKind.NETWORK
-            val vm = MessageViewModel(core, ID)
+            val vm = messageViewModel(core)
             assertEquals(MessageState.Failed(SyncErrorKind.NETWORK), vm.state.value)
             assertFalse("markRead" in core.calls)
 
@@ -179,7 +192,7 @@ class MessageViewModelTest {
         runTest {
             val core = FakeMessageCore()
             core.markReadFailure = SyncErrorKind.STORAGE
-            val vm = MessageViewModel(core, ID)
+            val vm = messageViewModel(core)
             assertTrue(vm.state.value is MessageState.Ready)
         }
 
@@ -188,8 +201,28 @@ class MessageViewModelTest {
         runTest {
             val png = InlinePart("image/png", byteArrayOf(1, 2, 3))
             val core = FakeMessageCore().apply { parts = mapOf("logo@example.org" to png) }
-            val vm = MessageViewModel(core, ID)
+            val vm = messageViewModel(core)
             assertEquals(png, vm.inlinePart("logo@example.org"))
             assertNull(vm.inlinePart("other@example.org"))
+        }
+
+    @Test
+    fun linksAreCleanedWhenTheSettingIsOn() =
+        runTest {
+            val vm = messageViewModel(settings = FakeAppSettings(cleanLinks = true), cleaner = MarkingCleaner)
+            val link = "https://example.com/?utm_source=x"
+            assertEquals("cleaned:$link", vm.linkToOpen(link))
+        }
+
+    @Test
+    fun linksAreLeftAloneWhenTheSettingIsOff() =
+        runTest {
+            val settings = FakeAppSettings(cleanLinks = false)
+            val vm = messageViewModel(settings = settings, cleaner = MarkingCleaner)
+            val link = "https://example.com/?utm_source=x"
+            assertEquals(link, vm.linkToOpen(link))
+
+            settings.setCleanLinks(true)
+            assertEquals("cleaned:https://example.com/", vm.linkToOpen("https://example.com/"))
         }
 }
