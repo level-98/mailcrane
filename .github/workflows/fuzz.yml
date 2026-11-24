@@ -35,7 +35,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target: [mime_parse, imap_response, html_sanitize]
+        target: [mime_parse, imap_response, html_sanitize, address_list]
     steps:
       - uses: actions/checkout@v7
 

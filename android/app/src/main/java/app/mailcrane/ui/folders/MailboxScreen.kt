@@ -30,10 +30,17 @@ import app.mailcrane.ui.messagelist.MessageListScreen
 import app.mailcrane.ui.messagelist.errorText
 import kotlinx.coroutines.launch
 
-/** The mail of account [accountId]: the open folder's messages, with the folder drawer beside them. */
+/**
+ * The mail of account [accountId]: the open folder's messages, with the folder drawer beside them.
+ * The compose parameters are passed to [MessageListScreen].
+ */
 @Composable
 fun MailboxScreen(
     accountId: Long,
+    onCompose: (() -> Unit)? = null,
+    composeFabModifier: Modifier = Modifier,
+    notice: String? = null,
+    onNoticeShown: () -> Unit = {},
     viewModel: FolderDrawerViewModel =
         hiltViewModel<FolderDrawerViewModel, FolderDrawerViewModel.Factory>(
             key = "folders-$accountId",
@@ -77,6 +84,10 @@ fun MailboxScreen(
                         title = folderName(selected),
                         onOpenMessage = { openMessage = it },
                         onOpenFolders = { scope.launch { drawerState.open() } },
+                        onCompose = onCompose,
+                        composeFabModifier = composeFabModifier,
+                        notice = notice,
+                        onNoticeShown = onNoticeShown,
                     )
                 }
             }

@@ -10,9 +10,9 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import app.mailcrane.ui.MailHome
 import app.mailcrane.ui.account.ManualSetupScreen
 import app.mailcrane.ui.components.WelcomeState
-import app.mailcrane.ui.folders.MailboxScreen
 import app.mailcrane.ui.theme.MailcraneTheme
 import dagger.hilt.android.AndroidEntryPoint
 
@@ -28,7 +28,7 @@ class MainActivity : ComponentActivity() {
                 var addingAccount by rememberSaveable { mutableStateOf(false) }
                 val id = accountId
                 when {
-                    id != null -> MailboxScreen(accountId = id)
+                    id != null -> MailHome(accountId = id)
                     addingAccount -> {
                         BackHandler { addingAccount = false }
                         ManualSetupScreen(onAccountAdded = { accountId = it })

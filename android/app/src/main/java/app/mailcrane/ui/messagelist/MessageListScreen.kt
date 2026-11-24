@@ -12,6 +12,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -46,12 +47,20 @@ import app.mailcrane.ui.components.EmptyFolderState
 import kotlinx.coroutines.delay
 import java.time.ZonedDateTime
 
-/** The messages of folder [folderId], newest first. */
+/**
+ * The messages of folder [folderId], newest first. [onCompose] adds a compose button, which carries
+ * [composeFabModifier] (for the shared transition into the compose screen). [notice] is shown once
+ * in a snackbar, then [onNoticeShown] is called.
+ */
 @Composable
 fun MessageListScreen(
     folderId: Long,
     title: String,
     onOpenMessage: (Long) -> Unit,
+    onCompose: (() -> Unit)? = null,
+    composeFabModifier: Modifier = Modifier,
+    notice: String? = null,
+    onNoticeShown: () -> Unit = {},
     onOpenFolders: (() -> Unit)? = null,
     viewModel: MessageListViewModel =
         hiltViewModel<MessageListViewModel, MessageListViewModel.Factory>(
@@ -65,6 +74,13 @@ fun MessageListScreen(
     LaunchedEffect(viewModel) {
         viewModel.errors.collect { kind -> snackbar.showSnackbar(resources.getString(errorText(kind))) }
     }
+    val noticeShown by rememberUpdatedState(onNoticeShown)
+    LaunchedEffect(notice) {
+        if (notice != null) {
+            snackbar.showSnackbar(notice)
+            noticeShown()
+        }
+    }
     MessageListContent(
         state = state,
         title = title,
@@ -72,6 +88,8 @@ fun MessageListScreen(
         onRefresh = viewModel::refresh,
         onLoadMore = viewModel::loadMore,
         onOpenMessage = onOpenMessage,
+        onCompose = onCompose,
+        fabModifier = composeFabModifier,
         onOpenFolders = onOpenFolders,
     )
 }
@@ -87,6 +105,8 @@ fun MessageListContent(
     onOpenMessage: (Long) -> Unit = {},
     onOpenFolders: (() -> Unit)? = null,
     listState: LazyListState = rememberLazyListState(),
+    onCompose: (() -> Unit)? = null,
+    fabModifier: Modifier = Modifier,
 ) {
     Scaffold(
         topBar = {
@@ -105,6 +125,19 @@ fun MessageListContent(
             )
         },
         snackbarHost = { SnackbarHost(snackbar) },
+        floatingActionButton = {
+            if (onCompose != null) {
+                val label = stringResource(R.string.compose_fab)
+                ExtendedFloatingActionButton(
+                    onClick = onCompose,
+                    icon = { Icon(painterResource(R.drawable.ic_mc_compose), contentDescription = null) },
+                    text = { Text(label) },
+                    // Collapses to the icon while scrolling down, so it covers less of the list.
+                    expanded = !listState.canScrollBackward,
+                    modifier = fabModifier,
+                )
+            }
+        },
     ) { padding ->
         PullToRefreshBox(
             isRefreshing = state.isRefreshing,
