@@ -466,7 +466,15 @@ fn fuzz(ctx: &Ctx, args: impl Iterator<Item = String>) -> Result<ExitCode, Error
         "seeded {seeded} file(s) into core/fuzz/corpus/{target}/"
     ));
 
+    // cargo-fuzz defaults `--target` to the platform it was itself built for.
+    // Prebuilt Linux copies (as `taiki-e/install-action` installs) are musl
+    // builds, and AddressSanitizer cannot link against static musl, so always
+    // build for the machine's own platform. Linux only: on Windows the nightly
+    // host can be `-gnu` while libFuzzer needs the MSVC target cargo-fuzz uses.
     let mut run_args = vec!["+nightly".to_string(), "fuzz".into(), "run".into()];
+    if cfg!(target_os = "linux") {
+        run_args.extend(["--target".into(), nightly_host()?]);
+    }
     run_args.extend([
         target.clone(),
         "--".into(),
@@ -500,10 +508,20 @@ fn fuzz(ctx: &Ctx, args: impl Iterator<Item = String>) -> Result<ExitCode, Error
                  <Visual Studio>\\VC\\Tools\\MSVC\\<version>\\bin\\Hostx64\\x64.",
             );
         }
-        say(format_args!(
-            "\n{target}: crash or error. Inputs that crash are in core/fuzz/artifacts/{target}/; \
-             see core/fuzz/README.md for turning one into a regression test."
-        ));
+        let crashes = std::fs::read_dir(fuzz_dir.join("artifacts").join(target.as_str()))
+            .map(|entries| entries.count())
+            .unwrap_or(0);
+        if crashes > 0 {
+            say(format_args!(
+                "\n{target}: crash. {crashes} input(s) in core/fuzz/artifacts/{target}/; \
+                 see core/fuzz/README.md for turning one into a regression test."
+            ));
+        } else {
+            say(format_args!(
+                "\n{target}: `cargo fuzz run` failed without saving a crashing input; \
+                 see the build output above."
+            ));
+        }
         Ok(ExitCode::FAILURE)
     }
 }
@@ -530,6 +548,25 @@ fn seed_corpus(fixtures: &Path, ext: &str, corpus: &Path) -> Result<usize, Error
         count += 1;
     }
     Ok(count)
+}
+
+/// The host platform of the nightly compiler, e.g. `x86_64-unknown-linux-gnu`,
+/// from the `host:` line of `rustc +nightly -vV`.
+fn nightly_host() -> Result<String, Error> {
+    let out = Command::new("rustc")
+        .args(["+nightly", "-vV"])
+        .env_remove("RUSTUP_TOOLCHAIN")
+        .env_remove("RUSTC")
+        .output()
+        .map_err(|e| format!("could not start `rustc +nightly -vV`: {e}"))?;
+    if !out.status.success() {
+        return Err("`rustc +nightly -vV` failed".into());
+    }
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .find_map(|line| line.strip_prefix("host: "))
+        .map(|host| host.trim().to_string())
+        .ok_or_else(|| "`rustc +nightly -vV` printed no `host:` line".into())
 }
 
 /// Whether `program args...` runs and succeeds.
