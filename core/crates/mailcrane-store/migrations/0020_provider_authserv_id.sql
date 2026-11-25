@@ -1,4 +1,4 @@
--- Schema v19: the authserv-id of the account's own provider (M5-08, #310).
+-- Schema v20: the authserv-id of the account's own provider (M5-08, #310).
 -- NULL (the default) means unset: only Authentication-Results headers above
 -- the point where a message entered the provider are trusted. When set, a
 -- header with exactly this authserv-id directly below that point is trusted
