@@ -10,6 +10,7 @@ mod pending_ops;
 mod search;
 mod settings;
 mod snooze;
+mod threads;
 
 pub use drafts::{Draft, DraftFields, DraftId, ServerCopy};
 pub use outbox::{
@@ -19,6 +20,7 @@ pub use pending_ops::{OpId, OpKind, OpMessage, PendingOp};
 pub use search::SearchFilter;
 pub use settings::{SignatureSetting, MAX_SIGNATURE_BYTES};
 pub use snooze::{KeywordedMessage, NewSnooze, Snooze, SnoozeId, SnoozeState};
+pub use threads::{ThreadSummary, UnthreadedMessage};
 
 use crate::error::StoreError;
 
