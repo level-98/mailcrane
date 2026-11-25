@@ -77,8 +77,20 @@ pub async fn call(
     config: &ClientConfig,
     calls: &[MethodCall],
 ) -> Result<Vec<MethodResponse>, JmapError> {
+    call_using(session, auth, config, &[CAP_CORE, CAP_MAIL], calls).await
+}
+
+/// [`call`] with other capabilities in `using` (RFC 8620 §3.3), for
+/// example submission.
+pub(crate) async fn call_using(
+    session: &Session,
+    auth: &Auth,
+    config: &ClientConfig,
+    using: &[&str],
+    calls: &[MethodCall],
+) -> Result<Vec<MethodResponse>, JmapError> {
     let body = json!({
-        "using": [CAP_CORE, CAP_MAIL],
+        "using": using,
         "methodCalls": calls.iter().map(|c| json!([c.name, c.args, c.id])).collect::<Vec<_>>(),
     });
     let bytes = serde_json::to_vec(&body).map_err(|_| JmapError::Malformed)?;
@@ -86,7 +98,7 @@ pub async fn call(
         Method::POST,
         &session.api_url,
         Some(auth),
-        Some(bytes),
+        Some((bytes, "application/json")),
         config,
     )
     .await?;
