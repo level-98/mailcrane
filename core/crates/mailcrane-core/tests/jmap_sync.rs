@@ -40,15 +40,16 @@ async fn setup() -> Setup {
     let account = store
         .insert_jmap_account(
             &NewAccount {
-                display_name: "Ana".into(),
-                email: "ana@example.org".into(),
+                display_name: "Alice".into(),
+                // The fake server's identity, so sending finds it.
+                email: "alice@example.org".into(),
                 imap_host: String::new(),
                 imap_port: 0,
                 imap_security: Security::Tls,
                 smtp_host: String::new(),
                 smtp_port: 0,
                 smtp_security: Security::Tls,
-                username: "ana@example.org".into(),
+                username: "alice@example.org".into(),
             },
             &server.base_url(),
         )
@@ -303,7 +304,7 @@ async fn sending_submits_and_files_the_message_in_sent() {
     let submissions = s.server.submissions();
     assert_eq!(submissions.len(), 1);
     let sub = &submissions[0];
-    assert_eq!(sub.mail_from, "ana@example.org");
+    assert_eq!(sub.mail_from, "alice@example.org");
     // Bcc is in the envelope, never in the message.
     assert!(sub.rcpt_to.contains(&"dan@example.org".to_string()));
     assert!(sub.rcpt_to.contains(&"bob@example.net".to_string()));
@@ -318,4 +319,60 @@ async fn sending_submits_and_files_the_message_in_sent() {
         s.server.email_mailboxes(&sub.email_id).expect("filed"),
         vec!["mb-sent".to_string()]
     );
+}
+
+#[tokio::test]
+async fn a_sender_without_an_identity_is_refused_clearly() {
+    use mailcrane_core::compose::{send, ComposeDraft, SendError, SendOptions};
+    use mailcrane_core::secrets::{Secret, SecretKey, SecretStore};
+    use mailcrane_testkit::MemorySecretStore;
+    let s = setup().await;
+    // An account whose address the server has no identity for.
+    let other = s
+        .store
+        .insert_jmap_account(
+            &NewAccount {
+                display_name: "Someone".into(),
+                email: "someone@example.net".into(),
+                imap_host: String::new(),
+                imap_port: 0,
+                imap_security: Security::Tls,
+                smtp_host: String::new(),
+                smtp_port: 0,
+                smtp_security: Security::Tls,
+                username: "someone@example.net".into(),
+            },
+            &s.server.base_url(),
+        )
+        .expect("account");
+    let secrets = MemorySecretStore::new();
+    secrets
+        .put(
+            &SecretKey::account_password(other.0),
+            &Secret::from_string("pw".into()),
+        )
+        .expect("password");
+    let draft = ComposeDraft {
+        account_id: other,
+        to: vec!["bob@example.net".into()],
+        cc: vec![],
+        bcc: vec![],
+        subject: "Hi".into(),
+        body_text: "Hi\n".into(),
+        in_reply_to: None,
+        references: vec![],
+        attachments: Vec::new(),
+        forward_attachments_of: None,
+        rich: None,
+    };
+    let options = SendOptions {
+        timeout: Duration::from_secs(10),
+        extra_root_certs: vec![s.server.root_cert_der().to_vec()],
+    };
+    let result = send(&s.store, &secrets, &draft, &options).await;
+    assert!(
+        matches!(result, Err(SendError::InvalidSender)),
+        "{result:?}"
+    );
+    assert!(s.server.submissions().is_empty(), "nothing was submitted");
 }

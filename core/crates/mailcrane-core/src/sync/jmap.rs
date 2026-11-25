@@ -166,6 +166,17 @@ impl<'a> JmapSyncer<'a> {
                         {
                             Ok(())
                         }
+                        // Partly refused: what the server did change is kept, so the op is
+                        // done; the refused emails show their real state again after the
+                        // next sync's Email/changes. Undoing all of it would also undo the
+                        // emails the server did change.
+                        Ok(outcome) if !outcome.done.is_empty() => {
+                            tracing::warn!(
+                                refused = outcome.failed.len(),
+                                "JMAP server refused part of a message action"
+                            );
+                            Ok(())
+                        }
                         Ok(_) => Err(None),
                         Err(e) => Err(Some(e)),
                     }

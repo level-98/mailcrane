@@ -484,10 +484,17 @@ async fn send_jmap(
     let identities = mailcrane_jmap::get_identities(&session, auth, config)
         .await
         .map_err(map_jmap)?;
+    // The identity for the sender (RFC 8621 §6): the exact address, or a
+    // wildcard `*@domain` identity. Without one the server would refuse
+    // (`forbiddenFrom`), so say so clearly instead of trying another.
     let identity = identities
         .iter()
         .find(|i| i.email.eq_ignore_ascii_case(&envelope.from))
-        .or_else(|| identities.first())
+        .or_else(|| {
+            identities
+                .iter()
+                .find(|i| wildcard_matches(&i.email, &envelope.from))
+        })
         .ok_or(SendError::InvalidSender)?;
     let (_, mailboxes) = mailcrane_jmap::get_mailboxes(&session, auth, config)
         .await
@@ -516,6 +523,16 @@ async fn send_jmap(
     Ok(SendReport {
         rejected: Vec::new(),
     })
+}
+
+/// Whether identity address `pattern` is `*@domain` and `address` is at that domain.
+fn wildcard_matches(pattern: &str, address: &str) -> bool {
+    let Some(domain) = pattern.strip_prefix("*@") else {
+        return false;
+    };
+    address
+        .rsplit_once('@')
+        .is_some_and(|(local, d)| !local.is_empty() && d.eq_ignore_ascii_case(domain))
 }
 
 pub(crate) fn map_jmap(err: mailcrane_jmap::JmapError) -> SendError {
