@@ -219,7 +219,11 @@ impl SyncEngine {
     pub fn sync_folder(&self, folder_id: i64) -> Result<u32, SyncFailure> {
         let account = self.folder_account(FolderId(folder_id))?;
         if let Some(r) = self.run_jmap(account, |s| {
-            Box::pin(async move { s.sync_folder(FolderId(folder_id)).await })
+            Box::pin(async move {
+                // Queued actions first, so the server's flags already include them.
+                let _ = s.replay_actions(crate::actions::now()).await;
+                s.sync_folder(FolderId(folder_id)).await
+            })
         }) {
             return r.map(|n| u32::try_from(n).unwrap_or(u32::MAX));
         }

@@ -9,6 +9,7 @@
 
 mod replay;
 
+pub(crate) use replay::action_kind;
 pub use replay::{backoff_secs, replay, ReplayReport};
 
 use crate::events::{CoreEvent, EventListener};

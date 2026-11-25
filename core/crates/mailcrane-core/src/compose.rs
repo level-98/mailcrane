@@ -216,10 +216,23 @@ pub fn validate_recipients(draft: &ComposeDraft) -> Result<Recipients, SendError
 /// not logged: `Debug` hides it) once sent.
 #[derive(Debug)]
 pub struct PreparedSend {
-    config: SmtpConfig,
-    auth: SmtpAuth,
+    transport: Transport,
     envelope: Envelope,
     message: Vec<u8>,
+}
+
+/// How an account sends: SMTP, or JMAP submission (M3-04).
+#[derive(Debug)]
+pub(crate) enum Transport {
+    Smtp {
+        config: SmtpConfig,
+        auth: SmtpAuth,
+    },
+    Jmap {
+        session_url: String,
+        auth: mailcrane_jmap::Auth,
+        config: mailcrane_jmap::ClientConfig,
+    },
 }
 
 /// A message built for sending, without credentials: what the outbox keeps.
@@ -342,18 +355,55 @@ pub(crate) fn smtp_settings(
 }
 
 /// A built message with its server and credentials, ready to send.
-pub(crate) fn prepared(
-    config: SmtpConfig,
-    auth: SmtpAuth,
-    envelope: Envelope,
-    message: Vec<u8>,
-) -> PreparedSend {
+pub(crate) fn prepared(transport: Transport, envelope: Envelope, message: Vec<u8>) -> PreparedSend {
     PreparedSend {
-        config,
-        auth,
+        transport,
         envelope,
         message,
     }
+}
+
+/// How the account sends, with its credentials: SMTP for IMAP accounts, the
+/// JMAP session for JMAP accounts.
+pub(crate) fn send_settings(
+    store: &Store,
+    secrets: &dyn SecretStore,
+    account_id: AccountId,
+    options: &SendOptions,
+) -> Result<Transport, SendError> {
+    let protocol = store
+        .account_protocol(account_id)
+        .map_err(|_| SendError::Storage)?
+        .ok_or(SendError::AccountNotFound)?;
+    let session_url = match protocol {
+        mailcrane_store::Protocol::Imap => {
+            let (config, auth) = smtp_settings(store, secrets, account_id, options)?;
+            return Ok(Transport::Smtp { config, auth });
+        }
+        mailcrane_store::Protocol::Jmap { session_url } => session_url,
+    };
+    let account = store
+        .get_account(account_id)
+        .map_err(|_| SendError::Storage)?
+        .ok_or(SendError::AccountNotFound)?
+        .details;
+    let password = secrets
+        .get(&SecretKey::account_password(account_id.0))
+        .map_err(|_| SendError::MissingCredentials)?
+        .ok_or(SendError::MissingCredentials)?;
+    let password =
+        std::str::from_utf8(password.expose()).map_err(|_| SendError::MissingCredentials)?;
+    Ok(Transport::Jmap {
+        session_url,
+        auth: mailcrane_jmap::Auth::Basic {
+            username: account.username,
+            password: password.to_owned(),
+        },
+        config: mailcrane_jmap::ClientConfig {
+            timeout: options.timeout,
+            extra_roots: options.extra_root_certs.clone(),
+        },
+    })
 }
 
 /// Validates the draft, reads the account and its password, and builds the
@@ -365,20 +415,32 @@ pub fn prepare_send(
     options: &SendOptions,
 ) -> Result<PreparedSend, SendError> {
     let built = build_for_sending(store, draft)?;
-    let (config, auth) = smtp_settings(store, secrets, draft.account_id, options)?;
-    Ok(prepared(config, auth, built.envelope, built.raw))
+    let transport = send_settings(store, secrets, draft.account_id, options)?;
+    Ok(prepared(transport, built.envelope, built.raw))
 }
 
 /// Sends a prepared message.
 pub async fn send_prepared(prepared: PreparedSend) -> Result<SendReport, SendError> {
-    let report = mailcrane_smtp::send(
-        &prepared.config,
-        &prepared.auth,
-        &prepared.envelope,
-        &prepared.message,
-    )
-    .await
-    .map_err(map_smtp)?;
+    let (config, auth) = match prepared.transport {
+        Transport::Smtp { config, auth } => (config, auth),
+        Transport::Jmap {
+            session_url,
+            auth,
+            config,
+        } => {
+            return send_jmap(
+                &session_url,
+                &auth,
+                &config,
+                &prepared.envelope,
+                prepared.message,
+            )
+            .await
+        }
+    };
+    let report = mailcrane_smtp::send(&config, &auth, &prepared.envelope, &prepared.message)
+        .await
+        .map_err(map_smtp)?;
     if !report.rejected.is_empty() {
         tracing::info!(
             rejected = report.rejected.len(),
@@ -404,6 +466,85 @@ pub async fn send(
 ) -> Result<SendReport, SendError> {
     let prepared = prepare_send(store, secrets, draft, options)?;
     send_prepared(prepared).await
+}
+
+/// Sends over JMAP (RFC 8621 §7): imports the message, submits it with the
+/// identity for the sender, and has the server move it from Drafts to Sent
+/// on success, so no separate Sent copy is needed.
+async fn send_jmap(
+    session_url: &str,
+    auth: &mailcrane_jmap::Auth,
+    config: &mailcrane_jmap::ClientConfig,
+    envelope: &Envelope,
+    raw: Vec<u8>,
+) -> Result<SendReport, SendError> {
+    let session = mailcrane_jmap::discover(session_url, auth, config)
+        .await
+        .map_err(map_jmap)?;
+    let identities = mailcrane_jmap::get_identities(&session, auth, config)
+        .await
+        .map_err(map_jmap)?;
+    // The identity for the sender (RFC 8621 §6): the exact address, or a
+    // wildcard `*@domain` identity. Without one the server would refuse
+    // (`forbiddenFrom`), so say so clearly instead of trying another.
+    let identity = identities
+        .iter()
+        .find(|i| i.email.eq_ignore_ascii_case(&envelope.from))
+        .or_else(|| {
+            identities
+                .iter()
+                .find(|i| wildcard_matches(&i.email, &envelope.from))
+        })
+        .ok_or(SendError::InvalidSender)?;
+    let (_, mailboxes) = mailcrane_jmap::get_mailboxes(&session, auth, config)
+        .await
+        .map_err(map_jmap)?;
+    let with_role = |role: mailcrane_jmap::MailboxRole| {
+        mailboxes
+            .iter()
+            .find(|m| m.role == Some(role))
+            .map(|m| m.id.clone())
+    };
+    let sent = with_role(mailcrane_jmap::MailboxRole::Sent)
+        .ok_or(SendError::Refused { temporary: false })?;
+    // Without a Drafts mailbox the message is created straight in Sent.
+    let drafts = with_role(mailcrane_jmap::MailboxRole::Drafts).unwrap_or_else(|| sent.clone());
+    let out = mailcrane_jmap::Outgoing {
+        raw,
+        identity_id: identity.id.clone(),
+        mail_from: envelope.from.clone(),
+        rcpt_to: envelope.to.clone(),
+        drafts_mailbox_id: drafts,
+        sent_mailbox_id: sent,
+    };
+    mailcrane_jmap::send_message(&session, auth, config, &out)
+        .await
+        .map_err(map_jmap)?;
+    Ok(SendReport {
+        rejected: Vec::new(),
+    })
+}
+
+/// Whether identity address `pattern` is `*@domain` and `address` is at that domain.
+fn wildcard_matches(pattern: &str, address: &str) -> bool {
+    let Some(domain) = pattern.strip_prefix("*@") else {
+        return false;
+    };
+    address
+        .rsplit_once('@')
+        .is_some_and(|(local, d)| !local.is_empty() && d.eq_ignore_ascii_case(domain))
+}
+
+pub(crate) fn map_jmap(err: mailcrane_jmap::JmapError) -> SendError {
+    use mailcrane_jmap::JmapError as J;
+    match err {
+        J::Network | J::InvalidUrl | J::NotJmap => SendError::CannotConnect,
+        J::Tls => SendError::TlsFailure,
+        J::Unauthorized => SendError::AuthFailed,
+        J::Timeout => SendError::Timeout,
+        J::Http(code) if code >= 500 => SendError::Refused { temporary: true },
+        _ => SendError::Refused { temporary: false },
+    }
 }
 
 pub(crate) fn map_smtp(err: SmtpError) -> SendError {

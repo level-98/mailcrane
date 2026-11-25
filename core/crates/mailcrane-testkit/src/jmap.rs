@@ -95,6 +95,8 @@ struct State {
     version: u64,
     /// Every change: (version it led to, what, email id).
     log: Vec<(u64, Change, String)>,
+    /// Emails whose updates and destroys are refused with `forbidden`.
+    refused: BTreeSet<String>,
 }
 
 impl State {
@@ -387,6 +389,12 @@ impl FakeJmap {
         state.bump(Change::Created, &e.id);
     }
 
+    /// From now on, changes to email `id` are refused with `forbidden`
+    /// (RFC 8620 §5.3 SetError), as for a message the user may not change.
+    pub fn refuse_changes(&self, id: &str) {
+        lock(&self.state).refused.insert(id.to_owned());
+    }
+
     pub fn submissions(&self) -> Vec<FakeSubmission> {
         lock(&self.state).submissions.clone()
     }
@@ -558,6 +566,10 @@ fn email_set(state: &mut State, args: &Value, id: &str) -> Value {
     let mut not_updated = Map::new();
     if let Some(update) = args.get("update").and_then(Value::as_object) {
         for (eid, patch) in update {
+            if state.refused.contains(eid) {
+                not_updated.insert(eid.clone(), json!({"type": "forbidden"}));
+                continue;
+            }
             match (state.email(eid), patch.as_object()) {
                 (Some(e), Some(p)) => {
                     apply_patch(e, p);
@@ -577,6 +589,10 @@ fn email_set(state: &mut State, args: &Value, id: &str) -> Value {
     let mut not_destroyed = Map::new();
     if let Some(ids) = args.get("destroy").and_then(Value::as_array) {
         for eid in ids.iter().filter_map(Value::as_str) {
+            if state.refused.contains(eid) {
+                not_destroyed.insert(eid.to_owned(), json!({"type": "forbidden"}));
+                continue;
+            }
             let before = state.emails.len();
             state.emails.retain(|e| e.id != eid);
             if state.emails.len() < before {

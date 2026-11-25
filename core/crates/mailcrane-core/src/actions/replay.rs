@@ -87,7 +87,7 @@ pub async fn replay(
     Ok(report)
 }
 
-fn action_kind(kind: OpKind) -> ActionKind {
+pub(crate) fn action_kind(kind: OpKind) -> ActionKind {
     match kind {
         OpKind::MarkRead => ActionKind::MarkRead,
         OpKind::MarkUnread => ActionKind::MarkUnread,

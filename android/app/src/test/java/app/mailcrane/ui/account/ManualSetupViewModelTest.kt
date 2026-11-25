@@ -5,6 +5,7 @@ import app.mailcrane.core.ConnectionSecurity
 import app.mailcrane.core.Field
 import app.mailcrane.core.FieldError
 import app.mailcrane.core.FieldProblem
+import app.mailcrane.core.JmapAccountSetup
 import app.mailcrane.core.MailServer
 import app.mailcrane.core.MailcraneCore
 import app.mailcrane.core.ManualAccountConfig
@@ -26,6 +27,7 @@ class ManualSetupViewModelTest {
         private val result: () -> Long,
     ) : MailcraneCore {
         var lastConfig: ManualAccountConfig? = null
+        var lastJmap: JmapAccountSetup? = null
 
         override fun hello() = ""
 
@@ -44,6 +46,14 @@ class ManualSetupViewModelTest {
             password: String,
         ): Long {
             lastConfig = config
+            return result()
+        }
+
+        override suspend fun addAccountJmap(
+            setup: JmapAccountSetup,
+            password: String,
+        ): Long {
+            lastJmap = setup
             return result()
         }
     }
@@ -120,5 +130,37 @@ class ManualSetupViewModelTest {
             assertFalse(vm.state.value.checking)
             assertEquals("pw", vm.state.value.password)
         }
+    }
+
+    @Test
+    fun jmapSetupSendsTheServerInsteadOfImapAndSmtp() {
+        val core = FakeCore { 7 }
+        val vm = ManualSetupViewModel(core)
+        vm.setUpManually()
+        vm.onJmapChange(true)
+        vm.onEmailChange("ana@example.org")
+        vm.onJmapServerChange(" example.org ")
+        vm.onUsernameChange("ana@example.org")
+        vm.onPasswordChange("app-password")
+        vm.submit()
+        assertEquals(7L, vm.state.value.addedAccountId)
+        assertEquals("example.org", core.lastJmap?.server)
+        assertEquals("ana@example.org", core.lastJmap?.username)
+        assertNull("no IMAP setup was attempted", core.lastConfig)
+    }
+
+    @Test
+    fun aBadJmapServerIsShownOnItsField() {
+        val vm =
+            ManualSetupViewModel(
+                FakeCore {
+                    throw AddAccountException.Invalid(listOf(FieldError(Field.IMAP_HOST, FieldProblem.EMPTY)))
+                },
+            )
+        vm.onJmapChange(true)
+        vm.submit()
+        assertEquals(FieldProblem.EMPTY, vm.state.value.fieldErrors[Field.IMAP_HOST])
+        vm.onJmapServerChange("example.org")
+        assertNull(vm.state.value.fieldErrors[Field.IMAP_HOST])
     }
 }
