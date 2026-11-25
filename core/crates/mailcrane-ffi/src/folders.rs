@@ -104,7 +104,7 @@ pub fn list_folders(db_path: String, account_id: i64) -> Result<Vec<FolderSummar
     let mut rows = Vec::with_capacity(folders.len());
     // Shown without the personal namespace prefix (#325), as the folder
     // list suggests it; nothing is asked of the server here.
-    let namespace = folder_admin::derive_namespace(&folders);
+    let namespace = imap_namespace(&store, &folders);
     for (folder, place) in arrange(&folders, namespace.as_deref()) {
         let unread = store.count_unread(folder.id).map_err(|_| storage())?;
         rows.push(FolderSummary {
@@ -131,10 +131,8 @@ fn folders_manageable(
     if store.is_local_account(account)? {
         return Ok(true);
     }
-    Ok(!matches!(
-        store.account_protocol(account)?,
-        Some(mailcrane_store::Protocol::Jmap { .. })
-    ))
+    // IMAP, and JMAP through Mailbox/set (M4-26).
+    Ok(true)
 }
 
 /// Whether the apps should offer "New folder" for this account (M4-22).
@@ -176,7 +174,7 @@ pub fn move_targets(db_path: String, folder_id: i64) -> Result<MoveTargets, Sync
     let account = folder.details.account_id;
     let all = list_folders(db_path, account.0)?;
     let folders = store.list_folders(account).map_err(|_| storage())?;
-    let namespace = folder_admin::derive_namespace(&folders);
+    let namespace = imap_namespace(&store, &folders);
     let (to_top, under) = folder_admin::move_targets_in(&folders, folder.id, namespace.as_deref());
     Ok(MoveTargets {
         to_top,
@@ -538,3 +536,14 @@ mod tests {
         );
     }
 }
+
+/// The personal namespace the folder list suggests (#325), for IMAP and
+/// local accounts. JMAP has none (its Inbox is stored as `Inbox`).
+fn imap_namespace(store: &Store, folders: &[Folder]) -> Option<String> {
+    let account = folders.first()?.details.account_id;
+    match store.account_protocol(account) {
+        Ok(Some(mailcrane_store::Protocol::Jmap { .. })) => None,
+        _ => folder_admin::derive_namespace(folders),
+    }
+}
+

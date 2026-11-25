@@ -14,7 +14,8 @@ use super::convert::jmap_header_row;
 use super::initial::{save_body, SyncConfig, SyncError};
 use crate::events::{AccountId, CoreEvent, EventListener, FolderId};
 use mailcrane_jmap::{Auth, ClientConfig, JmapEmail, JmapError, MailboxRole, Session};
-use mailcrane_store::{BodyState, FolderRole, MessageId, NewFolder, Store};
+use crate::folder_admin::{CreatePlan, FolderAdminError, RenamePlan};
+use mailcrane_store::{BodyState, Folder, FolderRole, MessageId, NewFolder, Store};
 use std::collections::{BTreeSet, HashMap};
 
 /// The `Email` data type's state key in the store.
@@ -62,6 +63,102 @@ impl<'a> JmapSyncer<'a> {
             config,
             sync,
         })
+    }
+
+    /// Creates the planned folder as a mailbox (M4-26), then stores it the
+    /// way [`JmapSyncer::refresh_mailboxes`] would: the path as its remote
+    /// name, its own name to show, and the mailbox id. `parent` is the
+    /// folder it goes under. Nothing is stored if the server refuses.
+    pub async fn create_folder(
+        &mut self,
+        plan: &CreatePlan,
+        parent: Option<FolderId>,
+    ) -> Result<FolderId, FolderAdminError> {
+        let parent_mailbox = match parent {
+            Some(p) => Some(self.mailbox_of(p)?),
+            None => None,
+        };
+        let name = leaf(&plan.remote_name);
+        let id = mailcrane_jmap::create_mailbox(
+            &self.session,
+            &self.auth,
+            &self.config,
+            name,
+            parent_mailbox.as_deref(),
+        )
+        .await?;
+        let folder = self.store.upsert_folder(&NewFolder {
+            account_id: self.account,
+            remote_name: plan.remote_name.clone(),
+            display_name: name.to_owned(),
+            delimiter: Some("/".into()),
+            role: None,
+            uidvalidity: None,
+            uidnext: None,
+            highestmodseq: None,
+            is_subscribed: true,
+            selectable: true,
+        })?;
+        self.store.set_jmap_mailbox(folder, &id)?;
+        Ok(folder)
+    }
+
+    /// Renames or moves `folder` as planned (M4-26): one `Mailbox/set`
+    /// update of its name and parent, then the stored paths of it and its
+    /// subfolders. Nothing is stored if the server refuses.
+    pub async fn rename_folder(
+        &mut self,
+        folder: FolderId,
+        plan: &RenamePlan,
+    ) -> Result<(), FolderAdminError> {
+        if plan.is_noop() {
+            return Ok(());
+        }
+        let mailbox = self.mailbox_of(folder)?;
+        let parent_mailbox = match plan.new_remote.rsplit_once('/') {
+            Some((parent_path, _)) => {
+                let parent = self
+                    .store
+                    .list_folders(self.account)?
+                    .into_iter()
+                    .find(|f| f.details.remote_name == parent_path)
+                    .ok_or(FolderAdminError::NotFound)?;
+                Some(self.mailbox_of(parent.id)?)
+            }
+            None => None,
+        };
+        mailcrane_jmap::update_mailbox(
+            &self.session,
+            &self.auth,
+            &self.config,
+            &mailbox,
+            leaf(&plan.new_remote),
+            parent_mailbox.as_deref(),
+        )
+        .await?;
+        // JMAP folders show their own name, not the path.
+        let rows: Vec<_> = plan
+            .rows
+            .iter()
+            .map(|(id, remote, _)| (*id, remote.clone(), leaf(remote).to_owned()))
+            .collect();
+        self.store.rename_folders(&rows)?;
+        Ok(())
+    }
+
+    /// Destroys the folder's mailbox (M4-26). The server refuses one that
+    /// still holds emails (`HasMessages`); only then is it removed here.
+    pub async fn delete_folder(&mut self, folder: &Folder) -> Result<(), FolderAdminError> {
+        let mailbox = self.mailbox_of(folder.id)?;
+        mailcrane_jmap::destroy_mailbox(&self.session, &self.auth, &self.config, &mailbox).await?;
+        self.store.delete_folder(folder.id)?;
+        Ok(())
+    }
+
+    fn mailbox_of(&self, folder: FolderId) -> Result<String, FolderAdminError> {
+        self.store
+            .jmap_mailbox(folder)?
+            .ok_or(FolderAdminError::NotFound)
     }
 
     /// Lists the account's mailboxes and saves them as folders, keeping each
@@ -574,3 +671,8 @@ fn folder_role(role: &MailboxRole) -> Option<FolderRole> {
         MailboxRole::All => FolderRole::All,
     })
 }
+/// The last path segment: a JMAP mailbox's own name.
+fn leaf(path: &str) -> &str {
+    path.rsplit('/').next().unwrap_or(path)
+}
+

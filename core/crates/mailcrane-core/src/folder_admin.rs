@@ -52,6 +52,10 @@ pub enum FolderAdminError {
     /// Delete its subfolders first.
     #[error("the folder has subfolders")]
     HasSubfolders,
+    /// The server won't delete a folder that still holds messages (JMAP,
+    /// M4-26): move or delete them first.
+    #[error("the folder has messages")]
+    HasMessages,
     /// A folder with that name is already there.
     #[error("a folder with that name exists")]
     AlreadyExists,
@@ -73,6 +77,9 @@ pub enum FolderAdminError {
     /// The connection failed; whether the change happened is unknown.
     #[error(transparent)]
     Imap(#[from] mailcrane_imap::ImapError),
+    /// The JMAP request failed; whether the change happened is unknown.
+    #[error(transparent)]
+    Jmap(#[from] mailcrane_jmap::JmapError),
     /// The local database failed.
     #[error(transparent)]
     Store(#[from] StoreError),
@@ -83,6 +90,20 @@ impl From<ChangeError> for FolderAdminError {
         match e {
             ChangeError::Refused { transient } => Self::Refused { transient },
             ChangeError::Imap(e) => Self::Imap(e),
+        }
+    }
+}
+
+impl From<mailcrane_jmap::MailboxSetError> for FolderAdminError {
+    fn from(e: mailcrane_jmap::MailboxSetError) -> Self {
+        use mailcrane_jmap::MailboxSetError as M;
+        match e {
+            M::AlreadyExists => Self::AlreadyExists,
+            M::HasEmail => Self::HasMessages,
+            M::HasChild => Self::HasSubfolders,
+            M::NotFound => Self::NotFound,
+            M::Refused(_) => Self::Refused { transient: false },
+            M::Jmap(e) => Self::Jmap(e),
         }
     }
 }

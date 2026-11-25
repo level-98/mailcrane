@@ -87,6 +87,8 @@ enum Change {
 
 #[derive(Debug, Default)]
 struct State {
+    /// What `Mailbox/get` serves; `Mailbox/set` changes it.
+    mailboxes: Vec<FakeMailbox>,
     emails: Vec<Stored>,
     blobs: HashMap<String, Vec<u8>>,
     submissions: Vec<FakeSubmission>,
@@ -180,7 +182,6 @@ struct Config {
     port: u16,
     faults: Vec<Fault>,
     user: Option<(String, String)>,
-    mailboxes: Vec<FakeMailbox>,
     redirect_session: bool,
     state: Arc<Mutex<State>>,
 }
@@ -263,6 +264,7 @@ impl FakeJmapBuilder {
             self.mailboxes
         };
         let state = Arc::new(Mutex::new(State {
+            mailboxes,
             emails: self
                 .emails
                 .into_iter()
@@ -296,7 +298,6 @@ impl FakeJmapBuilder {
             port: addr.port(),
             faults: self.faults,
             user: self.user,
-            mailboxes,
             redirect_session: self.redirect_session,
             state: state.clone(),
         });
@@ -335,6 +336,11 @@ impl FakeJmapBuilder {
 }
 
 impl FakeJmap {
+    /// The mailboxes as they are now, after any `Mailbox/set`.
+    pub fn mailboxes(&self) -> Vec<FakeMailbox> {
+        lock(&self.state).mailboxes.clone()
+    }
+
     pub fn builder() -> FakeJmapBuilder {
         FakeJmapBuilder {
             faults: Vec::new(),
@@ -797,8 +803,9 @@ fn method_responses(
     let mut state = lock(&config.state);
     let state = &mut *state;
     let one = match name {
+        "Mailbox/set" => mailbox_set(state, args, id),
         "Mailbox/get" => {
-            let list: Vec<Value> = config
+            let list: Vec<Value> = state
                 .mailboxes
                 .iter()
                 .map(|m| {
@@ -1006,3 +1013,113 @@ async fn jmap_response(
         ),
     })
 }
+
+/// `Mailbox/set` (RFC 8621 §2.5): one create, update or destroy at a time
+/// is all the app sends. Names must be unique among siblings, a mailbox
+/// can't move under itself, and destroying one with children or (without
+/// `onDestroyRemoveEmails`) emails is refused.
+fn mailbox_set(state: &mut State, args: &Value, id: &str) -> Value {
+    let err = |kind: &str| json!({"type": kind});
+    let taken = |state: &State, name: &str, parent: Option<&str>, except: Option<&str>| {
+        state.mailboxes.iter().any(|m| {
+            m.name == name && m.parent_id.as_deref() == parent && Some(m.id.as_str()) != except
+        })
+    };
+    let parent_of = |v: &Value| v.get("parentId").and_then(Value::as_str).map(str::to_owned);
+    let mut created = serde_json::Map::new();
+    let mut not_created = serde_json::Map::new();
+    if let Some(create) = args.get("create").and_then(Value::as_object) {
+        for (key, m) in create {
+            let name = m.get("name").and_then(Value::as_str).unwrap_or_default();
+            let parent = parent_of(m);
+            if name.is_empty()
+                || parent
+                    .as_deref()
+                    .is_some_and(|p| !state.mailboxes.iter().any(|m| m.id == p))
+            {
+                not_created.insert(key.clone(), err("invalidProperties"));
+            } else if taken(state, name, parent.as_deref(), None) {
+                not_created.insert(key.clone(), err("alreadyExists"));
+            } else {
+                state.next += 1;
+                let new_id = format!("mb-{}", state.next);
+                state.mailboxes.push(FakeMailbox {
+                    id: new_id.clone(),
+                    name: name.to_owned(),
+                    role: None,
+                    parent_id: parent,
+                });
+                created.insert(key.clone(), json!({"id": new_id}));
+            }
+        }
+    }
+    let mut updated = serde_json::Map::new();
+    let mut not_updated = serde_json::Map::new();
+    if let Some(update) = args.get("update").and_then(Value::as_object) {
+        for (mid, patch) in update {
+            let Some(current) = state.mailboxes.iter().find(|m| &m.id == mid).cloned() else {
+                not_updated.insert(mid.clone(), err("notFound"));
+                continue;
+            };
+            let name = patch
+                .get("name")
+                .and_then(Value::as_str)
+                .map_or(current.name.clone(), str::to_owned);
+            let parent = if patch.get("parentId").is_some() {
+                parent_of(patch)
+            } else {
+                current.parent_id.clone()
+            };
+            // Under itself or one of its own children?
+            let mut up = parent.clone();
+            let mut cycle = false;
+            while let Some(p) = up {
+                if &p == mid {
+                    cycle = true;
+                    break;
+                }
+                up = state
+                    .mailboxes
+                    .iter()
+                    .find(|m| m.id == p)
+                    .and_then(|m| m.parent_id.clone());
+            }
+            if name.is_empty() || cycle {
+                not_updated.insert(mid.clone(), err("invalidProperties"));
+            } else if taken(state, &name, parent.as_deref(), Some(mid)) {
+                not_updated.insert(mid.clone(), err("alreadyExists"));
+            } else if let Some(m) = state.mailboxes.iter_mut().find(|m| &m.id == mid) {
+                m.name = name;
+                m.parent_id = parent;
+                updated.insert(mid.clone(), Value::Null);
+            }
+        }
+    }
+    let remove_emails = args
+        .get("onDestroyRemoveEmails")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let mut destroyed = Vec::new();
+    let mut not_destroyed = serde_json::Map::new();
+    if let Some(destroy) = args.get("destroy").and_then(Value::as_array) {
+        for mid in destroy.iter().filter_map(Value::as_str) {
+            if !state.mailboxes.iter().any(|m| m.id == mid) {
+                not_destroyed.insert(mid.to_owned(), err("notFound"));
+            } else if state.mailboxes.iter().any(|m| m.parent_id.as_deref() == Some(mid)) {
+                not_destroyed.insert(mid.to_owned(), err("mailboxHasChild"));
+            } else if !remove_emails && state.emails.iter().any(|e| e.mailboxes.contains(mid)) {
+                not_destroyed.insert(mid.to_owned(), err("mailboxHasEmail"));
+            } else {
+                state.mailboxes.retain(|m| m.id != mid);
+                destroyed.push(json!(mid));
+            }
+        }
+    }
+    json!(["Mailbox/set", {
+        "accountId": "A1", "oldState": "mb-state-1", "newState": "mb-state-1",
+        "created": created, "notCreated": not_created,
+        "updated": updated, "notUpdated": not_updated,
+        "destroyed": destroyed, "notDestroyed": not_destroyed
+    }, id])
+}
+

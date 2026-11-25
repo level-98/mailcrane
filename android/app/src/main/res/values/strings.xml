@@ -189,6 +189,7 @@
     <string name="folders_error_reserved">That name is reserved. Choose another.</string>
     <string name="folders_error_system">Standard folders, and folders that contain them, can’t be changed.</string>
     <string name="folders_error_has_subfolders">Delete or move its subfolders first.</string>
+    <string name="folders_error_has_messages">This server only deletes empty folders. Move or delete its messages first.</string>
     <string name="folders_error_exists">A folder with that name is already there.</string>
     <string name="folders_error_into_itself">A folder can’t go inside itself or one of its subfolders.</string>
     <string name="folders_error_no_subfolders">This server doesn’t support subfolders.</string>
