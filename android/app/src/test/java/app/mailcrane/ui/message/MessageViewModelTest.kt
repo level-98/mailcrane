@@ -355,7 +355,8 @@ class MessageViewModelTest {
             risky.onLinkTapped("https://example.com@example.net/")
             assertEquals("https://example.com@example.net/", risky.linkPreview.value?.url)
 
-            val lookalike = messageViewModel(FakeMessageCore(plain = true), checker = warning(LinkWarning.LookalikeHost))
+            val lookalike =
+                messageViewModel(FakeMessageCore(plain = true), checker = warning(LinkWarning.LookalikeHost))
             lookalike.onLinkTapped("https://xn--80ak6aa92e.com/")
             assertEquals("https://xn--80ak6aa92e.com/", lookalike.linkPreview.value?.url)
         }
