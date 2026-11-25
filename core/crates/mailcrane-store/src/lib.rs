@@ -9,6 +9,7 @@ mod repo;
 
 pub use error::StoreError;
 pub use model::*;
+pub use repo::NewMail;
 pub use repo::{
     Correspondent, Draft, DraftFields, DraftId, NewOutboxMessage, NewRule, OpId, OpKind, OpMessage,
     OutboxId, OutboxMessage, OutboxState, PendingOp, Rule, RuleAction, RuleCondition, RuleId,

@@ -87,6 +87,46 @@ pub enum CoreEvent {
     },
 }
 
+/// A new message to notify about (M4-05). Holds only what a notification
+/// shows; the app decides whether to show sender and subject at all.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct NewMailNotification {
+    pub message_id: i64,
+    pub account_id: i64,
+    /// The account's address, to name its notification channel.
+    pub account_email: String,
+    /// The sender's display name, else their address, else empty.
+    pub sender: String,
+    pub subject: String,
+    /// When it arrived on the server, unix seconds UTC.
+    pub received_at: i64,
+}
+
+impl NewMailNotification {
+    fn from_store(m: mailcrane_store::NewMail, account: &mailcrane_store::Account) -> Self {
+        let sender = m
+            .from_name
+            .filter(|n| !n.trim().is_empty())
+            .or(m.from_addr)
+            .unwrap_or_default();
+        Self {
+            message_id: m.message_id.0,
+            account_id: account.id.0,
+            account_email: account.details.email.clone(),
+            sender,
+            subject: m.subject,
+            received_at: m.internal_date,
+        }
+    }
+}
+
+fn unix_now() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| i64::try_from(d.as_secs()).unwrap_or(i64::MAX))
+        .unwrap_or(0)
+}
+
 /// Receives events, implemented in Kotlin and Swift. It may be called from
 /// any thread and must not block.
 #[uniffi::export(with_foreign)]
@@ -361,6 +401,63 @@ impl SyncEngine {
         if let Some(finished) = live.remove(&account_id) {
             let _ = finished.thread.join();
         }
+    }
+
+    /// New mail to notify about (M4-05), from what is stored now; no network.
+    /// Each message is returned at most once, ever: the store remembers it,
+    /// also across resyncs. The first call for an account returns nothing
+    /// and only records what is already in its inbox.
+    pub fn take_new_mail(&self) -> Result<Vec<NewMailNotification>, SyncFailure> {
+        let store = self.open_store()?;
+        let accounts = store
+            .list_accounts()
+            .map_err(|_| failed(events::SyncErrorKind::Storage))?;
+        let now = unix_now();
+        let mut out = Vec::new();
+        for account in &accounts {
+            let found = mailcrane_core::notify::take_new_mail(&store, account, now)
+                .map_err(|_| failed(events::SyncErrorKind::Storage))?;
+            out.extend(
+                found
+                    .into_iter()
+                    .map(|m| NewMailNotification::from_store(m, account)),
+            );
+        }
+        Ok(out)
+    }
+
+    /// Syncs every account's inbox, stopping before `deadline_seconds` have
+    /// passed, then returns the new mail to notify about ([`take_new_mail`]).
+    /// For the periodic background check. An account that fails is skipped
+    /// (its error goes to the listener as usual); the others still sync.
+    /// Blocking.
+    ///
+    /// [`take_new_mail`]: Self::take_new_mail
+    pub fn background_sync(
+        &self,
+        deadline_seconds: u32,
+    ) -> Result<Vec<NewMailNotification>, SyncFailure> {
+        let started = std::time::Instant::now();
+        let deadline = Duration::from_secs(u64::from(deadline_seconds));
+        let store = self.open_store()?;
+        let accounts = store
+            .list_accounts()
+            .map_err(|_| failed(events::SyncErrorKind::Storage))?;
+        for account in &accounts {
+            if started.elapsed() >= deadline {
+                break;
+            }
+            let inbox = match inbox_of(&store, account.id) {
+                Ok(Some(folder)) => Some(folder.0),
+                _ => self.refresh_folders(account.id.0).ok().flatten(),
+            };
+            if let Some(folder) = inbox {
+                // Errors are reported to the listener; carry on with the others.
+                let _ = self.sync_folder(folder);
+            }
+        }
+        drop(store);
+        self.take_new_mail()
     }
 
     /// How long a stop waits for the live thread to finish.
