@@ -67,6 +67,7 @@ struct Mock {
     start: Instant,
     log: RefCell<Vec<(Duration, Ev)>>,
     connect_failures: Cell<usize>,
+    connect_error: Cell<SyncErrorKind>,
     sync_failures: Cell<usize>,
     idle: bool,
     idle_plan: RefCell<VecDeque<IdlePlan>>,
@@ -79,6 +80,7 @@ impl Mock {
             start: Instant::now(),
             log: RefCell::new(Vec::new()),
             connect_failures: Cell::new(0),
+            connect_error: Cell::new(SyncErrorKind::Network),
             sync_failures: Cell::new(0),
             idle: true,
             idle_plan: RefCell::new(VecDeque::new()),
@@ -118,7 +120,7 @@ impl Source for MockSource {
     async fn connect(&mut self) -> Result<MockConn, SyncErrorKind> {
         if Mock::take(&self.0.connect_failures) {
             self.0.record(Ev::ConnectFailed);
-            return Err(SyncErrorKind::Network);
+            return Err(self.0.connect_error.get());
         }
         self.0.record(Ev::Connect);
         Ok(MockConn(self.0.clone()))
@@ -195,6 +197,20 @@ async fn run_mock(mock: &Rc<Mock>, config: LiveConfig, stop_at: Duration) -> (Du
 
 fn gaps(times: &[Duration]) -> Vec<Duration> {
     times.windows(2).map(|w| w[1] - w[0]).collect()
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_refused_login_is_reported_once_and_not_retried() {
+    let mock = Rc::new(Mock::new());
+    mock.connect_failures.set(usize::MAX);
+    mock.connect_error.set(SyncErrorKind::Auth);
+    let (returned, events) = run_mock(&mock, exact(), 60 * MINUTE).await;
+    // One attempt, one error event, and the loop ends straight away
+    // instead of logging in again every few minutes.
+    assert_eq!(mock.times(Ev::ConnectFailed), [Duration::ZERO]);
+    assert!(mock.times(Ev::Connect).is_empty());
+    assert_eq!(events.sync_errors(), 1);
+    assert_eq!(returned, Duration::ZERO);
 }
 
 #[tokio::test(start_paused = true)]
@@ -620,11 +636,11 @@ async fn folders_are_listed_first_when_none_are_stored() {
 }
 
 #[tokio::test]
-async fn bad_credentials_are_reported_and_retried() {
+async fn bad_credentials_are_reported_once_and_the_loop_ends() {
     let imap = fake(1, None).await;
     let (store, account, _) = setup();
     let events = Events::default();
-    let (stop, signal) = live_stop();
+    let (_stop, signal) = live_stop();
     let port = imap.addr().port();
     let cert = imap.root_cert_der().to_vec();
     let wrong = move || {
@@ -635,7 +651,9 @@ async fn bad_credentials_are_reported_and_retried() {
             password: Secret::new("wrong"),
         })
     };
-    tokio::join!(
+    // Nobody stops it: a refused login ends the loop by itself.
+    tokio::time::timeout(
+        Duration::from_secs(5),
         run_live_updates(
             &store,
             account,
@@ -643,13 +661,13 @@ async fn bad_credentials_are_reported_and_retried() {
             wrong,
             SyncConfig::default(),
             fast(),
-            signal
+            signal,
         ),
-        async {
-            wait_for(Duration::from_secs(5), || events.sync_errors() >= 2).await;
-            stop.stop();
-        }
-    );
+    )
+    .await
+    .expect("the loop ends after a refused login");
+    assert_eq!(imap.connections_accepted(), 1);
+    assert_eq!(events.sync_errors(), 1);
     assert!(events.all().iter().all(|e| matches!(
         e,
         CoreEvent::SyncError {

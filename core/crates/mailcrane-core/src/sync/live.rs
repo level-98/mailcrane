@@ -12,7 +12,8 @@
 //! 4. without the `IDLE` capability, syncs every 5 minutes instead;
 //! 5. after a dropped connection or any error, reconnects with exponential
 //!    back-off from 2 s to 5 minutes, with jitter; a successful sync resets
-//!    the back-off.
+//!    the back-off. A refused login is not retried: the loop reports it and
+//!    ends, so a wrong password can't get the account locked.
 //!
 //! Stopping sends `DONE` and `LOGOUT`, and returns within 2 seconds even
 //! if the server does not answer.
@@ -190,6 +191,12 @@ async fn run<S: Source>(
                     account_id: account,
                     kind,
                 });
+                // Retrying a refused login every few minutes can get the
+                // account locked by the provider. Stop until the app starts
+                // live updates again (next foreground, or a fixed password).
+                if kind == SyncErrorKind::Auth {
+                    return;
+                }
             }
             Ok(mut conn) => {
                 // Once a stop is asked for, everything left (DONE, LOGOUT)
