@@ -147,6 +147,23 @@ class RulesViewModelTest {
     fun tearDown() = Dispatchers.resetMain()
 
     @Test
+    fun aRemovedFolderShowsUpInTheOpenRulesScreen() =
+        runTest {
+            // Manage folders deletes a folder while the Rules screen stays open (#323).
+            val core = FakeRules()
+            val mailbox = FakeMailbox()
+            val vm = RulesViewModel(core, mailbox, 7)
+            assertEquals(null, vm.state.value.rules.first().missingFolder)
+            core.rules = listOf(info(1).copy(missingFolder = "Receipts"), info(2))
+            mailbox.events.emit(CoreEvent.FolderChanged(5))
+            assertEquals("Receipts", vm.state.value.rules.first().missingFolder)
+            // And when the screen is shown again.
+            core.rules = listOf(info(1), info(2).copy(missingFolder = "Old"))
+            vm.refresh()
+            assertEquals("Old", vm.state.value.rules[1].missingFolder)
+        }
+
+    @Test
     fun turningOnARuleWithNothingToDoIsExplained() =
         runTest {
             val core = FakeRules().apply { enableFailure = RulesFailure.Invalid() }

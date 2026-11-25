@@ -78,6 +78,9 @@ import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.io.Serializable
+import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.conflate
+import app.mailcrane.core.CoreEvent
 
 /** The kinds of condition the editor offers, in menu order. */
 enum class ConditionKind(
@@ -236,16 +239,28 @@ class RulesViewModel
         val results: Flow<Pair<Int, Int>> = _results.receiveAsFlow()
 
         init {
+            viewModelScope.launch { reloadAll() }
             viewModelScope.launch {
-                val folders =
-                    try {
-                        mailbox.listFolders(accountId)
-                    } catch (_: SyncFailure) {
-                        emptyList()
-                    }
-                _state.update { it.copy(folders = folders) }
-                reload()
+                // A folder was removed or renamed (#323): rules may have been turned off, and the
+                // folder list for the editor changed. This screen outlives a trip to Manage folders.
+                mailbox.events.filter { it is CoreEvent.FolderChanged }.conflate().collect { reloadAll() }
             }
+        }
+
+        /** Re-reads everything; the screen calls it each time it's shown. */
+        fun refresh() {
+            viewModelScope.launch { reloadAll() }
+        }
+
+        private suspend fun reloadAll() {
+            val folders =
+                try {
+                    mailbox.listFolders(accountId)
+                } catch (_: SyncFailure) {
+                    _state.value.folders
+                }
+            _state.update { it.copy(folders = folders) }
+            reload()
         }
 
         private suspend fun reload() {
@@ -381,6 +396,8 @@ fun RulesScreen(
         ),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
+    // Shown again after another screen (such as Manage folders) may have changed rules (#323).
+    LaunchedEffect(Unit) { viewModel.refresh() }
     var editing by rememberSaveable { mutableStateOf(startWith) }
     val snackbar = remember { SnackbarHostState() }
     val resources = LocalResources.current
