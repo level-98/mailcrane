@@ -10,9 +10,9 @@ mod repo;
 pub use error::StoreError;
 pub use model::*;
 pub use repo::{
-    Draft, DraftFields, DraftId, NewOutboxMessage, OpId, OpKind, OpMessage, OutboxId,
-    OutboxMessage, OutboxState, PendingOp, SaveSentCopy, ScheduleMode, SearchFilter, SentCopy,
-    ServerCopy, SignatureSetting, ThreadSummary, UnthreadedMessage, MAX_SIGNATURE_BYTES,
+    Correspondent, Draft, DraftFields, DraftId, NewOutboxMessage, OpId, OpKind, OpMessage,
+    OutboxId, OutboxMessage, OutboxState, PendingOp, SaveSentCopy, ScheduleMode, SearchFilter,
+    SentCopy, ServerCopy, SignatureSetting, ThreadSummary, UnthreadedMessage, MAX_SIGNATURE_BYTES,
 };
 pub use repo::{KeywordedMessage, NewSnooze, Snooze, SnoozeId, SnoozeState};
 

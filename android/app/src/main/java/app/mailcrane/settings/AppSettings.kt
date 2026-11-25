@@ -67,6 +67,16 @@ interface AppSettings {
     suspend fun addRecentSearch(query: String)
 
     suspend fun clearRecentSearches()
+
+    /** Whether the message list groups messages into conversations (M4-02); on by default. */
+    val groupByConversation: Flow<Boolean>
+
+    suspend fun setGroupByConversation(enabled: Boolean)
+
+    /** Whether the user was asked about suggestions from their contacts (M2-08); asked once. */
+    val contactsPromptAnswered: Flow<Boolean>
+
+    suspend fun setContactsPromptAnswered()
 }
 
 /** How many recent searches are kept. */
@@ -99,6 +109,18 @@ class DataStoreAppSettings(
         dataStore.data.catch { e -> if (e is IOException) emit(emptyPreferences()) else throw e }
 
     override val cleanLinks: Flow<Boolean> = prefs.map { it[CLEAN_LINKS] ?: true }
+
+    override val groupByConversation: Flow<Boolean> = prefs.map { it[GROUP_THREADS] ?: true }
+
+    override suspend fun setGroupByConversation(enabled: Boolean) {
+        dataStore.edit { it[GROUP_THREADS] = enabled }
+    }
+
+    override val contactsPromptAnswered: Flow<Boolean> = prefs.map { it[CONTACTS_PROMPT] ?: false }
+
+    override suspend fun setContactsPromptAnswered() {
+        dataStore.edit { it[CONTACTS_PROMPT] = true }
+    }
 
     override suspend fun setCleanLinks(enabled: Boolean) {
         dataStore.edit { it[CLEAN_LINKS] = enabled }
@@ -168,10 +190,12 @@ class DataStoreAppSettings(
         val SWIPE_RIGHT = stringPreferencesKey("swipe_right")
         val SWIPE_LEFT = stringPreferencesKey("swipe_left")
         val CLEAN_LINKS = booleanPreferencesKey("clean_links")
+        val CONTACTS_PROMPT = booleanPreferencesKey("contacts_prompt_answered")
         val UNDO_SEND = intPreferencesKey("undo_send_seconds")
         val THEME = stringPreferencesKey("theme_mode")
         val DYNAMIC_COLOR = booleanPreferencesKey("dynamic_color")
         val DARK_BODIES = booleanPreferencesKey("dark_message_bodies")
+        val GROUP_THREADS = booleanPreferencesKey("group_by_conversation")
     }
 }
 

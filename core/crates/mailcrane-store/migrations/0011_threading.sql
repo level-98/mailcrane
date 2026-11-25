@@ -18,5 +18,5 @@ CREATE INDEX idx_thread_keys_thread ON thread_keys (thread_id);
 -- 2 = a reply or forward (prefix) without any References or In-Reply-To.
 ALTER TABLE messages ADD COLUMN thread_subject TEXT;
 ALTER TABLE messages ADD COLUMN subject_kind INTEGER NOT NULL DEFAULT 0;
-CREATE INDEX idx_messages_thread_subject ON messages (thread_subject) WHERE subject_kind > 0;
+CREATE INDEX idx_messages_thread_subject ON messages (thread_subject, subject_kind, date);
 CREATE INDEX idx_threads_account ON threads (account_id);

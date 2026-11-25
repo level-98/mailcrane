@@ -10,6 +10,7 @@ uniffi::setup_scaffolding!();
 pub mod account;
 pub mod actions;
 pub mod compose;
+pub mod contacts;
 pub mod drafts;
 pub mod folders;
 pub mod links;
@@ -20,6 +21,7 @@ pub mod secrets;
 pub mod settings;
 pub mod snooze;
 pub mod sync;
+pub mod threads;
 pub mod unsubscribe;
 
 /// The name of this crate.

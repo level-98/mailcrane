@@ -14,6 +14,7 @@ pub(crate) const MIGRATIONS: &[&str] = &[
     include_str!("../migrations/0007_scheduled_send.sql"),
     include_str!("../migrations/0008_search.sql"),
     include_str!("../migrations/0009_snooze.sql"),
+    include_str!("../migrations/0010_contacts.sql"),
     include_str!("../migrations/0011_threading.sql"),
 ];
 

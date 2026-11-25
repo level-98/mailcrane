@@ -67,4 +67,18 @@ class FakeAppSettings(
     override suspend fun clearRecentSearches() {
         recent.value = emptyList()
     }
+
+    private val contactsAnswered = MutableStateFlow(false)
+    override val contactsPromptAnswered: StateFlow<Boolean> = contactsAnswered
+
+    override suspend fun setContactsPromptAnswered() {
+        contactsAnswered.value = true
+    }
+
+    private val group = MutableStateFlow(true)
+    override val groupByConversation: StateFlow<Boolean> = group
+
+    override suspend fun setGroupByConversation(enabled: Boolean) {
+        group.value = enabled
+    }
 }

@@ -2,6 +2,10 @@ package app.mailcrane.ui.compose
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import app.mailcrane.contacts.DeviceContacts
+import app.mailcrane.contacts.NoDeviceContacts
+import app.mailcrane.contacts.RecipientSuggestion
+import app.mailcrane.contacts.mergeSuggestions
 import app.mailcrane.core.AccountSummary
 import app.mailcrane.core.ComposeCore
 import app.mailcrane.core.ComposeDraft
@@ -133,6 +137,11 @@ data class ComposeUiState(
     val draftId: Long? = null,
     /** The draft request this screen was filled for, so rotation doesn't fill it again. */
     val openedDraft: DraftRequest? = null,
+    /** Suggested recipients for what is being typed in [suggestionsFor] (M2-08). */
+    val suggestions: List<RecipientSuggestion> = emptyList(),
+    val suggestionsFor: RecipientField? = null,
+    /** Ask once whether to suggest from the device's contacts. */
+    val askContacts: Boolean = false,
     /** The fields this screen was filled with, so rotation doesn't fill them again. */
     val prefilledWith: ComposePrefill? = null,
 ) {
@@ -160,7 +169,9 @@ class ComposeViewModel
     constructor(
         private val core: ComposeCore,
         private val settings: AppSettings,
+        private val deviceContacts: DeviceContacts = NoDeviceContacts,
     ) : ViewModel() {
+        private var suggesting: Job? = null
         private val _state = MutableStateFlow(ComposeUiState())
         val state: StateFlow<ComposeUiState> = _state.asStateFlow()
 
@@ -359,18 +370,80 @@ class ComposeViewModel
         fun onRecipientInput(
             which: RecipientField,
             text: String,
-        ) = editField(which) { field ->
-            val parsed = parse(text, whole = false) ?: return@editField field.copy(input = text, inputValid = false)
-            val rest = parsed.rest
-            field.copy(
-                chips = field.chips + parsed.entries.map { it.toChip() },
-                input = rest,
-                inputValid = isValidInput(rest),
-            )
+        ) {
+            editField(which) { field ->
+                val parsed = parse(text, whole = false) ?: return@editField field.copy(input = text, inputValid = false)
+                val rest = parsed.rest
+                field.copy(
+                    chips = field.chips + parsed.entries.map { it.toChip() },
+                    input = rest,
+                    inputValid = isValidInput(rest),
+                )
+            }
+            suggest(which, _state.value.field(which).input)
+        }
+
+        /** Looks up recipients for [prefix]: past correspondents, then device contacts if allowed. */
+        private fun suggest(
+            which: RecipientField,
+            prefix: String,
+        ) {
+            suggesting?.cancel()
+            if (prefix.isBlank()) {
+                clearSuggestions()
+                return
+            }
+            suggesting =
+                viewModelScope.launch {
+                    if (!deviceContacts.available && !settings.contactsPromptAnswered.first()) {
+                        _state.update { it.copy(askContacts = true) }
+                    }
+                    val account = _state.value.fromAccountId
+                    val past =
+                        core.suggestContacts(account, prefix, MAX_SUGGESTIONS).map {
+                            RecipientSuggestion(it.name, it.email)
+                        }
+                    val device = deviceContacts.search(prefix, MAX_SUGGESTIONS)
+                    val merged = mergeSuggestions(past, device, MAX_SUGGESTIONS)
+                    _state.update {
+                        it.copy(
+                            suggestions = merged,
+                            suggestionsFor = which.takeIf { merged.isNotEmpty() },
+                        )
+                    }
+                }
+        }
+
+        private fun clearSuggestions() {
+            suggesting?.cancel()
+            _state.update { it.copy(suggestions = emptyList(), suggestionsFor = null) }
+        }
+
+        /** The user tapped a suggestion: it replaces what was typed with a chip. */
+        fun pickSuggestion(
+            which: RecipientField,
+            suggestion: RecipientSuggestion,
+        ) {
+            val name = suggestion.name.replace("\"", "").trim()
+            val text = if (name.isEmpty()) suggestion.email else "\"$name\" <${suggestion.email}>"
+            editField(which) { field ->
+                val chips = parse(text, whole = true)?.entries?.map { it.toChip() }.orEmpty()
+                field.copy(chips = field.chips + chips, input = "", inputValid = false)
+            }
+            clearSuggestions()
+        }
+
+        /** The contacts question was answered (either way); it isn't asked again. */
+        fun contactsAnswered() {
+            _state.update { it.copy(askContacts = false) }
+            viewModelScope.launch { settings.setContactsPromptAnswered() }
         }
 
         /** Turns what is left in the field into chips, e.g. when it loses focus or Enter is pressed. */
-        fun commitRecipient(which: RecipientField) = editField(which) { it.committed() }
+        fun commitRecipient(which: RecipientField) {
+            editField(which) { it.committed() }
+            clearSuggestions()
+        }
 
         fun removeRecipient(
             which: RecipientField,
@@ -687,3 +760,6 @@ internal fun SendFailure.toComposeError(): ComposeError =
         is SendFailure.Refused -> if (temporary) ComposeError.REFUSED_TEMPORARY else ComposeError.REFUSED_PERMANENT
         is SendFailure.Internal, is SendFailure.NotReady -> ComposeError.UNEXPECTED
     }
+
+/** Most recipient suggestions shown at once. */
+private const val MAX_SUGGESTIONS = 8

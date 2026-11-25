@@ -1,6 +1,9 @@
 package app.mailcrane.ui.compose
 
+import android.Manifest
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -53,6 +56,7 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.mailcrane.R
+import app.mailcrane.contacts.RecipientSuggestion
 import app.mailcrane.core.AccountSummary
 import app.mailcrane.core.RecipientField
 
@@ -76,6 +80,8 @@ fun ComposeScreen(
         }
     }
     BackHandler(onBack = viewModel::requestClose)
+    val askPermission =
+        rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { viewModel.contactsAnswered() }
     ComposeContent(
         state = state,
         actions =
@@ -95,6 +101,9 @@ fun ComposeScreen(
                 onConfirmDiscard = viewModel::confirmDiscard,
                 onKeepEditing = viewModel::keepEditing,
                 onDismissError = viewModel::dismissError,
+                onPickSuggestion = viewModel::pickSuggestion,
+                onAllowContacts = { askPermission.launch(Manifest.permission.READ_CONTACTS) },
+                onDeclineContacts = viewModel::contactsAnswered,
             ),
         modifier = modifier,
     )
@@ -117,6 +126,9 @@ data class ComposeActions(
     val onConfirmDiscard: () -> Unit = {},
     val onKeepEditing: () -> Unit = {},
     val onDismissError: () -> Unit = {},
+    val onPickSuggestion: (RecipientField, RecipientSuggestion) -> Unit = { _, _ -> },
+    val onAllowContacts: () -> Unit = {},
+    val onDeclineContacts: () -> Unit = {},
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -269,6 +281,12 @@ private fun Recipient(
         enabled = enabled,
         trailing = trailing,
     )
+    if (state.suggestionsFor == which) {
+        RecipientSuggestions(state.suggestions) { actions.onPickSuggestion(which, it) }
+    }
+    if (which == RecipientField.TO && state.askContacts) {
+        ContactsPrompt(onAllow = actions.onAllowContacts, onDecline = actions.onDeclineContacts)
+    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)

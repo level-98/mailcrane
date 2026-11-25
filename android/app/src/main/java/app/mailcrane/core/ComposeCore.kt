@@ -13,6 +13,13 @@ interface ComposeCore {
     /** The accounts the user can send from, oldest first. */
     suspend fun listAccounts(): List<AccountSummary>
 
+    /** Past correspondents matching [prefix], best first (M2-08). Empty if the database fails. */
+    suspend fun suggestContacts(
+        accountId: Long?,
+        prefix: String,
+        limit: Int,
+    ): List<ContactSuggestion> = emptyList()
+
     /**
      * Splits typed recipient text into chips. Without [whole], text after the last comma or semicolon
      * comes back in [RecipientInput.rest] because the user is still typing it.
@@ -120,6 +127,19 @@ class UniffiComposeCore(
     private val io: CoroutineDispatcher = Dispatchers.IO,
 ) : ComposeCore {
     override suspend fun listAccounts(): List<AccountSummary> = withContext(io) { listAccounts(dbPath) }
+
+    override suspend fun suggestContacts(
+        accountId: Long?,
+        prefix: String,
+        limit: Int,
+    ): List<ContactSuggestion> =
+        withContext(io) {
+            try {
+                suggestContacts(dbPath, accountId, prefix, limit.coerceAtLeast(0).toUInt())
+            } catch (_: ContactsFailure) {
+                emptyList()
+            }
+        }
 
     override fun parseRecipients(
         text: String,

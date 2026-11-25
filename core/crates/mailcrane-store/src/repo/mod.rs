@@ -2,6 +2,7 @@
 
 mod accounts;
 mod attachments;
+mod contacts;
 mod drafts;
 mod folders;
 mod messages;
@@ -12,6 +13,7 @@ mod settings;
 mod snooze;
 mod threads;
 
+pub use contacts::Correspondent;
 pub use drafts::{Draft, DraftFields, DraftId, ServerCopy};
 pub use outbox::{
     NewOutboxMessage, OutboxId, OutboxMessage, OutboxState, SaveSentCopy, ScheduleMode, SentCopy,

@@ -1,8 +1,11 @@
 package app.mailcrane.ui.compose
 
+import app.mailcrane.contacts.DeviceContacts
+import app.mailcrane.contacts.RecipientSuggestion
 import app.mailcrane.core.AccountSummary
 import app.mailcrane.core.ComposeCore
 import app.mailcrane.core.ComposeDraft
+import app.mailcrane.core.ContactSuggestion
 import app.mailcrane.core.DraftFailure
 import app.mailcrane.core.DraftKind
 import app.mailcrane.core.DraftSummary
@@ -42,6 +45,14 @@ class ComposeViewModelTest {
         var outcome: suspend () -> SendResult = { SendResult(emptyList()) }
 
         override suspend fun listAccounts() = accounts
+
+        var contacts: List<ContactSuggestion> = emptyList()
+
+        override suspend fun suggestContacts(
+            accountId: Long?,
+            prefix: String,
+            limit: Int,
+        ): List<ContactSuggestion> = contacts.filter { it.email.startsWith(prefix) || it.name.startsWith(prefix, true) }
 
         override fun parseRecipients(
             text: String,
@@ -589,5 +600,75 @@ class ComposeViewModelTest {
         assertEquals(ComposeResult.Scheduled(1_900_000_000), vm.state.value.result)
         assertEquals(1_900_000_000L, core.scheduled.single().second)
         assertNull("not sent now", core.sent)
+    }
+
+    private class FakeDevice(
+        override val available: Boolean,
+        val people: List<RecipientSuggestion> = emptyList(),
+    ) : DeviceContacts {
+        var searched = 0
+
+        override suspend fun search(
+            prefix: String,
+            limit: Int,
+        ): List<RecipientSuggestion> {
+            searched++
+            return if (available) people.filter { it.name.startsWith(prefix, true) } else emptyList()
+        }
+    }
+
+    @Test
+    fun typingSuggestsAndPickingAddsAChip() {
+        val core = FakeCore().apply { contacts = listOf(ContactSuggestion("ana@example.net", "Ana Silva")) }
+        val device = FakeDevice(true, listOf(RecipientSuggestion("Anabel", "anabel@example.net", fromDevice = true)))
+        val vm = ComposeViewModel(core, FakeAppSettings(), device).apply { start(1) }
+        vm.onRecipientInput(RecipientField.TO, "ana")
+        val state = vm.state.value
+        assertEquals(RecipientField.TO, state.suggestionsFor)
+        assertEquals(listOf("ana@example.net", "anabel@example.net"), state.suggestions.map { it.email })
+        assertFalse("allowed already: no question", state.askContacts)
+        vm.pickSuggestion(RecipientField.TO, state.suggestions[0])
+        val after = vm.state.value
+        assertEquals(listOf("\"Ana Silva\" <ana@example.net>"), after.to.chips.map { it.text })
+        assertEquals("", after.to.input)
+        assertNull(after.suggestionsFor)
+    }
+
+    @Test
+    fun theContactsQuestionIsAskedOnceAndDecliningKeepsPastCorrespondents() {
+        val settings = FakeAppSettings()
+        val core = FakeCore().apply { contacts = listOf(ContactSuggestion("bob@example.net", "Bob")) }
+        val device = FakeDevice(false)
+        val vm = ComposeViewModel(core, settings, device).apply { start(1) }
+        vm.onRecipientInput(RecipientField.TO, "b")
+        assertTrue(vm.state.value.askContacts)
+        assertEquals(
+            listOf("bob@example.net"),
+            vm.state.value.suggestions
+                .map { it.email },
+        )
+        vm.contactsAnswered()
+        assertFalse(vm.state.value.askContacts)
+        val again = ComposeViewModel(core, settings, device).apply { start(1) }
+        again.onRecipientInput(RecipientField.TO, "b")
+        assertFalse("not asked twice", again.state.value.askContacts)
+        assertEquals(
+            listOf("bob@example.net"),
+            again.state.value.suggestions
+                .map { it.email },
+        )
+    }
+
+    @Test
+    fun committingOrClearingHidesSuggestions() {
+        val core = FakeCore().apply { contacts = listOf(ContactSuggestion("bob@example.net", "Bob")) }
+        val vm = ComposeViewModel(core, FakeAppSettings(), FakeDevice(true)).apply { start(1) }
+        vm.onRecipientInput(RecipientField.CC, "bo")
+        assertEquals(RecipientField.CC, vm.state.value.suggestionsFor)
+        vm.onRecipientInput(RecipientField.CC, "")
+        assertNull(vm.state.value.suggestionsFor)
+        vm.onRecipientInput(RecipientField.CC, "bo")
+        vm.commitRecipient(RecipientField.CC)
+        assertNull(vm.state.value.suggestionsFor)
     }
 }

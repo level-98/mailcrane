@@ -9,6 +9,7 @@ import app.mailcrane.core.MessageAction
 import app.mailcrane.core.MessageSummary
 import app.mailcrane.core.SyncErrorKind
 import app.mailcrane.core.SyncFailure
+import app.mailcrane.core.ThreadSummary
 import app.mailcrane.settings.FakeAppSettings
 import app.mailcrane.settings.SwipeAction
 import kotlinx.coroutines.CompletableDeferred
@@ -57,6 +58,17 @@ private class FakeMailbox(
     var syncFailure: SyncErrorKind? = null
     var listFailure: SyncErrorKind? = null
     var rowsRead = 0
+    var threads: List<ThreadSummary> = emptyList()
+    var threadReads = 0
+
+    override suspend fun listThreads(
+        folderId: Long,
+        offset: Int,
+        limit: Int,
+    ): List<ThreadSummary> {
+        threadReads++
+        return threads.drop(offset).take(limit)
+    }
 
     override suspend fun listMessages(
         folderId: Long,
@@ -328,4 +340,30 @@ class MessageListViewModelTest {
         kotlinx.coroutines.runBlocking { settings.setSwipeLeft(SwipeAction.DELETE) }
         assertEquals(SwipeAction.READ_UNREAD to SwipeAction.DELETE, vm.swipes.value)
     }
+
+    private fun thread(
+        id: Long,
+        count: UInt,
+    ) = ThreadSummary(id, "Subject $id", listOf("Ana", "Bob"), count, 1u, id, false, false, id * 10)
+
+    @Test
+    fun conversationsFollowTheSetting() =
+        runTest {
+            val core = FakeMailbox(stored = 3).apply { threads = listOf(thread(2, 2u), thread(1, 1u)) }
+            val settings = FakeAppSettings()
+            val vm = MessageListViewModel(core, settings, FOLDER)
+            assertTrue(vm.state.value.grouped)
+            assertEquals(
+                listOf(2L, 1L),
+                vm.state.value.threads
+                    .map { it.threadId },
+            )
+            settings.setGroupByConversation(false)
+            assertFalse(vm.state.value.grouped)
+            assertTrue(
+                vm.state.value.threads
+                    .isEmpty(),
+            )
+            assertEquals(3, vm.state.value.messages.size)
+        }
 }
