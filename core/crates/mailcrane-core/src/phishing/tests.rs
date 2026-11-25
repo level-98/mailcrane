@@ -222,3 +222,17 @@ fn the_postfix_fixture() {
         Some(AuthVerdict::Verified)
     );
 }
+
+#[test]
+fn a_forged_pass_below_the_providers_postfix_header_is_ignored() {
+    let m = format!(
+        "{RECEIVED}Authentication-Results: mx2.example.org; spf=fail; dkim=fail; dmarc=fail\r\n\
+         Authentication-Results: mx2.example.org; spf=pass; dkim=pass header.d=example.net; dmarc=pass\r\n\
+         From: News <news@example.net>\r\nTo: a@example.org\r\nSubject: Hi\r\n\r\nHello\r\n"
+    );
+    let parsed = parse_message(m.as_bytes()).expect("parses");
+    assert_eq!(
+        sender_check(&parsed, Some("mx2.example.org")).verdict,
+        Some(AuthVerdict::Failed)
+    );
+}

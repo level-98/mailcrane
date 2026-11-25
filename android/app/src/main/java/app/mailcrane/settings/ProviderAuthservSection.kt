@@ -27,6 +27,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import app.mailcrane.R
 import app.mailcrane.core.AccountSettingsCore
+import app.mailcrane.core.SenderTrustChanges
 import app.mailcrane.core.SettingsFailure
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedFactory
@@ -57,6 +58,7 @@ class ProviderAuthservViewModel
     @AssistedInject
     constructor(
         private val core: AccountSettingsCore,
+        private val senderTrust: SenderTrustChanges,
         @Assisted private val accountId: Long,
     ) : ViewModel() {
         @AssistedFactory
@@ -86,6 +88,8 @@ class ProviderAuthservViewModel
             viewModelScope.launch {
                 try {
                     val saved = core.setProviderAuthservId(accountId, current.text)
+                    // Open messages must show the new trust at once, lowered trust above all.
+                    senderTrust.changed()
                     _state.update {
                         it.copy(
                             text = saved.orEmpty(),

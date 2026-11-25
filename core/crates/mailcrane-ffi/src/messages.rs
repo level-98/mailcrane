@@ -961,6 +961,12 @@ mod tests {
             .expect("set"));
         drop(store);
         assert_eq!(verdict(&path), Some(AuthVerdict::Verified));
+        // Clearing it takes effect on the next read: nothing is cached.
+        assert_eq!(
+            crate::settings::set_provider_authserv_id(path.clone(), account.0, String::new()),
+            Ok(None)
+        );
+        assert_eq!(verdict(&path), None);
     }
 
     #[test]

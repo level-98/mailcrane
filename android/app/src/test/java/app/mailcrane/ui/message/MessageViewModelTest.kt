@@ -35,6 +35,10 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
+import app.mailcrane.core.SenderTrustChanges
+import app.mailcrane.core.SenderCheck
+import app.mailcrane.core.AuthVerdict
+import app.mailcrane.core.AuthResult
 
 private const val ID = 42L
 
@@ -48,7 +52,8 @@ private fun messageViewModel(
     settings: FakeAppSettings = FakeAppSettings(),
     cleaner: LinkCleaner = NoCleaning,
     checker: LinkChecker = NoWarnings,
-) = MessageViewModel(core, settings, cleaner, checker, ID)
+    trust: SenderTrustChanges = SenderTrustChanges(),
+) = MessageViewModel(core, settings, cleaner, checker, trust, ID)
 
 private val NoWarnings =
     LinkChecker { _, url, _ -> LinkCheck(url.substringAfter("://").substringBefore('/'), "", false, emptyList()) }
@@ -98,6 +103,9 @@ private class FakeMessageCore(
     var markReadFailure: SyncErrorKind? = null
     var parts = mapOf<String, InlinePart>()
 
+    /** The sender check's verdict to report, or null for no chip (M5-08). */
+    var verdict: AuthVerdict? = null
+
     override suspend fun getMessage(
         messageId: Long,
         allowRemote: Boolean,
@@ -110,7 +118,20 @@ private class FakeMessageCore(
                 plain -> MessageBody.Plain("Hello")
                 else -> html(if (allowRemote) 0u else remoteBlocked, allowRemote)
             }
-        return detail(body, seen)
+        val check =
+            verdict?.let {
+                SenderCheck(
+                    trusted = true,
+                    verdict = it,
+                    spf = AuthResult.PASS,
+                    spfDomain = null,
+                    dkim = AuthResult.PASS,
+                    dkimDomain = null,
+                    dmarc = AuthResult.PASS,
+                    dmarcDomain = null,
+                )
+            }
+        return detail(body, seen).copy(senderCheck = check)
     }
 
     override suspend fun fetchBody(messageId: Long) {
@@ -184,6 +205,25 @@ class MessageViewModelTest {
     }
 
     private fun ready(vm: MessageViewModel) = vm.state.value as MessageState.Ready
+
+    @Test
+    fun aClearedProviderServerNameDropsTheVerdictAtOnce() {
+        // M5-08: the setting is saved, then cleared, while this message screen stays alive.
+        val core = FakeMessageCore().apply { verdict = AuthVerdict.VERIFIED }
+        val trust = SenderTrustChanges()
+        val vm = messageViewModel(core = core, trust = trust)
+        val shown = { (vm.state.value as MessageState.Ready).message.senderCheck?.verdict }
+        assertEquals(AuthVerdict.VERIFIED, shown())
+
+        core.verdict = null
+        trust.changed()
+        assertNull(shown())
+        assertTrue(vm.state.value is MessageState.Ready)
+
+        core.verdict = AuthVerdict.VERIFIED
+        trust.changed()
+        assertEquals(AuthVerdict.VERIFIED, shown())
+    }
 
     @Test
     fun opens_a_stored_message_with_remote_images_blocked_and_marks_it_read() =
