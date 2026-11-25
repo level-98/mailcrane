@@ -20,7 +20,9 @@ use mail_parser::{MessageParser, PartFlags, PartKind};
 pub use address::{
     parse_address_list, split_address_list, AddressEntry, AddressProblem, InvalidAddress, SplitList,
 };
-pub use build::{build_message, AddressField, BuildError, OutgoingMessage, TransferEncoding};
+pub use build::{
+    build_message, format_date, AddressField, BuildError, OutgoingMessage, TransferEncoding,
+};
 pub use model::{Address, AttachmentInfo, Disposition, ParsedMessage, UnsanitisedHtml};
 pub use sanitize::{sanitize_html, SanitizeOptions, SanitizedHtml};
 

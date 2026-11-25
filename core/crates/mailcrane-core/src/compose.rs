@@ -22,6 +22,10 @@ use mailcrane_store::{AccountId, Security, Store};
 
 use crate::secrets::{SecretKey, SecretStore};
 
+mod reply;
+
+pub use reply::{prepare_reply, ReplyError, ReplyKind};
+
 /// A message the user is writing. Each recipient entry is one chip or field
 /// value as typed, such as `Ann <ann@example.org>`; an entry may also hold
 /// several addresses separated by commas.
@@ -34,6 +38,10 @@ pub struct ComposeDraft {
     pub bcc: Vec<String>,
     pub subject: String,
     pub body_text: String,
+    /// For a reply: the Message-ID replied to, without angle brackets.
+    pub in_reply_to: Option<String>,
+    /// For a reply: the thread's Message-IDs, oldest first.
+    pub references: Vec<String>,
 }
 
 /// Which recipient field an entry is in.
@@ -243,6 +251,8 @@ pub fn prepare_send(
         body_text: draft.body_text.clone(),
         // The SMTP client doesn't negotiate 8BITMIME yet, so stay 7-bit.
         encoding: TransferEncoding::QuotedPrintable,
+        in_reply_to: draft.in_reply_to.clone(),
+        references: draft.references.clone(),
     })
     .map_err(|e| match e {
         BuildError::InvalidAddress { .. } => SendError::InvalidSender,
@@ -338,6 +348,8 @@ mod tests {
             bcc: v(bcc),
             subject: "Hi".into(),
             body_text: "Body".into(),
+            in_reply_to: None,
+            references: vec![],
         }
     }
 
