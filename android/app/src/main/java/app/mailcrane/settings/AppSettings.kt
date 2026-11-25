@@ -74,6 +74,11 @@ interface AppSettings {
 
     suspend fun setGroupByConversation(enabled: Boolean)
 
+    /** Show only counts, not senders or subjects, in widgets and notifications (M4-11). */
+    val hideContentOutsideApp: Flow<Boolean>
+
+    suspend fun setHideContentOutsideApp(hide: Boolean)
+
     /** The account shown last, to open it again at start-up (M4-01); 0 for none. */
     val lastAccountId: Flow<Long>
 
@@ -120,6 +125,12 @@ class DataStoreAppSettings(
 
     override suspend fun setGroupByConversation(enabled: Boolean) {
         dataStore.edit { it[GROUP_THREADS] = enabled }
+    }
+
+    override val hideContentOutsideApp: Flow<Boolean> = prefs.map { it[HIDE_OUTSIDE] ?: false }
+
+    override suspend fun setHideContentOutsideApp(hide: Boolean) {
+        dataStore.edit { it[HIDE_OUTSIDE] = hide }
     }
 
     override val lastAccountId: Flow<Long> = prefs.map { it[LAST_ACCOUNT] ?: 0L }
@@ -208,6 +219,7 @@ class DataStoreAppSettings(
         val DYNAMIC_COLOR = booleanPreferencesKey("dynamic_color")
         val DARK_BODIES = booleanPreferencesKey("dark_message_bodies")
         val LAST_ACCOUNT = longPreferencesKey("last_account_id")
+        val HIDE_OUTSIDE = booleanPreferencesKey("hide_content_outside_app")
         val GROUP_THREADS = booleanPreferencesKey("group_by_conversation")
     }
 }

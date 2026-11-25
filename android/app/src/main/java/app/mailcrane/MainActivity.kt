@@ -1,5 +1,6 @@
 package app.mailcrane
 
+import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
@@ -8,6 +9,7 @@ import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
@@ -27,6 +29,8 @@ import app.mailcrane.ui.theme.LocalDarkMessageBodies
 import app.mailcrane.ui.theme.LocalDarkTheme
 import app.mailcrane.ui.theme.MailcraneTheme
 import app.mailcrane.ui.theme.ThemeViewModel
+import app.mailcrane.widget.EXTRA_ACCOUNT_ID
+import app.mailcrane.widget.EXTRA_MESSAGE_ID
 import app.mailcrane.work.SnoozeWaker
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.delay
@@ -37,8 +41,23 @@ import javax.inject.Inject
 class MainActivity : ComponentActivity() {
     @Inject lateinit var snoozeWaker: SnoozeWaker
 
+    /** A message to open, from a widget tap (M4-11): (account, message). */
+    private var openRequest by mutableStateOf<Pair<Long, Long>?>(null)
+
+    private fun readOpenRequest(intent: Intent?) {
+        val message = intent?.getLongExtra(EXTRA_MESSAGE_ID, 0L) ?: 0L
+        val account = intent?.getLongExtra(EXTRA_ACCOUNT_ID, 0L) ?: 0L
+        if (message > 0 && account > 0) openRequest = account to message
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        readOpenRequest(intent)
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        if (savedInstanceState == null) readOpenRequest(intent)
         // Snoozed messages come back when the app opens and on the minute while it's shown (M4-06).
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.RESUMED) {
@@ -66,6 +85,16 @@ class MainActivity : ComponentActivity() {
                     val accountsModel: AccountsViewModel = hiltViewModel()
                     val accounts by accountsModel.state.collectAsStateWithLifecycle()
                     var addingAccount by rememberSaveable { mutableStateOf(false) }
+                    // A widget tap opens that message's account first.
+                    LaunchedEffect(openRequest, accounts.accounts) {
+                        openRequest?.let { (account, _) ->
+                            if (accounts.currentId !=
+                                account
+                            ) {
+                                accountsModel.select(account)
+                            }
+                        }
+                    }
                     val id = accounts.currentId
                     when {
                         addingAccount -> {
@@ -85,6 +114,8 @@ class MainActivity : ComponentActivity() {
                                     onSwitchAccount = accountsModel::select,
                                     onAddAccount = { addingAccount = true },
                                     onRemoveAccount = accountsModel::remove,
+                                    openMessageId = openRequest?.takeIf { it.first == id }?.second,
+                                    onMessageOpened = { openRequest = null },
                                 )
                             }
                         else ->

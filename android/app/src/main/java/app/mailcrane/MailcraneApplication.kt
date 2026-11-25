@@ -11,12 +11,16 @@ import javax.inject.Inject
 class MailcraneApplication : Application() {
     @Inject lateinit var outbox: OutboxSender
 
+    @Inject lateinit var widgets: app.mailcrane.widget.WidgetUpdater
+
     override fun onCreate() {
         super.onCreate()
         // The core reads and writes credentials only through this store.
         installSecretStore(KeystoreSecretStore(this))
         // Recovers sends interrupted by a stopped app, then sends what's queued.
         outbox.start()
+        // The home-screen widget follows mail changes (M4-11).
+        widgets.start()
         // Attachments opened more than a day ago (M2-04).
         Thread {
             app.mailcrane.ui.message

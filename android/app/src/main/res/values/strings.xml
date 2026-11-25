@@ -181,6 +181,13 @@
     <string name="message_move_title">Move to folder</string>
     <string name="message_move_cancel">Cancel</string>
 
+    <!-- Widget (M4-11) -->
+    <string name="widget_name">Mailcrane inbox</string>
+    <string name="widget_description">Unread mail and the latest messages from all your inboxes</string>
+    <string name="widget_unread">unread</string>
+    <string name="settings_hide_outside">Hide message content outside the app</string>
+    <string name="settings_hide_outside_summary">Widgets show only how many messages are unread, not who sent them or their subjects</string>
+
     <!-- Rich-text compose (M2-09) -->
     <string name="rich_bold">Bold</string>
     <string name="rich_italic">Italic</string>
