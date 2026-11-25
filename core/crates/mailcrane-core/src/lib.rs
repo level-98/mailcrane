@@ -6,6 +6,7 @@
 
 pub mod account;
 pub mod actions;
+pub mod attachments;
 pub mod compose;
 pub mod contacts;
 pub mod drafts;

@@ -42,10 +42,12 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.LiveRegionMode
@@ -59,6 +61,7 @@ import app.mailcrane.R
 import app.mailcrane.contacts.RecipientSuggestion
 import app.mailcrane.core.AccountSummary
 import app.mailcrane.core.RecipientField
+import kotlinx.coroutines.launch
 
 /** Writes a new message from account [accountId]. [onDone] is called once it is sent or closed. */
 @Composable
@@ -82,6 +85,12 @@ fun ComposeScreen(
     BackHandler(onBack = viewModel::requestClose)
     val askPermission =
         rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { viewModel.contactsAnswered() }
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val pickFiles =
+        rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+            scope.launch { viewModel.addAttachments(readAttachments(context, uris)) }
+        }
     ComposeContent(
         state = state,
         actions =
@@ -104,6 +113,8 @@ fun ComposeScreen(
                 onPickSuggestion = viewModel::pickSuggestion,
                 onAllowContacts = { askPermission.launch(Manifest.permission.READ_CONTACTS) },
                 onDeclineContacts = viewModel::contactsAnswered,
+                onAttach = { pickFiles.launch(arrayOf("*/*")) },
+                onRemoveAttachment = viewModel::removeAttachment,
             ),
         modifier = modifier,
     )
@@ -127,6 +138,8 @@ data class ComposeActions(
     val onKeepEditing: () -> Unit = {},
     val onDismissError: () -> Unit = {},
     val onPickSuggestion: (RecipientField, RecipientSuggestion) -> Unit = { _, _ -> },
+    val onAttach: () -> Unit = {},
+    val onRemoveAttachment: (Int) -> Unit = {},
     val onAllowContacts: () -> Unit = {},
     val onDeclineContacts: () -> Unit = {},
 )
@@ -152,6 +165,12 @@ fun ComposeContent(
                     }
                 },
                 actions = {
+                    IconButton(onClick = actions.onAttach, enabled = !state.sending) {
+                        Icon(
+                            painter = painterResource(R.drawable.ic_mc_attach),
+                            contentDescription = stringResource(R.string.compose_attach),
+                        )
+                    }
                     IconButton(onClick = actions.onDiscard, enabled = !state.sending) {
                         Icon(
                             painter = painterResource(R.drawable.ic_mc_trash),
@@ -204,6 +223,7 @@ fun ComposeContent(
                 modifier = Modifier.fillMaxWidth(),
             )
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+            ComposeAttachments(state, actions.onRemoveAttachment)
             TextField(
                 value = state.body,
                 onValueChange = actions.onBodyChange,

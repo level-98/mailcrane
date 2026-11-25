@@ -11,6 +11,7 @@ pub mod account;
 #[cfg(test)]
 mod accounts_tests;
 pub mod actions;
+pub mod attachments;
 pub mod compose;
 pub mod contacts;
 pub mod drafts;

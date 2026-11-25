@@ -205,16 +205,8 @@ pub fn cancel_pending(
     let store = open(&db_path)?;
     let draft =
         outbox::cancel_pending(&store, OutboxId(outbox_id)).map_err(|_| OutboxFailure::Storage)?;
-    Ok(draft.map(|d| ComposeDraft {
-        account_id: d.account_id.0,
-        to: d.to,
-        cc: d.cc,
-        bcc: d.bcc,
-        subject: d.subject,
-        body_text: d.body_text,
-        in_reply_to: d.in_reply_to,
-        references: d.references,
-    }))
+    // Attachments come back too (taken out of the built message).
+    Ok(draft.map(ComposeDraft::from))
 }
 
 /// Scheduled send (M4-07): validates and queues the draft to go out at

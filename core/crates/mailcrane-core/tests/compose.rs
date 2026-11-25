@@ -76,6 +76,8 @@ mod compose {
             body_text: "Hello Bob,\nsee you at noon.\n".into(),
             in_reply_to: None,
             references: vec![],
+            attachments: Vec::new(),
+            forward_attachments_of: None,
         }
     }
 

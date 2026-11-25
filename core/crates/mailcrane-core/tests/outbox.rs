@@ -87,6 +87,8 @@ fn draft(s: &Setup, subject: &str) -> ComposeDraft {
         body_text: "Hello".into(),
         in_reply_to: None,
         references: vec![],
+        attachments: Vec::new(),
+        forward_attachments_of: None,
     }
 }
 

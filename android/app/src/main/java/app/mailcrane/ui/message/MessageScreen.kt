@@ -7,6 +7,8 @@ import android.content.res.Resources
 import android.net.Uri
 import android.os.Build
 import android.text.format.Formatter
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.annotation.DrawableRes
 import androidx.annotation.StringRes
 import androidx.compose.foundation.clickable
@@ -23,6 +25,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
@@ -43,6 +46,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -76,11 +80,13 @@ import app.mailcrane.core.MessageBody
 import app.mailcrane.core.MessageDetail
 import app.mailcrane.core.ReplyKind
 import app.mailcrane.core.TrackerInfo
+import app.mailcrane.core.sanitizeFilename
 import app.mailcrane.ui.compose.ComposePrefill
 import app.mailcrane.ui.compose.ReplyRequest
 import app.mailcrane.ui.messagelist.errorText
 import app.mailcrane.ui.theme.LocalDarkMessageBodies
 import app.mailcrane.ui.theme.LocalDarkTheme
+import kotlinx.coroutines.launch
 import java.time.DateTimeException
 import java.time.Instant
 import java.time.ZoneId
@@ -133,6 +139,48 @@ fun MessageScreen(
             }
         }
     }
+    // Attachments (M2-04): open in another app (asking first for risky types) or save a copy.
+    val scope = rememberCoroutineScope()
+    var confirmOpen by remember { mutableStateOf<AttachmentInfo?>(null) }
+    var saving by remember { mutableStateOf<AttachmentInfo?>(null) }
+    val openNow: (AttachmentInfo) -> Unit = { a ->
+        scope.launch {
+            val file = viewModel.attachmentFile(a.partId, attachmentCacheDir(context))
+            if (file == null || !openAttachment(context, file, a.mimeType)) {
+                snackbar.showSnackbar(resources.getString(R.string.attachment_cant_open))
+            }
+        }
+    }
+    val createDocument =
+        rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/octet-stream")) { uri ->
+            val a = saving
+            saving = null
+            if (uri != null && a != null) {
+                scope.launch {
+                    val file = viewModel.attachmentFile(a.partId, attachmentCacheDir(context))
+                    val ok = file != null && copyToDocument(context, file, uri)
+                    snackbar.showSnackbar(
+                        resources.getString(if (ok) R.string.attachment_saved else R.string.attachment_cant_save),
+                    )
+                }
+            }
+        }
+    confirmOpen?.let { a ->
+        AlertDialog(
+            onDismissRequest = { confirmOpen = null },
+            title = { Text(stringResource(R.string.attachment_risky_title)) },
+            text = { Text(stringResource(R.string.attachment_risky_text, a.name.ifBlank { a.mimeType })) },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmOpen = null
+                    openNow(a)
+                }) { Text(stringResource(R.string.attachment_open_anyway)) }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmOpen = null }) { Text(stringResource(R.string.unsubscribe_cancel)) }
+            },
+        )
+    }
     var snoozing by rememberSaveable { mutableStateOf(false) }
     val askNotifications = rememberNotificationPermissionRequest()
     if (snoozing) {
@@ -149,6 +197,11 @@ fun MessageScreen(
         state = state,
         onBack = onBack,
         onUnsnooze = viewModel::unsnooze,
+        onOpenAttachment = { a -> if (isRiskyAttachment(a.name, a.mimeType)) confirmOpen = a else openNow(a) },
+        onSaveAttachment = { a ->
+            saving = a
+            createDocument.launch(sanitizeFilename(a.name.ifBlank { "attachment" }))
+        },
         snackbar = snackbar,
         folders = folders,
         onReply = { kind ->
@@ -197,6 +250,8 @@ fun MessageContent(
     onReply: (ReplyKind) -> Unit = {},
     onUnsubscribe: () -> Unit = {},
     onUnsnooze: () -> Unit = {},
+    onOpenAttachment: (AttachmentInfo) -> Unit = {},
+    onSaveAttachment: (AttachmentInfo) -> Unit = {},
 ) {
     Scaffold(
         snackbarHost = { SnackbarHost(snackbar) },
@@ -236,7 +291,16 @@ fun MessageContent(
                         }
                     }
                 is MessageState.Ready ->
-                    Message(state, onLoadRemoteImages, inlinePart, onOpenLink, onUnsubscribe, onUnsnooze)
+                    Message(
+                        state,
+                        onLoadRemoteImages,
+                        inlinePart,
+                        onOpenLink,
+                        onUnsubscribe,
+                        onUnsnooze,
+                        onOpenAttachment,
+                        onSaveAttachment,
+                    )
             }
         }
     }
@@ -250,6 +314,8 @@ private fun Message(
     onOpenLink: (Uri) -> Unit,
     onUnsubscribe: () -> Unit,
     onUnsnooze: () -> Unit,
+    onOpenAttachment: (AttachmentInfo) -> Unit = {},
+    onSaveAttachment: (AttachmentInfo) -> Unit = {},
 ) {
     val message = state.message
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
@@ -289,7 +355,7 @@ private fun Message(
             // The view model downloads the body before showing the message.
             MessageBody.NotDownloaded -> {}
         }
-        if (message.attachments.isNotEmpty()) Attachments(message.attachments)
+        if (message.attachments.isNotEmpty()) Attachments(message.attachments, onOpenAttachment, onSaveAttachment)
     }
 }
 
@@ -455,7 +521,11 @@ private fun PlainBody(
 }
 
 @Composable
-private fun Attachments(attachments: List<AttachmentInfo>) {
+private fun Attachments(
+    attachments: List<AttachmentInfo>,
+    onOpen: (AttachmentInfo) -> Unit,
+    onSave: (AttachmentInfo) -> Unit,
+) {
     val context = LocalContext.current
     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
     Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -465,14 +535,17 @@ private fun Attachments(attachments: List<AttachmentInfo>) {
             modifier = Modifier.semantics { heading() },
         )
         attachments.forEach { a ->
-            Row(verticalAlignment = Alignment.CenterVertically) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth().clickable { onOpen(a) }.testTag("attachment"),
+            ) {
                 Icon(
                     painter = painterResource(R.drawable.ic_mc_attach),
                     contentDescription = null,
                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.size(20.dp),
                 )
-                Column(Modifier.padding(start = 12.dp)) {
+                Column(Modifier.padding(start = 12.dp).weight(1f)) {
                     Text(
                         text = a.name.ifBlank { stringResource(R.string.message_attachment_unnamed) },
                         style = MaterialTheme.typography.bodyMedium,
@@ -483,6 +556,7 @@ private fun Attachments(attachments: List<AttachmentInfo>) {
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
+                TextButton(onClick = { onSave(a) }) { Text(stringResource(R.string.attachment_save)) }
             }
         }
     }

@@ -23,8 +23,8 @@ pub use address::{
     parse_address_list, split_address_list, AddressEntry, AddressProblem, InvalidAddress, SplitList,
 };
 pub use build::{
-    build_message, format_date, new_message_id, AddressField, BuildError, OutgoingMessage,
-    TransferEncoding,
+    build_message, format_date, new_message_id, AddressField, BuildError, OutgoingAttachment,
+    OutgoingMessage, TransferEncoding, MAX_ATTACHMENT_BYTES,
 };
 pub use model::{Address, AttachmentInfo, Disposition, ParsedMessage, UnsanitisedHtml};
 pub use sanitize::{sanitize_html, SanitizeOptions, SanitizedHtml};
@@ -244,9 +244,158 @@ pub fn inline_part(raw: &[u8], content_id: &str) -> Result<Option<InlinePart>, M
     }))
 }
 
+/// One attached part, decoded, with its file name (as sent; not safe to
+/// use as a path, see the core's `sanitize_filename`).
+#[derive(Clone, PartialEq, Eq)]
+pub struct AttachmentData {
+    pub filename: Option<String>,
+    pub mime_type: String,
+    pub bytes: Vec<u8>,
+}
+
+impl std::fmt::Debug for AttachmentData {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AttachmentData")
+            .field("mime_type", &self.mime_type)
+            .field("bytes", &self.bytes.len())
+            .finish_non_exhaustive()
+    }
+}
+
+/// The attached or inline part with this `part_id` (as in
+/// [`AttachmentInfo::part_id`]), decoded. `None` if there is none.
+pub fn attachment_part(raw: &[u8], part_id: &str) -> Result<Option<AttachmentData>, MimeError> {
+    let message = parse_limited(raw)?;
+    let found = message
+        .root()
+        .attachments()
+        .find(|part| part.id().to_string() == part_id);
+    Ok(found.map(|part| AttachmentData {
+        filename: headers::clean_opt(part.attachment_name()),
+        mime_type: mime_type_of(&part),
+        bytes: part.decoded().into_owned(),
+    }))
+}
+
+/// Every attached (not inline) part, decoded, in order: for forwarding a
+/// message with its attachments.
+pub fn attachments_of(raw: &[u8]) -> Result<Vec<AttachmentData>, MimeError> {
+    let parsed = parse_message(raw)?;
+    let mut out = Vec::new();
+    for info in parsed
+        .attachments
+        .iter()
+        .filter(|a| a.disposition == Disposition::Attachment)
+    {
+        if let Some(a) = attachment_part(raw, &info.part_id)? {
+            out.push(a);
+        }
+    }
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn attachments_round_trip() -> Result<(), Box<dyn std::error::Error>> {
+        let png: Vec<u8> = (0..=255u8).cycle().take(5000).collect();
+        let draft = OutgoingMessage {
+            from: Address {
+                name: Some("Ana".into()),
+                email: "ana@example.org".into(),
+            },
+            to: vec![Address {
+                name: None,
+                email: "bob@example.net".into(),
+            }],
+            subject: "Photos".into(),
+            body_text: "See attached.\nThanks".into(),
+            attachments: vec![
+                OutgoingAttachment {
+                    filename: "Été à Paris – photo.png".into(),
+                    mime_type: "image/png".into(),
+                    bytes: png.clone(),
+                },
+                OutgoingAttachment {
+                    filename: "notes\r\nBcc: x@evil.example.txt".into(),
+                    mime_type: "text/plain\r\nX: y".into(),
+                    bytes: b"hello\r\nworld".to_vec(),
+                },
+                OutgoingAttachment {
+                    filename: String::new(),
+                    mime_type: "application/pdf".into(),
+                    bytes: Vec::new(),
+                },
+            ],
+            ..OutgoingMessage::default()
+        };
+        let raw = build_message(&draft)?;
+        let text = String::from_utf8_lossy(&raw);
+        assert!(!text.contains("\nBcc:"), "no header injection");
+        assert!(raw.split(|b| *b == b'\n').all(|l| l.len() <= 998));
+        let parsed = parse_message(&raw)?;
+        assert_eq!(
+            parsed
+                .text_plain
+                .as_deref()
+                .map(|t| t.trim_end().replace("\r\n", "\n")),
+            Some("See attached.\nThanks".to_owned())
+        );
+        let names: Vec<Option<String>> = parsed
+            .attachments
+            .iter()
+            .map(|a| a.filename.clone())
+            .collect();
+        assert_eq!(
+            names,
+            [
+                Some("Été à Paris – photo.png".to_owned()),
+                Some("notesBcc: x@evil.example.txt".to_owned()),
+                Some("attachment".to_owned()),
+            ]
+        );
+        let types: Vec<&str> = parsed
+            .attachments
+            .iter()
+            .map(|a| a.mime_type.as_str())
+            .collect();
+        assert_eq!(
+            types,
+            ["image/png", "application/octet-stream", "application/pdf"]
+        );
+        let all = attachments_of(&raw)?;
+        assert_eq!(all.len(), 3);
+        assert_eq!(all[0].bytes, png);
+        assert_eq!(all[1].bytes, b"hello\r\nworld");
+        assert!(all[2].bytes.is_empty());
+        let first = attachment_part(&raw, &parsed.attachments[0].part_id)?.ok_or("part")?;
+        assert_eq!(first.bytes, png);
+        assert_eq!(attachment_part(&raw, "999")?, None);
+        Ok(())
+    }
+
+    #[test]
+    fn too_many_attachment_bytes_are_refused() {
+        let draft = OutgoingMessage {
+            from: Address {
+                name: None,
+                email: "ana@example.org".into(),
+            },
+            to: vec![Address {
+                name: None,
+                email: "bob@example.net".into(),
+            }],
+            attachments: vec![OutgoingAttachment {
+                filename: "big.bin".into(),
+                mime_type: "application/octet-stream".into(),
+                bytes: vec![0; MAX_ATTACHMENT_BYTES + 1],
+            }],
+            ..OutgoingMessage::default()
+        };
+        assert_eq!(build_message(&draft), Err(BuildError::TooLarge));
+    }
 
     #[test]
     fn crate_name_matches() {
