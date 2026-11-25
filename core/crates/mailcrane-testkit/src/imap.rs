@@ -16,7 +16,11 @@ struct Shared {
     quirks: Vec<Quirk>,
     user: (String, String),
     special_use: Vec<(String, String)>,
+    /// Folders listed as `\Noselect` parents (RFC 9051 §7.3.1).
+    noselect: Vec<String>,
     received: Arc<Mutex<Vec<String>>>,
+    /// The folder names SELECT and EXAMINE asked for, in order.
+    selected: Arc<Mutex<Vec<String>>>,
 }
 use tokio::task::JoinHandle;
 
@@ -43,6 +47,7 @@ pub struct FakeImap {
     root_cert_der: Vec<u8>,
     mailbox: Mailbox,
     received: Arc<Mutex<Vec<String>>>,
+    selected: Arc<Mutex<Vec<String>>>,
     shutdown: Arc<RwLock<Option<JoinHandle<()>>>>,
     connections: Arc<std::sync::Mutex<Vec<AbortHandle>>>,
     accepted: Arc<AtomicUsize>,
@@ -54,6 +59,7 @@ pub struct FakeImapBuilder {
     faults: Vec<Fault>,
     quirks: Vec<Quirk>,
     special_use: Vec<(String, String)>,
+    noselect: Vec<String>,
     mailbox: Option<Mailbox>,
 }
 
@@ -71,6 +77,36 @@ impl FakeImapBuilder {
     pub fn special_use(mut self, name: impl Into<String>, attribute: impl Into<String>) -> Self {
         self.special_use.push((name.into(), attribute.into()));
         self
+    }
+
+    /// Lists `name` as a `\Noselect` parent: it holds other folders but
+    /// can't be opened, and SELECT or EXAMINE of it is refused with
+    /// `NO [NONEXISTENT]`, as Gmail does for `[Gmail]`.
+    pub fn noselect(mut self, name: impl Into<String>) -> Self {
+        self.noselect.push(name.into());
+        self
+    }
+
+    /// Gmail's folder layout: a `[Gmail]` `\Noselect` parent whose children
+    /// carry SPECIAL-USE attributes and have spaces in their names, plus
+    /// `X-GM-EXT-1` ([`Quirk::GmailLabels`]). Each child starts empty.
+    pub fn gmail_layout(mut self) -> Self {
+        const CHILDREN: &[(&str, &str)] = &[
+            ("[Gmail]/All Mail", "\\All"),
+            ("[Gmail]/Drafts", "\\Drafts"),
+            ("[Gmail]/Important", "\\Important"),
+            ("[Gmail]/Sent Mail", "\\Sent"),
+            ("[Gmail]/Spam", "\\Junk"),
+            ("[Gmail]/Starred", "\\Flagged"),
+            ("[Gmail]/Trash", "\\Trash"),
+        ];
+        self = self.noselect("[Gmail]");
+        for (name, attribute) in CHILDREN {
+            self = self
+                .folder(*name, Vec::new())
+                .special_use(*name, *attribute);
+        }
+        self.quirk(Quirk::GmailLabels)
     }
 
     pub fn user(mut self, username: impl Into<String>, password: impl Into<String>) -> Self {
@@ -120,13 +156,16 @@ impl FakeImapBuilder {
             .user
             .unwrap_or_else(|| ("alice@example.org".into(), "password".into()));
         let received = Arc::new(Mutex::new(Vec::new()));
+        let selected = Arc::new(Mutex::new(Vec::new()));
         let shared = Arc::new(Shared {
             mailbox: mailbox_for_server,
             faults: self.faults,
             quirks: self.quirks,
             user,
             special_use: self.special_use,
+            noselect: self.noselect,
             received: received.clone(),
+            selected: selected.clone(),
         });
         let connections = Arc::new(std::sync::Mutex::new(Vec::<AbortHandle>::new()));
         let accepted = Arc::new(AtomicUsize::new(0));
@@ -158,6 +197,7 @@ impl FakeImapBuilder {
             root_cert_der: tls.cert_der,
             mailbox,
             received,
+            selected,
             shutdown: Arc::new(RwLock::new(Some(handle))),
             connections,
             accepted,
@@ -173,6 +213,7 @@ impl FakeImap {
             faults: Vec::new(),
             quirks: Vec::new(),
             special_use: Vec::new(),
+            noselect: Vec::new(),
             mailbox: None,
         }
     }
@@ -197,6 +238,11 @@ impl FakeImap {
     /// commands include their subcommand, e.g. `UID FETCH`.
     pub async fn received_commands(&self) -> Vec<String> {
         self.received.lock().await.clone()
+    }
+
+    /// The folder names SELECT and EXAMINE asked for, in order, unquoted.
+    pub async fn selected_folders(&self) -> Vec<String> {
+        self.selected.lock().await.clone()
     }
 
     /// How many connections the server has accepted so far, on either port.
@@ -229,6 +275,49 @@ impl Drop for FakeImap {
             }
         }
     }
+}
+
+/// Splits a command line into tokens. A quoted string (RFC 9051 §4.3)
+/// stays one token, quotes and escapes included, so names with spaces such
+/// as `"[Gmail]/Sent Mail"` survive.
+fn split_command(text: &str) -> Vec<&str> {
+    let mut tokens = Vec::new();
+    let bytes = text.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i].is_ascii_whitespace() {
+            i += 1;
+            continue;
+        }
+        let start = i;
+        if bytes[i] == b'"' {
+            i += 1;
+            while i < bytes.len() && bytes[i] != b'"' {
+                if bytes[i] == b'\\' {
+                    i += 1;
+                }
+                i += 1;
+            }
+            i = (i + 1).min(bytes.len());
+        } else {
+            while i < bytes.len() && !bytes[i].is_ascii_whitespace() {
+                i += 1;
+            }
+        }
+        if let Some(token) = text.get(start..i) {
+            tokens.push(token);
+        }
+    }
+    tokens
+}
+
+/// A token without its quotes and escapes.
+fn unquote(token: &str) -> String {
+    let inner = token
+        .strip_prefix('"')
+        .and_then(|t| t.strip_suffix('"'))
+        .unwrap_or(token);
+    inner.replace("\\\"", "\"").replace("\\\\", "\\")
 }
 
 async fn record(shared: &Shared, parts: &[&str]) {
@@ -278,7 +367,7 @@ async fn handle_connection(
                 return Ok(());
             }
             let text = String::from_utf8_lossy(&line);
-            let parts: Vec<&str> = text.split_whitespace().collect();
+            let parts: Vec<&str> = split_command(&text);
             let tag = parts.first().copied().unwrap_or("");
             let command = parts.get(1).copied().unwrap_or("").to_ascii_uppercase();
             record(&shared, &parts).await;
@@ -358,7 +447,7 @@ async fn handle_connection(
             break;
         }
         let text = String::from_utf8_lossy(&line);
-        let parts: Vec<&str> = text.split_whitespace().collect();
+        let parts: Vec<&str> = split_command(&text);
         record(&shared, &parts).await;
         if handle_imap_command(
             &mut tls_stream,
@@ -500,6 +589,12 @@ async fn handle_imap_command(
                     .filter(|name| name != "INBOX"),
             );
             let mut output = String::new();
+            for name in &shared.noselect {
+                let quoted = name.replace('\\', "\\\\").replace('"', "\\\"");
+                output.push_str(&format!(
+                    "* LIST (\\HasChildren \\Noselect) \"/\" \"{quoted}\"\r\n"
+                ));
+            }
             for name in &listed {
                 let prefix = format!("{name}/");
                 let mut attributes = if listed.iter().any(|other| other.starts_with(&prefix)) {
@@ -518,7 +613,9 @@ async fn handle_imap_command(
                 let quoted = name.replace('\\', "\\\\").replace('"', "\\\"");
                 output.push_str(&format!("* LIST ({attributes}) \"/\" \"{quoted}\"\r\n"));
             }
-            if quirks.contains(&Quirk::GmailLabels) {
+            if quirks.contains(&Quirk::GmailLabels)
+                && !listed.iter().any(|n| n == "[Gmail]/All Mail")
+            {
                 output.push_str("* LIST (\\All) \"/\" \"[Gmail]/All Mail\"\r\n");
                 output.push_str("* XLIST (\\HasNoChildren) \"/\" \"[Gmail]/All Mail\"\r\n");
             }
@@ -526,10 +623,15 @@ async fn handle_imap_command(
             output
         }
         "SELECT" | "EXAMINE" => {
-            let folder = parts.get(2).copied().unwrap_or("INBOX").trim_matches('"');
+            let unquoted = unquote(parts.get(2).copied().unwrap_or("INBOX"));
+            let folder = unquoted.as_str();
+            shared.selected.lock().await.push(unquoted.clone());
             let params = parts.get(3..).unwrap_or_default().join(" ");
             let qresync = qresync_params(&params);
-            if folder != "INBOX" && !mailbox.folder_names().await.iter().any(|n| n == folder) {
+            if shared.noselect.iter().any(|n| n == folder) {
+                format!("{tag} NO [NONEXISTENT] Unknown Mailbox: {folder} (Failure)\r\n")
+            } else if folder != "INBOX" && !mailbox.folder_names().await.iter().any(|n| n == folder)
+            {
                 format!("{tag} NO [NONEXISTENT] no such folder\r\n")
             } else if !params.is_empty() && (qresync.is_none() || !state.qresync) {
                 // RFC 7162 §3.2.5: QRESYNC parameters need ENABLE first.
@@ -878,6 +980,14 @@ fn decode_base64(text: &str) -> Option<Vec<u8>> {
 }
 
 /// Parses an IMAP set such as `1:5,9,12:*` against the UIDs present.
+/// Whether `token` is a sequence set such as `1:4096`, `4097:*` or `3,5`.
+fn is_sequence_set(token: &str) -> bool {
+    !token.is_empty()
+        && token
+            .bytes()
+            .all(|b| b.is_ascii_digit() || b == b':' || b == b',' || b == b'*')
+}
+
 fn in_uid_set(set: &str, uid: u32, max: u32) -> bool {
     set.split(',').any(|item| {
         let bound = |text: &str| {
@@ -1126,22 +1236,43 @@ async fn handle_uid_command(
             String::from_utf8_lossy(&out).into_owned()
         }
         "SEARCH" => {
-            let messages = mailbox.messages(folder).await;
+            let mut messages = mailbox.messages(folder).await;
+            // Message sequence numbers follow UID order (RFC 9051 §2.3.1.2).
+            messages.sort_by_key(|m| m.uid);
             let max = messages.iter().map(|m| m.uid).max().unwrap_or(0);
+            let count = u32::try_from(messages.len()).unwrap_or(u32::MAX);
+            // `[CHARSET UTF-8] [<sequence set>] [keys]`.
+            let mut args = parts.get(3..).unwrap_or_default();
+            let charset = args
+                .first()
+                .is_some_and(|a| a.eq_ignore_ascii_case("CHARSET"));
+            if charset {
+                args = args.get(2..).unwrap_or_default();
+            }
+            let seqs = args.first().copied().filter(|a| is_sequence_set(a));
+            if seqs.is_some() {
+                args = args.get(1..).unwrap_or_default();
+            }
             let uids: Vec<String> = messages
                 .iter()
+                .enumerate()
+                .filter(|(index, _)| {
+                    let seq = u32::try_from(index + 1).unwrap_or(u32::MAX);
+                    seqs.is_none_or(|set| in_uid_set(set, seq, count))
+                })
+                .map(|(_, m)| m)
                 .filter(
-                    |m| match parts.get(3).map(|p| p.to_ascii_uppercase()).as_deref() {
-                        Some("UID") => in_uid_set(parts.get(4).copied().unwrap_or(""), m.uid, max),
+                    |m| match args.first().map(|p| p.to_ascii_uppercase()).as_deref() {
+                        Some("UID") => in_uid_set(args.get(1).copied().unwrap_or(""), m.uid, max),
                         // `HEADER <name> <value>`: a substring match on that
                         // header, case-insensitive (RFC 9051 §6.4.4).
                         Some("HEADER") => header_contains(
                             &m.raw,
-                            parts.get(4).copied().unwrap_or(""),
-                            parts.get(5).copied().unwrap_or("").trim_matches('"'),
+                            args.get(1).copied().unwrap_or(""),
+                            args.get(2).copied().unwrap_or("").trim_matches('"'),
                         ),
                         // `CHARSET UTF-8 <keys>`: every key must match.
-                        Some("CHARSET") => search_keys_match(m, parts.get(5..).unwrap_or_default()),
+                        Some(_) if charset => search_keys_match(m, args),
                         _ => true,
                     },
                 )

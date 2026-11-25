@@ -1,10 +1,18 @@
 //! Selecting a folder and fetching headers and bodies (RFC 9051 §6.3.2,
 //! §6.4.4 and §6.4.5).
 
+use std::collections::HashSet;
+
+use crate::append::SearchKey;
 use crate::command::Arg;
 use crate::error::ImapError;
 use crate::parser::{Code, FetchData, Untagged};
 use crate::session::{expect_ok, Session};
+
+/// The most messages one `UID SEARCH` asks about. Its `* SEARCH` answer is
+/// then at most 4096 UIDs of at most 10 digits and a space each, about
+/// 44 KiB, under the 64 KiB line limit. Keep it below `max_line / 11`.
+pub const SEARCH_WINDOW: u32 = 4096;
 
 /// What `SELECT` told us about a folder (RFC 9051 §6.3.2).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -136,38 +144,99 @@ impl Session {
         select_info(&done.untagged)
     }
 
-    /// `UID SEARCH UID <low>:<high>` in the selected folder (RFC 9051
-    /// §6.4.4): the UIDs in that range, ascending.
-    pub async fn uid_search_range(&mut self, low: u32, high: u32) -> Result<Vec<u32>, ImapError> {
-        if low == 0 || low > high {
-            return Ok(Vec::new());
+    /// The UIDs in `low..=high` that match every key in `keys`, newest
+    /// first, at most `want` of them (RFC 9051 §6.4.4). `exists` is the
+    /// folder's message count from `SELECT`.
+    ///
+    /// A large folder's `* SEARCH` answer would be one line longer than
+    /// [`Limits::max_line`](crate::Limits), and raising that limit would
+    /// weaken the defence against hostile servers. So the folder is searched
+    /// by message sequence number, newest first, [`SEARCH_WINDOW`] messages
+    /// at a time: `UID SEARCH [CHARSET UTF-8] <a:b> [keys]`. No answer can
+    /// hold more than `SEARCH_WINDOW` UIDs, and the number of round trips
+    /// depends on how many messages are scanned, not on gaps between UIDs
+    /// (Gmail folders are sparse). The scan stops once `want` UIDs are
+    /// found, or, without keys, once a window reaches below `low`.
+    ///
+    /// Sequence numbers and UIDs rise together, so windows come newest
+    /// first. A message expunged during the scan only shifts newer messages
+    /// down into the next window, so nothing is missed (duplicates are
+    /// dropped). The first window ends at `*`, the current last message.
+    pub async fn uid_search_newest(
+        &mut self,
+        exists: u32,
+        low: u32,
+        high: u32,
+        keys: &[SearchKey],
+        want: usize,
+    ) -> Result<Vec<u32>, ImapError> {
+        let mut found: Vec<u32> = Vec::new();
+        if low == 0 || low > high || want == 0 || exists == 0 {
+            return Ok(found);
         }
-        let range = format!("{low}:{high}");
-        let done = self
-            .run_command(
-                "UID",
-                &[
-                    Arg::Raw("SEARCH"),
-                    Arg::Raw("UID"),
-                    Arg::Str(range.as_bytes()),
-                ],
-            )
-            .await?;
-        expect_ok(&done)?;
-        let mut uids: Vec<u32> = done
-            .untagged
-            .iter()
-            .filter_map(|u| match u {
-                Untagged::Search(list) => Some(list.iter().copied()),
-                _ => None,
-            })
-            .flatten()
-            // A server may answer outside the range we asked for.
-            .filter(|uid| (low..=high).contains(uid))
-            .collect();
-        uids.sort_unstable();
-        uids.dedup();
-        Ok(uids)
+        let mut seen: HashSet<u32> = HashSet::new();
+        let mut exists = exists;
+        let mut top = exists;
+        let mut first = true;
+        loop {
+            let bottom = top.saturating_sub(SEARCH_WINDOW.saturating_sub(1)).max(1);
+            let set = if first {
+                format!("{bottom}:*")
+            } else {
+                format!("{bottom}:{top}")
+            };
+            first = false;
+            let mut args = vec![Arg::Raw("SEARCH")];
+            if !keys.is_empty() {
+                args.extend([Arg::Raw("CHARSET"), Arg::Raw("UTF-8")]);
+            }
+            args.push(Arg::Built(&set));
+            crate::append::push_search_keys(&mut args, keys);
+            let done = self.run_command("UID", &args).await?;
+            expect_ok(&done)?;
+
+            let mut window: Vec<u32> = Vec::new();
+            for untagged in &done.untagged {
+                match untagged {
+                    Untagged::Search(list) => window.extend_from_slice(list),
+                    Untagged::Exists(n) => exists = *n,
+                    Untagged::Expunge(_) => exists = exists.saturating_sub(1),
+                    Untagged::Vanished {
+                        earlier: false,
+                        uids,
+                    } => {
+                        let gone = uids.iter().fold(0u32, |n, (a, b)| {
+                            n.saturating_add(b.abs_diff(*a)).saturating_add(1)
+                        });
+                        exists = exists.saturating_sub(gone);
+                    }
+                    _ => {}
+                }
+            }
+            window.sort_unstable_by(|a, b| b.cmp(a));
+            let window_oldest = window.last().copied();
+            for uid in window {
+                // A server may answer outside the range we asked for.
+                if (low..=high).contains(&uid) && seen.insert(uid) {
+                    found.push(uid);
+                    if found.len() >= want {
+                        return Ok(found);
+                    }
+                }
+            }
+            // Without keys the window lists every message in it, so its
+            // oldest UID shows whether older windows can still be in range.
+            let below_range = keys.is_empty() && window_oldest.is_some_and(|uid| uid < low);
+            if below_range || bottom <= 1 {
+                break;
+            }
+            top = bottom.saturating_sub(1).min(exists);
+            if top == 0 {
+                break;
+            }
+        }
+        found.sort_unstable_by(|a, b| b.cmp(a));
+        Ok(found)
     }
 
     /// `UID FETCH` of the list fields for `uids` (RFC 9051 §6.4.5). Uses

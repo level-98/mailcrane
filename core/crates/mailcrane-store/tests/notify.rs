@@ -33,6 +33,7 @@ fn inbox(account_id: AccountId, uidvalidity: Option<i64>) -> NewFolder {
         uidnext: Some(100),
         highestmodseq: None,
         is_subscribed: true,
+        selectable: true,
     }
 }
 

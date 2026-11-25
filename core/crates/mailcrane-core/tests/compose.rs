@@ -143,6 +143,7 @@ mod compose {
                 uidnext: Some(2),
                 highestmodseq: None,
                 is_subscribed: true,
+                selectable: true,
             })
             .expect("folder");
         let raw = b"From: Bob Example <bob@example.net>\r\n\

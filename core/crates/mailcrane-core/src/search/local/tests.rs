@@ -33,6 +33,7 @@ fn fixture() -> Fixture {
         uidnext: Some(1),
         highestmodseq: None,
         is_subscribed: true,
+        selectable: true,
     };
     let inbox = store.upsert_folder(&folder("INBOX")).expect("inbox");
     store.upsert_folder(&folder("Work")).expect("work");
@@ -239,6 +240,7 @@ fn every_account_is_searched_and_account_narrows_it() {
             uidnext: Some(1),
             highestmodseq: None,
             is_subscribed: true,
+            selectable: true,
         })
         .expect("inbox");
     add(&f, f.inbox, 1, "lunch at home", "a@example.com", 100);
