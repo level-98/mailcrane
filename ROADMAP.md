@@ -62,7 +62,7 @@ Goal: add an IMAP account and read your inbox, online and offline.
 - [ ] **M2-07** Save sent messages to Sent (skip for providers that do it themselves, such as Gmail) 🤖
 - [ ] **M2-08** Contact autocomplete from the device's contacts and past correspondents 🤖
 - [ ] **M2-09** Rich-text compose (bold, italic, lists, links) 🤖
-- [ ] **M2-10** Signatures, per account 🟢🤖
+- [x] **M2-10** Signatures, per account 🟢🤖
 
 ## M3 — Providers and sign-in
 
