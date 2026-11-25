@@ -284,6 +284,7 @@ impl<'a> JmapSyncer<'a> {
                 uidnext: old.and_then(|f| f.details.uidnext),
                 highestmodseq: None,
                 is_subscribed: true,
+                selectable: true,
             })?;
             self.store.set_jmap_mailbox(id, &m.id)?;
             if role == Some(FolderRole::Inbox) {

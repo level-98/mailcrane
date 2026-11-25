@@ -97,6 +97,7 @@ fn setup() -> (Store, AccountId, FolderId) {
             uidnext: None,
             highestmodseq: None,
             is_subscribed: true,
+            selectable: true,
         })
         .expect("folder");
     (store, account, folder)

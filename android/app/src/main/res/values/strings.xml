@@ -63,6 +63,11 @@
     <!-- Message list (M1-10) -->
     <string name="message_list_loading">Checking for mail…</string>
     <string name="message_list_retry">Try again</string>
+    <!-- Date headers in the message list (M4-19). -->
+    <string name="message_list_header_today">Today</string>
+    <string name="message_list_header_yesterday">Yesterday</string>
+    <string name="message_list_header_this_week">This week</string>
+    <string name="message_list_header_no_date">No date</string>
     <string name="message_no_subject">(No subject)</string>
     <string name="message_unknown_sender">Unknown sender</string>
     <!-- TalkBack reads one row as these parts joined by spaces, e.g. "Unread. From Ana. Subject: Lunch. 10:42. Has attachment." -->
@@ -517,6 +522,16 @@
     <string name="notify_channel_description">New messages in this account’s inbox</string>
     <string name="always_on_channel">Always-on sync</string>
     <string name="always_on_notification">Checking for new mail</string>
+    <!-- Debug builds only (#289) -->
+    <string name="settings_debug_header">Debug tools</string>
+    <string name="settings_load_test_mail">Load test mail</string>
+    <string name="settings_load_test_mail_summary">Adds a local Fixtures account with the test messages from tests/fixtures. It never connects to a server. Loading again replaces them.</string>
+    <string name="settings_load_test_mail_loading">Loading test mail…</string>
+    <string name="settings_load_test_mail_failed">Couldn\'t load the test mail.</string>
+    <plurals name="settings_load_test_mail_done">
+        <item quantity="one">Loaded %d test message into the Fixtures account.</item>
+        <item quantity="other">Loaded %d test messages into the Fixtures account.</item>
+    </plurals>
     <string name="settings_notifications_header">Notifications</string>
     <string name="settings_notifications">New mail notifications</string>
     <string name="settings_notifications_summary">Tell me about new messages in my inboxes</string>

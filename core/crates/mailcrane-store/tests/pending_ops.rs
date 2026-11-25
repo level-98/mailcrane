@@ -29,6 +29,7 @@ fn folder(account_id: AccountId, name: &str) -> NewFolder {
         uidnext: Some(10),
         highestmodseq: None,
         is_subscribed: true,
+        selectable: true,
     }
 }
 

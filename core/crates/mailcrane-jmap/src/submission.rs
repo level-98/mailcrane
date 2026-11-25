@@ -1,7 +1,9 @@
 //! Sending (RFC 8621 §7): upload the message (RFC 8620 §6.1), import it
 //! into Drafts, then submit it with `EmailSubmission/set`. On success the
 //! server moves it to Sent itself (`onSuccessUpdateEmail`), so there's no
-//! separate Sent copy to upload.
+//! separate Sent copy to upload. An account without a Sent mailbox (RFC 8621
+//! doesn't require one) has the imported copy destroyed instead
+//! (`onSuccessDestroyEmail`).
 
 use crate::email::{percent_encode, same_org_url};
 use crate::http::{send, Auth, ClientConfig};
@@ -39,7 +41,10 @@ pub struct Outgoing {
     pub mail_from: String,
     pub rcpt_to: Vec<String>,
     pub drafts_mailbox_id: String,
-    pub sent_mailbox_id: String,
+    /// Where the email goes once submitted. `None` when the account has no
+    /// Sent mailbox: the imported copy is then destroyed on success, so no
+    /// sent message is left looking like an unsent draft.
+    pub sent_mailbox_id: Option<String>,
 }
 
 /// What the server made.
@@ -143,7 +148,8 @@ pub async fn upload(
 /// The `Email/import` and `EmailSubmission/set` calls for one message
 /// whose blob is uploaded. The submission refers to the imported email by
 /// creation id (`#draft`, RFC 8620 §5.3), and on success the email leaves
-/// Drafts for Sent and loses `$draft` (RFC 8621 §7.5).
+/// Drafts for Sent and loses `$draft` (RFC 8621 §7.5), or, without a Sent
+/// mailbox, is destroyed (`onSuccessDestroyEmail`, RFC 8621 §7.5).
 pub fn send_calls(
     account_id: &str,
     blob_id: &str,
@@ -157,24 +163,29 @@ pub fn send_calls(
     }
     if out.identity_id.is_empty()
         || out.drafts_mailbox_id.is_empty()
-        || out.sent_mailbox_id.is_empty()
+        || out.sent_mailbox_id.as_deref().is_some_and(str::is_empty)
     {
         return Err(JmapError::Malformed);
     }
-    let token = |s: &str| s.replace('~', "~0").replace('/', "~1");
-    let mut update = serde_json::Map::new();
-    if out.drafts_mailbox_id != out.sent_mailbox_id {
-        update.insert(
-            format!("mailboxIds/{}", token(&out.drafts_mailbox_id)),
-            Value::Null,
-        );
-    }
-    update.insert(
-        format!("mailboxIds/{}", token(&out.sent_mailbox_id)),
-        Value::Bool(true),
-    );
-    update.insert("keywords/$draft".into(), Value::Null);
     let rcpt: Vec<Value> = out.rcpt_to.iter().map(|r| json!({"email": r})).collect();
+    let mut submit = json!({
+        "accountId": account_id,
+        "create": {"send": {
+            "identityId": out.identity_id,
+            "emailId": "#draft",
+            "envelope": {"mailFrom": {"email": out.mail_from}, "rcptTo": rcpt},
+        }},
+    });
+    let after = match &out.sent_mailbox_id {
+        Some(sent) => (
+            "onSuccessUpdateEmail",
+            json!({"#send": sent_update(&out.drafts_mailbox_id, sent)}),
+        ),
+        None => ("onSuccessDestroyEmail", json!(["#send"])),
+    };
+    if let Some(args) = submit.as_object_mut() {
+        args.insert(after.0.into(), after.1);
+    }
     Ok([
         MethodCall {
             name: "Email/import".into(),
@@ -190,18 +201,23 @@ pub fn send_calls(
         },
         MethodCall {
             name: "EmailSubmission/set".into(),
-            args: json!({
-                "accountId": account_id,
-                "create": {"send": {
-                    "identityId": out.identity_id,
-                    "emailId": "#draft",
-                    "envelope": {"mailFrom": {"email": out.mail_from}, "rcptTo": rcpt},
-                }},
-                "onSuccessUpdateEmail": {"#send": update},
-            }),
+            args: submit,
             id: "s0".into(),
         },
     ])
+}
+
+/// The patch that files a submitted email in Sent: out of Drafts, into
+/// Sent, no longer `$draft` (RFC 8621 §7.5, JSON Pointer per RFC 8620 §5.3).
+fn sent_update(drafts: &str, sent: &str) -> Value {
+    let token = |s: &str| s.replace('~', "~0").replace('/', "~1");
+    let mut update = serde_json::Map::new();
+    if drafts != sent {
+        update.insert(format!("mailboxIds/{}", token(drafts)), Value::Null);
+    }
+    update.insert(format!("mailboxIds/{}", token(sent)), Value::Bool(true));
+    update.insert("keywords/$draft".into(), Value::Null);
+    Value::Object(update)
 }
 
 /// The response named `name` with call id `id`; method errors become
@@ -231,6 +247,12 @@ fn created_id(args: &Value, cid: &str) -> Result<String, JmapError> {
 }
 
 /// Uploads, imports and submits `out` in two requests.
+///
+/// If the server imports the email but refuses the submission, the imported
+/// copy is destroyed again, so a failed send leaves the mailbox unchanged
+/// and a retry doesn't leave another copy in Drafts (#277). When the outcome
+/// of the submission is unknown (no or a malformed answer), the copy is
+/// kept: the message may have gone, and then it is the Sent copy.
 pub async fn send_message(
     session: &Session,
     auth: &Auth,
@@ -243,11 +265,46 @@ pub async fn send_message(
     let calls = send_calls(&session.mail_account_id, &blob_id, out)?;
     let responses = call_using(session, auth, config, &using(), &calls).await?;
     let email_id = created_id(&find(responses.clone(), "Email/import", "i0")?, "draft")?;
-    let submission_id = created_id(&find(responses, "EmailSubmission/set", "s0")?, "send")?;
-    Ok(Sent {
-        email_id,
-        submission_id,
-    })
+    match find(responses, "EmailSubmission/set", "s0").and_then(|a| created_id(&a, "send")) {
+        Ok(submission_id) => Ok(Sent {
+            email_id,
+            submission_id,
+        }),
+        // The server answered that nothing was submitted (a method error,
+        // RFC 8620 §3.6.2, or `notCreated`, RFC 8620 §5.3).
+        Err(refused @ JmapError::Method(_)) => {
+            // Best effort: if this fails too, the refusal is still what the
+            // caller needs to hear, and one copy is left at worst.
+            let _ = destroy_email(session, auth, config, &email_id).await;
+            Err(refused)
+        }
+        Err(other) => Err(other),
+    }
+}
+
+/// Destroys one email (`Email/set`, RFC 8621 §4.6).
+async fn destroy_email(
+    session: &Session,
+    auth: &Auth,
+    config: &ClientConfig,
+    email_id: &str,
+) -> Result<(), JmapError> {
+    let calls = [MethodCall {
+        name: "Email/set".into(),
+        args: json!({"accountId": session.mail_account_id, "destroy": [email_id]}),
+        id: "d0".into(),
+    }];
+    let responses = call_using(session, auth, config, &[CAP_CORE, CAP_MAIL], &calls).await?;
+    let args = find(responses, "Email/set", "d0")?;
+    let destroyed = args
+        .get("destroyed")
+        .and_then(Value::as_array)
+        .is_some_and(|d| d.iter().any(|i| i.as_str() == Some(email_id)));
+    if destroyed {
+        Ok(())
+    } else {
+        Err(JmapError::Malformed)
+    }
 }
 
 #[cfg(test)]
@@ -261,7 +318,7 @@ mod tests {
             mail_from: "alice@example.org".into(),
             rcpt_to: vec!["bob@example.net".into(), "hidden@example.net".into()],
             drafts_mailbox_id: "d".into(),
-            sent_mailbox_id: "s".into(),
+            sent_mailbox_id: Some("s".into()),
         }
     }
 
@@ -279,6 +336,22 @@ mod tests {
         assert_eq!(update["mailboxIds/d"], Value::Null);
         assert_eq!(update["mailboxIds/s"], true);
         assert_eq!(update["keywords/$draft"], Value::Null);
+        assert!(submit.args.get("onSuccessDestroyEmail").is_none());
+    }
+
+    #[test]
+    fn without_a_sent_mailbox_the_copy_is_destroyed_on_success() {
+        let mut out = outgoing();
+        out.sent_mailbox_id = None;
+        let [import, submit] = send_calls("A1", "B1", &out).expect("calls");
+        assert_eq!(import.args["emails"]["draft"]["mailboxIds"]["d"], true);
+        assert_eq!(submit.args["onSuccessDestroyEmail"], json!(["#send"]));
+        assert!(submit.args.get("onSuccessUpdateEmail").is_none());
+        out.sent_mailbox_id = Some(String::new());
+        assert_eq!(
+            send_calls("A1", "B1", &out).map(|_| ()),
+            Err(JmapError::Malformed)
+        );
     }
 
     #[test]

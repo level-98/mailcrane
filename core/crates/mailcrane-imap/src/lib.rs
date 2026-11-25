@@ -42,7 +42,7 @@ mod tls;
 pub use append::{AppendFlags, SearchKey};
 pub use condstore::{FetchedFlags, FlagUpdate, QresyncParams, QresyncSelect};
 pub use error::ImapError;
-pub use fetch::{parse_internal_date, FetchedHeaders, SelectInfo};
+pub use fetch::{parse_internal_date, FetchedHeaders, SelectInfo, SEARCH_WINDOW};
 pub use idle::IdleOutcome;
 pub use parser::{parse_response, Envelope, EnvelopeAddress, FetchData, Limits};
 pub use quirks::{detect as detect_quirks, ServerQuirk};

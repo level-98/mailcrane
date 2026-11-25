@@ -71,8 +71,9 @@ Commands:
   ci        every step below except bindings, then a summary table
   design    generated theme check and unit tests
   fmt       cargo fmt --all --check
-  lint      cargo clippy --workspace --all-targets -- -D warnings
-  test      cargo test --workspace
+  lint      release guard (#289), cargo clippy --workspace --all-targets -- -D warnings,
+            and clippy on mailcrane-ffi with --features debug-fixtures
+  test      cargo test --workspace, then the fixture loader tests (#289)
   deny      cargo deny check
   android   ktlintCheck, lintDebug, testDebugUnitTest and assembleDebug through Gradle
   ios       XCFramework, xcodegen, swiftlint and xcodebuild test (macOS only)
@@ -311,6 +312,9 @@ fn fmt(ctx: &Ctx) -> Result<Outcome, Error> {
 }
 
 fn lint(ctx: &Ctx) -> Result<Outcome, Error> {
+    if let Err(problem) = release_guard(ctx) {
+        return Ok(Outcome::Failed(format!("release guard: {problem}")));
+    }
     let args = [
         "clippy",
         "--workspace",
@@ -319,12 +323,166 @@ fn lint(ctx: &Ctx) -> Result<Outcome, Error> {
         "-D",
         "warnings",
     ];
-    Ok(outcome(run(&ctx.core, &cargo(), &args)?, "cargo clippy"))
+    if !run(&ctx.core, &cargo(), &args)? {
+        return Ok(Outcome::Failed("`cargo clippy` failed".into()));
+    }
+    // The debug-only fixture loader (#289) is behind a feature the workspace
+    // run leaves off; lint it too.
+    let fixtures = [
+        "clippy",
+        "-p",
+        "mailcrane-ffi",
+        "--all-targets",
+        "--features",
+        DEBUG_FIXTURES,
+        "--",
+        "-D",
+        "warnings",
+    ];
+    Ok(outcome(
+        run(&ctx.core, &cargo(), &fixtures)?,
+        "cargo clippy -p mailcrane-ffi --features debug-fixtures",
+    ))
 }
 
 fn test(ctx: &Ctx) -> Result<Outcome, Error> {
-    let ok = run(&ctx.core, &cargo(), &["test", "--workspace"])?;
-    Ok(outcome(ok, "cargo test --workspace"))
+    if !run(&ctx.core, &cargo(), &["test", "--workspace"])? {
+        return Ok(Outcome::Failed("`cargo test --workspace` failed".into()));
+    }
+    // The fixture loader's tests (#289), in the core and through the FFI.
+    let core = [
+        "test",
+        "-p",
+        "mailcrane-core",
+        "--features",
+        "fixtures",
+        "--lib",
+        "fixtures",
+    ];
+    if !run(&ctx.core, &cargo(), &core)? {
+        return Ok(Outcome::Failed(
+            "`cargo test -p mailcrane-core --features fixtures` failed".into(),
+        ));
+    }
+    let ffi = [
+        "test",
+        "-p",
+        "mailcrane-ffi",
+        "--features",
+        DEBUG_FIXTURES,
+        "--lib",
+        "fixtures",
+    ];
+    Ok(outcome(
+        run(&ctx.core, &cargo(), &ffi)?,
+        "cargo test -p mailcrane-ffi --features debug-fixtures",
+    ))
+}
+
+// ---------------------------------------------------------- release guard
+
+/// The feature behind "Load test mail" (#289). Debug Android builds only.
+const DEBUG_FIXTURES: &str = "debug-fixtures";
+
+/// The one line in `android/app/build.gradle.kts` that may turn on
+/// [`DEBUG_FIXTURES`]: only when the build is not a release build.
+const GRADLE_FEATURE_LINE: &str = r#"val rustFeatures = if (rustRelease) emptyList() else listOf("--features", "debug-fixtures")"#;
+
+/// The Gradle check that refuses to package a release APK with a core built
+/// for debug (and so with the loader in it).
+const GRADLE_GUARD: &str = "checkNoDebugCoreInRelease";
+
+/// Checks that no release build can contain the fixture loader (#289):
+/// it is never a default feature, no crate turns it on, the Android build
+/// enables it only for debug and refuses to mix a debug core into a release
+/// APK, and only the debug source set calls it.
+fn release_guard(ctx: &Ctx) -> Result<(), String> {
+    let read = |p: &Path| {
+        std::fs::read_to_string(p).map_err(|e| format!("can't read {}: {e}", p.display()))
+    };
+    let crates = ctx.core.join("crates");
+    let mut manifests = Vec::new();
+    let entries = std::fs::read_dir(&crates).map_err(|e| format!("can't list crates: {e}"))?;
+    for entry in entries.flatten() {
+        let manifest = entry.path().join("Cargo.toml");
+        if manifest.is_file() {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            manifests.push((name, read(&manifest)?));
+        }
+    }
+    let app = ctx.root.join("android/app");
+    let gradle = read(&app.join("build.gradle.kts"))?;
+    let mut release_sources = Vec::new();
+    for set in ["main", "release"] {
+        collect_kotlin(&app.join("src").join(set), &mut release_sources)?;
+    }
+    check_release_guard(&manifests, &gradle, &release_sources)
+}
+
+/// Every `.kt` file under `dir`, as (path, contents). A missing `dir` is
+/// fine (there may be no `release` source set).
+fn collect_kotlin(dir: &Path, out: &mut Vec<(String, String)>) -> Result<(), String> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Ok(());
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            collect_kotlin(&path, out)?;
+        } else if path.extension().is_some_and(|e| e == "kt") {
+            let text = std::fs::read_to_string(&path)
+                .map_err(|e| format!("can't read {}: {e}", path.display()))?;
+            out.push((path.display().to_string(), text));
+        }
+    }
+    Ok(())
+}
+
+/// The checks of [`release_guard`] on file contents, so they can be tested.
+fn check_release_guard(
+    manifests: &[(String, String)],
+    gradle: &str,
+    release_sources: &[(String, String)],
+) -> Result<(), String> {
+    for (name, text) in manifests {
+        for line in text.lines() {
+            let line = line.trim();
+            if line.starts_with('#') {
+                continue;
+            }
+            if line.starts_with("default") && line.contains('=') && line.contains("fixtures") {
+                return Err(format!("{name}: a `fixtures` feature is in `default`"));
+            }
+            let defines_it = name == "mailcrane-ffi"
+                && line == r#"debug-fixtures = ["mailcrane-core/fixtures"]"#;
+            let enables = line.contains(DEBUG_FIXTURES) || line.contains("mailcrane-core/fixtures");
+            if enables && !defines_it {
+                return Err(format!("{name}: `{line}` turns on the fixture loader"));
+            }
+            if line.starts_with("mailcrane-core") && line.contains("fixtures") {
+                return Err(format!("{name}: depends on mailcrane-core with `fixtures`"));
+            }
+        }
+    }
+    let mentions = gradle.matches(DEBUG_FIXTURES).count();
+    if !gradle.lines().any(|l| l.trim() == GRADLE_FEATURE_LINE) || mentions != 1 {
+        return Err(format!(
+            "android/app/build.gradle.kts must turn on `{DEBUG_FIXTURES}` only through              `{GRADLE_FEATURE_LINE}`"
+        ));
+    }
+    if !gradle.contains(GRADLE_GUARD) {
+        return Err(format!(
+            "android/app/build.gradle.kts lost its `{GRADLE_GUARD}` check"
+        ));
+    }
+    for (path, text) in release_sources {
+        if text.contains("loadTestMail") || text.contains("FixtureFile") {
+            return Err(format!(
+                "{path} uses the fixture loader; only the debug source set may"
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn deny(ctx: &Ctx) -> Result<Outcome, Error> {
@@ -648,6 +806,79 @@ fn bindings(ctx: &Ctx) -> Result<Outcome, Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn ffi_manifest() -> (String, String) {
+        (
+            "mailcrane-ffi".to_string(),
+            "[features]\nbindgen = [\"uniffi/cli\"]\n\
+             # Debug only; never in default.\n\
+             debug-fixtures = [\"mailcrane-core/fixtures\"]\n"
+                .to_string(),
+        )
+    }
+
+    fn gradle() -> String {
+        format!("val x = 1\n    {GRADLE_FEATURE_LINE}\ntasks.register(\"{GRADLE_GUARD}\")\n")
+    }
+
+    #[test]
+    fn release_guard_accepts_the_intended_setup() {
+        // Main code reaches the loader only through the DebugTools
+        // interface, whose release implementation does nothing.
+        let main = vec![(
+            "Settings.kt".to_string(),
+            "debugTools.loadFixtures()".to_string(),
+        )];
+        assert_eq!(
+            check_release_guard(&[ffi_manifest()], &gradle(), &main),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn release_guard_rejects_each_way_in() {
+        let m = |name: &str, text: &str| vec![(name.to_string(), text.to_string())];
+        let g = gradle();
+        // A default feature.
+        assert!(check_release_guard(
+            &m("mailcrane-ffi", "default = [\"debug-fixtures\"]"),
+            &g,
+            &[]
+        )
+        .is_err());
+        assert!(
+            check_release_guard(&m("mailcrane-core", "default = [\"fixtures\"]"), &g, &[]).is_err()
+        );
+        // Another crate turning it on.
+        assert!(check_release_guard(
+            &m(
+                "mailcrane-x",
+                "mailcrane-ffi = { path = \"../mailcrane-ffi\", features = [\"debug-fixtures\"] }"
+            ),
+            &g,
+            &[]
+        )
+        .is_err());
+        assert!(check_release_guard(
+            &m(
+                "mailcrane-x",
+                "mailcrane-core = { path = \"../mailcrane-core\", features = [\"fixtures\"] }"
+            ),
+            &g,
+            &[]
+        )
+        .is_err());
+        // Gradle enabling it unconditionally, twice, or without the guard.
+        let always = "listOf(\"--features\", \"debug-fixtures\")\ncheckNoDebugCoreInRelease";
+        assert!(check_release_guard(&[ffi_manifest()], always, &[]).is_err());
+        let twice = format!("{g}\n// debug-fixtures\n");
+        assert!(check_release_guard(&[ffi_manifest()], &twice, &[]).is_err());
+        let unguarded = format!("{GRADLE_FEATURE_LINE}\n");
+        assert!(check_release_guard(&[ffi_manifest()], &unguarded, &[]).is_err());
+        // Main or release Kotlin calling the FFI function.
+        let src = m("MainScreen.kt", "loadTestMail(path, listOf<FixtureFile>())");
+        assert!(check_release_guard(&[ffi_manifest()], &g, &src).is_err());
+    }
 
     fn parse(args: &[&str]) -> Result<Options, Error> {
         parse_options(args.iter().map(|a| a.to_string()))

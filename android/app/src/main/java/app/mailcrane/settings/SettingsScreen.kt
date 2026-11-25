@@ -186,6 +186,7 @@ fun SettingsScreen(
             checked = hideOutside,
             onChange = viewModel::setHideContentOutsideApp,
         )
+        DebugToolsSection(onAccountsChanged)
         onOpenRules?.let { open ->
             androidx.compose.material3.ListItem(
                 headlineContent = { Text(stringResource(R.string.rules_settings_row)) },

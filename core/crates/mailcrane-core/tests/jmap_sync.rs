@@ -455,3 +455,186 @@ async fn a_partly_refused_flag_change_is_undone_for_the_refused_message() {
         );
     }
 }
+
+/// Alice's JMAP account on `server`, with her password stored.
+struct Sender {
+    server: FakeJmap,
+    store: Store,
+    account: AccountId,
+    secrets: mailcrane_testkit::MemorySecretStore,
+}
+
+/// A fake server with only `mailboxes` (id, role; empty for the default
+/// Inbox, Drafts, Sent and Trash) and `faults`, and Alice's account on it.
+async fn sender(mailboxes: &[(&str, &str)], faults: &[mailcrane_testkit::Fault]) -> Sender {
+    use mailcrane_core::secrets::{Secret, SecretKey, SecretStore};
+    let mut builder = FakeJmap::builder();
+    for (id, role) in mailboxes {
+        builder = builder.mailbox(id, id, Some(role), None);
+    }
+    for fault in faults {
+        builder = builder.fault(fault.clone());
+    }
+    let server = builder.start().await.expect("server");
+    let store = Store::open_in_memory().expect("store");
+    let account = store
+        .insert_jmap_account(
+            &NewAccount {
+                display_name: "Alice".into(),
+                email: "alice@example.org".into(),
+                imap_host: String::new(),
+                imap_port: 0,
+                imap_security: Security::Tls,
+                smtp_host: String::new(),
+                smtp_port: 0,
+                smtp_security: Security::Tls,
+                username: "alice@example.org".into(),
+            },
+            &server.base_url(),
+        )
+        .expect("account");
+    let secrets = mailcrane_testkit::MemorySecretStore::new();
+    secrets
+        .put(
+            &SecretKey::account_password(account.0),
+            &Secret::from_string("pw".into()),
+        )
+        .expect("password");
+    Sender {
+        server,
+        store,
+        account,
+        secrets,
+    }
+}
+
+impl Sender {
+    fn draft(&self, subject: &str) -> mailcrane_core::compose::ComposeDraft {
+        mailcrane_core::compose::ComposeDraft {
+            account_id: self.account,
+            to: vec!["bob@example.net".into()],
+            cc: vec![],
+            bcc: vec![],
+            subject: subject.into(),
+            body_text: "Hello Bob
+"
+            .into(),
+            in_reply_to: None,
+            references: vec![],
+            attachments: Vec::new(),
+            forward_attachments_of: None,
+            rich: None,
+        }
+    }
+    fn options(&self) -> mailcrane_core::compose::SendOptions {
+        mailcrane_core::compose::SendOptions {
+            timeout: Duration::from_secs(10),
+            extra_root_certs: vec![self.server.root_cert_der().to_vec()],
+        }
+    }
+    /// Sends queued message `id` through the outbox at time `now`.
+    async fn send_queued(
+        &self,
+        id: mailcrane_store::OutboxId,
+        now: i64,
+    ) -> mailcrane_core::outbox::SendOutcome {
+        mailcrane_core::outbox::send_one(&self.store, &self.secrets, id, &self.options(), now)
+            .await
+            .expect("store")
+            .expect("was queued")
+    }
+    fn outbox(&self, id: mailcrane_store::OutboxId) -> mailcrane_store::OutboxMessage {
+        self.store
+            .get_outbox(id)
+            .expect("read")
+            .expect("still in the outbox")
+    }
+}
+
+/// Sends one message from Alice over a fake server with only `mailboxes`
+/// (id, role), and returns the server.
+async fn send_with_mailboxes(mailboxes: &[(&str, &str)]) -> FakeJmap {
+    let s = sender(mailboxes, &[]).await;
+    mailcrane_core::compose::send(
+        &s.store,
+        &s.secrets,
+        &s.draft("No Sent mailbox"),
+        &s.options(),
+    )
+    .await
+    .expect("sent without a Sent mailbox");
+    s.server
+}
+
+#[tokio::test]
+async fn sending_works_without_a_sent_mailbox() {
+    // RFC 8621 doesn't require a `sent` role (#276).
+    let server = send_with_mailboxes(&[("mb-inbox", "inbox"), ("mb-drafts", "drafts")]).await;
+    let submissions = server.submissions();
+    assert_eq!(submissions.len(), 1, "submitted exactly once");
+    assert_eq!(submissions[0].rcpt_to, vec!["bob@example.net".to_string()]);
+    // The imported copy was destroyed on success: nothing is left in Drafts
+    // looking like an unsent draft.
+    assert_eq!(server.email_mailboxes(&submissions[0].email_id), None);
+    assert!(server.emails_in("mb-drafts").is_empty());
+    assert_eq!(server.email_count(), 0);
+}
+
+#[tokio::test]
+async fn sending_works_with_neither_drafts_nor_sent() {
+    let server = send_with_mailboxes(&[("mb-inbox", "inbox")]).await;
+    assert_eq!(server.submissions().len(), 1, "submitted exactly once");
+    assert_eq!(server.email_count(), 0, "the temporary copy is gone");
+}
+
+const NOW: i64 = 1_790_000_000;
+
+#[tokio::test]
+async fn a_refused_submission_leaves_no_copy_and_the_retry_sends_once() {
+    // #277: the import succeeds, the submission is refused; then the
+    // outbox retry is accepted.
+    use mailcrane_core::outbox::{enqueue, retry, SendOutcome};
+    use mailcrane_store::{OutboxState, SentCopy};
+    let s = sender(&[], &[mailcrane_testkit::Fault::RefuseSubmissions(1)]).await;
+    let id = enqueue(&s.store, &s.draft("Refused once"), 0, NOW).expect("queued");
+
+    let first = s.send_queued(id, NOW).await;
+    assert!(matches!(first, SendOutcome::Failed { .. }), "{first:?}");
+    assert_eq!(s.outbox(id).state, OutboxState::Failed);
+    assert!(s.server.submissions().is_empty());
+    // The imported copy was destroyed again: the mailbox is unchanged.
+    assert!(
+        s.server.emails_in("mb-drafts").is_empty(),
+        "no copy in Drafts"
+    );
+    assert_eq!(s.server.email_count(), 0);
+
+    retry(&s.store, id, NOW + 10).expect("retried");
+    let second = s.send_queued(id, NOW + 10).await;
+    assert!(matches!(second, SendOutcome::Sent { .. }), "{second:?}");
+    let submissions = s.server.submissions();
+    assert_eq!(submissions.len(), 1, "exactly one submission");
+    assert!(
+        s.server.emails_in("mb-drafts").is_empty(),
+        "no leftover copies"
+    );
+    assert_eq!(
+        s.server.emails_in("mb-sent"),
+        vec![submissions[0].email_id.clone()],
+        "one copy, in Sent"
+    );
+    assert_eq!(s.outbox(id).sent_copy, SentCopy::Saved);
+}
+
+#[tokio::test]
+async fn without_a_sent_mailbox_the_outbox_keeps_no_copy() {
+    // Review nit on #286: the server kept no Sent copy, so the outbox must
+    // not record one as saved.
+    use mailcrane_core::outbox::{enqueue, SendOutcome};
+    use mailcrane_store::SentCopy;
+    let s = sender(&[("mb-inbox", "inbox"), ("mb-drafts", "drafts")], &[]).await;
+    let id = enqueue(&s.store, &s.draft("No Sent"), 0, NOW).expect("queued");
+    let outcome = s.send_queued(id, NOW).await;
+    assert!(matches!(outcome, SendOutcome::Sent { .. }), "{outcome:?}");
+    assert_eq!(s.outbox(id).sent_copy, SentCopy::Skipped);
+}

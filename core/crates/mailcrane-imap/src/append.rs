@@ -2,7 +2,6 @@
 //! and sent copies.
 
 use crate::command::Arg;
-use crate::error::ImapError;
 use crate::parser::{Code, StatusKind, Untagged};
 use crate::session::Session;
 use crate::store_cmds::ChangeError;
@@ -58,41 +57,21 @@ pub enum SearchKey {
     Flagged,
 }
 
-impl Session {
-    /// `UID SEARCH CHARSET UTF-8 <keys>` in the selected folder: the UIDs
-    /// matching every key, ascending. An empty list matches nothing (no
-    /// command is sent).
-    pub async fn uid_search(&mut self, keys: &[SearchKey]) -> Result<Vec<u32>, ImapError> {
-        if keys.is_empty() {
-            return Ok(Vec::new());
+/// Adds `keys` to a `SEARCH` command. Values are always sent as strings.
+pub(crate) fn push_search_keys<'a>(args: &mut Vec<Arg<'a>>, keys: &'a [SearchKey]) {
+    for key in keys {
+        match key {
+            SearchKey::Text(v) => args.extend([Arg::Raw("TEXT"), Arg::Str(v.as_bytes())]),
+            SearchKey::From(v) => args.extend([Arg::Raw("FROM"), Arg::Str(v.as_bytes())]),
+            SearchKey::To(v) => args.extend([Arg::Raw("TO"), Arg::Str(v.as_bytes())]),
+            SearchKey::Subject(v) => args.extend([Arg::Raw("SUBJECT"), Arg::Str(v.as_bytes())]),
+            SearchKey::Unseen => args.push(Arg::Raw("UNSEEN")),
+            SearchKey::Flagged => args.push(Arg::Raw("FLAGGED")),
         }
-        let mut args = vec![Arg::Raw("SEARCH"), Arg::Raw("CHARSET"), Arg::Raw("UTF-8")];
-        for key in keys {
-            match key {
-                SearchKey::Text(v) => args.extend([Arg::Raw("TEXT"), Arg::Str(v.as_bytes())]),
-                SearchKey::From(v) => args.extend([Arg::Raw("FROM"), Arg::Str(v.as_bytes())]),
-                SearchKey::To(v) => args.extend([Arg::Raw("TO"), Arg::Str(v.as_bytes())]),
-                SearchKey::Subject(v) => args.extend([Arg::Raw("SUBJECT"), Arg::Str(v.as_bytes())]),
-                SearchKey::Unseen => args.push(Arg::Raw("UNSEEN")),
-                SearchKey::Flagged => args.push(Arg::Raw("FLAGGED")),
-            }
-        }
-        let done = self.run_command("UID", &args).await?;
-        crate::session::expect_ok(&done)?;
-        let mut uids: Vec<u32> = done
-            .untagged
-            .iter()
-            .filter_map(|u| match u {
-                Untagged::Search(list) => Some(list.iter().copied()),
-                _ => None,
-            })
-            .flatten()
-            .collect();
-        uids.sort_unstable();
-        uids.dedup();
-        Ok(uids)
     }
+}
 
+impl Session {
     /// Appends `message` (the raw bytes, CRLF line endings) to the folder
     /// named `raw_name`. Returns the new UID when the server reports it
     /// (UIDPLUS), otherwise `None`. Doesn't need a selected folder.

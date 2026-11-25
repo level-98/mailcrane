@@ -52,10 +52,19 @@ impl FolderSyncer<'_> {
         folder: FolderId,
         keys: &[SearchKey],
     ) -> Result<usize, SyncError> {
-        let (_, _, _) = self.select(folder).await?;
-        let found = self.session.uid_search(keys).await?;
+        if !self.selectable(folder)? {
+            return Ok(0);
+        }
+        let (_, info, _) = self.select(folder).await?;
         let known: std::collections::HashSet<u32> =
             self.store.list_uids(folder)?.into_iter().collect();
+        // Among the newest MAX_NEW + known matches there are MAX_NEW not
+        // stored yet, if there are that many at all.
+        let want = MAX_NEW.saturating_add(known.len());
+        let found = self
+            .session
+            .uid_search_newest(info.exists, 1, u32::MAX, keys, want)
+            .await?;
         let mut missing: Vec<u32> = found
             .into_iter()
             .filter(|uid| !known.contains(uid))

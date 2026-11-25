@@ -110,7 +110,7 @@ async fn sending_uploads_submits_and_files_the_copy_in_sent() {
         mail_from: "alice@example.org".into(),
         rcpt_to: ids(&["bob@example.net", "secret@example.net"]),
         drafts_mailbox_id: "mb-drafts".into(),
-        sent_mailbox_id: "mb-sent".into(),
+        sent_mailbox_id: Some("mb-sent".into()),
     };
     let sent = send_message(&session, &auth, &cfg, &out)
         .await
@@ -149,13 +149,15 @@ async fn an_unknown_identity_is_a_method_error_and_nothing_is_sent() {
         mail_from: "alice@example.org".into(),
         rcpt_to: ids(&["bob@example.net"]),
         drafts_mailbox_id: "mb-drafts".into(),
-        sent_mailbox_id: "mb-sent".into(),
+        sent_mailbox_id: Some("mb-sent".into()),
     };
     let err = send_message(&session, &auth, &cfg, &out)
         .await
         .expect_err("refused");
     assert_eq!(err, JmapError::Method("invalidProperties".into()));
     assert!(server.submissions().is_empty());
+    // The imported copy was destroyed again (#277).
+    assert!(server.emails_in("mb-drafts").is_empty());
 }
 
 #[tokio::test]
@@ -167,7 +169,7 @@ async fn a_bad_envelope_is_refused_before_anything_is_uploaded() {
         mail_from: "alice@example.org".into(),
         rcpt_to: ids(&["bob@example.net\r\nRCPT TO:<x@y>"]),
         drafts_mailbox_id: "mb-drafts".into(),
-        sent_mailbox_id: "mb-sent".into(),
+        sent_mailbox_id: Some("mb-sent".into()),
     };
     let before = server.requests().await.len();
     assert_eq!(

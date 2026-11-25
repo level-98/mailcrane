@@ -14,6 +14,10 @@ pub enum Fault {
     TempFailure,
     PermFailure,
     NoStartTls,
+    /// JMAP only: refuse the first this many `EmailSubmission/set` creates
+    /// with `forbiddenToSend` (RFC 8621 §7.5), after any `Email/import` in
+    /// the same request has succeeded.
+    RefuseSubmissions(usize),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -32,6 +32,7 @@ fn folder(account_id: AccountId, name: &str, role: Option<FolderRole>) -> NewFol
         uidnext: Some(100),
         highestmodseq: None,
         is_subscribed: true,
+        selectable: true,
     }
 }
 

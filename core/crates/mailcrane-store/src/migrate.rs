@@ -20,6 +20,8 @@ pub(crate) const MIGRATIONS: &[&str] = &[
     include_str!("../migrations/0013_notifications.sql"),
     include_str!("../migrations/0014_jmap.sql"),
     include_str!("../migrations/0015_account_color.sql"),
+    include_str!("../migrations/0016_folder_selectable.sql"),
+    include_str!("../migrations/0017_local_accounts.sql"),
 ];
 
 fn user_version(conn: &Connection) -> Result<i64, StoreError> {
@@ -61,6 +63,50 @@ mod tests {
     use super::*;
 
     type R = Result<(), Box<dyn std::error::Error>>;
+
+    #[test]
+    fn v16_with_rows_upgrades_to_v17_with_every_account_remote() -> R {
+        // A database as main had it before #289: schema v16, with an account,
+        // a folder and a message.
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("m.db");
+        let v16 = MIGRATIONS.get(..16).ok_or("fewer than 16 migrations")?;
+        {
+            let mut conn = Connection::open(&path)?;
+            run(&mut conn, v16)?;
+            assert_eq!(user_version(&conn)?, 16);
+            conn.execute_batch(
+                "INSERT INTO accounts (display_name, email, imap_host, imap_port, imap_security, \
+                 smtp_host, smtp_port, smtp_security, username) VALUES \
+                 ('A','a@example.org','imap.example.org',993,'tls','smtp.example.org',465,'tls','a'); \
+                 INSERT INTO folders (account_id, remote_name, display_name, is_subscribed) \
+                 VALUES (1, 'INBOX', 'Inbox', 1); \
+                 INSERT INTO messages (folder_id, uid, subject, date, internal_date, size) \
+                 VALUES (1, 7, 'Hello', 1790000000, 1790000000, 10);",
+            )?;
+        }
+
+        let store = crate::Store::open(&path)?;
+        assert_eq!(store.schema_version()?, 17);
+        let accounts = store.list_accounts()?;
+        assert_eq!(accounts.len(), 1);
+        let id = accounts.first().ok_or("account")?.id;
+        assert!(
+            !store.is_local_account(id)?,
+            "existing accounts stay remote"
+        );
+        let folders = store.list_folders(id)?;
+        assert_eq!(folders.len(), 1);
+        let folder = folders.first().ok_or("folder")?.id;
+        assert_eq!(store.list_messages(folder, 10, 0)?.len(), 1);
+        // The new column only takes 0 or 1.
+        drop(store);
+        let conn = Connection::open(&path)?;
+        assert!(conn
+            .execute("UPDATE accounts SET local_only = 2", [])
+            .is_err());
+        Ok(())
+    }
 
     #[test]
     fn broken_second_migration_leaves_v1_and_data() -> R {

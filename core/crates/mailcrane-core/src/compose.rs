@@ -157,6 +157,9 @@ pub enum SendError {
 pub struct SendReport {
     /// Recipients the server refused; the message went to everyone else.
     pub rejected: Vec<String>,
+    /// The server filed the message in Sent itself (JMAP with a Sent
+    /// mailbox, RFC 8621 §7.5), so there is no copy to upload.
+    pub filed_in_sent: bool,
 }
 
 /// Options for sending. The defaults are what the apps use.
@@ -333,6 +336,15 @@ pub(crate) fn smtp_settings(
         .map_err(|_| SendError::Storage)?
         .ok_or(SendError::AccountNotFound)?
         .details;
+    // A local-only account (#289) has no server and never connects; sending
+    // from it fails before the network, as if it had no credentials. A marker
+    // that can't be read is a storage failure, also before the network.
+    if store
+        .is_local_account(account_id)
+        .map_err(|_| SendError::Storage)?
+    {
+        return Err(SendError::MissingCredentials);
+    }
     let password = secrets
         .get(&SecretKey::account_password(account_id.0))
         .map_err(|_| SendError::MissingCredentials)?
@@ -449,6 +461,7 @@ pub async fn send_prepared(prepared: PreparedSend) -> Result<SendReport, SendErr
     }
     Ok(SendReport {
         rejected: report.rejected,
+        filed_in_sent: false,
     })
 }
 
@@ -470,7 +483,9 @@ pub async fn send(
 
 /// Sends over JMAP (RFC 8621 §7): imports the message, submits it with the
 /// identity for the sender, and has the server move it from Drafts to Sent
-/// on success, so no separate Sent copy is needed.
+/// on success, so no separate Sent copy is needed. RFC 8621 §2 doesn't
+/// require a Sent mailbox; without one the imported copy is destroyed once
+/// the submission succeeds (#276).
 async fn send_jmap(
     session_url: &str,
     auth: &mailcrane_jmap::Auth,
@@ -505,10 +520,16 @@ async fn send_jmap(
             .find(|m| m.role == Some(role))
             .map(|m| m.id.clone())
     };
-    let sent = with_role(mailcrane_jmap::MailboxRole::Sent)
+    let sent = with_role(mailcrane_jmap::MailboxRole::Sent);
+    // `Email/import` needs a mailbox (RFC 8621 §4.8). Drafts if there is
+    // one; else straight into Sent; else, as the copy is destroyed on
+    // success, the Inbox or any mailbox. No mailbox at all can't hold it.
+    let drafts = with_role(mailcrane_jmap::MailboxRole::Drafts)
+        .or_else(|| sent.clone())
+        .or_else(|| with_role(mailcrane_jmap::MailboxRole::Inbox))
+        .or_else(|| mailboxes.first().map(|m| m.id.clone()))
         .ok_or(SendError::Refused { temporary: false })?;
-    // Without a Drafts mailbox the message is created straight in Sent.
-    let drafts = with_role(mailcrane_jmap::MailboxRole::Drafts).unwrap_or_else(|| sent.clone());
+    let filed_in_sent = sent.is_some();
     let out = mailcrane_jmap::Outgoing {
         raw,
         identity_id: identity.id.clone(),
@@ -522,6 +543,7 @@ async fn send_jmap(
         .map_err(map_jmap)?;
     Ok(SendReport {
         rejected: Vec::new(),
+        filed_in_sent,
     })
 }
 
@@ -606,6 +628,56 @@ mod tests {
                 },
             ]))
         );
+    }
+
+    /// Holds one password for every account.
+    struct OnePassword;
+
+    impl SecretStore for OnePassword {
+        fn put(
+            &self,
+            _: &SecretKey,
+            _: &crate::secrets::Secret,
+        ) -> Result<(), crate::secrets::SecretError> {
+            Ok(())
+        }
+        fn get(
+            &self,
+            _: &SecretKey,
+        ) -> Result<Option<crate::secrets::Secret>, crate::secrets::SecretError> {
+            Ok(Some(crate::secrets::Secret::new(b"pw".to_vec())))
+        }
+        fn delete(&self, _: &SecretKey) -> Result<(), crate::secrets::SecretError> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn a_local_only_account_never_gets_smtp_settings() {
+        let store = Store::open_in_memory().expect("store");
+        let account = |email: &str| mailcrane_store::NewAccount {
+            display_name: "A".into(),
+            email: email.into(),
+            imap_host: "imap.example.org".into(),
+            imap_port: 993,
+            imap_security: Security::Tls,
+            smtp_host: "smtp.example.org".into(),
+            smtp_port: 465,
+            smtp_security: Security::Tls,
+            username: "a".into(),
+        };
+        let remote = store.insert_account(&account("a@example.org")).expect("a");
+        let local = store
+            .insert_local_account(&account("fixtures@example.org"))
+            .expect("local");
+        let options = SendOptions::default();
+        assert!(smtp_settings(&store, &OnePassword, remote, &options).is_ok());
+        // Even with a server and a password, a local-only account is refused
+        // before anything connects.
+        assert!(matches!(
+            smtp_settings(&store, &OnePassword, local, &options),
+            Err(SendError::MissingCredentials)
+        ));
     }
 
     #[test]

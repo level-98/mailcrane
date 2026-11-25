@@ -16,6 +16,7 @@ fn from_row(r: &Row<'_>) -> Result<Folder, StoreError> {
             uidnext: r.get(7)?,
             highestmodseq: r.get(8)?,
             is_subscribed: narrow::<u8>(r.get(9)?, "is_subscribed")? != 0,
+            selectable: narrow::<u8>(r.get(10)?, "selectable")? != 0,
         },
     })
 }
@@ -25,13 +26,13 @@ impl Store {
     pub fn upsert_folder(&self, f: &NewFolder) -> Result<FolderId, StoreError> {
         let id: i64 = self.conn.query_row(
             "INSERT INTO folders (account_id, remote_name, display_name, delimiter, role, \
-             uidvalidity, uidnext, highestmodseq, is_subscribed) \
-             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9) \
+             uidvalidity, uidnext, highestmodseq, is_subscribed, selectable) \
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10) \
              ON CONFLICT (account_id, remote_name) DO UPDATE SET \
                display_name = excluded.display_name, delimiter = excluded.delimiter, \
                role = excluded.role, uidvalidity = excluded.uidvalidity, \
                uidnext = excluded.uidnext, highestmodseq = excluded.highestmodseq, \
-               is_subscribed = excluded.is_subscribed \
+               is_subscribed = excluded.is_subscribed, selectable = excluded.selectable \
              RETURNING id",
             params![
                 f.account_id.0,
@@ -42,7 +43,8 @@ impl Store {
                 f.uidvalidity,
                 f.uidnext,
                 f.highestmodseq,
-                f.is_subscribed
+                f.is_subscribed,
+                f.selectable
             ],
             |r| r.get(0),
         )?;
@@ -65,7 +67,7 @@ impl Store {
     pub fn get_folder(&self, id: FolderId) -> Result<Option<Folder>, StoreError> {
         let mut stmt = self.conn.prepare(
             "SELECT id, account_id, remote_name, display_name, delimiter, role, uidvalidity, \
-             uidnext, highestmodseq, is_subscribed FROM folders WHERE id = ?1",
+             uidnext, highestmodseq, is_subscribed, selectable FROM folders WHERE id = ?1",
         )?;
         let mut rows = stmt.query(params![id.0])?;
         rows.next()?.map(from_row).transpose()
@@ -116,7 +118,7 @@ impl Store {
     pub fn list_folders(&self, account: AccountId) -> Result<Vec<Folder>, StoreError> {
         let mut stmt = self.conn.prepare(
             "SELECT id, account_id, remote_name, display_name, delimiter, role, uidvalidity, \
-             uidnext, highestmodseq, is_subscribed FROM folders WHERE account_id = ?1 \
+             uidnext, highestmodseq, is_subscribed, selectable FROM folders WHERE account_id = ?1 \
              ORDER BY remote_name",
         )?;
         let mut rows = stmt.query(params![account.0])?;

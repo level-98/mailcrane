@@ -11,8 +11,8 @@ use std::time::Duration;
 use mailcrane_core::events::{self, EventListener};
 use mailcrane_core::secrets::SecretKey;
 use mailcrane_core::sync::{
-    live_stop, run_live_updates, FolderSyncer, ImapLogin, LiveConfig, LiveStop, SyncConfig,
-    SyncError as CoreSyncError,
+    live_stop, log_failure, run_live_updates, FolderSyncer, ImapLogin, LiveConfig, LiveStop,
+    SyncConfig, SyncError as CoreSyncError,
 };
 use mailcrane_imap::{save_folders, ImapConfig, ImapError, ImapSecurity, Secret, Session};
 use mailcrane_store::{AccountId, FolderId, FolderRole, MessageId, Security, Store};
@@ -218,6 +218,10 @@ impl SyncEngine {
     /// server's flags already include them.
     pub fn sync_folder(&self, folder_id: i64) -> Result<u32, SyncFailure> {
         let account = self.folder_account(FolderId(folder_id))?;
+        // A local-only account (#289) has no server: nothing to fetch.
+        if self.is_local(account)? {
+            return Ok(0);
+        }
         if let Some(r) = self.run_jmap(account, |s| {
             Box::pin(async move {
                 // Queued actions first, so the server's flags already include them.
@@ -237,6 +241,9 @@ impl SyncEngine {
     /// Returns how many were stored.
     pub fn load_older(&self, folder_id: i64, count: u32) -> Result<u32, SyncFailure> {
         let account = self.folder_account(FolderId(folder_id))?;
+        if self.is_local(account)? {
+            return Ok(0);
+        }
         let wanted = usize::try_from(count).unwrap_or(usize::MAX);
         if let Some(r) = self.run_jmap(account, |s| {
             Box::pin(async move { s.load_older(FolderId(folder_id), wanted).await })
@@ -268,6 +275,10 @@ impl SyncEngine {
             .folder_id;
         drop(store);
         let account = self.folder_account(folder)?;
+        // Local-only messages are stored whole when they are imported.
+        if self.is_local(account)? {
+            return Ok(());
+        }
         if let Some(r) = self.run_jmap(account, |s| {
             Box::pin(async move { s.fetch_body(MessageId(message_id)).await })
         }) {
@@ -297,6 +308,10 @@ impl SyncEngine {
     /// the server has no inbox. On failure the saved folders are unchanged.
     pub fn refresh_folders(&self, account_id: i64) -> Result<Option<i64>, SyncFailure> {
         let account = AccountId(account_id);
+        if self.is_local(account)? {
+            let store = self.open_store()?;
+            return Ok(inbox_of(&store, account)?.map(|f| f.0));
+        }
         if let Some(r) = self.run_jmap(account, |s| {
             Box::pin(async move { s.refresh_mailboxes().await })
         }) {
@@ -310,10 +325,18 @@ impl SyncEngine {
         runtime.block_on(async {
             let mut session = self.connect(&store, account).await.map_err(report)?;
             let listed = session.list_folders().await;
+            let command = session.last_command();
             session.logout().await;
-            let folders = listed.map_err(|e| report(CoreSyncError::from(e).kind()))?;
-            save_folders(&store, account, &folders)
-                .map_err(|e| report(CoreSyncError::from(e).kind()))?;
+            let folders = listed.map_err(|e| {
+                let e = CoreSyncError::from(e);
+                log_failure("list folders", &e, command);
+                report(e.kind())
+            })?;
+            save_folders(&store, account, &folders).map_err(|e| {
+                let e = CoreSyncError::from(e);
+                log_failure("save folders", &e, None);
+                report(e.kind())
+            })?;
             Ok::<(), SyncFailure>(())
         })?;
         Ok(inbox_of(&store, account)?.map(|f| f.0))
@@ -337,7 +360,7 @@ impl SyncEngine {
     pub fn start_live_updates(&self, account_id: i64) -> Result<(), SyncFailure> {
         // JMAP push (EventSource) is a later issue; JMAP accounts are kept
         // up to date by the app's syncs and the periodic check until then.
-        if self.is_jmap(AccountId(account_id)) {
+        if self.is_jmap(AccountId(account_id)) || self.is_local(AccountId(account_id))? {
             return Ok(());
         }
         let mut live = self.live.lock().unwrap_or_else(|p| p.into_inner());
@@ -447,7 +470,15 @@ impl SyncEngine {
             .map_err(|_| failed(events::SyncErrorKind::Storage))?;
         let now = unix_now();
         let mut out = Vec::new();
+        // A local-only account gets no notifications: its mail is imported,
+        // not new.
         for account in &accounts {
+            if store
+                .is_local_account(account.id)
+                .map_err(|_| failed(events::SyncErrorKind::Storage))?
+            {
+                continue;
+            }
             let found = mailcrane_core::notify::take_new_mail(&store, account, now)
                 .map_err(|_| failed(events::SyncErrorKind::Storage))?;
             out.extend(
@@ -480,6 +511,16 @@ impl SyncEngine {
             if started.elapsed() >= deadline {
                 break;
             }
+            match store.is_local_account(account.id) {
+                Ok(false) => {}
+                Ok(true) => continue,
+                // Never connect without knowing; report it like any other
+                // account failure and carry on with the others.
+                Err(_) => {
+                    let _ = self.report(account.id, events::SyncErrorKind::Storage);
+                    continue;
+                }
+            }
             let inbox = match inbox_of(&store, account.id) {
                 Ok(Some(folder)) => Some(folder.0),
                 _ => self.refresh_folders(account.id.0).ok().flatten(),
@@ -510,6 +551,15 @@ pub(crate) type SyncFuture<'a, T> =
     std::pin::Pin<Box<dyn std::future::Future<Output = Result<T, CoreSyncError>> + 'a>>;
 
 impl SyncEngine {
+    /// Whether the account is local-only (#289): it never syncs and never
+    /// connects. A marker that can't be read is a storage failure, returned
+    /// to the caller, so it neither connects nor hides the error.
+    pub(crate) fn is_local(&self, account: AccountId) -> Result<bool, SyncFailure> {
+        self.open_store()?
+            .is_local_account(account)
+            .map_err(|_| failed(events::SyncErrorKind::Storage))
+    }
+
     /// The lock serialising `account`'s calls.
     pub(crate) fn account_lock(&self, account: AccountId) -> Arc<Mutex<()>> {
         let mut locks = self.busy.lock().unwrap_or_else(|p| p.into_inner());
@@ -639,6 +689,9 @@ impl SyncEngine {
         runtime.block_on(async {
             let mut session = self.connect(&store, account).await.map_err(report)?;
             let result = job(&store, &mut session, &listener).await;
+            if let Err(e) = &result {
+                log_failure("session job", e, session.last_command());
+            }
             session.logout().await;
             result.map_err(SyncFailure::from)
         })
@@ -679,7 +732,11 @@ impl SyncEngine {
         let login = imap_login(store, account, self.extra_root_cert().as_deref())?;
         Session::connect(&login.config, &login.username, &login.password)
             .await
-            .map_err(|e: ImapError| CoreSyncError::from(e).kind())
+            .map_err(|e: ImapError| {
+                let e = CoreSyncError::from(e);
+                log_failure("connect", &e, None);
+                e.kind()
+            })
     }
 }
 
@@ -718,6 +775,14 @@ fn imap_login(
         .get_account(account)
         .map_err(|_| events::SyncErrorKind::Storage)?
         .ok_or(events::SyncErrorKind::NotFound)?;
+    // Never connect for a local-only account (#289), whatever path got here.
+    // An unreadable marker is a storage failure: no connection either.
+    if store
+        .is_local_account(account)
+        .map_err(|_| events::SyncErrorKind::Storage)?
+    {
+        return Err(events::SyncErrorKind::NotFound);
+    }
     let password = crate::secrets::secret_store()
         .and_then(|s| s.get(&SecretKey::account_password(account.0)))
         .map_err(|_| events::SyncErrorKind::Auth)?

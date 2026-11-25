@@ -16,6 +16,10 @@ crate-type = ["lib", "cdylib", "staticlib"]
 [features]
 # Needed only to build the `uniffi-bindgen` binary.
 bindgen = ["uniffi/cli"]
+# "Load test mail" (#289): DEBUG BUILDS ONLY. The Android build turns it on
+# for the debug variant alone. Never add it to `default`; `cargo xtask ci`
+# fails if a release path could get it.
+debug-fixtures = ["mailcrane-core/fixtures"]
 
 [[bin]]
 name = "uniffi-bindgen"
@@ -29,6 +33,7 @@ mailcrane-jmap = { path = "../mailcrane-jmap" }
 mailcrane-mime = { path = "../mailcrane-mime" }
 mailcrane-store = { path = "../mailcrane-store" }
 thiserror = "2.0.21"
+tracing = "0.1"
 tokio = { version = "1.54.1", features = ["rt", "sync", "time"] }
 uniffi = { version = "0.32.2", features = ["tokio"] }
 url = "2.5.9"
@@ -42,4 +47,6 @@ rustls-platform-verifier = "0.7.1"
 [dev-dependencies]
 tokio = { version = "1.54.1", features = ["macros", "rt-multi-thread", "time"] }
 mailcrane-testkit = { path = "../mailcrane-testkit" }
+# Already in the tree (mailcrane-store); tests use it to damage a database.
+rusqlite = { version = "0.43.0", features = ["bundled"] }
 tempfile = "3.27.0"

@@ -1,6 +1,6 @@
 //! Initial sync against the testkit's fake IMAP server. Never a real mailbox.
 
-use super::{FolderSyncer, SyncConfig, SyncError};
+use super::{FailureLog, FolderSyncer, SyncConfig, SyncError};
 use crate::events::{CoreEvent, EventListener, SyncErrorKind};
 use mailcrane_imap::{ImapConfig, ImapSecurity, Secret, Session};
 use mailcrane_store::{
@@ -90,6 +90,7 @@ fn setup() -> (Store, AccountId, FolderId) {
             uidnext: None,
             highestmodseq: None,
             is_subscribed: true,
+            selectable: true,
         })
         .expect("folder");
     (store, account, folder)
@@ -354,5 +355,227 @@ async fn unknown_folder_and_message_are_errors_not_panics() {
             ))
             .count(),
         2
+    );
+}
+
+#[tokio::test]
+async fn a_folder_too_big_for_one_search_line_syncs_newest_first() {
+    // Issue #282: Gmail's `* SEARCH` answer for a big inbox was one line
+    // longer than the 64 KiB limit (LineTooLong on UID SEARCH). 200 000
+    // UIDs in one answer would be about 1.3 MB.
+    const COUNT: u32 = 200_000;
+    let imap = fake(raws(usize::try_from(COUNT).expect("fits")), &[]).await;
+    let (store, account, folder) = setup();
+    let events = Events::default();
+    let mut session = connect(&imap).await;
+    let mut syncer = FolderSyncer::new(
+        &store,
+        &mut session,
+        &events,
+        account,
+        SyncConfig::default(),
+    );
+
+    // First sync: the newest 200, one window.
+    assert_eq!(syncer.sync_folder(folder).await.expect("first sync"), 200);
+    let mut uids = store.list_uids(folder).expect("uids");
+    uids.sort_unstable();
+    assert_eq!(uids, range(COUNT - 199, COUNT));
+
+    // Refresh: changes and new mail, still within the line limit.
+    syncer.sync_changes(folder).await.expect("refresh");
+    // Older mail: the next 200 below the oldest stored.
+    assert_eq!(
+        syncer.load_older(folder, 200).await.expect("load older"),
+        200
+    );
+    let mut uids = store.list_uids(folder).expect("uids");
+    uids.sort_unstable();
+    assert_eq!(uids, range(COUNT - 399, COUNT));
+    assert!(
+        !events
+            .all()
+            .iter()
+            .any(|e| matches!(e, CoreEvent::SyncError { .. })),
+        "{:?}",
+        events.all()
+    );
+    // Each search asked for at most one window.
+    let searches = imap
+        .received_commands()
+        .await
+        .iter()
+        .filter(|c| *c == "UID SEARCH")
+        .count();
+    assert!(searches <= 4, "{searches} searches");
+}
+
+#[tokio::test]
+async fn gmail_layout_syncs_every_folder_and_never_selects_the_noselect_parent() {
+    let imap = FakeImap::builder()
+        .user(USER, PASSWORD)
+        .folder("INBOX", raws(3))
+        .gmail_layout()
+        .start()
+        .await
+        .expect("fake imap starts");
+    let (store, account, _) = setup();
+    let events = Events::default();
+    let mut session = connect(&imap).await;
+    let listed = session.list_folders().await.expect("list");
+    mailcrane_imap::save_folders(&store, account, &listed).expect("save");
+
+    let folders = store.list_folders(account).expect("folders");
+    let parent = folders
+        .iter()
+        .find(|f| f.details.remote_name == "[Gmail]")
+        .expect("[Gmail] stays in the folder tree");
+    assert!(!parent.details.selectable);
+    let sent = folders
+        .iter()
+        .find(|f| f.details.remote_name == "[Gmail]/Sent Mail")
+        .expect("child with a space in its name");
+    assert!(sent.details.selectable);
+
+    let mut syncer = FolderSyncer::new(
+        &store,
+        &mut session,
+        &events,
+        account,
+        SyncConfig::default(),
+    );
+    for folder in &folders {
+        let name = &folder.details.remote_name;
+        syncer
+            .sync_folder(folder.id)
+            .await
+            .unwrap_or_else(|e| panic!("sync {name}: {e:?}"));
+        syncer
+            .sync_changes(folder.id)
+            .await
+            .unwrap_or_else(|e| panic!("refresh {name}: {e:?}"));
+        syncer
+            .load_older(folder.id, 10)
+            .await
+            .unwrap_or_else(|e| panic!("load older {name}: {e:?}"));
+    }
+    assert_eq!(
+        syncer.sync_changes(parent.id).await.expect("skip").strategy,
+        super::super::Strategy::NotSelectable
+    );
+    assert!(events
+        .all()
+        .iter()
+        .all(|e| !matches!(e, CoreEvent::SyncError { .. })));
+
+    let selected = imap.selected_folders().await;
+    assert!(!selected.iter().any(|n| n == "[Gmail]"), "{selected:?}");
+    assert!(
+        selected.iter().any(|n| n == "[Gmail]/Sent Mail"),
+        "{selected:?}"
+    );
+    let inbox = folders
+        .iter()
+        .find(|f| f.details.remote_name == "INBOX")
+        .expect("inbox");
+    assert_eq!(store.list_uids(inbox.id).expect("uids").len(), 3);
+}
+
+#[tokio::test]
+async fn a_refused_select_logs_the_command_and_error_but_no_server_text() {
+    // The fake answers SELECT of a folder it doesn't have with
+    // "NO [NONEXISTENT] no such folder".
+    let imap = fake(raws(1), &[]).await;
+    let (store, account, _) = setup();
+    let missing = store
+        .upsert_folder(&NewFolder {
+            account_id: account,
+            remote_name: "Private Stuff".into(),
+            display_name: "Private Stuff".into(),
+            delimiter: Some("/".into()),
+            role: None,
+            uidvalidity: None,
+            uidnext: None,
+            highestmodseq: None,
+            is_subscribed: true,
+            selectable: true,
+        })
+        .expect("folder");
+    let events = Events::default();
+    let mut session = connect(&imap).await;
+    let error = FolderSyncer::new(
+        &store,
+        &mut session,
+        &events,
+        account,
+        SyncConfig::default(),
+    )
+    .sync_folder(missing)
+    .await
+    .expect_err("SELECT is refused");
+
+    // What report() logs for this failure.
+    let log = FailureLog::new("sync", &error, session.last_command());
+    assert_eq!(
+        log,
+        FailureLog {
+            stage: "sync",
+            kind: SyncErrorKind::Protocol,
+            error: "CommandFailed",
+            command: "SELECT",
+            store: "none",
+            field: "none",
+            sqlite: "none",
+            sqlite_code: 0,
+        }
+    );
+    // No server text, folder name, account or credential in it. (Every
+    // field is a `&'static str` or an enum, so none could get in.)
+    let text = format!("{log:?}");
+    for secret in ["no such folder", "NONEXISTENT", "Private", USER, PASSWORD] {
+        assert!(!text.contains(secret), "{text} holds {secret:?}");
+    }
+}
+
+#[test]
+fn a_database_failure_logs_the_sqlite_code_but_no_values() {
+    let conn = rusqlite::Connection::open_in_memory().expect("open");
+    conn.execute_batch(
+        "CREATE TABLE m (folder_id INTEGER, uid INTEGER, subject TEXT, UNIQUE (folder_id, uid));
+         INSERT INTO m VALUES (1, 42, 'Private subject');",
+    )
+    .expect("schema");
+    let error = conn
+        .execute_batch("INSERT INTO m VALUES (1, 42, 'Private subject');")
+        .expect_err("duplicate");
+    let error = SyncError::Store(mailcrane_store::StoreError::from(error));
+
+    let log = FailureLog::new("sync", &error, Some("UID FETCH"));
+    assert_eq!(
+        log,
+        FailureLog {
+            stage: "sync",
+            kind: SyncErrorKind::Storage,
+            error: "Store",
+            command: "UID FETCH",
+            store: "Sqlite",
+            field: "none",
+            sqlite: "SQLITE_CONSTRAINT_UNIQUE",
+            sqlite_code: rusqlite::ffi::SQLITE_CONSTRAINT_UNIQUE,
+        }
+    );
+    let text = format!("{log:?}");
+    for secret in ["Private", "42", "folder_id", "m.uid"] {
+        assert!(!text.contains(secret), "{text} holds {secret:?}");
+    }
+
+    // The same through the IMAP error (save_folders).
+    let wrapped = SyncError::Imap(mailcrane_imap::ImapError::Store(
+        mailcrane_store::StoreError::Invalid { field: "uid" },
+    ));
+    let log = FailureLog::new("list folders", &wrapped, Some("LIST"));
+    assert_eq!(
+        (log.store, log.field, log.sqlite),
+        ("Invalid", "uid", "none")
     );
 }
