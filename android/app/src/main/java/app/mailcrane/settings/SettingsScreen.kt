@@ -34,6 +34,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import app.mailcrane.R
+import app.mailcrane.ui.theme.dynamicColorAvailable
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -64,6 +65,25 @@ class SettingsViewModel
         fun setUndoSendSeconds(seconds: Int) {
             viewModelScope.launch { settings.setUndoSendSeconds(seconds) }
         }
+
+        val themeMode: StateFlow<ThemeMode> =
+            settings.themeMode.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ThemeMode.SYSTEM)
+        val dynamicColor: StateFlow<Boolean> =
+            settings.dynamicColor.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), true)
+        val darkMessageBodies: StateFlow<Boolean> =
+            settings.darkMessageBodies.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
+
+        fun setThemeMode(mode: ThemeMode) {
+            viewModelScope.launch { settings.setThemeMode(mode) }
+        }
+
+        fun setDynamicColor(enabled: Boolean) {
+            viewModelScope.launch { settings.setDynamicColor(enabled) }
+        }
+
+        fun setDarkMessageBodies(enabled: Boolean) {
+            viewModelScope.launch { settings.setDarkMessageBodies(enabled) }
+        }
     }
 
 /** The app's settings. */
@@ -75,12 +95,24 @@ fun SettingsScreen(
 ) {
     val cleanLinks by viewModel.cleanLinks.collectAsStateWithLifecycle()
     val undoSend by viewModel.undoSendSeconds.collectAsStateWithLifecycle()
+    val themeMode by viewModel.themeMode.collectAsStateWithLifecycle()
+    val dynamicColor by viewModel.dynamicColor.collectAsStateWithLifecycle()
+    val darkBodies by viewModel.darkMessageBodies.collectAsStateWithLifecycle()
     SettingsContent(
         cleanLinks = cleanLinks,
         onCleanLinksChange = viewModel::setCleanLinks,
         onBack = onBack,
         undoSendSeconds = undoSend,
         onUndoSendChange = viewModel::setUndoSendSeconds,
+        appearance =
+            AppearanceSettings(
+                mode = themeMode,
+                dynamicColor = dynamicColor,
+                darkMessageBodies = darkBodies,
+                onModeChange = viewModel::setThemeMode,
+                onDynamicColorChange = viewModel::setDynamicColor,
+                onDarkMessageBodiesChange = viewModel::setDarkMessageBodies,
+            ),
     ) {
         if (accountId != null) {
             SignatureSection(accountId)
@@ -97,6 +129,7 @@ fun SettingsContent(
     onBack: () -> Unit,
     undoSendSeconds: Int = DEFAULT_UNDO_SEND_SECONDS,
     onUndoSendChange: (Int) -> Unit = {},
+    appearance: AppearanceSettings = AppearanceSettings(),
     accountSection: @Composable () -> Unit = {},
 ) {
     Scaffold(
@@ -124,6 +157,7 @@ fun SettingsContent(
             ) {
                 Text(stringResource(R.string.settings_clean_links))
             }
+            AppearanceSection(appearance)
             UndoSendSection(undoSendSeconds, onUndoSendChange)
             accountSection()
         }
@@ -162,5 +196,79 @@ private fun UndoSendSection(
                 )
             }
         }
+    }
+}
+
+/** The appearance settings and what changing them does. */
+data class AppearanceSettings(
+    val mode: ThemeMode = ThemeMode.SYSTEM,
+    val dynamicColor: Boolean = true,
+    val darkMessageBodies: Boolean = false,
+    val onModeChange: (ThemeMode) -> Unit = {},
+    val onDynamicColorChange: (Boolean) -> Unit = {},
+    val onDarkMessageBodiesChange: (Boolean) -> Unit = {},
+)
+
+@Composable
+private fun AppearanceSection(a: AppearanceSettings) {
+    Column(Modifier.fillMaxWidth().selectableGroup()) {
+        Text(
+            text = stringResource(R.string.settings_appearance_header),
+            style = MaterialTheme.typography.titleSmall,
+            color = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 24.dp, bottom = 8.dp).semantics { heading() },
+        )
+        for ((mode, label) in THEME_CHOICES) {
+            ListItem(
+                leadingContent = { RadioButton(selected = a.mode == mode, onClick = null) },
+                modifier =
+                    Modifier.selectable(
+                        selected = a.mode == mode,
+                        role = Role.RadioButton,
+                        onClick = { a.onModeChange(mode) },
+                    ),
+            ) {
+                Text(stringResource(label))
+            }
+        }
+    }
+    // Hidden where the system has no wallpaper colours (before Android 12).
+    if (dynamicColorAvailable) {
+        SwitchRow(
+            title = R.string.settings_dynamic_color,
+            summary = R.string.settings_dynamic_color_summary,
+            checked = a.dynamicColor,
+            onChange = a.onDynamicColorChange,
+        )
+    }
+    SwitchRow(
+        title = R.string.settings_dark_bodies,
+        summary = R.string.settings_dark_bodies_summary,
+        checked = a.darkMessageBodies,
+        onChange = a.onDarkMessageBodiesChange,
+    )
+}
+
+private val THEME_CHOICES =
+    listOf(
+        ThemeMode.SYSTEM to R.string.settings_theme_system,
+        ThemeMode.LIGHT to R.string.settings_theme_light,
+        ThemeMode.DARK to R.string.settings_theme_dark,
+    )
+
+/** One switch as a whole row, for touch and TalkBack; the Switch itself stays silent. */
+@Composable
+private fun SwitchRow(
+    title: Int,
+    summary: Int,
+    checked: Boolean,
+    onChange: (Boolean) -> Unit,
+) {
+    ListItem(
+        supportingContent = { Text(stringResource(summary)) },
+        trailingContent = { Switch(checked = checked, onCheckedChange = null) },
+        modifier = Modifier.toggleable(value = checked, role = Role.Switch, onValueChange = onChange),
+    ) {
+        Text(stringResource(title))
     }
 }

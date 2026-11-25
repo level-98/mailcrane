@@ -3,6 +3,7 @@ package app.mailcrane.ui.message
 import android.annotation.SuppressLint
 import android.graphics.Color
 import android.net.Uri
+import android.os.Build
 import android.view.ViewGroup
 import android.webkit.CookieManager
 import android.webkit.WebResourceRequest
@@ -39,6 +40,7 @@ fun SafeWebView(
     inlinePart: (contentId: String) -> InlinePart?,
     onOpenLink: (Uri) -> Unit,
     modifier: Modifier = Modifier,
+    darken: Boolean = false,
 ) {
     val fontScale = LocalDensity.current.fontScale
     val currentInlinePart by rememberUpdatedState(inlinePart)
@@ -60,6 +62,12 @@ fun SafeWebView(
         },
         update = { view ->
             lockDown(view, allowRemote, fontScale)
+            // "Dark message bodies": the system darkens the page (Android 13+; the activity theme is dark).
+            // Otherwise mail keeps the white page it was designed for.
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                view.settings.isAlgorithmicDarkeningAllowed = darken
+            }
+            view.setBackgroundColor(if (darken) Color.TRANSPARENT else Color.WHITE)
             (view.webViewClient as? SafeWebViewClient)?.allowRemote = allowRemote
             if (view.tag != html) {
                 view.tag = html
