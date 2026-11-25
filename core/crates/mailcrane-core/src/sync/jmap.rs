@@ -92,6 +92,48 @@ impl<'a> JmapSyncer<'a> {
         self.report(result)
     }
 
+    /// Downloads one batch of bodies ahead of time (M4-25) and saves each
+    /// one; see [`super::prefetch`]. Blob downloads never change `$seen`.
+    /// An email the server no longer has, or one over `max_size` bytes, is
+    /// left as it was. Sends no events: the caller reports the batch.
+    pub async fn prefetch_batch(
+        &mut self,
+        batch: &[super::prefetch::Candidate],
+        max_size: u32,
+    ) -> Result<super::prefetch::BatchOutcome, SyncError> {
+        let limit = usize::try_from(max_size).unwrap_or(usize::MAX);
+        let mut outcome = super::prefetch::BatchOutcome {
+            saved: 0,
+            tried: batch.iter().map(|c| c.id).collect(),
+        };
+        for candidate in batch {
+            let Some(row) = self.store.jmap_row(candidate.id)? else {
+                continue;
+            };
+            let raw = match mailcrane_jmap::download_blob(
+                &self.session,
+                &self.auth,
+                &self.config,
+                &row.blob_id,
+            )
+            .await
+            {
+                Ok(raw) => raw,
+                Err(JmapError::Http(404)) => continue,
+                Err(e) => return Err(e.into()),
+            };
+            if raw.len() > limit {
+                continue;
+            }
+            match save_body(self.store, candidate.id, &raw) {
+                Ok(()) => outcome.saved = outcome.saved.saturating_add(1),
+                Err(SyncError::UnknownMessage) => {}
+                Err(e) => return Err(e),
+            }
+        }
+        Ok(outcome)
+    }
+
     /// Carries the account's queued message actions out on the server,
     /// oldest first (RFC 8621 §4.6 `Email/set`): read and flag states as
     /// keywords, moves as `mailboxIds`, deletion for good as `destroy`. Stops

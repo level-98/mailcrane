@@ -204,9 +204,9 @@ fn each_account_has_its_own_sync_lock() {
     assert!(Arc::ptr_eq(&one, &again));
     assert!(!Arc::ptr_eq(&one, &two));
     // Holding account 1's lock doesn't block account 2.
-    let _held = one.lock().expect("lock 1");
-    assert!(two.try_lock().is_ok());
-    assert!(again.try_lock().is_err());
+    let _held = one.lock();
+    assert!(two.is_free());
+    assert!(!again.is_free());
 }
 
 #[test]

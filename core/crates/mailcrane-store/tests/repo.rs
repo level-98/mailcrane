@@ -328,3 +328,50 @@ fn remote_changes_delete_and_reflag_only_stored_messages() -> R {
     assert!(!s.set_folder_sync_state(FolderId(999), 1, None)?);
     Ok(())
 }
+
+#[test]
+fn prefetch_candidates_keep_to_the_newest_recent_small_uncached() -> R {
+    let s = Store::open_in_memory()?;
+    let acc = s.insert_account(&account())?;
+    let f = s.upsert_folder(&folder(acc, "INBOX"))?;
+    let other = s.upsert_folder(&folder(acc, "Archive"))?;
+    // uid n arrives at time 100 + n.
+    let mut ids = Vec::new();
+    for uid in 1..=6 {
+        ids.push(s.upsert_message_header(&header(f, uid, 100 + i64::from(uid)))?);
+    }
+    s.upsert_message_header(&header(other, 7, 200))?;
+    let mut big = header(f, 8, 50);
+    big.size = 2_000;
+    s.upsert_message_header(&big)?;
+    // uid 6 already has its body.
+    assert!(s.store_body(ids[5], b"raw", 1)?);
+
+    // Newest first, cached and other folders left out.
+    let all = s.prefetch_candidates(f, 0, 200, 1_000)?;
+    let uids: Vec<u32> = all.iter().map(|(_, uid)| *uid).collect();
+    assert_eq!(uids, [5, 4, 3, 2, 1]);
+    assert_eq!(all.first().map(|(id, _)| *id), Some(ids[4]));
+    // Too old.
+    let uids: Vec<u32> = s
+        .prefetch_candidates(f, 103, 200, 1_000)?
+        .iter()
+        .map(|(_, uid)| *uid)
+        .collect();
+    assert_eq!(uids, [5, 4, 3]);
+    // Only the newest 3 messages count, the cached one among them.
+    let uids: Vec<u32> = s
+        .prefetch_candidates(f, 0, 3, 1_000)?
+        .iter()
+        .map(|(_, uid)| *uid)
+        .collect();
+    assert_eq!(uids, [5, 4]);
+    // The big one only when the size limit allows it.
+    let uids: Vec<u32> = s
+        .prefetch_candidates(f, 0, 200, 5_000)?
+        .iter()
+        .map(|(_, uid)| *uid)
+        .collect();
+    assert_eq!(uids, [5, 4, 3, 2, 1, 8]);
+    Ok(())
+}

@@ -300,7 +300,61 @@ impl Session {
             _ => None,
         }))
     }
+
+    /// `UID FETCH <uids> (UID RFC822.SIZE BODY.PEEK[]<0.n>)` for downloading
+    /// bodies ahead of time (M4-25): whole raw messages without setting
+    /// `\Seen`, at most [`PREFETCH_MAX_OCTETS`] each. The partial fetch
+    /// (RFC 9051 §6.4.5, `<origin.octets>`) asks for one octet more than
+    /// the limit, so a longer message shows up as too long instead of
+    /// being cut off. Only complete bodies come back: one longer than the
+    /// limit, or whose length is not the `RFC822.SIZE` the server sent with
+    /// it, is left out, as are UIDs not asked for and repeats.
+    pub async fn uid_fetch_complete_bodies(
+        &mut self,
+        uids: &[u32],
+    ) -> Result<Vec<(u32, Vec<u8>)>, ImapError> {
+        if uids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let set = uid_set(uids);
+        let done = self
+            .run_command(
+                "UID",
+                &[
+                    Arg::Raw("FETCH"),
+                    Arg::Str(set.as_bytes()),
+                    Arg::Raw(PREFETCH_ITEMS),
+                ],
+            )
+            .await?;
+        expect_ok(&done)?;
+        let limit = usize::try_from(PREFETCH_MAX_OCTETS).unwrap_or(usize::MAX);
+        let mut out: Vec<(u32, Vec<u8>)> = Vec::new();
+        for untagged in done.untagged {
+            let Untagged::Fetch(data) = untagged else {
+                continue;
+            };
+            let (Some(uid), Some(body)) = (data.uid, data.body) else {
+                continue;
+            };
+            let complete = body.len() <= limit
+                && data
+                    .size
+                    .is_none_or(|size| u64::try_from(body.len()).is_ok_and(|len| len == size));
+            if complete && uids.contains(&uid) && !out.iter().any(|(u, _)| *u == uid) {
+                out.push((uid, body));
+            }
+        }
+        Ok(out)
+    }
 }
+
+/// The largest message [`Session::uid_fetch_complete_bodies`] returns: 1 MiB.
+pub const PREFETCH_MAX_OCTETS: u32 = 1_048_576;
+
+/// The items for [`Session::uid_fetch_complete_bodies`]; the partial length
+/// is `PREFETCH_MAX_OCTETS + 1` (an `Arg::Raw` has to be a fixed string).
+const PREFETCH_ITEMS: &str = "(UID RFC822.SIZE BODY.PEEK[]<0.1048577>)";
 
 /// Parses `INTERNALDATE` (`24-Nov-2026 10:46:51 +0000`, RFC 9051 §9
 /// `date-time`) to Unix seconds, UTC.
@@ -409,6 +463,12 @@ mod tests {
         assert!(!with("()"));
         // Missing: every flag can be changed permanently (RFC 9051 §7.1).
         assert!(select_info(&base()).expect("info").custom_keywords);
+    }
+
+    #[test]
+    fn prefetch_items_ask_for_one_octet_over_the_limit() {
+        let wanted = format!("BODY.PEEK[]<0.{}>", PREFETCH_MAX_OCTETS + 1);
+        assert!(PREFETCH_ITEMS.contains(&wanted));
     }
 
     #[test]

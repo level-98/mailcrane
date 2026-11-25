@@ -7,7 +7,7 @@ use mailcrane_testkit::FakeImap;
 use std::collections::HashMap;
 
 #[derive(Default)]
-struct Platform(Mutex<HashMap<String, Vec<u8>>>);
+pub(super) struct Platform(Mutex<HashMap<String, Vec<u8>>>);
 
 impl PlatformSecretStore for Platform {
     fn put(&self, key: String, value: Vec<u8>) -> Result<(), SecretStoreError> {
@@ -35,7 +35,7 @@ impl PlatformSecretStore for Platform {
 }
 
 #[derive(Default)]
-struct Collect(Mutex<Vec<CoreEvent>>);
+pub(super) struct Collect(pub(super) Mutex<Vec<CoreEvent>>);
 
 impl CoreEventListener for Collect {
     fn on_event(&self, event: CoreEvent) {
