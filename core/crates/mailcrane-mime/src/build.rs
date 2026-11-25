@@ -69,6 +69,9 @@ pub struct OutgoingMessage {
     pub is_draft: bool,
     /// Files to attach (M2-04). With any, the message is `multipart/mixed`.
     pub attachments: Vec<OutgoingAttachment>,
+    /// Rich text (M2-09). With it, the body is `multipart/alternative`: the
+    /// plain-text version (from this, not `body_text`), then the HTML.
+    pub rich: Option<crate::richtext::RichDoc>,
 }
 
 /// A file attached to a new message.
@@ -202,7 +205,7 @@ pub(crate) fn build_with(
     }
     header(&mut out, "MIME-Version", &["1.0".to_owned()]);
     if draft.attachments.is_empty() {
-        write_text_part(&mut out, draft);
+        write_body(&mut out, draft, &id);
         return Ok(out);
     }
     // RFC 2046 §5.1.1. `=_` can't occur in quoted-printable or base64
@@ -218,7 +221,7 @@ pub(crate) fn build_with(
     );
     out.extend_from_slice(b"\r\n");
     out.extend_from_slice(format!("--{boundary}\r\n").as_bytes());
-    write_text_part(&mut out, draft);
+    write_body(&mut out, draft, &id);
     for attachment in &draft.attachments {
         out.extend_from_slice(format!("\r\n--{boundary}\r\n").as_bytes());
         write_attachment(&mut out, attachment);
@@ -308,17 +311,51 @@ fn param(name: &str, value: &str) -> String {
     format!("{name}*=UTF-8''{encoded}")
 }
 
-/// The plain-text body part: its Content-Type and transfer encoding, then
-/// the text.
-fn write_text_part(out: &mut Vec<u8>, draft: &OutgoingMessage) {
+/// The message body: plain text, or with [`OutgoingMessage::rich`] a
+/// `multipart/alternative` of the plain text and then the HTML (RFC 2046
+/// §5.1.4: the preferred, richer version last).
+fn write_body(out: &mut Vec<u8>, draft: &OutgoingMessage, id: &str) {
+    let Some(rich) = &draft.rich else {
+        write_text(out, "plain", &draft.body_text, draft.encoding);
+        return;
+    };
+    let boundary = format!("=_mca_{id}");
     header(
         out,
         "Content-Type",
-        &["text/plain;".to_owned(), "charset=utf-8".to_owned()],
+        &[
+            "multipart/alternative;".to_owned(),
+            format!("boundary=\"{boundary}\""),
+        ],
+    );
+    out.extend_from_slice(b"\r\n");
+    out.extend_from_slice(format!("--{boundary}\r\n").as_bytes());
+    write_text(
+        out,
+        "plain",
+        &crate::richtext::to_plain(rich),
+        draft.encoding,
+    );
+    out.extend_from_slice(format!("\r\n--{boundary}\r\n").as_bytes());
+    let html = format!(
+        "<!DOCTYPE html>\n<html><head><meta charset=\"utf-8\"></head><body>\n{}</body></html>",
+        crate::richtext::to_html(rich)
+    );
+    write_text(out, "html", &html, draft.encoding);
+    out.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
+}
+
+/// One `text/<subtype>` part in UTF-8: its Content-Type and transfer
+/// encoding, then the text.
+fn write_text(out: &mut Vec<u8>, subtype: &str, text: &str, encoding: TransferEncoding) {
+    header(
+        out,
+        "Content-Type",
+        &[format!("text/{subtype};"), "charset=utf-8".to_owned()],
     );
 
-    let lines = body_lines(&draft.body_text);
-    let eight_bit = draft.encoding == TransferEncoding::EightBit
+    let lines = body_lines(text);
+    let eight_bit = encoding == TransferEncoding::EightBit
         && lines
             .iter()
             .all(|l| l.len() <= MAX_LINE && !l.contains('\0'));

@@ -701,4 +701,31 @@ class ComposeViewModelTest {
         vm.addAttachments(listOf(ComposeAttachment("big.bin", "application/octet-stream", ByteArray(26 * 1024 * 1024))))
         assertTrue(vm.state.value.attachmentsTooLarge)
     }
+
+    @Test
+    fun formattedBodiesAreSentRichUnlessPlainIsChosen() {
+        val core = FakeCore()
+        val vm = started(core)
+        vm.onRecipientInput(RecipientField.TO, "bob@example.net,")
+        vm.onBodyChange("Hello world")
+        vm.format(0, 5, InlineFormat.BOLD)
+        vm.send()
+        assertTrue(core.sent?.rich != null)
+
+        val plainCore = FakeCore()
+        val plain = started(plainCore)
+        plain.onRecipientInput(RecipientField.TO, "bob@example.net,")
+        plain.onBodyChange("Hello world")
+        plain.format(0, 5, InlineFormat.BOLD)
+        plain.setPlainTextOnly(true)
+        plain.send()
+        assertNull(plainCore.sent?.rich)
+
+        val unformatted = FakeCore()
+        val text = started(unformatted)
+        text.onRecipientInput(RecipientField.TO, "bob@example.net,")
+        text.onBodyChange("Just text")
+        text.send()
+        assertNull("no formatting: plain text", unformatted.sent?.rich)
+    }
 }

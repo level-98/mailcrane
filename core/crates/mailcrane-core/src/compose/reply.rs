@@ -140,6 +140,7 @@ fn draft_for(
         references,
         attachments: Vec::new(),
         forward_attachments_of: None,
+        rich: None,
     }
 }
 

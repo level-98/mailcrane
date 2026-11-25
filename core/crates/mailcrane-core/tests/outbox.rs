@@ -89,6 +89,7 @@ fn draft(s: &Setup, subject: &str) -> ComposeDraft {
         references: vec![],
         attachments: Vec::new(),
         forward_attachments_of: None,
+        rich: None,
     }
 }
 

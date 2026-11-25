@@ -181,6 +181,18 @@
     <string name="message_move_title">Move to folder</string>
     <string name="message_move_cancel">Cancel</string>
 
+    <!-- Rich-text compose (M2-09) -->
+    <string name="rich_bold">Bold</string>
+    <string name="rich_italic">Italic</string>
+    <string name="rich_bullets">Bulleted list</string>
+    <string name="rich_numbers">Numbered list</string>
+    <string name="rich_link">Link</string>
+    <string name="rich_plain_only">Plain text</string>
+    <string name="rich_link_title">Link</string>
+    <string name="rich_link_address">Address (https:// or mailto:)</string>
+    <string name="rich_link_ok">OK</string>
+    <string name="rich_link_cancel">Cancel</string>
+
     <!-- Accounts (M4-01) -->
     <string name="accounts_title">Accounts</string>
     <string name="all_inboxes">All inboxes</string>

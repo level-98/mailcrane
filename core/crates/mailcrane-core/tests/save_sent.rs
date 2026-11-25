@@ -97,6 +97,7 @@ async fn send_one_message(s: &Setup) -> mailcrane_store::OutboxId {
         references: vec![],
         attachments: Vec::new(),
         forward_attachments_of: None,
+        rich: None,
     };
     let id = enqueue(&s.store, &draft, 0, NOW).expect("queued");
     let options = SendOptions {
