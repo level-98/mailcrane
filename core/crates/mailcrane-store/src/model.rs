@@ -156,6 +156,10 @@ pub struct NewFolder {
     pub highestmodseq: Option<i64>,
     /// Whether the folder is subscribed.
     pub is_subscribed: bool,
+    /// Whether the folder can be opened. `false` for a `\Noselect` folder
+    /// (RFC 9051 §7.3.1) such as Gmail's `[Gmail]` parent: it only holds
+    /// other folders and is never `SELECT`ed.
+    pub selectable: bool,
 }
 
 /// A stored folder.

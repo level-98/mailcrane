@@ -185,12 +185,19 @@ pub fn record(
         Ok(report) => {
             store.outbox_sent(id, &report.rejected, now)?;
             // A JMAP server files the message in Sent itself (RFC 8621 §7.5
-            // onSuccessUpdateEmail): there is no copy to append.
+            // onSuccessUpdateEmail): there is no copy to append. Without a
+            // Sent mailbox there is nowhere to keep one (#276), so none is
+            // kept rather than one claimed to be saved.
             if matches!(
                 store.account_protocol(message.account_id)?,
                 Some(mailcrane_store::Protocol::Jmap { .. })
             ) {
-                store.set_sent_copy(id, mailcrane_store::SentCopy::Saved)?;
+                let copy = if report.filed_in_sent {
+                    mailcrane_store::SentCopy::Saved
+                } else {
+                    mailcrane_store::SentCopy::Skipped
+                };
+                store.set_sent_copy(id, copy)?;
             }
             crate::contacts::record_sent(store, &message, now)?;
             SendOutcome::Sent {

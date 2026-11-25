@@ -39,6 +39,9 @@ pub enum Strategy {
     Condstore,
     /// A full comparison of UIDs and flags.
     Compare,
+    /// The folder can't be opened (`\Noselect`, e.g. Gmail's `[Gmail]`
+    /// parent): nothing was sent to the server.
+    NotSelectable,
 }
 
 /// What [`FolderSyncer::sync_changes`] did.
@@ -99,6 +102,13 @@ impl FolderSyncer<'_> {
     }
 
     async fn sync_changes_inner(&mut self, folder: FolderId) -> Result<SyncReport, SyncError> {
+        if !self.selectable(folder)? {
+            return Ok(SyncReport {
+                strategy: Strategy::NotSelectable,
+                new: 0,
+                changed: 0,
+            });
+        }
         let Some(cached) = self.cached(folder)? else {
             let (_, info, _) = self.select(folder).await?;
             return self.initial(folder, &info).await;
@@ -235,7 +245,7 @@ impl FolderSyncer<'_> {
         log_skipped(&fetched);
         let present: HashSet<u32> = self
             .session
-            .uid_search_range(cached.low, cached.high)
+            .uid_search_newest(info.exists, cached.low, cached.high, &[], usize::MAX)
             .await?
             .into_iter()
             .collect();
@@ -346,10 +356,13 @@ impl FolderSyncer<'_> {
         if top <= high {
             return Ok(0);
         }
-        let uids = self
+        let mut uids = self
             .session
-            .uid_search_range(high.saturating_add(1), top)
+            .uid_search_newest(info.exists, high.saturating_add(1), top, &[], usize::MAX)
             .await?;
+        // Oldest first, so an interrupted fetch leaves no gap below the
+        // highest stored UID, which is where the next sync starts.
+        uids.reverse();
         self.fetch_batches(folder, &uids).await
     }
 

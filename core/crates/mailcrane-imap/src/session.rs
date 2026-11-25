@@ -392,6 +392,10 @@ pub fn save_folders(
                 uidnext: old.and_then(|o| o.uidnext),
                 highestmodseq: old.and_then(|o| o.highestmodseq),
                 is_subscribed: old.is_none_or(|o| o.is_subscribed),
+                selectable: !f
+                    .attributes
+                    .iter()
+                    .any(|a| a.eq_ignore_ascii_case("\\Noselect")),
             }
         })
         .collect();

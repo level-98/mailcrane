@@ -4,7 +4,9 @@
 // Lets clippy's test allowances (clippy.toml) cover the helpers too.
 #![cfg(test)]
 
-use mailcrane_imap::{save_folders, ImapConfig, ImapError, ImapSecurity, Secret, Session};
+use mailcrane_imap::{
+    save_folders, ImapConfig, ImapError, ImapSecurity, SearchKey, Secret, Session, SEARCH_WINDOW,
+};
 use mailcrane_store::{FolderRole, NewAccount, NewFolder, Security, Store};
 use mailcrane_testkit::{FakeImap, Fault, Quirk};
 use std::time::Duration;
@@ -314,6 +316,7 @@ async fn saving_again_keeps_sync_state() {
             uidnext: Some(7),
             highestmodseq: Some(99),
             is_subscribed: false,
+            selectable: true,
         })
         .expect("seed");
     save_folders(&store, account, &folders).expect("saved");
@@ -368,13 +371,23 @@ async fn fetch_search_range_and_headers() {
     let mut session = connect(&config(&imap, ImapSecurity::ImplicitTls), PASSWORD)
         .await
         .expect("logged in");
-    session.select("INBOX").await.expect("selects");
+    let info = session.select("INBOX").await.expect("selects");
     assert_eq!(
-        session.uid_search_range(2, 4).await.expect("search"),
-        [2, 3, 4]
+        session
+            .uid_search_newest(info.exists, 2, 4, &[], usize::MAX)
+            .await
+            .expect("search"),
+        [4, 3, 2]
+    );
+    assert_eq!(
+        session
+            .uid_search_newest(info.exists, 1, 5, &[], 2)
+            .await
+            .expect("newest two"),
+        [5, 4]
     );
     assert!(session
-        .uid_search_range(9, 5)
+        .uid_search_newest(info.exists, 9, 5, &[], usize::MAX)
         .await
         .expect("empty")
         .is_empty());
@@ -427,4 +440,63 @@ async fn fetch_on_a_dropped_connection_is_an_error_not_a_hang() {
         .await
         .expect("must not hang");
     assert!(result.is_err());
+}
+
+#[tokio::test]
+async fn uid_search_newest_works_in_windows_that_fit_the_line_limit() {
+    // Two full windows and a bit: one `* SEARCH` line for all of them would
+    // be longer than the 64 KiB line limit if UIDs were long; here it is
+    // the window count that's checked.
+    let count = usize::try_from(SEARCH_WINDOW).expect("fits") * 2 + 10;
+    let imap = fake_with_messages(count, &[]).await;
+    let mut session = connect(&config(&imap, ImapSecurity::ImplicitTls), PASSWORD)
+        .await
+        .expect("logged in");
+    let info = session.select("INBOX").await.expect("selects");
+    let top = u32::try_from(count).expect("fits");
+
+    let all = session
+        .uid_search_newest(info.exists, 1, top, &[], usize::MAX)
+        .await
+        .expect("search all");
+    assert_eq!(all.len(), count);
+    assert_eq!(all.first(), Some(&top));
+    assert_eq!(all.last(), Some(&1));
+    assert!(
+        all.windows(2).all(|w| w[0] > w[1]),
+        "newest first, no repeats"
+    );
+    let searches = |cmds: &[String]| cmds.iter().filter(|c| *c == "UID SEARCH").count();
+    assert_eq!(searches(&imap.received_commands().await), 3);
+
+    // The newest 5: one window, one round trip.
+    let before = searches(&imap.received_commands().await);
+    let newest = session
+        .uid_search_newest(info.exists, 1, top, &[], 5)
+        .await
+        .expect("newest");
+    assert_eq!(newest, (top - 4..=top).rev().collect::<Vec<_>>());
+    assert_eq!(searches(&imap.received_commands().await), before + 1);
+
+    // A range in the newest window: the scan stops below it.
+    let before = searches(&imap.received_commands().await);
+    let range = session
+        .uid_search_newest(info.exists, top - 20, top - 10, &[], usize::MAX)
+        .await
+        .expect("range");
+    assert_eq!(range, (top - 20..=top - 10).rev().collect::<Vec<_>>());
+    assert_eq!(searches(&imap.received_commands().await), before + 1);
+
+    // With keys: CHARSET first, then the window, then the keys.
+    let found = session
+        .uid_search_newest(
+            info.exists,
+            1,
+            u32::MAX,
+            &[SearchKey::Text(top.to_string())],
+            usize::MAX,
+        )
+        .await
+        .expect("keyed search");
+    assert_eq!(found, [top]);
 }

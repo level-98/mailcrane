@@ -109,7 +109,7 @@ Goal: add an IMAP account and read your inbox, online and offline.
 - [ ] **M4-16** Choose which view the app opens on: unified inbox, a chosen account's inbox, or the last one used 🟢🤖
 - [ ] **M4-17** Templates and canned replies: save, insert while composing, edit and delete 🟢🤖
 - [ ] **M4-18** Settings backup and restore to an encrypted, password-protected file: accounts (server settings only, never passwords or tokens), signatures, rules, templates and app settings 🔒🤖
-- [ ] **M4-19** Date headers in the message list: Today, Yesterday, This week, then by month 🟢🤖
+- [x] **M4-19** Date headers in the message list: Today, Yesterday, This week, then by month 🟢🤖
 - [x] **M4-20** Let users choose each account's colour (the automatic colours from M4-01 stay the default) 🟢🤖
 - [x] **M4-21** Search filter chips (from, has attachment, unread, flagged, date range, account) built on the existing search syntax, adding `account:` to it 🟢🤖
 - [ ] **M4-22** Create, rename, move and delete folders from the phone 🤖

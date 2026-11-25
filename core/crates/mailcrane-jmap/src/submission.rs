@@ -247,6 +247,12 @@ fn created_id(args: &Value, cid: &str) -> Result<String, JmapError> {
 }
 
 /// Uploads, imports and submits `out` in two requests.
+///
+/// If the server imports the email but refuses the submission, the imported
+/// copy is destroyed again, so a failed send leaves the mailbox unchanged
+/// and a retry doesn't leave another copy in Drafts (#277). When the outcome
+/// of the submission is unknown (no or a malformed answer), the copy is
+/// kept: the message may have gone, and then it is the Sent copy.
 pub async fn send_message(
     session: &Session,
     auth: &Auth,
@@ -259,11 +265,46 @@ pub async fn send_message(
     let calls = send_calls(&session.mail_account_id, &blob_id, out)?;
     let responses = call_using(session, auth, config, &using(), &calls).await?;
     let email_id = created_id(&find(responses.clone(), "Email/import", "i0")?, "draft")?;
-    let submission_id = created_id(&find(responses, "EmailSubmission/set", "s0")?, "send")?;
-    Ok(Sent {
-        email_id,
-        submission_id,
-    })
+    match find(responses, "EmailSubmission/set", "s0").and_then(|a| created_id(&a, "send")) {
+        Ok(submission_id) => Ok(Sent {
+            email_id,
+            submission_id,
+        }),
+        // The server answered that nothing was submitted (a method error,
+        // RFC 8620 §3.6.2, or `notCreated`, RFC 8620 §5.3).
+        Err(refused @ JmapError::Method(_)) => {
+            // Best effort: if this fails too, the refusal is still what the
+            // caller needs to hear, and one copy is left at worst.
+            let _ = destroy_email(session, auth, config, &email_id).await;
+            Err(refused)
+        }
+        Err(other) => Err(other),
+    }
+}
+
+/// Destroys one email (`Email/set`, RFC 8621 §4.6).
+async fn destroy_email(
+    session: &Session,
+    auth: &Auth,
+    config: &ClientConfig,
+    email_id: &str,
+) -> Result<(), JmapError> {
+    let calls = [MethodCall {
+        name: "Email/set".into(),
+        args: json!({"accountId": session.mail_account_id, "destroy": [email_id]}),
+        id: "d0".into(),
+    }];
+    let responses = call_using(session, auth, config, &[CAP_CORE, CAP_MAIL], &calls).await?;
+    let args = find(responses, "Email/set", "d0")?;
+    let destroyed = args
+        .get("destroyed")
+        .and_then(Value::as_array)
+        .is_some_and(|d| d.iter().any(|i| i.as_str() == Some(email_id)));
+    if destroyed {
+        Ok(())
+    } else {
+        Err(JmapError::Malformed)
+    }
 }
 
 #[cfg(test)]
