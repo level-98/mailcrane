@@ -214,27 +214,25 @@ pub struct PreparedSend {
     message: Vec<u8>,
 }
 
-/// Validates the draft, reads the account and its password, and builds the
-/// message. Nothing goes over the network.
-pub fn prepare_send(
-    store: &Store,
-    secrets: &dyn SecretStore,
-    draft: &ComposeDraft,
-    options: &SendOptions,
-) -> Result<PreparedSend, SendError> {
+/// A message built for sending, without credentials: what the outbox keeps.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BuiltMessage {
+    pub envelope: Envelope,
+    /// The exact bytes to send; never a Bcc header.
+    pub raw: Vec<u8>,
+    /// Its Message-ID, without angle brackets.
+    pub message_id: String,
+}
+
+/// Validates the draft, reads the account and builds the message with a
+/// fresh Message-ID. Nothing goes over the network; no password is read.
+pub fn build_for_sending(store: &Store, draft: &ComposeDraft) -> Result<BuiltMessage, SendError> {
     let recipients = validate_recipients(draft)?;
     let account = store
         .get_account(draft.account_id)
         .map_err(|_| SendError::Storage)?
         .ok_or(SendError::AccountNotFound)?
         .details;
-    let password = secrets
-        .get(&SecretKey::account_password(draft.account_id.0))
-        .map_err(|_| SendError::MissingCredentials)?
-        .ok_or(SendError::MissingCredentials)?;
-    let password =
-        std::str::from_utf8(password.expose()).map_err(|_| SendError::MissingCredentials)?;
-
     let from = Address {
         name: Some(account.display_name.trim().to_owned()).filter(|n| !n.is_empty()),
         email: account.email.clone(),
@@ -243,7 +241,13 @@ pub fn prepare_send(
         from: account.email.clone(),
         to: recipients.envelope(),
     };
-    let message = build_message(&OutgoingMessage {
+    let domain = account
+        .email
+        .rsplit_once('@')
+        .map(|(_, d)| d)
+        .unwrap_or_default();
+    let message_id = mailcrane_mime::new_message_id(domain).map_err(|_| SendError::Internal)?;
+    let raw = build_message(&OutgoingMessage {
         from,
         to: recipients.to,
         cc: recipients.cc,
@@ -254,7 +258,7 @@ pub fn prepare_send(
         encoding: TransferEncoding::QuotedPrintable,
         in_reply_to: draft.in_reply_to.clone(),
         references: draft.references.clone(),
-        message_id: None,
+        message_id: Some(message_id.clone()),
         is_draft: false,
     })
     .map_err(|e| match e {
@@ -264,7 +268,32 @@ pub fn prepare_send(
         BuildError::TooLarge => SendError::TooLarge,
         BuildError::Random => SendError::Internal,
     })?;
+    Ok(BuiltMessage {
+        envelope,
+        raw,
+        message_id,
+    })
+}
 
+/// The account's SMTP server and credentials (the password from the secret
+/// store, never the database).
+pub(crate) fn smtp_settings(
+    store: &Store,
+    secrets: &dyn SecretStore,
+    account_id: AccountId,
+    options: &SendOptions,
+) -> Result<(SmtpConfig, SmtpAuth), SendError> {
+    let account = store
+        .get_account(account_id)
+        .map_err(|_| SendError::Storage)?
+        .ok_or(SendError::AccountNotFound)?
+        .details;
+    let password = secrets
+        .get(&SecretKey::account_password(account_id.0))
+        .map_err(|_| SendError::MissingCredentials)?
+        .ok_or(SendError::MissingCredentials)?;
+    let password =
+        std::str::from_utf8(password.expose()).map_err(|_| SendError::MissingCredentials)?;
     let security = match account.smtp_security {
         Security::Tls => SmtpSecurity::ImplicitTls,
         Security::Starttls => SmtpSecurity::StartTls,
@@ -277,12 +306,35 @@ pub fn prepare_send(
         username: account.username,
         password: mailcrane_smtp::Secret::new(password),
     };
-    Ok(PreparedSend {
+    Ok((config, auth))
+}
+
+/// A built message with its server and credentials, ready to send.
+pub(crate) fn prepared(
+    config: SmtpConfig,
+    auth: SmtpAuth,
+    envelope: Envelope,
+    message: Vec<u8>,
+) -> PreparedSend {
+    PreparedSend {
         config,
         auth,
         envelope,
         message,
-    })
+    }
+}
+
+/// Validates the draft, reads the account and its password, and builds the
+/// message. Nothing goes over the network.
+pub fn prepare_send(
+    store: &Store,
+    secrets: &dyn SecretStore,
+    draft: &ComposeDraft,
+    options: &SendOptions,
+) -> Result<PreparedSend, SendError> {
+    let built = build_for_sending(store, draft)?;
+    let (config, auth) = smtp_settings(store, secrets, draft.account_id, options)?;
+    Ok(prepared(config, auth, built.envelope, built.raw))
 }
 
 /// Sends a prepared message.
@@ -322,7 +374,7 @@ pub async fn send(
     send_prepared(prepared).await
 }
 
-fn map_smtp(err: SmtpError) -> SendError {
+pub(crate) fn map_smtp(err: SmtpError) -> SendError {
     match err {
         SmtpError::CannotConnect => SendError::CannotConnect,
         SmtpError::TlsFailure => SendError::TlsFailure,

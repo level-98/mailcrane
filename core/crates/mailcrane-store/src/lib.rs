@@ -10,8 +10,8 @@ mod repo;
 pub use error::StoreError;
 pub use model::*;
 pub use repo::{
-    Draft, DraftFields, DraftId, OpId, OpKind, OpMessage, PendingOp, ServerCopy, SignatureSetting,
-    MAX_SIGNATURE_BYTES,
+    Draft, DraftFields, DraftId, NewOutboxMessage, OpId, OpKind, OpMessage, OutboxId,
+    OutboxMessage, OutboxState, PendingOp, ServerCopy, SignatureSetting, MAX_SIGNATURE_BYTES,
 };
 
 use rusqlite::Connection;

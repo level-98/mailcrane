@@ -10,6 +10,7 @@ pub mod compose;
 pub mod drafts;
 pub mod events;
 pub mod links;
+pub mod outbox;
 pub mod secrets;
 pub mod sync;
 

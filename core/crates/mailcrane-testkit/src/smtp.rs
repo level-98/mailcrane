@@ -27,6 +27,8 @@ pub struct FakeSmtp {
     root_cert_der: Vec<u8>,
     sent: Arc<RwLock<Vec<SentMessage>>>,
     shutdown: Arc<RwLock<Option<JoinHandle<()>>>>,
+    /// While set, connections are closed as soon as they arrive.
+    down: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl FakeSmtpBuilder {
@@ -53,6 +55,8 @@ impl FakeSmtpBuilder {
         let sent_for_server = sent.clone();
         let faults = Arc::new(self.faults);
         let quirks = Arc::new(self.quirks);
+        let down = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let down_for_server = down.clone();
         let handle = tokio::spawn(async move {
             loop {
                 let accepted = tokio::select! {
@@ -62,6 +66,10 @@ impl FakeSmtpBuilder {
                 let Ok((stream, implicit_tls)) = accepted else {
                     break;
                 };
+                if down_for_server.load(std::sync::atomic::Ordering::SeqCst) {
+                    drop(stream);
+                    continue;
+                }
                 let sent = sent_for_server.clone();
                 let faults = faults.clone();
                 let quirks = quirks.clone();
@@ -82,6 +90,7 @@ impl FakeSmtpBuilder {
             root_cert_der: tls.cert_der,
             sent,
             shutdown: Arc::new(RwLock::new(Some(handle))),
+            down,
         })
     }
 }
@@ -104,6 +113,12 @@ impl FakeSmtp {
     pub fn root_cert_der(&self) -> &[u8] {
         &self.root_cert_der
     }
+    /// Takes the server down (connections close at once) or brings it
+    /// back, on the same addresses.
+    pub fn set_down(&self, down: bool) {
+        self.down.store(down, std::sync::atomic::Ordering::SeqCst);
+    }
+
     pub async fn sent(&self) -> Vec<SentMessage> {
         self.sent.read().await.clone()
     }
