@@ -169,5 +169,22 @@ pub fn apply_action(
     }))
 }
 
+/// Undoes the newest queued action on `message` if it hasn't been sent to
+/// the server yet (for "Archived · Undo"). Sends `MessagesChanged`. Returns
+/// whether anything was undone; if not, it's too late.
+pub fn undo(
+    store: &Store,
+    message: MessageId,
+    listener: &dyn EventListener,
+) -> Result<bool, ActionError> {
+    match store.cancel_queued(message)? {
+        Some(folder_id) => {
+            listener.on_event(CoreEvent::MessagesChanged { folder_id });
+            Ok(true)
+        }
+        None => Ok(false),
+    }
+}
+
 #[cfg(test)]
 mod tests;

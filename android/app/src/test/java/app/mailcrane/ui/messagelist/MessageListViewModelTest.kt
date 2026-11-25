@@ -1,12 +1,16 @@
 package app.mailcrane.ui.messagelist
 
+import app.mailcrane.core.ActionFailure
 import app.mailcrane.core.ActionKind
 import app.mailcrane.core.CoreEvent
 import app.mailcrane.core.FolderSummary
 import app.mailcrane.core.MailboxCore
+import app.mailcrane.core.MessageAction
 import app.mailcrane.core.MessageSummary
 import app.mailcrane.core.SyncErrorKind
 import app.mailcrane.core.SyncFailure
+import app.mailcrane.settings.FakeAppSettings
+import app.mailcrane.settings.SwipeAction
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -87,6 +91,21 @@ private class FakeMailbox(
     override suspend fun refreshFolders(accountId: Long): Long? = FOLDER
 
     override suspend fun listFolders(accountId: Long): List<FolderSummary> = emptyList()
+
+    val swiped = mutableListOf<Pair<MessageAction, Boolean>>()
+    var actionFailure: ActionFailure? = null
+    var undoResult = true
+
+    override suspend fun swipeAction(
+        messageId: Long,
+        action: MessageAction,
+        undoable: Boolean,
+    ) {
+        actionFailure?.let { throw it }
+        swiped += action to undoable
+    }
+
+    override suspend fun undoAction(messageId: Long) = undoResult
 }
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -100,7 +119,7 @@ class MessageListViewModelTest {
     @Test
     fun showsFirstPageNewestFirstAndSyncsOnOpen() {
         val core = FakeMailbox(stored = 120)
-        val vm = MessageListViewModel(core, FOLDER)
+        val vm = MessageListViewModel(core, FakeAppSettings(), FOLDER)
         val state = vm.state.value
         assertFalse(state.isLoading)
         assertFalse(state.isRefreshing)
@@ -112,7 +131,7 @@ class MessageListViewModelTest {
     @Test
     fun refreshShowsProgressUntilSyncFinishes() {
         val core = FakeMailbox(stored = 3)
-        val vm = MessageListViewModel(core, FOLDER)
+        val vm = MessageListViewModel(core, FakeAppSettings(), FOLDER)
         val gate = CompletableDeferred<Unit>()
         core.syncGate = gate
         vm.refresh()
@@ -127,7 +146,7 @@ class MessageListViewModelTest {
     fun failedRefreshStopsProgressAndReportsTheError() =
         runTest {
             val core = FakeMailbox(stored = 3)
-            val vm = MessageListViewModel(core, FOLDER)
+            val vm = MessageListViewModel(core, FakeAppSettings(), FOLDER)
             core.syncFailure = SyncErrorKind.NETWORK
             vm.refresh()
             assertFalse(vm.state.value.isRefreshing)
@@ -138,7 +157,7 @@ class MessageListViewModelTest {
     @Test
     fun scrollingShowsMoreStoredMessagesBeforeAskingTheServer() {
         val core = FakeMailbox(stored = 120, onServer = 100)
-        val vm = MessageListViewModel(core, FOLDER)
+        val vm = MessageListViewModel(core, FakeAppSettings(), FOLDER)
         vm.loadMore()
         assertEquals(100, vm.state.value.messages.size)
         assertEquals(0, core.loadOlderCalls)
@@ -153,7 +172,7 @@ class MessageListViewModelTest {
     @Test
     fun loadOlderIsCalledOncePerPageWhileOneIsRunning() {
         val core = FakeMailbox(stored = 10, onServer = 100)
-        val vm = MessageListViewModel(core, FOLDER)
+        val vm = MessageListViewModel(core, FakeAppSettings(), FOLDER)
         val gate = CompletableDeferred<Unit>()
         core.loadOlderGate = gate
         vm.loadMore()
@@ -169,7 +188,7 @@ class MessageListViewModelTest {
     @Test
     fun stopsAskingOnceTheServerHasNoOlderMessages() {
         val core = FakeMailbox(stored = 10, onServer = 0)
-        val vm = MessageListViewModel(core, FOLDER)
+        val vm = MessageListViewModel(core, FakeAppSettings(), FOLDER)
         vm.loadMore()
         assertTrue(vm.state.value.endReached)
         vm.loadMore()
@@ -179,7 +198,7 @@ class MessageListViewModelTest {
     @Test
     fun messagesChangedReloadsTheLoadedRange() {
         val core = FakeMailbox(stored = 120)
-        val vm = MessageListViewModel(core, FOLDER)
+        val vm = MessageListViewModel(core, FakeAppSettings(), FOLDER)
         vm.loadMore()
         assertEquals(100, vm.state.value.messages.size)
 
@@ -196,7 +215,7 @@ class MessageListViewModelTest {
     fun anUndoneActionIsReportedOnce() =
         runTest {
             val core = FakeMailbox(stored = 3)
-            val vm = MessageListViewModel(core, FOLDER)
+            val vm = MessageListViewModel(core, FakeAppSettings(), FOLDER)
             core.events.tryEmit(CoreEvent.ActionFailed(1, ActionKind.MOVE, listOf(7L), SyncErrorKind.PROTOCOL))
             vm.actionsUndone.first()
             assertEquals(3, vm.state.value.messages.size)
@@ -205,7 +224,7 @@ class MessageListViewModelTest {
     @Test
     fun eventsForOtherFoldersAreIgnored() {
         val core = FakeMailbox(stored = 3)
-        val vm = MessageListViewModel(core, FOLDER)
+        val vm = MessageListViewModel(core, FakeAppSettings(), FOLDER)
         core.messages = emptyList()
         core.events.tryEmit(CoreEvent.MessagesChanged(FOLDER + 1))
         core.events.tryEmit(CoreEvent.SyncError(1, SyncErrorKind.AUTH))
@@ -215,7 +234,7 @@ class MessageListViewModelTest {
     @Test
     fun readsALargeFolderInChunksTheCoreAccepts() {
         val core = FakeMailbox(stored = 5_000)
-        val vm = MessageListViewModel(core, FOLDER)
+        val vm = MessageListViewModel(core, FakeAppSettings(), FOLDER)
         repeat(30) { vm.loadMore() }
         assertEquals(31 * MessageListViewModel.PAGE_SIZE, vm.state.value.messages.size)
         assertEquals(
@@ -228,7 +247,7 @@ class MessageListViewModelTest {
     @Test
     fun scrollingReadsOnlyTheNextPage() {
         val core = FakeMailbox(stored = 5_000)
-        val vm = MessageListViewModel(core, FOLDER)
+        val vm = MessageListViewModel(core, FakeAppSettings(), FOLDER)
         val before = core.rowsRead
         repeat(30) { vm.loadMore() }
         assertEquals(30 * MessageListViewModel.PAGE_SIZE, core.rowsRead - before)
@@ -238,7 +257,7 @@ class MessageListViewModelTest {
     fun failedFirstReadShowsAnErrorState() {
         val core = FakeMailbox(stored = 3)
         core.listFailure = SyncErrorKind.STORAGE
-        val vm = MessageListViewModel(core, FOLDER)
+        val vm = MessageListViewModel(core, FakeAppSettings(), FOLDER)
         assertEquals(SyncErrorKind.STORAGE, vm.state.value.loadError)
         assertFalse(vm.state.value.isLoading)
 
@@ -246,5 +265,55 @@ class MessageListViewModelTest {
         vm.refresh()
         assertNull(vm.state.value.loadError)
         assertEquals(3, vm.state.value.messages.size)
+    }
+
+    @Test
+    fun swipesRunThroughTheCoreAndArchiveOffersUndo() =
+        runTest {
+            val core = FakeMailbox(stored = 3)
+            val vm = MessageListViewModel(core, FakeAppSettings(), FOLDER)
+            val unread = summary(1)
+            vm.swipe(unread, SwipeAction.READ_UNREAD)
+            vm.swipe(unread.copy(isSeen = true), SwipeAction.READ_UNREAD)
+            vm.swipe(unread, SwipeAction.FLAG)
+            vm.swipe(unread.copy(isFlagged = true), SwipeAction.FLAG)
+            vm.swipe(unread, SwipeAction.NONE)
+            vm.move(1, 9)
+            assertEquals(
+                listOf(
+                    MessageAction.MarkRead to false,
+                    MessageAction.MarkUnread to false,
+                    MessageAction.Flag to false,
+                    MessageAction.Unflag to false,
+                    MessageAction.Move(9) to false,
+                ),
+                core.swiped,
+            )
+            vm.swipe(unread, SwipeAction.ARCHIVE)
+            assertEquals(UndoOffer(1, SwipeAction.ARCHIVE), vm.undoOffers.first())
+            vm.swipe(unread, SwipeAction.DELETE)
+            assertEquals(UndoOffer(1, SwipeAction.DELETE), vm.undoOffers.first())
+            assertEquals(listOf(MessageAction.Archive to true, MessageAction.Delete to true), core.swiped.takeLast(2))
+        }
+
+    @Test
+    fun undoTooLateAndRefusedSwipesAreExplained() =
+        runTest {
+            val core = FakeMailbox(stored = 3).apply { undoResult = false }
+            val vm = MessageListViewModel(core, FakeAppSettings(), FOLDER)
+            vm.undo(1)
+            assertEquals(app.mailcrane.R.string.swipe_undo_too_late, vm.notices.first())
+            core.actionFailure = ActionFailure.NoArchiveFolder()
+            vm.swipe(summary(1), SwipeAction.ARCHIVE)
+            assertEquals(app.mailcrane.R.string.action_no_archive_folder, vm.notices.first())
+        }
+
+    @Test
+    fun swipeSettingsReachTheList() {
+        val settings = FakeAppSettings()
+        val vm = MessageListViewModel(FakeMailbox(stored = 1), settings, FOLDER)
+        assertEquals(SwipeAction.READ_UNREAD to SwipeAction.ARCHIVE, vm.swipes.value)
+        kotlinx.coroutines.runBlocking { settings.setSwipeLeft(SwipeAction.DELETE) }
+        assertEquals(SwipeAction.READ_UNREAD to SwipeAction.DELETE, vm.swipes.value)
     }
 }

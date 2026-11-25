@@ -45,7 +45,24 @@ interface MailboxCore {
 
     /** The account's stored folders in display order, with unread counts. */
     suspend fun listFolders(accountId: Long): List<FolderSummary>
+
+    /**
+     * A swipe action: applied at once and queued like [MessageCore.applyAction]. With [undoable], the
+     * server copy waits [UNDO_WINDOW_MS] first so [undoAction] can still take it back.
+     * @throws ActionFailure
+     */
+    suspend fun swipeAction(
+        messageId: Long,
+        action: MessageAction,
+        undoable: Boolean,
+    )
+
+    /** Undoes the newest action on the message if it hasn't reached the server; false if too late. */
+    suspend fun undoAction(messageId: Long): Boolean
 }
+
+/** How long Undo is offered after archiving or deleting with a swipe. */
+const val UNDO_WINDOW_MS = 5_000L
 
 /** Forwards events from the core to every collector of [flow]. Called by the core on any thread. */
 private class EventHub : CoreEventListener {
@@ -127,6 +144,17 @@ class UniffiMailboxCore(
         if (account != null) replaySoon(account)
     }
 
+    override suspend fun swipeAction(
+        messageId: Long,
+        action: MessageAction,
+        undoable: Boolean,
+    ) {
+        val account = withContext(io) { engine.applyAction(listOf(messageId), action) }
+        if (account != null) replaySoon(account, if (undoable) UNDO_WINDOW_MS + 500 else 0)
+    }
+
+    override suspend fun undoAction(messageId: Long): Boolean = withContext(io) { engine.undoAction(messageId) }
+
     // Replays outlive the screen that started them (an archived message's screen closes at once).
     private val background = CoroutineScope(SupervisorJob() + io)
     private val replays = ConcurrentHashMap<Long, Job>()
@@ -135,10 +163,14 @@ class UniffiMailboxCore(
      * Sends the account's queued actions to the server now, then again with back-off while some are
      * left (offline, or the server busy). One loop per account; a newer action restarts it.
      */
-    private fun replaySoon(accountId: Long) {
+    private fun replaySoon(
+        accountId: Long,
+        firstDelayMs: Long = 0,
+    ) {
         replays[accountId]?.cancel()
         replays[accountId] =
             background.launch {
+                delay(firstDelayMs)
                 var wait = FIRST_RETRY_MS
                 while (true) {
                     val left =

@@ -99,7 +99,7 @@ fun RowScope.MessageToolbarActions(
 
 /** Picks the folder to move the message to. */
 @Composable
-private fun MoveDialog(
+internal fun MoveDialog(
     folders: List<FolderSummary>,
     onPick: (Long) -> Unit,
     onDismiss: () -> Unit,

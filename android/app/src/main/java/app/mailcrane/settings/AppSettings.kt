@@ -49,7 +49,24 @@ interface AppSettings {
     val darkMessageBodies: Flow<Boolean>
 
     suspend fun setDarkMessageBodies(enabled: Boolean)
+
+    /** What swiping a message to the right (start to end) does. */
+    val swipeRight: Flow<SwipeAction>
+
+    suspend fun setSwipeRight(action: SwipeAction)
+
+    /** What swiping a message to the left (end to start) does. */
+    val swipeLeft: Flow<SwipeAction>
+
+    suspend fun setSwipeLeft(action: SwipeAction)
 }
+
+/** What a swipe on a message does (M4-04). */
+enum class SwipeAction { NONE, ARCHIVE, DELETE, READ_UNREAD, FLAG, MOVE }
+
+/** Swiping right toggles read; swiping left archives. */
+val DEFAULT_SWIPE_RIGHT = SwipeAction.READ_UNREAD
+val DEFAULT_SWIPE_LEFT = SwipeAction.ARCHIVE
 
 /** The app's theme choice. */
 enum class ThemeMode { SYSTEM, LIGHT, DARK }
@@ -104,7 +121,23 @@ class DataStoreAppSettings(
         dataStore.edit { it[DARK_BODIES] = enabled }
     }
 
+    override val swipeRight: Flow<SwipeAction> = prefs.map { swipe(it[SWIPE_RIGHT]) ?: DEFAULT_SWIPE_RIGHT }
+
+    override suspend fun setSwipeRight(action: SwipeAction) {
+        dataStore.edit { it[SWIPE_RIGHT] = action.name }
+    }
+
+    override val swipeLeft: Flow<SwipeAction> = prefs.map { swipe(it[SWIPE_LEFT]) ?: DEFAULT_SWIPE_LEFT }
+
+    override suspend fun setSwipeLeft(action: SwipeAction) {
+        dataStore.edit { it[SWIPE_LEFT] = action.name }
+    }
+
+    private fun swipe(name: String?): SwipeAction? = SwipeAction.entries.firstOrNull { it.name == name }
+
     private companion object {
+        val SWIPE_RIGHT = stringPreferencesKey("swipe_right")
+        val SWIPE_LEFT = stringPreferencesKey("swipe_left")
         val CLEAN_LINKS = booleanPreferencesKey("clean_links")
         val UNDO_SEND = intPreferencesKey("undo_send_seconds")
         val THEME = stringPreferencesKey("theme_mode")

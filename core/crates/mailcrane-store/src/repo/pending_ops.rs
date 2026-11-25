@@ -310,6 +310,46 @@ impl Store {
         Ok(())
     }
 
+    /// Undo (M4-04): takes `message` out of its newest queued action if
+    /// that action hasn't been tried yet, and undoes its local change, in
+    /// one transaction. Returns the folder the message is in, or `None` if
+    /// there was nothing to undo (already sent to the server, or no action).
+    pub fn cancel_queued(&self, message: MessageId) -> Result<Option<FolderId>, StoreError> {
+        let tx = self.conn.unchecked_transaction()?;
+        let latest: Option<(i64, String, i64)> = tx
+            .query_row(
+                "SELECT o.id, o.kind, o.folder_id FROM pending_ops o \
+                 JOIN pending_op_messages pm ON pm.op_id = o.id \
+                 WHERE pm.message_id = ?1 ORDER BY o.id DESC LIMIT 1",
+                params![message.0],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .optional()?;
+        let Some((op, kind, folder)) = latest else {
+            return Ok(None);
+        };
+        let untried: bool = tx.query_row(
+            "SELECT attempts = 0 AND step = 0 FROM pending_ops WHERE id = ?1",
+            params![op],
+            |r| r.get(0),
+        )?;
+        if !untried {
+            return Ok(None);
+        }
+        revert_local(&tx, OpKind::parse(&kind)?, message)?;
+        tx.execute(
+            "DELETE FROM pending_op_messages WHERE op_id = ?1 AND message_id = ?2",
+            params![op, message.0],
+        )?;
+        tx.execute(
+            "DELETE FROM pending_ops WHERE id = ?1 AND NOT EXISTS \
+             (SELECT 1 FROM pending_op_messages WHERE op_id = ?1)",
+            params![op],
+        )?;
+        tx.commit()?;
+        Ok(Some(FolderId(folder)))
+    }
+
     /// How many actions are queued for the account.
     pub fn count_pending_ops(&self, account: AccountId) -> Result<u64, StoreError> {
         let n: i64 = self.conn.query_row(
