@@ -104,7 +104,7 @@ Goal: add an IMAP account and read your inbox, online and offline.
 - [x] **M4-11** Home-screen widgets (Android Glance) 🤖
 - [x] **M4-12** Dark mode and dynamic colour (Material You) 🟢🤖
 - [x] **M4-13** Tablet layouts (list and detail side by side) 🤖
-- [ ] **M4-14** Multi-select and bulk actions in the message list: long-press to start, then read, unread, flag, archive, delete and move on all selected 🤖
+- [x] **M4-14** Multi-select and bulk actions in the message list: long-press to start, then read, unread, flag, archive, delete and move on all selected 🤖
 - [ ] **M4-15** Mark-as-read setting (on open, after a few seconds, or only by hand) and an "after delete or move" setting (next message, previous message, or back to the list) 🟢🤖
 - [ ] **M4-16** Choose which view the app opens on: unified inbox, a chosen account's inbox, or the last one used 🟢🤖
 - [ ] **M4-17** Templates and canned replies: save, insert while composing, edit and delete 🟢🤖
