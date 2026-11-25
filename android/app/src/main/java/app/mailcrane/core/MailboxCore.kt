@@ -59,6 +59,20 @@ interface MailboxCore {
 
     /** Undoes the newest action on the message if it hasn't reached the server; false if too late. */
     suspend fun undoAction(messageId: Long): Boolean
+
+    /** Searches the stored mail (works offline), newest first. */
+    suspend fun searchMessages(
+        accountId: Long,
+        folderId: Long?,
+        query: String,
+        limit: Int,
+    ): List<MessageSummary>
+
+    /** Asks the server for matches in the folder that were never downloaded; returns how many were stored. */
+    suspend fun searchServer(
+        folderId: Long,
+        query: String,
+    ): Int
 }
 
 /** How long Undo is offered after archiving or deleting with a swipe. */
@@ -154,6 +168,19 @@ class UniffiMailboxCore(
     }
 
     override suspend fun undoAction(messageId: Long): Boolean = withContext(io) { engine.undoAction(messageId) }
+
+    override suspend fun searchMessages(
+        accountId: Long,
+        folderId: Long?,
+        query: String,
+        limit: Int,
+    ): List<MessageSummary> =
+        withContext(io) { searchMessages(dbPath, accountId, folderId, query, limit.coerceAtLeast(0).toUInt()) }
+
+    override suspend fun searchServer(
+        folderId: Long,
+        query: String,
+    ): Int = withContext(io) { engine.searchServer(folderId, query).toInt() }
 
     // Replays outlive the screen that started them (an archived message's screen closes at once).
     private val background = CoroutineScope(SupervisorJob() + io)

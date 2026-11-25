@@ -56,4 +56,15 @@ class FakeAppSettings(
     override suspend fun setSwipeLeft(action: SwipeAction) {
         left.value = action
     }
+
+    private val recent = MutableStateFlow<List<String>>(emptyList())
+    override val recentSearches: StateFlow<List<String>> = recent
+
+    override suspend fun addRecentSearch(query: String) {
+        recent.value = (listOf(query) + recent.value.filter { it != query }).take(MAX_RECENT_SEARCHES)
+    }
+
+    override suspend fun clearRecentSearches() {
+        recent.value = emptyList()
+    }
 }
