@@ -231,16 +231,20 @@ pub async fn add_account_manual(
     config: ManualAccountConfig,
     password: String,
 ) -> Result<i64, AddAccountError> {
-    // Fail before contacting a server if the app isn't set up.
-    let secrets = secrets::secret_store().map_err(|_| AddAccountError::NotReady)?;
-    add_with(
-        &db_path,
-        secrets.as_ref(),
-        config,
-        password,
-        &core::SetupOptions::default(),
-    )
+    crate::worker::on_worker_thread(move || async move {
+        // Fail before contacting a server if the app isn't set up.
+        let secrets = secrets::secret_store().map_err(|_| AddAccountError::NotReady)?;
+        add_with(
+            &db_path,
+            secrets.as_ref(),
+            config,
+            password,
+            &core::SetupOptions::default(),
+        )
+        .await
+    })
     .await
+    .unwrap_or(Err(AddAccountError::NotReady))
 }
 
 async fn add_with(

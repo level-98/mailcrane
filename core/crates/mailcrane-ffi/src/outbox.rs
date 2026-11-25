@@ -131,14 +131,18 @@ pub async fn send_via_outbox(
     db_path: String,
     draft: ComposeDraft,
 ) -> Result<SendResult, SendFailure> {
-    let secrets = secrets::secret_store().map_err(|_| SendFailure::NotReady)?;
-    send_via_outbox_with(
-        &db_path,
-        secrets.as_ref(),
-        draft,
-        &core::SendOptions::default(),
-    )
+    crate::worker::on_worker_thread(move || async move {
+        let secrets = secrets::secret_store().map_err(|_| SendFailure::NotReady)?;
+        send_via_outbox_with(
+            &db_path,
+            secrets.as_ref(),
+            draft,
+            &core::SendOptions::default(),
+        )
+        .await
+    })
     .await
+    .unwrap_or(Err(SendFailure::NotReady))
 }
 
 pub(crate) async fn send_via_outbox_with(
@@ -277,14 +281,18 @@ fn status(db_path: &str, account: AccountId) -> Result<OutboxStatus, SyncFailure
 /// network comes back, and at `next_attempt_at`.
 #[uniffi::export(async_runtime = "tokio")]
 pub async fn send_outbox(db_path: String, account_id: i64) -> Result<OutboxStatus, SyncFailure> {
-    let secrets = secrets::secret_store().map_err(|_| failed(events::SyncErrorKind::Auth))?;
-    send_outbox_with(
-        &db_path,
-        secrets.as_ref(),
-        AccountId(account_id),
-        &core::SendOptions::default(),
-    )
+    crate::worker::on_worker_thread(move || async move {
+        let secrets = secrets::secret_store().map_err(|_| failed(events::SyncErrorKind::Auth))?;
+        send_outbox_with(
+            &db_path,
+            secrets.as_ref(),
+            AccountId(account_id),
+            &core::SendOptions::default(),
+        )
+        .await
+    })
     .await
+    .unwrap_or(Err(failed(events::SyncErrorKind::Network)))
 }
 
 pub(crate) async fn send_outbox_with(
