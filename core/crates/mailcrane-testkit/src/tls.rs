@@ -15,7 +15,7 @@ pub struct TestTls {
 ///
 /// Made once per test process and shared. Generating a key pair is CPU
 /// work that can take well over 100 ms on a busy or throttled machine,
-/// which used to make the servers' start-time check fail at random when
+/// which used to fail the servers' old start-time check at random when
 /// many tests started servers at once. Clients still trust each server
 /// only through its `root_cert_der()`, so sharing changes nothing for them.
 pub fn generate() -> Result<TestTls, String> {

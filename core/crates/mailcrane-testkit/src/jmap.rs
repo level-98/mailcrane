@@ -234,10 +234,10 @@ impl FakeJmapBuilder {
         self
     }
     pub async fn start(self) -> Result<FakeJmap, String> {
-        // The certificate is made once per process (see tls::generate);
-        // the time limit is for starting the server itself.
+        // The certificate is made once per process (see tls::generate).
+        // Starting is quick (see `servers_start_in_under_100_ms`), but it is
+        // not timed here: a busy machine would fail unrelated tests (#268).
         let tls = tls::generate()?;
-        let started = std::time::Instant::now();
         let listener = Loopback::bind().await?;
         let addr = listener.addr();
         let requests = Arc::new(RwLock::new(Vec::new()));
@@ -314,10 +314,6 @@ impl FakeJmapBuilder {
                 });
             }
         });
-        if started.elapsed() >= std::time::Duration::from_millis(100) {
-            handle.abort();
-            return Err("JMAP server start exceeded 100 ms".into());
-        }
         Ok(FakeJmap {
             addr,
             root_cert_der: tls.cert_der,
