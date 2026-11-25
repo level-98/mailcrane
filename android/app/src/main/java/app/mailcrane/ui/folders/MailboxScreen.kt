@@ -63,6 +63,9 @@ fun MailboxScreen(
     onSwitchAccount: (Long) -> Unit = {},
     onAddAccount: () -> Unit = {},
     onRemoveAccount: (Long) -> Unit = {},
+    /** A message to open now (from a widget, M4-11). */
+    openMessageId: Long? = null,
+    onMessageOpened: () -> Unit = {},
     onCompose: (() -> Unit)? = null,
     composeFabModifier: Modifier = Modifier,
     notice: String? = null,
@@ -84,6 +87,12 @@ fun MailboxScreen(
             // The open message is kept here until there is app-wide navigation. The list keeps its
             // scroll position while a message is open.
             var openMessage by rememberSaveable { mutableStateOf<Long?>(null) }
+            LaunchedEffect(openMessageId) {
+                if (openMessageId != null) {
+                    openMessage = openMessageId
+                    onMessageOpened()
+                }
+            }
             val saved = rememberSaveableStateHolder()
             var showSettings by rememberSaveable { mutableStateOf(false) }
             // The Rules screen (M4-09), opened from Settings or from a message.
