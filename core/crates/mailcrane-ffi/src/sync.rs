@@ -14,7 +14,7 @@ use mailcrane_core::sync::{
     live_stop, log_failure, run_live_updates, FolderSyncer, ImapLogin, LiveAccount, LiveConfig,
     LiveStop, SyncConfig, SyncError as CoreSyncError,
 };
-use mailcrane_imap::{save_folders, ImapConfig, ImapError, ImapSecurity, Secret, Session};
+use mailcrane_imap::{save_folder_list, ImapConfig, ImapError, ImapSecurity, Secret, Session};
 use mailcrane_store::{AccountId, FolderId, FolderRole, MessageId, Security, Store};
 
 /// Why a sync failed. Never carries server text.
@@ -364,11 +364,17 @@ impl SyncEngine {
                 log_failure("list folders", &e, command);
                 report(e.kind())
             })?;
-            save_folders(&store, account, &folders).map_err(|e| {
+            let saved = save_folder_list(&store, account, &folders).map_err(|e| {
                 let e = CoreSyncError::from(e);
                 log_failure("save folders", &e, None);
                 report(e.kind())
             })?;
+            // Folders gone from the server (#323): the apps re-read the list
+            // and leave a removed folder that was open.
+            for folder in saved.removed {
+                self.listener
+                    .on_event(events::CoreEvent::FolderChanged { folder_id: folder }.into());
+            }
             Ok::<(), SyncFailure>(())
         })?;
         Ok(inbox_of(&store, account)?.map(|f| f.0))
