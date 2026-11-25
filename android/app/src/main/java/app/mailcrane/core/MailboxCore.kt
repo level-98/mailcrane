@@ -195,6 +195,11 @@ class UniffiMailboxCore(
 
     override val events: Flow<CoreEvent> = hub.flow()
 
+    /** Reports the device conditions for background downloads (M4-25). Cheap; any thread. */
+    fun setDeviceConditions(conditions: DeviceConditions) {
+        engine.setDeviceConditions(conditions)
+    }
+
     override suspend fun listMessages(
         folderId: Long,
         offset: Int,

@@ -120,7 +120,15 @@ interface AppSettings {
     val contactsPromptAnswered: Flow<Boolean>
 
     suspend fun setContactsPromptAnswered()
+
+    /** "Download messages in the background" (M4-25). On Wi-Fi only by default. */
+    val backgroundDownload: Flow<BackgroundDownloadSetting>
+
+    suspend fun setBackgroundDownload(setting: BackgroundDownloadSetting)
 }
+
+/** When recent messages are downloaded in the background so they open at once (M4-25). */
+enum class BackgroundDownloadSetting { WIFI_ONLY, ALWAYS, NEVER }
 
 /** How many recent searches are kept. */
 const val MAX_RECENT_SEARCHES = 5
@@ -217,6 +225,16 @@ class DataStoreAppSettings(
         dataStore.edit { it[CONTACTS_PROMPT] = true }
     }
 
+    override val backgroundDownload: Flow<BackgroundDownloadSetting> =
+        prefs.map { p ->
+            BackgroundDownloadSetting.entries.firstOrNull { it.name == p[BACKGROUND_DOWNLOAD] }
+                ?: BackgroundDownloadSetting.WIFI_ONLY
+        }
+
+    override suspend fun setBackgroundDownload(setting: BackgroundDownloadSetting) {
+        dataStore.edit { it[BACKGROUND_DOWNLOAD] = setting.name }
+    }
+
     override suspend fun setCleanLinks(enabled: Boolean) {
         dataStore.edit { it[CLEAN_LINKS] = enabled }
     }
@@ -299,6 +317,7 @@ class DataStoreAppSettings(
         val NOTIFY_PROMPT = booleanPreferencesKey("notification_prompt_answered")
         val APP_LOCK_TIMEOUT = intPreferencesKey("app_lock_timeout_seconds")
         val APP_LOCK_SCREENSHOTS = booleanPreferencesKey("app_lock_allow_screenshots")
+        val BACKGROUND_DOWNLOAD = stringPreferencesKey("background_download")
     }
 }
 

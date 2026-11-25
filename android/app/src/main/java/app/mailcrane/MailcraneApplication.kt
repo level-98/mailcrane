@@ -33,6 +33,8 @@ class MailcraneApplication : Application() {
 
     @Inject lateinit var backgroundMail: app.mailcrane.sync.BackgroundMail
 
+    @Inject lateinit var backgroundDownloads: app.mailcrane.sync.BackgroundDownloads
+
     override fun onCreate() {
         super.onCreate()
         // Before anything connects: the core checks certificates through Android's trust store.
@@ -57,6 +59,8 @@ class MailcraneApplication : Application() {
         // every ~15 minutes or always-on, as the settings say.
         newMail.start()
         backgroundMail.start()
+        // Recent messages are downloaded after each sync when the network and battery allow (M4-25).
+        backgroundDownloads.start()
         // Recovers sends interrupted by a stopped app, then sends what's queued.
         outbox.start()
         // The home-screen widget follows mail changes (M4-11).

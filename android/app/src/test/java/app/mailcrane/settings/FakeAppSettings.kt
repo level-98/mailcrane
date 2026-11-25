@@ -22,6 +22,13 @@ class FakeAppSettings(
         undo.value = seconds
     }
 
+    private val download = MutableStateFlow(BackgroundDownloadSetting.WIFI_ONLY)
+    override val backgroundDownload: StateFlow<BackgroundDownloadSetting> = download
+
+    override suspend fun setBackgroundDownload(setting: BackgroundDownloadSetting) {
+        download.value = setting
+    }
+
     private val notify = MutableStateFlow(true)
     override val notificationsEnabled: StateFlow<Boolean> = notify
 

@@ -92,7 +92,8 @@ fn raws(count: usize) -> Vec<Vec<u8>> {
 async fn connect(imap: &FakeImap) -> Session {
     let mut config = ImapConfig::new("localhost", imap.addr().port(), ImapSecurity::ImplicitTls)
         .with_extra_root_cert(imap.root_cert_der().to_vec());
-    config.command_timeout = Duration::from_millis(2000);
+    // Generous: a 1 MiB answer from the fake is slow in debug builds under load.
+    config.command_timeout = Duration::from_secs(10);
     Session::connect(&config, USER, &Secret::new(PASSWORD))
         .await
         .expect("connects")
