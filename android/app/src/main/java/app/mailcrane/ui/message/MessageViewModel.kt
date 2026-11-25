@@ -13,7 +13,10 @@ import app.mailcrane.core.SnoozeFailure
 import app.mailcrane.core.SnoozeInfo
 import app.mailcrane.core.SyncErrorKind
 import app.mailcrane.core.SyncFailure
+import app.mailcrane.core.UnsubscribeFailure
+import app.mailcrane.core.UnsubscribeInfo
 import app.mailcrane.settings.AppSettings
+import app.mailcrane.ui.compose.ComposePrefill
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedFactory
 import dagger.assisted.AssistedInject
@@ -38,7 +41,43 @@ sealed interface MessageEffect {
     data class ActionRefused(
         val reason: ActionRefusal,
     ) : MessageEffect
+
+    /** Open compose with an unsubscribe email for the user to send. */
+    data class ComposeUnsubscribe(
+        val prefill: ComposePrefill,
+    ) : MessageEffect
+
+    /** Open the sender's unsubscribe page in the browser (the user already confirmed). */
+    data class OpenUnsubscribePage(
+        val url: String,
+    ) : MessageEffect
+
+    /** The one-click unsubscribe request finished. */
+    data class Unsubscribed(
+        val success: Boolean,
+    ) : MessageEffect
 }
+
+/** How "Unsubscribe" will work for a message, best first (M4-10). */
+enum class UnsubscribeMethod {
+    /** Mailcrane tells the sender's server directly (RFC 8058). */
+    ONE_CLICK,
+
+    /** Mailcrane prepares an email for the user to send. */
+    EMAIL,
+
+    /** The sender's page opens in the browser. */
+    WEB,
+}
+
+/** The method used for [info], or null if it offers nothing. */
+fun unsubscribeMethod(info: UnsubscribeInfo): UnsubscribeMethod? =
+    when {
+        info.oneClick -> UnsubscribeMethod.ONE_CLICK
+        info.mailto != null -> UnsubscribeMethod.EMAIL
+        info.webUrl != null -> UnsubscribeMethod.WEB
+        else -> null
+    }
 
 /** Why an action couldn't be applied, in terms the screen can explain. */
 enum class ActionRefusal {
@@ -60,6 +99,10 @@ sealed interface MessageState {
         val message: MessageDetail,
         /** The user asked to load remote images for this message. */
         val remoteAllowed: Boolean,
+        /** How the message can be unsubscribed from (M4-10), if at all. */
+        val unsubscribe: UnsubscribeInfo? = null,
+        /** A one-click unsubscribe request is running. */
+        val unsubscribing: Boolean = false,
         /** The message's snooze, if it is snoozed (M4-06). */
         val snooze: SnoozeInfo? = null,
     ) : MessageState {
@@ -122,7 +165,13 @@ class MessageViewModel
                             core.fetchBody(messageId)
                             message = core.getMessage(messageId, remoteAllowed)
                         }
-                        _state.value = MessageState.Ready(message, remoteAllowed, snoozeOf())
+                        _state.value =
+                            MessageState.Ready(
+                                message,
+                                remoteAllowed,
+                                unsubscribe = core.unsubscribeOptions(messageId),
+                                snooze = snoozeOf(),
+                            )
                         markRead(message)
                     } catch (e: SyncFailure.Failed) {
                         _state.value = MessageState.Failed(e.kind)
@@ -139,7 +188,14 @@ class MessageViewModel
             loading =
                 viewModelScope.launch {
                     try {
-                        _state.value = MessageState.Ready(core.getMessage(messageId, true), true, snoozeOf())
+                        val unsubscribe = (_state.value as? MessageState.Ready)?.unsubscribe
+                        _state.value =
+                            MessageState.Ready(
+                                core.getMessage(messageId, true),
+                                true,
+                                unsubscribe = unsubscribe,
+                                snooze = snoozeOf(),
+                            )
                     } catch (e: SyncFailure.Failed) {
                         _state.value = MessageState.Failed(e.kind)
                     }
@@ -157,6 +213,55 @@ class MessageViewModel
 
         /** Marks the message unread and closes it, so it isn't marked read again at once. */
         fun markUnread() = act(MessageAction.MarkUnread, close = true)
+
+        /**
+         * Unsubscribes the way [unsubscribeMethod] says. Call only after the user confirmed: one-click
+         * sends the request now; the email and web methods hand over to compose or the browser.
+         */
+        fun unsubscribe() {
+            val ready = _state.value as? MessageState.Ready ?: return
+            val info = ready.unsubscribe ?: return
+            if (ready.unsubscribing) return
+            when (unsubscribeMethod(info)) {
+                UnsubscribeMethod.ONE_CLICK -> {
+                    _state.value = ready.copy(unsubscribing = true)
+                    viewModelScope.launch {
+                        val ok =
+                            try {
+                                core.oneClickUnsubscribe(messageId)
+                                true
+                            } catch (_: UnsubscribeFailure) {
+                                false
+                            }
+                        (_state.value as? MessageState.Ready)?.let {
+                            // Done: no button any more. Failed: fall back to the other methods.
+                            val left = if (ok) null else it.unsubscribe?.copy(oneClick = false)
+                            _state.value = it.copy(unsubscribing = false, unsubscribe = left)
+                        }
+                        _effects.send(MessageEffect.Unsubscribed(ok))
+                    }
+                }
+                UnsubscribeMethod.EMAIL -> {
+                    val m = info.mailto ?: return
+                    viewModelScope.launch {
+                        _effects.send(
+                            MessageEffect.ComposeUnsubscribe(
+                                ComposePrefill(
+                                    to = m.address,
+                                    subject = m.subject ?: "unsubscribe",
+                                    body = m.body ?: "",
+                                ),
+                            ),
+                        )
+                    }
+                }
+                UnsubscribeMethod.WEB -> {
+                    val url = info.webUrl ?: return
+                    viewModelScope.launch { _effects.send(MessageEffect.OpenUnsubscribePage(url)) }
+                }
+                null -> {}
+            }
+        }
 
         /** Snoozes the message until [wakeAt] (Unix seconds) and closes it: it leaves this folder. */
         fun snooze(wakeAt: Long) =

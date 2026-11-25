@@ -68,10 +68,11 @@ fun ComposeScreen(
     modifier: Modifier = Modifier,
     reply: ReplyRequest? = null,
     draft: DraftRequest? = null,
+    prefill: ComposePrefill? = null,
     viewModel: ComposeViewModel = hiltViewModel(),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
-    LaunchedEffect(viewModel, accountId, reply, draft) { viewModel.start(accountId, reply, draft) }
+    LaunchedEffect(viewModel, accountId, reply, draft, prefill) { viewModel.start(accountId, reply, draft, prefill) }
     LaunchedEffect(state.result) {
         state.result?.let {
             viewModel.reset()

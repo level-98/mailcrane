@@ -15,6 +15,7 @@ mod model;
 mod sanitize;
 mod snippet;
 mod trackers;
+pub mod unsubscribe;
 
 use mail_parser::{MessageParser, PartFlags, PartKind};
 
@@ -163,6 +164,23 @@ pub fn parse_message(raw: &[u8]) -> Result<ParsedMessage, MimeError> {
             .unwrap_or_default(),
         list_unsubscribe: raw_header("List-Unsubscribe"),
         list_unsubscribe_post: raw_header("List-Unsubscribe-Post"),
+        authentication_results: hdrs
+            .iter()
+            .filter(|h| {
+                h.name()
+                    .as_str()
+                    .eq_ignore_ascii_case("Authentication-Results")
+            })
+            .filter_map(|h| headers::raw_value(h.raw_value()))
+            .take(20)
+            .collect(),
+        // The first Received header in the message is the topmost: the one
+        // the user's provider added last.
+        received_by: hdrs
+            .iter()
+            .find(|h| h.name().as_str().eq_ignore_ascii_case("Received"))
+            .and_then(|h| headers::raw_value(h.raw_value()))
+            .and_then(|r| unsubscribe::received_by(&r)),
         text_plain,
         text_html: html.map(UnsanitisedHtml::new),
         attachments,

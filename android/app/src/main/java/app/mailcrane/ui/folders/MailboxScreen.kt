@@ -28,6 +28,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.mailcrane.R
 import app.mailcrane.core.FolderRole
 import app.mailcrane.settings.SettingsScreen
+import app.mailcrane.ui.compose.ComposePrefill
 import app.mailcrane.ui.compose.DraftRequest
 import app.mailcrane.ui.compose.LocalDraftsScreen
 import app.mailcrane.ui.compose.OutboxScreen
@@ -52,6 +53,7 @@ fun MailboxScreen(
     onNoticeShown: () -> Unit = {},
     onReply: (ReplyRequest) -> Unit = {},
     onOpenDraft: (DraftRequest) -> Unit = {},
+    onComposeTo: (ComposePrefill) -> Unit = {},
     viewModel: FolderDrawerViewModel =
         hiltViewModel<FolderDrawerViewModel, FolderDrawerViewModel.Factory>(
             key = "folders-$accountId",
@@ -112,6 +114,7 @@ fun MailboxScreen(
                     onBack = { openMessage = null },
                     folders = state.folders,
                     onReply = onReply,
+                    onComposeTo = onComposeTo,
                 )
                 return
             }
