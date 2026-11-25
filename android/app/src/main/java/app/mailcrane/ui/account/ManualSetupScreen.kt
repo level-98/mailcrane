@@ -82,6 +82,9 @@ fun ManualSetupScreen(
                 onPasswordChange = viewModel::onPasswordChange,
                 onTogglePasswordVisible = viewModel::onTogglePasswordVisible,
                 onSubmit = viewModel::submit,
+                onDiscover = viewModel::discover,
+                onEditSettings = viewModel::editSettings,
+                onSetUpManually = viewModel::setUpManually,
             ),
     )
 }
@@ -100,11 +103,27 @@ data class ManualSetupActions(
     val onPasswordChange: (String) -> Unit = {},
     val onTogglePasswordVisible: () -> Unit = {},
     val onSubmit: () -> Unit = {},
+    val onDiscover: () -> Unit = {},
+    val onEditSettings: () -> Unit = {},
+    val onSetUpManually: () -> Unit = {},
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ManualSetupContent(
+    state: ManualSetupUiState,
+    actions: ManualSetupActions,
+) {
+    when (state.step) {
+        SetupStep.EMAIL -> EmailStepContent(state, actions)
+        SetupStep.CONFIRM -> ConfirmStepContent(state, actions)
+        SetupStep.MANUAL -> ManualFormContent(state, actions)
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ManualFormContent(
     state: ManualSetupUiState,
     actions: ManualSetupActions,
 ) {
@@ -122,6 +141,7 @@ fun ManualSetupContent(
                     .padding(horizontal = 16.dp, vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
+            state.discoveryNote?.let { NoteCard(it.message()) }
             SectionTitle(R.string.setup_section_account)
             FormField(
                 value = state.email,
@@ -222,7 +242,7 @@ fun ManualSetupContent(
 }
 
 @Composable
-private fun SectionTitle(
+internal fun SectionTitle(
     @StringRes text: Int,
 ) {
     Text(
@@ -234,7 +254,7 @@ private fun SectionTitle(
 }
 
 @Composable
-private fun FormField(
+internal fun FormField(
     value: String,
     onValueChange: (String) -> Unit,
     @StringRes label: Int,
@@ -343,8 +363,40 @@ private fun SecurityDropdown(
     }
 }
 
+/** A neutral note above the form, such as "no settings were found". */
 @Composable
-private fun ErrorCard(error: SetupError) {
+internal fun NoteCard(
+    @StringRes text: Int,
+) {
+    Card(
+        colors =
+            CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+            ),
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .padding(top = 8.dp)
+                .semantics { liveRegion = LiveRegionMode.Polite },
+    ) {
+        Text(
+            text = stringResource(text),
+            style = MaterialTheme.typography.bodyMedium,
+            modifier = Modifier.padding(16.dp),
+        )
+    }
+}
+
+@StringRes
+private fun DiscoveryNote.message(): Int =
+    when (this) {
+        DiscoveryNote.NOT_FOUND -> R.string.setup_auto_not_found
+        DiscoveryNote.TIMED_OUT -> R.string.setup_auto_timed_out
+    }
+
+@Composable
+internal fun ErrorCard(error: SetupError) {
     Card(
         colors =
             CardDefaults.cardColors(
@@ -366,7 +418,7 @@ private fun ErrorCard(error: SetupError) {
 }
 
 @StringRes
-private fun ConnectionSecurity.label(): Int =
+internal fun ConnectionSecurity.label(): Int =
     when (this) {
         ConnectionSecurity.TLS -> R.string.setup_security_tls
         ConnectionSecurity.START_TLS -> R.string.setup_security_starttls

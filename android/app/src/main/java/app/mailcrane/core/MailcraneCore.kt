@@ -21,6 +21,14 @@ interface MailcraneCore {
         password: String,
     ): Long
 
+    /**
+     * Looks for server settings for [email] (M1-15), most trusted first, within 20 seconds. The
+     * address is never sent anywhere.
+     *
+     * @throws DiscoverException when nothing was found; the app then offers manual setup.
+     */
+    suspend fun discoverSettings(email: String): List<DiscoveredSettings> = throw DiscoverException.NotFound()
+
     /** The saved accounts, oldest first (M4-01). */
     suspend fun listAccounts(): List<AccountSummary> = emptyList()
 
@@ -34,6 +42,7 @@ interface MailcraneCore {
  */
 class UniffiMailcraneCore(
     private val dbPath: String,
+    private val dns: PlatformDns? = AndroidDns(),
 ) : MailcraneCore {
     override fun hello(): String = app.mailcrane.core.hello()
 
@@ -49,6 +58,9 @@ class UniffiMailcraneCore(
         config: ManualAccountConfig,
         password: String,
     ): Long = app.mailcrane.core.addAccountManual(dbPath, config, password)
+
+    override suspend fun discoverSettings(email: String): List<DiscoveredSettings> =
+        app.mailcrane.core.discoverSettings(email, dns)
 
     override suspend fun listAccounts(): List<AccountSummary> =
         kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {

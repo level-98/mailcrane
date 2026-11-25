@@ -12,6 +12,7 @@ pub mod account;
 mod accounts_tests;
 pub mod actions;
 pub mod attachments;
+pub mod autoconfig;
 pub mod compose;
 pub mod contacts;
 pub mod drafts;
