@@ -1,6 +1,6 @@
 # Architecture
 
-> Status: **proposed**, see [ADR 0001](decisions/0001-tech-stack.md). Once the owner accepts it, this becomes "accepted, see ADR 0001".
+> Status: **accepted**, see [ADR 0001](decisions/0001-tech-stack.md).
 
 ## Overview
 
@@ -57,6 +57,5 @@ Platform-specific code (`#[cfg(target_os = …)]`, `std::os::unix`, crates that 
 ## Open questions
 
 - **Push notifications on iOS.** iOS doesn't allow a permanent IMAP connection in the background. Options are background fetch only, or an optional self-hostable push relay. Needs an ADR (M7-10).
-- **Licence check.** MPL-2.0 is proposed because it works with the App Store, unlike GPL.
 - **Network calls beyond the user's mail server.** AGENTS.md §4.7 allows them only with an accepted decision. The bundled ISPDB has one ([ADR 0003](decisions/0003-bundled-ispdb.md)). These don't yet: one-click unsubscribe (M4-10) sends an HTTPS POST to the sender's unsubscribe URL, and automatic setup fetches autoconfig files from the domain of the address's MX provider.
 - **JMAP storage.** The store is built around IMAP (integer UIDs, one folder per message). Connecting `mailcrane-jmap` needs a maintainer decision on the schema before its migration ships, because migrations can't be undone once released.

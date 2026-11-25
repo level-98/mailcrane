@@ -1,6 +1,6 @@
 # 0001: Shared Rust core with native UIs, bound through UniFFI
 
-Status: proposed
+Status: accepted
 Date: 2026-11-24
 
 ## Context
