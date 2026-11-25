@@ -83,7 +83,7 @@ Goal: add an IMAP account and read your inbox, online and offline.
 - [x] **M4-06** Snooze (stored locally, synced via a hidden folder or IMAP keyword) 🤖
 - [x] **M4-07** Scheduled send 🤖
 - [x] **M4-08** Undo send (short delay before sending) 🟢🤖
-- [ ] **M4-09** Local rules and filters 🤖
+- [x] **M4-09** Local rules and filters 🤖
 - [x] **M4-10** One-tap unsubscribe (`List-Unsubscribe`, RFC 8058) 🤖
 - [ ] **M4-11** Home-screen widgets (Android Glance) 🤖
 - [x] **M4-12** Dark mode and dynamic colour (Material You) 🟢🤖

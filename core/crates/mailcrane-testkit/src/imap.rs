@@ -977,10 +977,11 @@ async fn handle_uid_command(
                             "IN-REPLY-TO",
                             "LIST-UNSUBSCRIBE",
                             "LIST-UNSUBSCRIBE-POST",
+                            "LIST-ID",
                         ],
                     );
                     out.extend_from_slice(
-                        format!(" BODY[HEADER.FIELDS (REFERENCES IN-REPLY-TO LIST-UNSUBSCRIBE LIST-UNSUBSCRIBE-POST)] {{{}}}\r\n", fields.len()).as_bytes(),
+                        format!(" BODY[HEADER.FIELDS (REFERENCES IN-REPLY-TO LIST-UNSUBSCRIBE LIST-UNSUBSCRIBE-POST LIST-ID)] {{{}}}\r\n", fields.len()).as_bytes(),
                     );
                     out.extend_from_slice(&fields);
                 }

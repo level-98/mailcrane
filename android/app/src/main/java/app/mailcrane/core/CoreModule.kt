@@ -54,6 +54,12 @@ object CoreModule {
         @ApplicationContext context: Context,
     ): AccountSettingsCore = UniffiAccountSettingsCore(dbPath = dbPath(context))
 
+    @Provides
+    @Singleton
+    fun provideRulesCore(
+        @ApplicationContext context: Context,
+    ): RulesCore = UniffiRulesCore(dbPath = dbPath(context))
+
     private fun dbPath(context: Context): String = databasePath(context)
 }
 

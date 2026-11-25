@@ -194,6 +194,56 @@
     <string name="attachment_risky_text">%1$s is a kind of file that can run code on your device. Only open it if you trust the sender and expected it.</string>
     <string name="attachment_open_anyway">Open</string>
 
+    <!-- Local rules (M4-09) -->
+    <string name="rules_title">Rules</string>
+    <string name="rules_settings_row">Rules</string>
+    <string name="rules_settings_summary">Sort new mail automatically on this device</string>
+    <string name="rules_explain">Rules run on this device, in this order, on new mail in your inbox. Text is matched anywhere, ignoring case and accents.</string>
+    <string name="rules_empty">No rules yet.</string>
+    <string name="rules_add">Add</string>
+    <string name="rules_new">New rule</string>
+    <string name="rules_edit">Edit rule</string>
+    <string name="rules_save">Save</string>
+    <string name="rules_cancel">Cancel</string>
+    <string name="rules_name">Name</string>
+    <string name="rules_when">When a message matches</string>
+    <string name="rules_match_all">All of these</string>
+    <string name="rules_match_any">Any of these</string>
+    <string name="rules_contains">Contains</string>
+    <string name="rules_days">Days</string>
+    <string name="rules_remove">Remove</string>
+    <string name="rules_add_condition">Add condition</string>
+    <string name="rules_then">Then</string>
+    <string name="rules_add_action">Add action</string>
+    <string name="rules_pick_folder">Pick folder</string>
+    <string name="rules_stop">Don’t run later rules on it</string>
+    <string name="rules_this_account">Only this account</string>
+    <string name="rules_enabled">On</string>
+    <string name="rules_run_now">Run on the inbox now</string>
+    <string name="rules_delete">Delete rule</string>
+    <string name="rules_incomplete">Give the rule a name, fill in every condition and pick a folder for each move.</string>
+    <string name="rules_failed">Couldn’t save the rules.</string>
+    <string name="rules_create_from_message">Create rule from this message</string>
+    <plurals name="rules_summary">
+        <item quantity="one">%1$d condition</item>
+        <item quantity="other">%1$d conditions</item>
+    </plurals>
+    <plurals name="rules_ran">
+        <item quantity="one">%1$d message changed</item>
+        <item quantity="other">%1$d messages changed</item>
+    </plurals>
+    <string name="rule_cond_from">From</string>
+    <string name="rule_cond_to_cc">To or Cc</string>
+    <string name="rule_cond_subject">Subject</string>
+    <string name="rule_cond_attachment">Has attachment</string>
+    <string name="rule_cond_list_id">Mailing list (List-Id)</string>
+    <string name="rule_cond_older">Older than (days)</string>
+    <string name="rule_act_move">Move to</string>
+    <string name="rule_act_read">Mark read</string>
+    <string name="rule_act_flag">Flag</string>
+    <string name="rule_act_archive">Archive</string>
+    <string name="rule_act_delete">Delete</string>
+
     <!-- Contact suggestions (M2-08) -->
     <string name="contacts_prompt_title">Show suggestions from your contacts? They stay on this device.</string>
     <string name="contacts_prompt_yes">Allow</string>

@@ -1,5 +1,6 @@
 package app.mailcrane.settings
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -111,6 +112,7 @@ class SettingsViewModel
 fun SettingsScreen(
     onBack: () -> Unit,
     accountId: Long? = null,
+    onOpenRules: (() -> Unit)? = null,
     viewModel: SettingsViewModel = hiltViewModel(),
 ) {
     val cleanLinks by viewModel.cleanLinks.collectAsStateWithLifecycle()
@@ -149,6 +151,13 @@ fun SettingsScreen(
         if (accountId != null) {
             SignatureSection(accountId)
             SaveSentSection(accountId)
+        }
+        onOpenRules?.let { open ->
+            androidx.compose.material3.ListItem(
+                headlineContent = { Text(stringResource(R.string.rules_settings_row)) },
+                supportingContent = { Text(stringResource(R.string.rules_settings_summary)) },
+                modifier = Modifier.clickable(onClick = open),
+            )
         }
     }
 }
