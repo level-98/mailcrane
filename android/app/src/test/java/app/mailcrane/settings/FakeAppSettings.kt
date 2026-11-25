@@ -42,4 +42,18 @@ class FakeAppSettings(
     override suspend fun setDarkMessageBodies(enabled: Boolean) {
         darkBodies.value = enabled
     }
+
+    private val right = MutableStateFlow(DEFAULT_SWIPE_RIGHT)
+    override val swipeRight: StateFlow<SwipeAction> = right
+
+    override suspend fun setSwipeRight(action: SwipeAction) {
+        right.value = action
+    }
+
+    private val left = MutableStateFlow(DEFAULT_SWIPE_LEFT)
+    override val swipeLeft: StateFlow<SwipeAction> = left
+
+    override suspend fun setSwipeLeft(action: SwipeAction) {
+        left.value = action
+    }
 }

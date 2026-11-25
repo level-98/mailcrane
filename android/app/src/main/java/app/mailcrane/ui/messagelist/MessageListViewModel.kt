@@ -2,11 +2,19 @@ package app.mailcrane.ui.messagelist
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import app.mailcrane.R
+import app.mailcrane.core.ActionFailure
 import app.mailcrane.core.CoreEvent
 import app.mailcrane.core.MailboxCore
+import app.mailcrane.core.MessageAction
 import app.mailcrane.core.MessageSummary
 import app.mailcrane.core.SyncErrorKind
 import app.mailcrane.core.SyncFailure
+import app.mailcrane.core.UNDO_WINDOW_MS
+import app.mailcrane.settings.AppSettings
+import app.mailcrane.settings.DEFAULT_SWIPE_LEFT
+import app.mailcrane.settings.DEFAULT_SWIPE_RIGHT
+import app.mailcrane.settings.SwipeAction
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedFactory
 import dagger.assisted.AssistedInject
@@ -14,10 +22,13 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.receiveAsFlow
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -47,6 +58,7 @@ class MessageListViewModel
     @AssistedInject
     constructor(
         private val core: MailboxCore,
+        settings: AppSettings,
         @Assisted private val folderId: Long,
     ) : ViewModel() {
         @AssistedFactory
@@ -63,6 +75,75 @@ class MessageListViewModel
         val errors: Flow<SyncErrorKind> = _errors.receiveAsFlow()
 
         private val _actionsUndone = Channel<Unit>(Channel.CONFLATED)
+
+        /** The swipe settings (right, left). */
+        val swipes: StateFlow<Pair<SwipeAction, SwipeAction>> =
+            combine(settings.swipeRight, settings.swipeLeft) { r, l -> r to l }
+                .stateIn(viewModelScope, SharingStarted.Eagerly, DEFAULT_SWIPE_RIGHT to DEFAULT_SWIPE_LEFT)
+
+        private val _undoOffers = Channel<UndoOffer>(Channel.BUFFERED)
+
+        /** "Archived · Undo" and "Deleted · Undo", shown for [UNDO_WINDOW_MS]. */
+        val undoOffers: Flow<UndoOffer> = _undoOffers.receiveAsFlow()
+
+        private val _notices = Channel<Int>(Channel.BUFFERED)
+
+        /** One-off messages from swipes, as string resources. */
+        val notices: Flow<Int> = _notices.receiveAsFlow()
+
+        /** Runs [action] on [message] through the core (never by changing the list alone). Not for MOVE. */
+        fun swipe(
+            message: MessageSummary,
+            action: SwipeAction,
+        ) {
+            val (coreAction, undoable) =
+                when (action) {
+                    SwipeAction.NONE, SwipeAction.MOVE -> return
+                    SwipeAction.ARCHIVE -> MessageAction.Archive to true
+                    SwipeAction.DELETE -> MessageAction.Delete to true
+                    SwipeAction.READ_UNREAD ->
+                        (if (message.isSeen) MessageAction.MarkUnread else MessageAction.MarkRead) to false
+                    SwipeAction.FLAG -> (if (message.isFlagged) MessageAction.Unflag else MessageAction.Flag) to false
+                }
+            run(message.id, coreAction, undoable, action)
+        }
+
+        /** The Move swipe, once a folder is picked. */
+        fun move(
+            messageId: Long,
+            folderId: Long,
+        ) = run(messageId, MessageAction.Move(folderId), undoable = false, swipe = SwipeAction.MOVE)
+
+        /** The snackbar's Undo. */
+        fun undo(messageId: Long) {
+            viewModelScope.launch {
+                val undone =
+                    try {
+                        core.undoAction(messageId)
+                    } catch (_: ActionFailure) {
+                        false
+                    }
+                if (!undone) _notices.send(R.string.swipe_undo_too_late)
+            }
+        }
+
+        private fun run(
+            messageId: Long,
+            action: MessageAction,
+            undoable: Boolean,
+            swipe: SwipeAction,
+        ) {
+            viewModelScope.launch {
+                try {
+                    core.swipeAction(messageId, action, undoable)
+                    if (undoable) _undoOffers.send(UndoOffer(messageId, swipe))
+                } catch (e: ActionFailure.NoArchiveFolder) {
+                    _notices.send(R.string.action_no_archive_folder)
+                } catch (e: ActionFailure) {
+                    _notices.send(R.string.action_not_applied)
+                }
+            }
+        }
 
         /** The server refused a message action and it was undone; shown in a snackbar. */
         val actionsUndone: Flow<Unit> = _actionsUndone.receiveAsFlow()
@@ -187,6 +268,12 @@ class MessageListViewModel
             const val LOAD_MORE_THRESHOLD = 20
         }
     }
+
+/** Undo is offered for [messageId] after [action] (archive or delete). */
+data class UndoOffer(
+    val messageId: Long,
+    val action: SwipeAction,
+)
 
 private fun CoreEvent.isAbout(folderId: Long): Boolean =
     when (this) {

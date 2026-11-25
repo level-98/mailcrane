@@ -84,6 +84,19 @@ class SettingsViewModel
         fun setDarkMessageBodies(enabled: Boolean) {
             viewModelScope.launch { settings.setDarkMessageBodies(enabled) }
         }
+
+        val swipeRight: StateFlow<SwipeAction> =
+            settings.swipeRight.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), DEFAULT_SWIPE_RIGHT)
+        val swipeLeft: StateFlow<SwipeAction> =
+            settings.swipeLeft.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), DEFAULT_SWIPE_LEFT)
+
+        fun setSwipeRight(action: SwipeAction) {
+            viewModelScope.launch { settings.setSwipeRight(action) }
+        }
+
+        fun setSwipeLeft(action: SwipeAction) {
+            viewModelScope.launch { settings.setSwipeLeft(action) }
+        }
     }
 
 /** The app's settings. */
@@ -98,6 +111,8 @@ fun SettingsScreen(
     val themeMode by viewModel.themeMode.collectAsStateWithLifecycle()
     val dynamicColor by viewModel.dynamicColor.collectAsStateWithLifecycle()
     val darkBodies by viewModel.darkMessageBodies.collectAsStateWithLifecycle()
+    val swipeRight by viewModel.swipeRight.collectAsStateWithLifecycle()
+    val swipeLeft by viewModel.swipeLeft.collectAsStateWithLifecycle()
     SettingsContent(
         cleanLinks = cleanLinks,
         onCleanLinksChange = viewModel::setCleanLinks,
@@ -112,6 +127,13 @@ fun SettingsScreen(
                 onModeChange = viewModel::setThemeMode,
                 onDynamicColorChange = viewModel::setDynamicColor,
                 onDarkMessageBodiesChange = viewModel::setDarkMessageBodies,
+            ),
+        swipe =
+            SwipeSettings(
+                right = swipeRight,
+                left = swipeLeft,
+                onRightChange = viewModel::setSwipeRight,
+                onLeftChange = viewModel::setSwipeLeft,
             ),
     ) {
         if (accountId != null) {
@@ -130,6 +152,7 @@ fun SettingsContent(
     undoSendSeconds: Int = DEFAULT_UNDO_SEND_SECONDS,
     onUndoSendChange: (Int) -> Unit = {},
     appearance: AppearanceSettings = AppearanceSettings(),
+    swipe: SwipeSettings = SwipeSettings(),
     accountSection: @Composable () -> Unit = {},
 ) {
     Scaffold(
@@ -159,6 +182,8 @@ fun SettingsContent(
             }
             AppearanceSection(appearance)
             UndoSendSection(undoSendSeconds, onUndoSendChange)
+            SwipeSection(R.string.settings_swipe_right, swipe.right, swipe.onRightChange)
+            SwipeSection(R.string.settings_swipe_left, swipe.left, swipe.onLeftChange)
             accountSection()
         }
     }
@@ -272,3 +297,51 @@ private fun SwitchRow(
         Text(stringResource(title))
     }
 }
+
+/** The two swipe settings and what changing them does. */
+data class SwipeSettings(
+    val right: SwipeAction = DEFAULT_SWIPE_RIGHT,
+    val left: SwipeAction = DEFAULT_SWIPE_LEFT,
+    val onRightChange: (SwipeAction) -> Unit = {},
+    val onLeftChange: (SwipeAction) -> Unit = {},
+)
+
+@Composable
+private fun SwipeSection(
+    title: Int,
+    current: SwipeAction,
+    onChange: (SwipeAction) -> Unit,
+) {
+    Column(Modifier.fillMaxWidth().selectableGroup()) {
+        Text(
+            text = stringResource(title),
+            style = MaterialTheme.typography.titleSmall,
+            color = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 24.dp, bottom = 8.dp).semantics { heading() },
+        )
+        for (action in SwipeAction.entries) {
+            ListItem(
+                leadingContent = { RadioButton(selected = current == action, onClick = null) },
+                modifier =
+                    Modifier.selectable(
+                        selected = current == action,
+                        role = Role.RadioButton,
+                        onClick = { onChange(action) },
+                    ),
+            ) {
+                Text(stringResource(swipeLabel(action)))
+            }
+        }
+    }
+}
+
+/** The name of a swipe choice. */
+fun swipeLabel(action: SwipeAction): Int =
+    when (action) {
+        SwipeAction.NONE -> R.string.swipe_none
+        SwipeAction.ARCHIVE -> R.string.swipe_archive
+        SwipeAction.DELETE -> R.string.swipe_delete
+        SwipeAction.READ_UNREAD -> R.string.swipe_read_unread
+        SwipeAction.FLAG -> R.string.swipe_flag
+        SwipeAction.MOVE -> R.string.swipe_move
+    }

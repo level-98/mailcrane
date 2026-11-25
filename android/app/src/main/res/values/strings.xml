@@ -263,4 +263,17 @@
     <string name="outbox_scheduled_device">This phone will send it then, so it may be late if the phone is off or offline.</string>
     <string name="outbox_scheduled_undecided">Checking whether your mail server can send it for you…</string>
     <string name="outbox_held_by_server">Your mail server will send it on time, even with the phone off. It can no longer be cancelled.</string>
+    <!-- Swipe actions (M4-04) -->
+    <string name="settings_swipe_right">Swipe right</string>
+    <string name="settings_swipe_left">Swipe left</string>
+    <string name="swipe_none">Nothing</string>
+    <string name="swipe_archive">Archive</string>
+    <string name="swipe_delete">Delete</string>
+    <string name="swipe_read_unread">Mark read or unread</string>
+    <string name="swipe_flag">Flag or unflag</string>
+    <string name="swipe_move">Move to…</string>
+    <string name="swipe_archived">Archived</string>
+    <string name="swipe_deleted">Deleted</string>
+    <string name="swipe_undo_too_late">Too late to undo: the change already reached the server</string>
+    <string name="message_mark_read">Mark as read</string>
 </resources>

@@ -275,3 +275,32 @@ fn queueing_for_an_unknown_account_changes_nothing() -> R {
     );
     Ok(())
 }
+
+#[test]
+fn an_untried_action_can_be_undone() -> R {
+    let f = fixture(Store::open_in_memory()?)?;
+    let (a, b) = (f.messages[0], f.messages[1]);
+    f.store.queue_op(
+        f.account,
+        OpKind::Move,
+        f.inbox,
+        Some(f.archive),
+        &[a, b],
+        100,
+    )?;
+    assert_eq!(f.store.cancel_queued(a.message_id)?, Some(f.inbox));
+    // a is back; b is still on its way.
+    assert_eq!(f.store.list_messages(f.inbox, 10, 0)?.len(), 2);
+    let ops = f.store.pending_ops(f.account)?;
+    assert_eq!(ops[0].messages, vec![b]);
+    assert_eq!(
+        f.store.cancel_queued(a.message_id)?,
+        None,
+        "nothing left to undo"
+    );
+
+    // Once tried, it may have reached the server: too late to undo here.
+    f.store.defer_op(ops[0].id, 1, 200, "network")?;
+    assert_eq!(f.store.cancel_queued(b.message_id)?, None);
+    Ok(())
+}
