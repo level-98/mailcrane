@@ -8,6 +8,8 @@ import app.mailcrane.core.MessageAddress
 import app.mailcrane.core.MessageBody
 import app.mailcrane.core.MessageCore
 import app.mailcrane.core.MessageDetail
+import app.mailcrane.core.SnoozeFailure
+import app.mailcrane.core.SnoozeInfo
 import app.mailcrane.core.SyncErrorKind
 import app.mailcrane.core.SyncFailure
 import app.mailcrane.settings.FakeAppSettings
@@ -107,6 +109,24 @@ private class FakeMessageCore(
 
     val actions = mutableListOf<MessageAction>()
     var actionFailure: ActionFailure? = null
+    var snoozeInfo: SnoozeInfo? = null
+    var snoozeFailure: SnoozeFailure? = null
+
+    override suspend fun snooze(
+        messageId: Long,
+        wakeAt: Long,
+    ) {
+        assertEquals(ID, messageId)
+        snoozeFailure?.let { throw it }
+        calls += "snooze($wakeAt)"
+    }
+
+    override suspend fun unsnooze(messageId: Long) {
+        snoozeFailure?.let { throw it }
+        calls += "unsnooze"
+    }
+
+    override suspend fun snoozeInfo(messageId: Long): SnoozeInfo? = snoozeInfo
 
     override suspend fun applyAction(
         messageId: Long,
@@ -260,6 +280,37 @@ class MessageViewModelTest {
                 listOf(MessageAction.Archive, MessageAction.Delete, MessageAction.Move(9), MessageAction.MarkUnread),
                 core.actions,
             )
+        }
+
+    @Test
+    fun snoozeAndUnsnoozeCloseTheMessage() =
+        runTest {
+            val core = FakeMessageCore()
+            val vm = messageViewModel(core)
+            vm.snooze(1_800_000_000)
+            assertEquals(MessageEffect.Close, vm.effects.first())
+            vm.unsnooze()
+            assertEquals(MessageEffect.Close, vm.effects.first())
+            assertTrue(core.calls.containsAll(listOf("snooze(1800000000)", "unsnooze")))
+        }
+
+    @Test
+    fun aSnoozedMessageShowsItsWakeTime() =
+        runTest {
+            val info = SnoozeInfo(wakeAt = 1_800_000_000, deviceOnly = true, waking = false)
+            val core = FakeMessageCore().apply { snoozeInfo = info }
+            val vm = messageViewModel(core)
+            assertEquals(info, ready(vm).snooze)
+        }
+
+    @Test
+    fun aMessageWithoutMessageIdCantBeSnoozed() =
+        runTest {
+            val core = FakeMessageCore().apply { snoozeFailure = SnoozeFailure.NoMessageId() }
+            val vm = messageViewModel(core)
+            vm.snooze(1_800_000_000)
+            assertEquals(MessageEffect.ActionRefused(ActionRefusal.CANNOT_SNOOZE), vm.effects.first())
+            assertTrue(vm.state.value is MessageState.Ready)
         }
 
     @Test

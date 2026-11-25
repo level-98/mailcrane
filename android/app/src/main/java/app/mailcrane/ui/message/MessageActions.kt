@@ -36,6 +36,8 @@ data class MessageActions(
     val onMarkUnread: () -> Unit = {},
     val onToggleFlag: () -> Unit = {},
     val onMove: (Long) -> Unit = {},
+    /** Opens the snooze picker; null hides the button. */
+    val onSnooze: (() -> Unit)? = null,
 )
 
 /**
@@ -61,6 +63,11 @@ fun RowScope.MessageToolbarActions(
             painter = painterResource(R.drawable.ic_mc_mail),
             contentDescription = stringResource(R.string.message_mark_unread),
         )
+    }
+    actions.onSnooze?.let { snooze ->
+        IconButton(onClick = snooze) {
+            Icon(painterResource(R.drawable.ic_mc_snooze), contentDescription = stringResource(R.string.message_snooze))
+        }
     }
     IconButton(onClick = actions.onToggleFlag) {
         Icon(

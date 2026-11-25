@@ -73,6 +73,15 @@ interface MailboxCore {
         folderId: Long,
         query: String,
     ): Int
+
+    /**
+     * Wakes every snooze that is due and starts moving those messages back; returns them, once each,
+     * for a notification. @throws SnoozeFailure
+     */
+    suspend fun wakeDueSnoozes(): List<WokenMessage> = emptyList()
+
+    /** The next time a snoozed message wakes (Unix seconds), or null. @throws SnoozeFailure */
+    suspend fun nextSnoozeWake(): Long? = null
 }
 
 /** How long Undo is offered after archiving or deleting with a swipe. */
@@ -168,6 +177,27 @@ class UniffiMailboxCore(
     }
 
     override suspend fun undoAction(messageId: Long): Boolean = withContext(io) { engine.undoAction(messageId) }
+
+    override suspend fun snooze(
+        messageId: Long,
+        wakeAt: Long,
+    ) {
+        withContext(io) { engine.snoozeMessages(listOf(messageId), wakeAt) }.forEach { replaySoon(it) }
+    }
+
+    override suspend fun unsnooze(messageId: Long) {
+        withContext(io) { engine.unsnoozeMessages(listOf(messageId)) }.forEach { replaySoon(it) }
+    }
+
+    override suspend fun snoozeInfo(messageId: Long): SnoozeInfo? = withContext(io) { engine.snoozeInfo(messageId) }
+
+    override suspend fun wakeDueSnoozes(): List<WokenMessage> {
+        val woken = withContext(io) { engine.wakeDueSnoozes() }
+        woken.map { it.accountId }.distinct().forEach { replaySoon(it) }
+        return woken
+    }
+
+    override suspend fun nextSnoozeWake(): Long? = withContext(io) { engine.nextSnoozeWake() }
 
     override suspend fun searchMessages(
         accountId: Long,
