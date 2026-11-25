@@ -181,6 +181,11 @@
     <string name="message_move_title">Move to folder</string>
     <string name="message_move_cancel">Cancel</string>
 
+    <!-- Contact suggestions (M2-08) -->
+    <string name="contacts_prompt_title">Show suggestions from your contacts? They stay on this device.</string>
+    <string name="contacts_prompt_yes">Allow</string>
+    <string name="contacts_prompt_no">No thanks</string>
+
     <!-- One-tap unsubscribe (M4-10) -->
     <string name="unsubscribe_button">Unsubscribe</string>
     <string name="unsubscribe_cancel">Cancel</string>
