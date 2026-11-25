@@ -26,7 +26,7 @@ pub use outbox::{
 pub use pending_ops::{OpId, OpKind, OpMessage, PendingOp};
 pub use rules::{NewRule, Rule, RuleAction, RuleCondition, RuleId};
 pub use search::SearchFilter;
-pub use settings::{SignatureSetting, MAX_SIGNATURE_BYTES};
+pub use settings::{SignatureSetting, ACCOUNT_COLOR_COUNT, MAX_SIGNATURE_BYTES};
 pub use snooze::{KeywordedMessage, NewSnooze, Snooze, SnoozeId, SnoozeState};
 pub use threads::{ThreadSummary, UnthreadedMessage};
 

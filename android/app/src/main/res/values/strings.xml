@@ -375,6 +375,17 @@
     <string name="outbox_delete">Delete</string>
 
     <!-- Save sent messages (M2-07) -->
+    <string name="settings_account_color_header">Account colour</string>
+    <string name="settings_account_color_auto">Automatic</string>
+    <string name="settings_account_color_auto_summary">Picked for you, so each account looks different</string>
+    <string name="account_color_blue">Blue</string>
+    <string name="account_color_pink">Pink</string>
+    <string name="account_color_green">Green</string>
+    <string name="account_color_orange">Orange</string>
+    <string name="account_color_purple">Purple</string>
+    <string name="account_color_teal">Teal</string>
+    <string name="account_color_red">Red</string>
+    <string name="account_color_brown">Brown</string>
     <string name="settings_save_sent_header">Save sent messages to the Sent folder</string>
     <string name="settings_save_sent_auto">Automatic</string>
     <string name="settings_save_sent_auto_summary">Yes, unless your provider does it itself (such as Gmail and Outlook)</string>

@@ -19,6 +19,10 @@ pub struct AccountSummary {
     pub email: String,
     /// Empty when the user gave no name.
     pub display_name: String,
+    /// The account's marker colour (0–7): the one the user chose (M4-20),
+    /// else the automatic one.
+    #[uniffi(default = 0)]
+    pub color: u32,
 }
 
 /// Lists the accounts in the database, oldest first, for the From picker.
@@ -29,12 +33,14 @@ pub fn list_accounts(db_path: String) -> Result<Vec<AccountSummary>, SyncFailure
     };
     let store = Store::open(&db_path).map_err(|_| storage())?;
     let accounts = store.list_accounts().map_err(|_| storage())?;
+    let colors = crate::messages::marker_colors(&store).map_err(|_| storage())?;
     Ok(accounts
         .into_iter()
         .map(|a| AccountSummary {
             id: a.id.0,
             email: a.details.email,
             display_name: a.details.display_name,
+            color: crate::messages::marker_color(&colors, a.id.0),
         })
         .collect())
 }
@@ -615,6 +621,7 @@ mod tests {
                 id: id.0,
                 email: "ann@example.org".into(),
                 display_name: "Ann".into(),
+                color: crate::messages::account_color(id.0),
             }]
         );
 

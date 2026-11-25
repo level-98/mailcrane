@@ -59,3 +59,39 @@ fn unknown_accounts_and_huge_signatures_are_refused() -> R {
     );
     Ok(())
 }
+
+#[test]
+fn account_color_is_automatic_until_chosen_and_survives_a_reopen() -> R {
+    let dir = tempfile::tempdir()?;
+    let path = dir.path().join("c.db");
+    let store = Store::open(&path)?;
+    let id = store.insert_account(&account())?;
+    assert_eq!(store.get_account_color(id)?, None);
+    assert!(store.set_account_color(id, Some(5))?);
+    drop(store);
+    let store = Store::open(&path)?;
+    assert_eq!(store.get_account_color(id)?, Some(5));
+    let other = store.insert_account(&account())?;
+    assert_eq!(
+        store.list_account_colors()?,
+        vec![(id, Some(5)), (other, None)]
+    );
+    assert!(store.set_account_color(id, None)?);
+    assert_eq!(store.get_account_color(id)?, None);
+    Ok(())
+}
+
+#[test]
+fn bad_colors_and_unknown_accounts_change_nothing() -> R {
+    let store = Store::open_in_memory()?;
+    assert_eq!(store.get_account_color(AccountId(9))?, None);
+    assert!(!store.set_account_color(AccountId(9), Some(1))?);
+    let id = store.insert_account(&account())?;
+    assert!(store.set_account_color(id, Some(2))?);
+    assert!(store
+        .set_account_color(id, Some(ACCOUNT_COLOR_COUNT))
+        .is_err());
+    assert!(store.set_account_color(id, Some(u32::MAX)).is_err());
+    assert_eq!(store.get_account_color(id)?, Some(2));
+    Ok(())
+}

@@ -21,7 +21,6 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import app.mailcrane.R
 import app.mailcrane.core.AccountSummary
-import app.mailcrane.core.accountColor
 import app.mailcrane.ui.components.AccountDot
 
 /** The saved accounts, with Add and Remove (M4-01). Removing asks first. */
@@ -41,7 +40,7 @@ internal fun AccountsSection(
         )
         accounts.forEach { account ->
             ListItem(
-                leadingContent = { AccountDot(accountColor(account.id).toInt()) },
+                leadingContent = { AccountDot(account.color.toInt()) },
                 headlineContent = { Text(account.displayName.ifBlank { account.email }) },
                 supportingContent = { Text(account.email) },
                 trailingContent = {
