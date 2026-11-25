@@ -9,7 +9,7 @@ mod repo;
 
 pub use error::StoreError;
 pub use model::*;
-pub use repo::{OpId, OpKind, OpMessage, PendingOp};
+pub use repo::{OpId, OpKind, OpMessage, PendingOp, SignatureSetting, MAX_SIGNATURE_BYTES};
 
 use rusqlite::Connection;
 use std::path::Path;

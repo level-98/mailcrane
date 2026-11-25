@@ -23,6 +23,7 @@ use mailcrane_store::{AccountId, Security, Store};
 use crate::secrets::{SecretKey, SecretStore};
 
 mod reply;
+pub mod signature;
 
 pub use reply::{prepare_reply, ReplyError, ReplyKind};
 

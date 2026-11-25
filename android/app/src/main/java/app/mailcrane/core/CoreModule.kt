@@ -41,6 +41,12 @@ object CoreModule {
     @Provides
     fun provideLinkCleaner(): LinkCleaner = CoreLinkCleaner
 
+    @Provides
+    @Singleton
+    fun provideAccountSettingsCore(
+        @ApplicationContext context: Context,
+    ): AccountSettingsCore = UniffiAccountSettingsCore(dbPath = dbPath(context))
+
     // The database lives in app-private storage that is never backed up.
     private fun dbPath(context: Context): String = File(context.noBackupFilesDir, "mailcrane.sqlite").path
 }
