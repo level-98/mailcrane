@@ -374,6 +374,33 @@ fn find_inbox(store: &Store, account: AccountId) -> Result<Option<FolderId>, Syn
         .map(|f| f.id))
 }
 
+impl ImapConn<'_> {
+    /// Incremental sync of the inbox; leaves it selected. Reports its own
+    /// failures as events.
+    async fn sync_inbox(&mut self) -> Result<(), SyncErrorKind> {
+        let session = self.session.as_mut().ok_or(SyncErrorKind::Network)?;
+        FolderSyncer::new(
+            self.store,
+            session,
+            self.listener,
+            self.account,
+            self.sync_config,
+        )
+        .sync_changes(self.inbox)
+        .await
+        .map(|_| ())
+        .map_err(|e| e.kind())
+    }
+}
+
+/// Unix seconds now. A clock before 1970 counts as 0.
+fn unix_now() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| i64::try_from(d.as_secs()).unwrap_or(i64::MAX))
+        .unwrap_or(0)
+}
+
 struct ImapConn<'a> {
     /// `None` once closed.
     session: Option<Session>,
@@ -392,19 +419,25 @@ impl Conn for ImapConn<'_> {
     }
 
     async fn sync(&mut self) -> Result<(), SyncErrorKind> {
-        let session = self.session.as_mut().ok_or(SyncErrorKind::Network)?;
-        // Reports its own failures as events.
-        FolderSyncer::new(
-            self.store,
-            session,
-            self.listener,
-            self.account,
-            self.sync_config,
-        )
-        .sync_changes(self.inbox)
-        .await
-        .map(|_| ())
-        .map_err(|e| e.kind())
+        self.sync_inbox().await?;
+        // What a sync from the app does next, so mail that arrives live is
+        // treated the same: rules on new inbox mail (M4-09), the actions
+        // they queue, and threading (M4-02). A failure in these only leaves
+        // the work for the next sync.
+        let now = unix_now();
+        if crate::rules::apply_new(self.store, self.account, now, self.listener).is_ok() {
+            let session = self.session.as_mut().ok_or(SyncErrorKind::Network)?;
+            let replayed =
+                crate::actions::replay(self.store, session, self.listener, self.account, now).await;
+            // Carrying out actions may select other folders, and IDLE
+            // watches the selected one: select the inbox again, catching
+            // anything that arrived meanwhile.
+            if replayed.is_ok_and(|r| r.done > 0 || r.failed > 0) {
+                self.sync_inbox().await?;
+            }
+        }
+        let _ = crate::threading::assign_new(self.store, Some(self.account));
+        Ok(())
     }
 
     async fn idle(

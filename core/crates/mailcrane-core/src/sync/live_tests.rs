@@ -684,3 +684,71 @@ trait NowOrNever: Future + Sized {
 }
 
 impl<F: Future> NowOrNever for F {}
+
+#[tokio::test]
+async fn rules_run_on_live_mail_and_idle_returns_to_the_inbox() {
+    use crate::rules::{NewRule, RuleAction, RuleCondition};
+    let imap = FakeImap::builder()
+        .user(USER, PASSWORD)
+        .folder("INBOX", vec![raw(1)])
+        .folder("Deals", vec![])
+        .start()
+        .await
+        .expect("fake imap starts");
+    // No folders stored: the live loop lists them (INBOX and Deals).
+    let (store, account) = account_only();
+    let events = Events::default();
+    let folder = |name: &str| {
+        store
+            .list_folders(account)
+            .ok()?
+            .into_iter()
+            .find(|f| f.details.remote_name == name)
+            .map(|f| f.id)
+    };
+    with_live(&imap, &store, account, &events, fast(), || async {
+        wait_for(Duration::from_secs(10), || {
+            folder("INBOX").is_some_and(|inbox| stored(&store, inbox).len() == 1)
+        })
+        .await;
+        let deals = folder("Deals").expect("Deals listed");
+        store
+            .insert_rule(&NewRule {
+                account_id: None,
+                name: "Deals".into(),
+                enabled: true,
+                match_all: true,
+                stop_processing: false,
+                conditions: vec![RuleCondition::ListId("deals.shop.example".into())],
+                actions: vec![RuleAction::MarkRead, RuleAction::Move(deals)],
+            })
+            .expect("rule");
+        wait_for(Duration::from_secs(5), || idling(&imap)).await;
+        imap.mailbox()
+            .deliver(
+                "INBOX",
+                b"From: news@shop.example\r\nSubject: Sale\r\nList-Id: News <deals.shop.example>\r\n\r\nHi\r\n"
+                    .to_vec(),
+            )
+            .await;
+        // The rule moved it on the server and marked it read.
+        let mailbox = imap.mailbox();
+        wait_for(Duration::from_secs(5), || {
+            let deals = mailbox.messages("Deals").now_or_never().unwrap_or_default();
+            deals.len() == 1 && deals[0].flags.iter().any(|f| f == r"\Seen")
+        })
+        .await;
+        // Replaying the move selected Deals; live updates are back on the
+        // inbox, so the next delivery still arrives.
+        let inbox = folder("INBOX").expect("inbox");
+        imap.mailbox().deliver("INBOX", raw(3)).await;
+        wait_for(Duration::from_secs(3), || {
+            store
+                .list_messages(inbox, 100, 0)
+                .map(|m| m.iter().any(|m| m.details.subject == "Message 3"))
+                .unwrap_or(false)
+        })
+        .await;
+    })
+    .await;
+}
