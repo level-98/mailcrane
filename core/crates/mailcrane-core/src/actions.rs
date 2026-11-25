@@ -14,7 +14,8 @@ pub use replay::{backoff_secs, replay, ReplayReport};
 
 use crate::events::{CoreEvent, EventListener};
 use mailcrane_store::{
-    AccountId, FolderId, FolderRole, MessageId, OpKind, OpMessage, Store, StoreError,
+    AccountId, FolderId, FolderRole, MessageHeader, MessageId, NewOp, OpKind, OpMessage, Store,
+    StoreError,
 };
 
 /// What the user asked to do.
@@ -56,6 +57,13 @@ pub enum ActionError {
     /// The messages are in different folders. Act on one folder at a time.
     #[error("the messages are in different folders")]
     MixedFolders,
+    /// A move of messages from several accounts: folders belong to one
+    /// account, so there is no destination for all of them (M4-14).
+    #[error("the messages are in different accounts")]
+    MixedAccounts,
+    /// More than [`MAX_BULK`] messages in one action.
+    #[error("too many messages")]
+    TooMany,
     /// The local database failed.
     #[error("store error: {0}")]
     Store(#[from] StoreError),
@@ -96,6 +104,46 @@ pub fn apply_action(
     if headers.iter().any(|h| h.details.folder_id != folder_id) {
         return Err(ActionError::MixedFolders);
     }
+    let plan = plan(store, folder_id, &headers, action)?;
+    let account = plan.account;
+    if plan.messages.is_empty() {
+        return Ok(Some(Applied {
+            account,
+            queued: false,
+        }));
+    }
+    let kind = plan.kind;
+    let count = plan.messages.len();
+    let op = store.queue_op(
+        account,
+        plan.kind,
+        plan.folder,
+        plan.dest,
+        &plan.messages,
+        now,
+    )?;
+    listener.on_event(CoreEvent::MessagesChanged { folder_id });
+    tracing::debug!(
+        ?kind,
+        count,
+        queued = op.is_some(),
+        "message action applied"
+    );
+    Ok(Some(Applied {
+        account,
+        queued: op.is_some(),
+    }))
+}
+
+/// The op that carries `action` out on `headers`, all in `folder_id`,
+/// leaving out messages already in the wanted state. Checks everything and
+/// changes nothing.
+fn plan(
+    store: &Store,
+    folder_id: FolderId,
+    headers: &[MessageHeader],
+    action: Action,
+) -> Result<NewOp, ActionError> {
     let folder = store
         .get_folder(folder_id)?
         .ok_or(ActionError::UnknownFolder)?;
@@ -119,7 +167,6 @@ pub fn apply_action(
         }
         Action::Delete => match role_folder(FolderRole::Trash)? {
             Some(trash) if trash != folder_id => (OpKind::Move, Some(trash)),
-            // Already in Trash, or no Trash: delete for good.
             _ => (OpKind::Expunge, None),
         },
         Action::Move { to } => {
@@ -131,7 +178,7 @@ pub fn apply_action(
         }
     };
 
-    let needed: Vec<OpMessage> = headers
+    let messages: Vec<OpMessage> = headers
         .iter()
         .filter(|h| {
             let f = h.details.flags;
@@ -140,7 +187,6 @@ pub fn apply_action(
                 OpKind::MarkUnread => f.seen,
                 OpKind::Flag => !f.flagged,
                 OpKind::Unflag => f.flagged,
-                // Moving a message into the folder it is in does nothing.
                 OpKind::Move => dest != Some(folder_id),
                 OpKind::Expunge => true,
             }
@@ -150,24 +196,136 @@ pub fn apply_action(
             uid: h.details.uid,
         })
         .collect();
-    if needed.is_empty() {
-        return Ok(Some(Applied {
-            account,
-            queued: false,
-        }));
-    }
-    let op = store.queue_op(account, kind, folder_id, dest, &needed, now)?;
-    listener.on_event(CoreEvent::MessagesChanged { folder_id });
-    tracing::debug!(
-        ?kind,
-        count = needed.len(),
-        queued = op.is_some(),
-        "message action applied"
-    );
-    Ok(Some(Applied {
+    Ok(NewOp {
         account,
-        queued: op.is_some(),
-    }))
+        kind,
+        folder: folder_id,
+        dest,
+        messages,
+    })
+}
+
+/// The most messages one multi-select action takes.
+pub const MAX_BULK: usize = 10_000;
+
+/// What [`apply_bulk_action`] did.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct BulkApplied {
+    /// Accounts with something queued, each once, whose queues to replay.
+    pub accounts: Vec<AccountId>,
+    /// The messages that changed (for undo). Messages already in the wanted
+    /// state are not in it.
+    pub messages: Vec<MessageId>,
+    /// Whether any message was deleted for good rather than moved to Trash.
+    pub deleted_for_good: bool,
+}
+
+/// Multi-select (M4-14): applies `action` to `messages`, which may be in
+/// several folders and accounts. Every folder's group is checked first,
+/// then all are applied and queued in one transaction, one op per folder;
+/// on any error nothing changes. Sends `MessagesChanged` for each folder
+/// that changed. A move needs messages of one account.
+pub fn apply_bulk_action(
+    store: &Store,
+    messages: &[MessageId],
+    action: Action,
+    now: i64,
+    listener: &dyn EventListener,
+) -> Result<BulkApplied, ActionError> {
+    if messages.len() > MAX_BULK {
+        return Err(ActionError::TooMany);
+    }
+    // Groups by folder, in the order the folders first appear; a message
+    // listed twice counts once.
+    let mut groups: Vec<(FolderId, Vec<MessageHeader>)> = Vec::new();
+    let mut seen = std::collections::HashSet::with_capacity(messages.len());
+    for id in messages {
+        if !seen.insert(*id) {
+            continue;
+        }
+        let header = store
+            .get_message_header(*id)?
+            .ok_or(ActionError::UnknownMessage)?;
+        let folder = header.details.folder_id;
+        match groups.iter_mut().find(|(f, _)| *f == folder) {
+            Some((_, group)) => group.push(header),
+            None => groups.push((folder, vec![header])),
+        }
+    }
+    // Before planning: a move's destination fits only one account's groups.
+    if matches!(action, Action::Move { .. }) {
+        let mut account = None;
+        for (folder, _) in &groups {
+            let owner = store
+                .get_folder(*folder)?
+                .ok_or(ActionError::UnknownFolder)?
+                .details
+                .account_id;
+            if account.is_some_and(|a| a != owner) {
+                return Err(ActionError::MixedAccounts);
+            }
+            account = Some(owner);
+        }
+    }
+    let mut ops = Vec::with_capacity(groups.len());
+    for (folder, headers) in &groups {
+        ops.push(plan(store, *folder, headers, action)?);
+    }
+    ops.retain(|op| !op.messages.is_empty());
+    let mut applied = BulkApplied::default();
+    if ops.is_empty() {
+        return Ok(applied);
+    }
+    let queued = store.queue_ops(&ops, now)?;
+    for (op, id) in ops.iter().zip(&queued) {
+        applied
+            .messages
+            .extend(op.messages.iter().map(|m| m.message_id));
+        if op.kind == OpKind::Expunge {
+            applied.deleted_for_good = true;
+        }
+        if id.is_some() && !applied.accounts.contains(&op.account) {
+            applied.accounts.push(op.account);
+        }
+        listener.on_event(CoreEvent::MessagesChanged {
+            folder_id: op.folder,
+        });
+    }
+    tracing::debug!(
+        folders = ops.len(),
+        count = applied.messages.len(),
+        "bulk message action applied"
+    );
+    Ok(applied)
+}
+
+/// What [`undo_bulk`] did.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct BulkUndo {
+    /// Messages put back.
+    pub undone: u32,
+    /// Messages whose action had already reached the server.
+    pub too_late: u32,
+}
+
+/// Undo for a multi-select action: takes back the queued action of every
+/// one of `messages` that hasn't been tried yet, in one transaction.
+pub fn undo_bulk(
+    store: &Store,
+    messages: &[MessageId],
+    listener: &dyn EventListener,
+) -> Result<BulkUndo, ActionError> {
+    if messages.len() > MAX_BULK {
+        return Err(ActionError::TooMany);
+    }
+    let report = store.cancel_queued_many(messages)?;
+    for folder_id in report.folders {
+        listener.on_event(CoreEvent::MessagesChanged { folder_id });
+    }
+    Ok(BulkUndo {
+        undone: report.undone,
+        too_late: report.too_late,
+    })
 }
 
 /// Undoes the newest queued action on `message` if it hasn't been sent to

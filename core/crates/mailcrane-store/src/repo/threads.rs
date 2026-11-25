@@ -286,6 +286,24 @@ impl Store {
         Ok(out)
     }
 
+    /// The visible messages of `thread` in `folder` only, newest first: what
+    /// a conversation row in that folder's list stands for (M4-14).
+    pub fn thread_message_ids_in_folder(
+        &self,
+        folder: FolderId,
+        thread: ThreadId,
+    ) -> Result<Vec<MessageId>, StoreError> {
+        let mut stmt = self.conn.prepare_cached(
+            "SELECT id FROM messages WHERE folder_id = ?1 AND thread_id = ?2 AND hidden = 0 \
+             ORDER BY date DESC, id DESC",
+        )?;
+        let ids = stmt
+            .query_map(params![folder.0, thread.0], |r| r.get::<_, i64>(0))?
+            .map(|r| r.map(MessageId))
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(ids)
+    }
+
     /// Every message of a thread across its account's folders, oldest
     /// first, leaving out hidden ones and those in Trash or Spam. A message
     /// stored in several folders comes once (see `one_copy_each` in

@@ -4,7 +4,10 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import app.mailcrane.R
 import app.mailcrane.core.ActionFailure
+import app.mailcrane.core.BulkSelection
 import app.mailcrane.core.CoreEvent
+import app.mailcrane.core.FolderRole
+import app.mailcrane.core.FolderSummary
 import app.mailcrane.core.MailboxCore
 import app.mailcrane.core.MessageAction
 import app.mailcrane.core.MessageSummary
@@ -54,7 +57,36 @@ data class MessageListState(
     val grouped: Boolean = false,
     /** The conversations covering the loaded messages, newest first, when [grouped]. */
     val threads: List<ThreadSummary> = emptyList(),
-)
+    /** Selected message rows (M4-14). */
+    val selectedMessages: Set<Long> = emptySet(),
+    /** Selected conversation rows, by thread id, when [grouped]. */
+    val selectedThreads: Set<Long> = emptySet(),
+) {
+    /** Multi-select is on: taps toggle rows and the top bar shows the bulk actions. */
+    val selecting: Boolean get() = selectedMessages.isNotEmpty() || selectedThreads.isNotEmpty()
+
+    /** How many rows are selected. */
+    val selectedCount: Int get() = selectedMessages.size + selectedThreads.size
+
+    /** Every selected row is read, so the top bar offers Mark unread. */
+    val allSelectedRead: Boolean
+        get() =
+            messages.filter { it.id in selectedMessages }.all { it.isSeen } &&
+                threads.filter { it.threadId in selectedThreads }.all { it.unreadCount == 0u }
+
+    /** Every selected row is flagged, so the top bar offers Unflag. */
+    val allSelectedFlagged: Boolean
+        get() =
+            messages.filter { it.id in selectedMessages }.all { it.isFlagged } &&
+                threads.filter { it.threadId in selectedThreads }.all { it.isFlagged }
+
+    /** The accounts of the selected rows (0 for rows outside the Unified Inbox, which name none). */
+    val selectedAccounts: Set<Long>
+        get() = messages.filter { it.id in selectedMessages }.mapTo(HashSet()) { it.accountId }
+}
+
+/** What the selection top bar can do to every selected row (M4-14). */
+enum class BulkAction { READ, UNREAD, FLAG, UNFLAG, ARCHIVE, DELETE }
 
 /**
  * The message list of one folder. All mail logic stays in the core: this only asks it for pages,
@@ -104,6 +136,7 @@ class MessageListViewModel
                 settings.groupByConversation.distinctUntilChanged().collect { grouped ->
                     _state.update { it.copy(grouped = grouped) }
                     refreshThreads()
+                    pruneSelection()
                 }
             }
         }
@@ -131,6 +164,156 @@ class MessageListViewModel
 
         /** One-off messages from swipes, as string resources. */
         val notices: Flow<Int> = _notices.receiveAsFlow()
+
+        private val _bulkUndoOffers = Channel<BulkUndoOffer>(Channel.BUFFERED)
+
+        /** "3 archived · Undo" after a bulk Archive, Delete or Move, shown for [UNDO_WINDOW_MS]. */
+        val bulkUndoOffers: Flow<BulkUndoOffer> = _bulkUndoOffers.receiveAsFlow()
+
+        /** Long-press, or a tap while selecting: selects or deselects a message row. */
+        fun toggleMessage(id: Long) =
+            _state.update {
+                it.copy(
+                    selectedMessages =
+                        if (id in
+                            it.selectedMessages
+                        ) {
+                            it.selectedMessages - id
+                        } else {
+                            it.selectedMessages + id
+                        },
+                )
+            }
+
+        /** Selects or deselects a conversation row. */
+        fun toggleThread(threadId: Long) =
+            _state.update {
+                it.copy(
+                    selectedThreads =
+                        if (threadId in
+                            it.selectedThreads
+                        ) {
+                            it.selectedThreads - threadId
+                        } else {
+                            it.selectedThreads + threadId
+                        },
+                )
+            }
+
+        /** Back or the top bar's Clear: ends selection. */
+        fun clearSelection() = _state.update { it.copy(selectedMessages = emptySet(), selectedThreads = emptySet()) }
+
+        /** Runs [action] on every selected row through the core, then ends selection. */
+        fun bulk(action: BulkAction) {
+            val coreAction =
+                when (action) {
+                    BulkAction.READ -> MessageAction.MarkRead
+                    BulkAction.UNREAD -> MessageAction.MarkUnread
+                    BulkAction.FLAG -> MessageAction.Flag
+                    BulkAction.UNFLAG -> MessageAction.Unflag
+                    BulkAction.ARCHIVE -> MessageAction.Archive
+                    BulkAction.DELETE -> MessageAction.Delete
+                }
+            val kind =
+                when (action) {
+                    BulkAction.ARCHIVE -> BulkUndoKind.ARCHIVED
+                    BulkAction.DELETE -> BulkUndoKind.DELETED
+                    else -> null
+                }
+            runBulk(coreAction, kind)
+        }
+
+        private val _moveTargets = MutableStateFlow<List<FolderSummary>?>(null)
+
+        /** The folders to offer for the selection's Move while its dialog is open, else null. */
+        val moveTargets: StateFlow<List<FolderSummary>?> = _moveTargets.asStateFlow()
+
+        /**
+         * The selection's Move: offers [folders] (this folder's account, minus this folder), or in the Unified
+         * Inbox the selected messages' account's folders. Messages from several accounts can't share a
+         * destination, so that says so instead.
+         */
+        fun startMove(folders: List<FolderSummary>) {
+            if (!unified) {
+                _moveTargets.value = folders.filter { it.id != folderId }
+                return
+            }
+            val accounts = _state.value.selectedAccounts
+            val account = accounts.singleOrNull()
+            viewModelScope.launch {
+                if (account == null) {
+                    _notices.send(R.string.bulk_move_one_account)
+                    return@launch
+                }
+                try {
+                    _moveTargets.value = core.listFolders(account).filter { it.role != FolderRole.INBOX }
+                } catch (_: SyncFailure) {
+                    _notices.send(R.string.action_not_applied)
+                }
+            }
+        }
+
+        /** The Move dialog was closed without a pick. */
+        fun cancelMove() {
+            _moveTargets.value = null
+        }
+
+        /** The selection's Move, once a folder is picked. */
+        fun bulkMove(folderId: Long) {
+            _moveTargets.value = null
+            runBulk(MessageAction.Move(folderId), BulkUndoKind.MOVED)
+        }
+
+        private fun runBulk(
+            action: MessageAction,
+            undo: BulkUndoKind?,
+        ) {
+            val current = _state.value
+            if (!current.selecting) return
+            val selection =
+                BulkSelection(
+                    messageIds = current.selectedMessages.toList(),
+                    folderId = folderId,
+                    threadIds = current.selectedThreads.toList(),
+                )
+            clearSelection()
+            viewModelScope.launch {
+                try {
+                    val applied = core.bulkAction(selection, action, undoable = undo != null)
+                    if (undo != null && applied.messageIds.isNotEmpty()) {
+                        _bulkUndoOffers.send(
+                            BulkUndoOffer(
+                                messageIds = applied.messageIds,
+                                kind = if (applied.deletedForGood) BulkUndoKind.DELETED_FOR_GOOD else undo,
+                            ),
+                        )
+                    }
+                } catch (e: ActionFailure.NoArchiveFolder) {
+                    _notices.send(R.string.action_no_archive_folder)
+                } catch (e: ActionFailure.MixedAccounts) {
+                    _notices.send(R.string.bulk_move_one_account)
+                } catch (e: ActionFailure) {
+                    _notices.send(R.string.action_not_applied)
+                }
+            }
+        }
+
+        /** The bulk snackbar's Undo. */
+        fun undoBulk(messageIds: List<Long>) {
+            viewModelScope.launch {
+                val result =
+                    try {
+                        core.undoBulk(messageIds)
+                    } catch (_: ActionFailure) {
+                        null
+                    }
+                when {
+                    result == null -> _notices.send(R.string.action_not_applied)
+                    result.undone == 0u -> _notices.send(R.string.swipe_undo_too_late)
+                    result.tooLate > 0u -> _notices.send(R.string.bulk_undo_partly_late)
+                }
+            }
+        }
 
         /** Runs [action] on [message] through the core (never by changing the list alone). Not for MOVE. */
         fun swipe(
@@ -256,6 +439,26 @@ class MessageListViewModel
             }
         }
 
+        /** Drops selected rows that left the list (moved, deleted, or changed elsewhere). */
+        private fun pruneSelection() =
+            _state.update { s ->
+                if (!s.selecting) return@update s
+                val ids = s.messages.mapTo(HashSet()) { it.id }
+                val threads = s.threads.mapTo(HashSet()) { it.threadId }
+                s.copy(
+                    selectedMessages = s.selectedMessages.filterTo(HashSet()) { it in ids },
+                    // Conversation rows only show while grouping is on.
+                    selectedThreads =
+                        if (s.grouped) {
+                            s.selectedThreads.filterTo(
+                                HashSet(),
+                            ) { it in threads }
+                        } else {
+                            emptySet()
+                        },
+                )
+            }
+
         /** Re-reads the loaded range from the database. */
         private suspend fun reload() {
             reading.withLock {
@@ -263,6 +466,7 @@ class MessageListViewModel
                     val messages = readWindow()
                     _state.update { it.copy(messages = messages, isLoading = false, loadError = null) }
                     refreshThreads()
+                    pruneSelection()
                 } catch (e: SyncFailure.Failed) {
                     if (_state.value.messages.isEmpty()) {
                         _state.update { it.copy(isLoading = false, loadError = e.kind) }
@@ -311,6 +515,15 @@ class MessageListViewModel
             const val LOAD_MORE_THRESHOLD = 20
         }
     }
+
+/** What a bulk action did, for its snackbar. */
+enum class BulkUndoKind { ARCHIVED, DELETED, DELETED_FOR_GOOD, MOVED }
+
+/** Undo is offered for [messageIds] after a bulk action (M4-14). */
+data class BulkUndoOffer(
+    val messageIds: List<Long>,
+    val kind: BulkUndoKind,
+)
 
 /** Undo is offered for [messageId] after [action] (archive or delete). */
 data class UndoOffer(

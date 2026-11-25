@@ -1,8 +1,13 @@
 package app.mailcrane.ui.messagelist
 
+import app.mailcrane.R
 import app.mailcrane.core.ActionFailure
 import app.mailcrane.core.ActionKind
+import app.mailcrane.core.BulkApplied
+import app.mailcrane.core.BulkSelection
+import app.mailcrane.core.BulkUndo
 import app.mailcrane.core.CoreEvent
+import app.mailcrane.core.FolderRole
 import app.mailcrane.core.FolderSummary
 import app.mailcrane.core.MailboxCore
 import app.mailcrane.core.MessageAction
@@ -115,7 +120,7 @@ private class FakeMailbox(
 
     override suspend fun refreshFolders(accountId: Long): Long? = FOLDER
 
-    override suspend fun listFolders(accountId: Long): List<FolderSummary> = emptyList()
+    override suspend fun listFolders(accountId: Long): List<FolderSummary> = accountFolders
 
     val swiped = mutableListOf<Pair<MessageAction, Boolean>>()
     var actionFailure: ActionFailure? = null
@@ -143,6 +148,29 @@ private class FakeMailbox(
     ) = 0
 
     override suspend fun undoAction(messageId: Long) = undoResult
+
+    val bulkCalls = mutableListOf<Triple<BulkSelection, MessageAction, Boolean>>()
+    var deletedForGood = false
+
+    override suspend fun bulkAction(
+        selection: BulkSelection,
+        action: MessageAction,
+        undoable: Boolean,
+    ): BulkApplied {
+        actionFailure?.let { throw it }
+        bulkCalls += Triple(selection, action, undoable)
+        return BulkApplied(listOf(1L), selection.messageIds, deletedForGood)
+    }
+
+    val undoBulkCalls = mutableListOf<List<Long>>()
+    var undoBulkResult = BulkUndo(0u, 0u)
+
+    override suspend fun undoBulk(messageIds: List<Long>): BulkUndo {
+        undoBulkCalls += messageIds
+        return undoBulkResult
+    }
+
+    var accountFolders: List<FolderSummary> = emptyList()
 }
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -407,4 +435,172 @@ class MessageListViewModelTest {
             assertEquals("once on opening, once on refresh", 2, core.unifiedSyncs)
             assertEquals(0, core.syncCalls)
         }
+    // Multi-select (M4-14).
+
+    private fun folder(
+        id: Long,
+        role: FolderRole? = null,
+    ) = FolderSummary(id = id, displayName = "F$id", role = role, depth = 0u, unreadCount = 0u)
+
+    @Test
+    fun longPressStartsSelectionTapsToggleAndClearEndsIt() {
+        val vm = MessageListViewModel(FakeMailbox(stored = 5), FakeAppSettings(), FOLDER)
+        assertFalse(vm.state.value.selecting)
+        vm.toggleMessage(5)
+        vm.toggleMessage(4)
+        assertTrue(vm.state.value.selecting)
+        assertEquals(2, vm.state.value.selectedCount)
+        vm.toggleMessage(5)
+        assertEquals(setOf(4L), vm.state.value.selectedMessages)
+        vm.clearSelection()
+        assertFalse(vm.state.value.selecting)
+    }
+
+    @Test
+    fun aBulkActionIsOneCoreCallForEverySelectedRowAndEndsSelection() {
+        val core = FakeMailbox(stored = 5)
+        val vm = MessageListViewModel(core, FakeAppSettings(), FOLDER)
+        vm.toggleMessage(5)
+        vm.toggleMessage(3)
+        vm.toggleThread(42)
+        vm.bulk(BulkAction.READ)
+        assertEquals(1, core.bulkCalls.size)
+        val (selection, action, undoable) = core.bulkCalls.single()
+        assertEquals(setOf(5L, 3L), selection.messageIds.toSet())
+        assertEquals(listOf(42L), selection.threadIds)
+        assertEquals(FOLDER, selection.folderId)
+        assertEquals(MessageAction.MarkRead, action)
+        assertFalse("read needs no undo", undoable)
+        assertFalse(vm.state.value.selecting)
+    }
+
+    @Test
+    fun readAndFlagTurnIntoUnreadAndUnflagWhenEverySelectedRowIs() {
+        val core = FakeMailbox(stored = 3)
+        core.messages = core.messages.map { it.copy(isSeen = true, isFlagged = it.id != 1L) }
+        val vm = MessageListViewModel(core, FakeAppSettings(), FOLDER)
+        vm.toggleMessage(3)
+        vm.toggleMessage(2)
+        assertTrue(vm.state.value.allSelectedRead)
+        assertTrue(vm.state.value.allSelectedFlagged)
+        vm.toggleMessage(1)
+        assertFalse(vm.state.value.allSelectedFlagged)
+    }
+
+    @Test
+    fun archiveOffersUndoForEveryMessageAndUndoTakesThemBack() =
+        runTest {
+            val core = FakeMailbox(stored = 3)
+            val vm = MessageListViewModel(core, FakeAppSettings(), FOLDER)
+            vm.toggleMessage(3)
+            vm.toggleMessage(2)
+            vm.bulk(BulkAction.ARCHIVE)
+            assertEquals(MessageAction.Archive, core.bulkCalls.single().second)
+            assertTrue("waits for a possible undo", core.bulkCalls.single().third)
+            val offer = vm.bulkUndoOffers.first()
+            assertEquals(BulkUndoKind.ARCHIVED, offer.kind)
+            assertEquals(setOf(3L, 2L), offer.messageIds.toSet())
+            core.undoBulkResult = BulkUndo(2u, 0u)
+            vm.undoBulk(offer.messageIds)
+            assertEquals(listOf(offer.messageIds), core.undoBulkCalls)
+        }
+
+    @Test
+    fun undoThatCameTooLateForSomeSaysSo() =
+        runTest {
+            val core = FakeMailbox(stored = 3)
+            val vm = MessageListViewModel(core, FakeAppSettings(), FOLDER)
+            core.undoBulkResult = BulkUndo(1u, 1u)
+            vm.undoBulk(listOf(3, 2))
+            assertEquals(R.string.bulk_undo_partly_late, vm.notices.first())
+            core.undoBulkResult = BulkUndo(0u, 2u)
+            vm.undoBulk(listOf(3, 2))
+            assertEquals(R.string.swipe_undo_too_late, vm.notices.first())
+        }
+
+    @Test
+    fun deleteThatDeletedForGoodSaysSo() =
+        runTest {
+            val core = FakeMailbox(stored = 3).apply { deletedForGood = true }
+            val vm = MessageListViewModel(core, FakeAppSettings(), FOLDER)
+            vm.toggleMessage(3)
+            vm.bulk(BulkAction.DELETE)
+            assertEquals(BulkUndoKind.DELETED_FOR_GOOD, vm.bulkUndoOffers.first().kind)
+        }
+
+    @Test
+    fun aRefusedBulkActionSaysWhy() =
+        runTest {
+            val core = FakeMailbox(stored = 3)
+            val vm = MessageListViewModel(core, FakeAppSettings(), FOLDER)
+            core.actionFailure = ActionFailure.NoArchiveFolder()
+            vm.toggleMessage(3)
+            vm.bulk(BulkAction.ARCHIVE)
+            assertEquals(R.string.action_no_archive_folder, vm.notices.first())
+            core.actionFailure = ActionFailure.MixedAccounts()
+            vm.toggleMessage(3)
+            vm.bulkMove(9)
+            assertEquals(R.string.bulk_move_one_account, vm.notices.first())
+        }
+
+    @Test
+    fun rowsThatLeaveTheListLeaveTheSelection() {
+        val core = FakeMailbox(stored = 3)
+        val vm = MessageListViewModel(core, FakeAppSettings(), FOLDER)
+        vm.toggleMessage(3)
+        vm.toggleMessage(2)
+        core.messages = core.messages.filter { it.id != 3L }
+        core.events.tryEmit(CoreEvent.MessagesChanged(FOLDER))
+        assertEquals(setOf(2L), vm.state.value.selectedMessages)
+        core.messages = emptyList()
+        core.events.tryEmit(CoreEvent.MessagesChanged(FOLDER))
+        assertFalse("nothing left: selection ends", vm.state.value.selecting)
+    }
+
+    @Test
+    fun moveInAFolderOffersTheOtherFolders() {
+        val core = FakeMailbox(stored = 3)
+        val vm = MessageListViewModel(core, FakeAppSettings(), FOLDER)
+        vm.toggleMessage(3)
+        vm.startMove(listOf(folder(FOLDER, FolderRole.INBOX), folder(8)))
+        assertEquals(listOf(8L), vm.moveTargets.value?.map { it.id })
+        vm.bulkMove(8)
+        assertNull(vm.moveTargets.value)
+        assertEquals(MessageAction.Move(8), core.bulkCalls.single().second)
+    }
+
+    @Test
+    fun moveInTheUnifiedInboxNeedsOneAccount() =
+        runTest {
+            val core =
+                FakeMailbox(stored = 0).apply {
+                    unified =
+                        listOf(
+                            summary(9).copy(accountId = 1, accountColor = 1u),
+                            summary(8).copy(accountId = 2, accountColor = 2u),
+                            summary(7).copy(accountId = 2, accountColor = 2u),
+                        )
+                    accountFolders = listOf(folder(20, FolderRole.INBOX), folder(21))
+                }
+            val vm = MessageListViewModel(core, FakeAppSettings(), UNIFIED_FOLDER_ID)
+            vm.toggleMessage(9)
+            vm.toggleMessage(8)
+            vm.startMove(emptyList())
+            assertEquals(R.string.bulk_move_one_account, vm.notices.first())
+            assertNull(vm.moveTargets.value)
+            vm.toggleMessage(9)
+            vm.toggleMessage(7)
+            vm.startMove(emptyList())
+            assertEquals("that account's folders, not its inbox", listOf(21L), vm.moveTargets.value?.map { it.id })
+        }
+
+    @Test
+    fun selectionSurvivesWhatARotationKeeps() {
+        // Rotation keeps the view model; the selection lives there, not in the composable.
+        val core = FakeMailbox(stored = 3)
+        val vm = MessageListViewModel(core, FakeAppSettings(), FOLDER)
+        vm.toggleMessage(2)
+        vm.refresh()
+        assertEquals(setOf(2L), vm.state.value.selectedMessages)
+    }
 }
