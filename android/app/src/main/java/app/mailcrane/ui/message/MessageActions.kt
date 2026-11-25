@@ -38,6 +38,8 @@ data class MessageActions(
     val onMove: (Long) -> Unit = {},
     /** Opens the snooze picker; null hides the button. */
     val onSnooze: (() -> Unit)? = null,
+    /** "Create rule from this message"; null hides it. */
+    val onCreateRule: (() -> Unit)? = null,
 )
 
 /**
@@ -90,6 +92,15 @@ fun RowScope.MessageToolbarActions(
                     picking = true
                 },
             )
+            actions.onCreateRule?.let { create ->
+                DropdownMenuItem(
+                    text = { Text(stringResource(R.string.rules_create_from_message)) },
+                    onClick = {
+                        menuOpen = false
+                        create()
+                    },
+                )
+            }
         }
     }
     if (picking) {

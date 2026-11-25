@@ -27,6 +27,8 @@ import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.mailcrane.R
 import app.mailcrane.core.FolderRole
+import app.mailcrane.settings.RuleDraft
+import app.mailcrane.settings.RulesScreen
 import app.mailcrane.settings.SettingsScreen
 import app.mailcrane.ui.compose.ComposePrefill
 import app.mailcrane.ui.compose.DraftRequest
@@ -71,6 +73,9 @@ fun MailboxScreen(
             var openMessage by rememberSaveable { mutableStateOf<Long?>(null) }
             val saved = rememberSaveableStateHolder()
             var showSettings by rememberSaveable { mutableStateOf(false) }
+            // The Rules screen (M4-09), opened from Settings or from a message.
+            var showRules by rememberSaveable { mutableStateOf(false) }
+            var ruleFrom by rememberSaveable { mutableStateOf<String?>(null) }
             var showDrafts by rememberSaveable { mutableStateOf(false) }
             var showOutbox by rememberSaveable { mutableStateOf(false) }
             var showSearch by rememberSaveable { mutableStateOf(false) }
@@ -94,9 +99,26 @@ fun MailboxScreen(
                 )
                 return
             }
+            if (showRules) {
+                val close = {
+                    showRules = false
+                    ruleFrom = null
+                }
+                BackHandler { close() }
+                RulesScreen(
+                    accountId = accountId,
+                    onBack = close,
+                    startWith = ruleFrom?.let { RuleDraft.fromSender(it) },
+                )
+                return
+            }
             if (showSettings) {
                 BackHandler { showSettings = false }
-                SettingsScreen(onBack = { showSettings = false }, accountId = accountId)
+                SettingsScreen(
+                    onBack = { showSettings = false },
+                    accountId = accountId,
+                    onOpenRules = { showRules = true },
+                )
                 return
             }
             val messageId = openMessage
@@ -129,6 +151,10 @@ fun MailboxScreen(
                     folders = state.folders,
                     onReply = onReply,
                     onComposeTo = onComposeTo,
+                    onCreateRule = {
+                        ruleFrom = it
+                        showRules = true
+                    },
                 )
                 return
             }
