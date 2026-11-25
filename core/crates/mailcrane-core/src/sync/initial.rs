@@ -74,6 +74,14 @@ impl SyncError {
         }
     }
 
+    /// The local database error behind this one, if any.
+    pub fn store_error(&self) -> Option<&StoreError> {
+        match self {
+            SyncError::Store(e) | SyncError::Imap(ImapError::Store(e)) => Some(e),
+            _ => None,
+        }
+    }
+
     /// The kind reported in [`CoreEvent::SyncError`].
     pub fn kind(&self) -> SyncErrorKind {
         match self {
@@ -106,9 +114,9 @@ impl SyncError {
     }
 }
 
-/// What [`log_failure`] logs. Every field is a `&'static str` or a fieldless
-/// enum, so no server text, message content or credential can get in
-/// (AGENTS.md §4.4).
+/// What [`log_failure`] logs. Every field is a `&'static str`, a fieldless
+/// enum or a number, so no server text, message content, stored value or
+/// credential can get in (AGENTS.md §4.4).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FailureLog {
     /// Where it failed, e.g. `"sync"` or `"connect"`.
@@ -120,16 +128,33 @@ pub struct FailureLog {
     /// The last IMAP command sent, e.g. `"SELECT"` or `"UID FETCH"`, or
     /// `"none"`.
     pub command: &'static str,
+    /// For a local database failure, the [`StoreError`] variant, e.g.
+    /// `"Sqlite"`; otherwise `"none"`.
+    pub store: &'static str,
+    /// The column or field a `Corrupt` or `Invalid` store error names, or
+    /// `"none"`.
+    pub field: &'static str,
+    /// The SQLite extended result code's name (e.g.
+    /// `"SQLITE_CONSTRAINT_UNIQUE"`) or the rusqlite error kind, or
+    /// `"none"`.
+    pub sqlite: &'static str,
+    /// The SQLite extended result code as a number, or 0.
+    pub sqlite_code: i32,
 }
 
 impl FailureLog {
     /// The fields for a failed step.
     pub fn new(stage: &'static str, error: &SyncError, command: Option<&'static str>) -> Self {
+        let store = error.store_error();
         Self {
             stage,
             kind: error.kind(),
             error: error.detail(),
             command: command.unwrap_or("none"),
+            store: store.map_or("none", StoreError::name),
+            field: store.and_then(StoreError::field).unwrap_or("none"),
+            sqlite: store.and_then(StoreError::sqlite_detail).unwrap_or("none"),
+            sqlite_code: store.and_then(StoreError::sqlite_code).unwrap_or(0),
         }
     }
 }
@@ -143,6 +168,10 @@ pub fn log_failure(stage: &'static str, error: &SyncError, command: Option<&'sta
         kind = ?log.kind,
         error = log.error,
         command = log.command,
+        store = log.store,
+        field = log.field,
+        sqlite = log.sqlite,
+        sqlite_code = log.sqlite_code,
         "sync failed"
     );
 }
