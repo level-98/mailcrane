@@ -8,7 +8,7 @@ Write one when you add a dependency, change a public API or the database schema,
 
 | Number | Decision | Status |
 |---|---|---|
-| [0000](0000-app-name-and-domain-acquisition.md) | App name and domain name acquisition |
+| [0000](0000-app-name-and-domain-acquisition.md) | App name and domain name acquisition | accepted |
 | [0001](0001-tech-stack.md) | Shared Rust core with native UIs, bound through UniFFI | proposed |
 | [0002](0002-android-first-ios-after-release.md) | Android first; the iOS app follows after the Android release | accepted |
 | [0003](0003-bundled-ispdb.md) | Bundle a snapshot of Mozilla's ISPDB for automatic setup | accepted |
