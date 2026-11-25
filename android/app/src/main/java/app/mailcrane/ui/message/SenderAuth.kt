@@ -131,7 +131,17 @@ private fun AuthRow(
     ListItem(
         headlineContent = { Text(stringResource(name)) },
         supportingContent = {
-            Text(if (domain.isNullOrEmpty()) words else stringResource(R.string.message_auth_result_domain, words, domain))
+            Text(
+                if (domain.isNullOrEmpty()) {
+                    words
+                } else {
+                    stringResource(
+                        R.string.message_auth_result_domain,
+                        words,
+                        domain,
+                    )
+                },
+            )
         },
     )
 }

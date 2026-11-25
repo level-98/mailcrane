@@ -41,7 +41,8 @@ class SenderAuthTest {
 
     @Test
     fun verifiedChipOpensTheSheet() {
-        val c = check(AuthVerdict.VERIFIED, spf = AuthResult.PASS, dkim = AuthResult.TEMP_ERROR, dmarc = AuthResult.PASS)
+        val c =
+            check(AuthVerdict.VERIFIED, spf = AuthResult.PASS, dkim = AuthResult.TEMP_ERROR, dmarc = AuthResult.PASS)
         compose.setContent { MailcraneTheme { SenderAuthChip(c) } }
         compose.onNodeWithText("Verified").assertIsDisplayed().performClick()
         compose.onNodeWithTag("sender-auth-sheet").assertExists()
