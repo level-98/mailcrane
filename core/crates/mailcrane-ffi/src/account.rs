@@ -383,3 +383,40 @@ mod tests {
         assert_eq!(secrets.keys(), vec![format!("account/{id}/password")]);
     }
 }
+
+/// Why an account couldn't be removed.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error, uniffi::Error)]
+pub enum RemoveAccountFailure {
+    /// No such account.
+    #[error("account not found")]
+    NotFound,
+    /// The secure storage or the database failed; nothing was removed from
+    /// the database.
+    #[error("storage failure")]
+    Storage,
+}
+
+/// Removes an account (M4-01): its password and tokens from secure storage
+/// first, then everything stored for it (folders, messages, drafts, outbox,
+/// rules…, by the database's cascades). The app stops its sync jobs.
+#[uniffi::export]
+pub fn remove_account(db_path: String, account_id: i64) -> Result<(), RemoveAccountFailure> {
+    let store =
+        mailcrane_store::Store::open(&db_path).map_err(|_| RemoveAccountFailure::Storage)?;
+    let id = mailcrane_store::AccountId(account_id);
+    if store
+        .get_account(id)
+        .map_err(|_| RemoveAccountFailure::Storage)?
+        .is_none()
+    {
+        return Err(RemoveAccountFailure::NotFound);
+    }
+    let secrets = crate::secrets::secret_store().map_err(|_| RemoveAccountFailure::Storage)?;
+    mailcrane_core::secrets::delete_account_secrets(secrets.as_ref(), account_id)
+        .map_err(|_| RemoveAccountFailure::Storage)?;
+    match store.delete_account(id) {
+        Ok(true) => Ok(()),
+        Ok(false) => Err(RemoveAccountFailure::NotFound),
+        Err(_) => Err(RemoveAccountFailure::Storage),
+    }
+}

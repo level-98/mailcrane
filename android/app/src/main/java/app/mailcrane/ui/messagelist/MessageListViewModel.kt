@@ -12,6 +12,7 @@ import app.mailcrane.core.SyncErrorKind
 import app.mailcrane.core.SyncFailure
 import app.mailcrane.core.ThreadSummary
 import app.mailcrane.core.UNDO_WINDOW_MS
+import app.mailcrane.core.UNIFIED_FOLDER_ID
 import app.mailcrane.settings.AppSettings
 import app.mailcrane.settings.DEFAULT_SWIPE_LEFT
 import app.mailcrane.settings.DEFAULT_SWIPE_RIGHT
@@ -72,6 +73,9 @@ class MessageListViewModel
             fun create(folderId: Long): MessageListViewModel
         }
 
+        /** The Unified Inbox (M4-01) rather than one folder. */
+        private val unified = folderId == UNIFIED_FOLDER_ID
+
         private val _state = MutableStateFlow(MessageListState())
         val state: StateFlow<MessageListState> = _state.asStateFlow()
 
@@ -104,9 +108,16 @@ class MessageListViewModel
             }
         }
 
+        private suspend fun read(
+            offset: Int,
+            limit: Int,
+        ): List<MessageSummary> =
+            if (unified) core.listUnifiedInbox(offset, limit) else core.listMessages(folderId, offset, limit)
+
         /** Re-reads the conversations for the loaded range, when grouping is on. */
         private suspend fun refreshThreads() {
-            if (!_state.value.grouped) {
+            // Conversations are per folder; the Unified Inbox lists messages.
+            if (!_state.value.grouped || unified) {
                 _state.update { it.copy(threads = emptyList()) }
                 return
             }
@@ -205,7 +216,7 @@ class MessageListViewModel
             _state.update { it.copy(isRefreshing = true) }
             viewModelScope.launch {
                 try {
-                    core.syncFolder(folderId)
+                    if (unified) core.syncUnifiedInbox() else core.syncFolder(folderId)
                     reload()
                 } catch (e: SyncFailure.Failed) {
                     _errors.send(e.kind)
@@ -230,7 +241,7 @@ class MessageListViewModel
                     window = shown + PAGE_SIZE
                     if (moreStored) appendStored()
                     if (_state.value.messages.size == shown) {
-                        val stored = core.loadOlder(folderId, PAGE_SIZE)
+                        val stored = if (unified) 0 else core.loadOlder(folderId, PAGE_SIZE)
                         if (stored == 0) {
                             _state.update { it.copy(endReached = true) }
                         } else {
@@ -269,7 +280,7 @@ class MessageListViewModel
         private suspend fun appendStored() {
             reading.withLock {
                 val loaded = _state.value.messages
-                val next = core.listMessages(folderId, loaded.size, window - loaded.size)
+                val next = read(loaded.size, window - loaded.size)
                 // A reload may have run meanwhile; drop rows already in the list.
                 val known = loaded.mapTo(HashSet(loaded.size)) { it.id }
                 _state.update { it.copy(messages = loaded + next.filter { m -> m.id !in known }) }
@@ -282,7 +293,7 @@ class MessageListViewModel
             val out = ArrayList<MessageSummary>(window)
             while (out.size < window) {
                 val want = minOf(READ_CHUNK, window - out.size)
-                val chunk = core.listMessages(folderId, out.size, want)
+                val chunk = read(out.size, want)
                 out += chunk
                 if (chunk.size < want) break
             }
@@ -309,8 +320,9 @@ data class UndoOffer(
 
 private fun CoreEvent.isAbout(folderId: Long): Boolean =
     when (this) {
-        is CoreEvent.MessagesChanged -> this.folderId == folderId
-        is CoreEvent.FolderChanged -> this.folderId == folderId
+        // The Unified Inbox shows several folders: any change may concern it.
+        is CoreEvent.MessagesChanged -> folderId == UNIFIED_FOLDER_ID || this.folderId == folderId
+        is CoreEvent.FolderChanged -> folderId == UNIFIED_FOLDER_ID || this.folderId == folderId
         is CoreEvent.SyncError -> false
         is CoreEvent.ActionFailed -> false
     }

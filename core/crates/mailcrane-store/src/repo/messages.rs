@@ -216,6 +216,44 @@ impl Store {
         Ok(n > 0)
     }
 
+    /// The Unified Inbox (M4-01): messages of every account's inbox-role
+    /// folder, by `date DESC, id DESC` (ties across accounts break on the
+    /// row id, so pages with the same `limit` and consecutive `offset`s have
+    /// no duplicates or gaps). Hidden messages are left out. Each comes with
+    /// its account.
+    pub fn list_unified_inbox(
+        &self,
+        limit: u32,
+        offset: u32,
+    ) -> Result<Vec<(MessageHeader, crate::AccountId)>, StoreError> {
+        let cols = COLS
+            .split(',')
+            .map(|c| format!("m.{}", c.trim()))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let sql = format!(
+            "SELECT {cols}, f.account_id FROM messages m JOIN folders f ON f.id = m.folder_id              WHERE f.role = 'inbox' AND m.hidden = 0              ORDER BY m.date DESC, m.id DESC LIMIT ?1 OFFSET ?2"
+        );
+        let mut stmt = self.conn.prepare(&sql)?;
+        let mut rows = stmt.query(params![limit, offset])?;
+        let mut out = Vec::new();
+        while let Some(r) = rows.next()? {
+            let header = from_row(r)?;
+            out.push((header, crate::AccountId(r.get(24)?)));
+        }
+        Ok(out)
+    }
+
+    /// Unread messages across every account's inbox.
+    pub fn count_unified_unread(&self) -> Result<u64, StoreError> {
+        let n: i64 = self.conn.query_row(
+            "SELECT count(*) FROM messages m JOIN folders f ON f.id = m.folder_id              WHERE f.role = 'inbox' AND m.hidden = 0 AND m.seen = 0",
+            [],
+            |r| r.get(0),
+        )?;
+        Ok(u64::try_from(n).unwrap_or(0))
+    }
+
     /// Lists a folder's messages by `date DESC, id DESC`, leaving out ones
     /// hidden by a queued move or delete. Pages made with the
     /// same `limit` and consecutive `offset`s have no duplicates or gaps.

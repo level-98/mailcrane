@@ -27,6 +27,7 @@ import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.mailcrane.R
 import app.mailcrane.core.FolderRole
+import app.mailcrane.core.UNIFIED_FOLDER_ID
 import app.mailcrane.settings.RuleDraft
 import app.mailcrane.settings.RulesScreen
 import app.mailcrane.settings.SettingsScreen
@@ -50,6 +51,10 @@ import kotlinx.coroutines.launch
 @Composable
 fun MailboxScreen(
     accountId: Long,
+    accounts: List<app.mailcrane.core.AccountSummary> = emptyList(),
+    onSwitchAccount: (Long) -> Unit = {},
+    onAddAccount: () -> Unit = {},
+    onRemoveAccount: (Long) -> Unit = {},
     onCompose: (() -> Unit)? = null,
     composeFabModifier: Modifier = Modifier,
     notice: String? = null,
@@ -117,6 +122,9 @@ fun MailboxScreen(
                 SettingsScreen(
                     onBack = { showSettings = false },
                     accountId = accountId,
+                    accounts = accounts,
+                    onAddAccount = onAddAccount,
+                    onRemoveAccount = onRemoveAccount,
                     onOpenRules = { showRules = true },
                 )
                 return
@@ -188,6 +196,13 @@ fun MailboxScreen(
                             showDrafts = true
                         },
                         outboxCount = outboxEntries.size,
+                        accounts = accounts,
+                        currentAccountId = accountId,
+                        onSwitchAccount = { id ->
+                            scope.launch { drawerState.close() }
+                            onSwitchAccount(id)
+                        },
+                        unifiedUnread = state.unifiedUnread,
                         onOpenOutbox = {
                             scope.launch { drawerState.close() }
                             showOutbox = true
@@ -198,7 +213,12 @@ fun MailboxScreen(
                 saved.SaveableStateProvider("folder-${selected.id}") {
                     MessageListScreen(
                         folderId = selected.id,
-                        title = folderName(selected),
+                        title =
+                            if (selected.id == UNIFIED_FOLDER_ID) {
+                                stringResource(R.string.all_inboxes)
+                            } else {
+                                folderName(selected)
+                            },
                         // A message in the Drafts folder opens for editing, not reading.
                         onOpenMessage = {
                             if (selected.role == FolderRole.DRAFTS) {

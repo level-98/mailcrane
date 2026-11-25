@@ -9,6 +9,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -19,6 +20,7 @@ import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import app.mailcrane.settings.ThemeMode
 import app.mailcrane.ui.MailHome
+import app.mailcrane.ui.account.AccountsViewModel
 import app.mailcrane.ui.account.ManualSetupScreen
 import app.mailcrane.ui.components.WelcomeState
 import app.mailcrane.ui.theme.LocalDarkMessageBodies
@@ -60,17 +62,31 @@ class MainActivity : ComponentActivity() {
                     LocalDarkTheme provides dark,
                     LocalDarkMessageBodies provides appearance.darkMessageBodies,
                 ) {
-                    // Adding an account opens its mail. Remembering accounts across restarts comes
-                    // with the account list; until then, no account id means no accounts.
-                    var accountId by rememberSaveable { mutableStateOf<Long?>(null) }
+                    // The saved accounts, and the one shown, survive restarts (M4-01).
+                    val accountsModel: AccountsViewModel = hiltViewModel()
+                    val accounts by accountsModel.state.collectAsStateWithLifecycle()
                     var addingAccount by rememberSaveable { mutableStateOf(false) }
-                    val id = accountId
+                    val id = accounts.currentId
                     when {
-                        id != null -> MailHome(accountId = id)
                         addingAccount -> {
                             BackHandler { addingAccount = false }
-                            ManualSetupScreen(onAccountAdded = { accountId = it })
+                            ManualSetupScreen(onAccountAdded = {
+                                addingAccount = false
+                                accountsModel.added(it)
+                            })
                         }
+                        accounts.accounts == null -> Surface(color = MaterialTheme.colorScheme.surface) {}
+                        id != null ->
+                            // A new key per account, so its screens start fresh.
+                            key(id) {
+                                MailHome(
+                                    accountId = id,
+                                    accounts = accounts.accounts.orEmpty(),
+                                    onSwitchAccount = accountsModel::select,
+                                    onAddAccount = { addingAccount = true },
+                                    onRemoveAccount = accountsModel::remove,
+                                )
+                            }
                         else ->
                             Surface(color = MaterialTheme.colorScheme.surface) {
                                 WelcomeState(onAddAccount = { addingAccount = true })

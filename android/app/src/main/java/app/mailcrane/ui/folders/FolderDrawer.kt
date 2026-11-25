@@ -24,8 +24,12 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import app.mailcrane.R
+import app.mailcrane.core.AccountSummary
 import app.mailcrane.core.FolderRole
 import app.mailcrane.core.FolderSummary
+import app.mailcrane.core.UNIFIED_FOLDER_ID
+import app.mailcrane.core.accountColor
+import app.mailcrane.ui.components.AccountDot
 
 /** Indent per nesting level. */
 private val INDENT_STEP = 16.dp
@@ -47,8 +51,39 @@ fun FolderDrawer(
     onOpenLocalDrafts: (() -> Unit)? = null,
     outboxCount: Int = 0,
     onOpenOutbox: (() -> Unit)? = null,
+    accounts: List<AccountSummary> = emptyList(),
+    currentAccountId: Long? = null,
+    onSwitchAccount: (Long) -> Unit = {},
+    unifiedUnread: Int = 0,
 ) {
     ModalDrawerSheet(modifier = modifier) {
+        // With several accounts (M4-01): switch between them, or see every inbox together.
+        if (accounts.size > 1) {
+            Text(
+                text = stringResource(R.string.accounts_title),
+                style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = 28.dp, vertical = 12.dp).semantics { heading() },
+            )
+            accounts.forEach { account ->
+                NavigationDrawerItem(
+                    label = { Text(account.email, maxLines = 1) },
+                    icon = { AccountDot(accountColor(account.id).toInt()) },
+                    selected = account.id == currentAccountId && selectedFolderId != UNIFIED_FOLDER_ID,
+                    onClick = { onSwitchAccount(account.id) },
+                    modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding),
+                )
+            }
+            NavigationDrawerItem(
+                label = { Text(stringResource(R.string.all_inboxes)) },
+                icon = { Icon(painterResource(R.drawable.ic_mc_inbox), contentDescription = null) },
+                badge = { if (unifiedUnread > 0) Text(unifiedUnread.toString()) },
+                selected = selectedFolderId == UNIFIED_FOLDER_ID,
+                onClick = { onSelect(UNIFIED_FOLDER_ID) },
+                modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding),
+            )
+            HorizontalDivider(Modifier.padding(horizontal = 28.dp, vertical = 8.dp))
+        }
         Text(
             text = stringResource(R.string.folders_title),
             style = MaterialTheme.typography.titleSmall,

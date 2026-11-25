@@ -10,6 +10,7 @@ import app.mailcrane.core.MessageSummary
 import app.mailcrane.core.SyncErrorKind
 import app.mailcrane.core.SyncFailure
 import app.mailcrane.core.ThreadSummary
+import app.mailcrane.core.UNIFIED_FOLDER_ID
 import app.mailcrane.settings.FakeAppSettings
 import app.mailcrane.settings.SwipeAction
 import kotlinx.coroutines.CompletableDeferred
@@ -59,6 +60,18 @@ private class FakeMailbox(
     var listFailure: SyncErrorKind? = null
     var rowsRead = 0
     var threads: List<ThreadSummary> = emptyList()
+    var unified: List<MessageSummary> = emptyList()
+    var unifiedSyncs = 0
+
+    override suspend fun listUnifiedInbox(
+        offset: Int,
+        limit: Int,
+    ): List<MessageSummary> = unified.drop(offset).take(limit)
+
+    override suspend fun syncUnifiedInbox() {
+        unifiedSyncs++
+    }
+
     var threadReads = 0
 
     override suspend fun listThreads(
@@ -365,5 +378,33 @@ class MessageListViewModelTest {
                     .isEmpty(),
             )
             assertEquals(3, vm.state.value.messages.size)
+        }
+
+    @Test
+    fun theUnifiedInboxListsEveryAccountAndSyncsThemAll() =
+        runTest {
+            val core =
+                FakeMailbox(stored = 0).apply {
+                    unified =
+                        listOf(
+                            summary(9).copy(accountId = 1, accountColor = 1u),
+                            summary(8).copy(accountId = 2, accountColor = 2u),
+                        )
+                    threads = listOf(thread(1, 2u))
+                }
+            val vm = MessageListViewModel(core, FakeAppSettings(), UNIFIED_FOLDER_ID)
+            assertEquals(
+                listOf(9L, 8L),
+                vm.state.value.messages
+                    .map { it.id },
+            )
+            assertTrue(
+                "no conversations in the unified inbox",
+                vm.state.value.threads
+                    .isEmpty(),
+            )
+            vm.refresh()
+            assertEquals("once on opening, once on refresh", 2, core.unifiedSyncs)
+            assertEquals(0, core.syncCalls)
         }
 }
