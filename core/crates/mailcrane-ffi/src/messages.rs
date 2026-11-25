@@ -2,7 +2,7 @@
 //! page of a folder's message list, newest first; `get_message` returns one
 //! message ready to show, and `get_inline_part` the `cid:` images in it.
 
-use mailcrane_mime::{parse_message, sanitize_html, SanitizeOptions};
+use mailcrane_mime::{parse_message, sanitize_html, SanitizeOptions, TrackerHit, TrackerKind};
 use mailcrane_store::{BodyState, FolderId, MessageHeader, MessageId, Store};
 
 use crate::sync::{SyncErrorKind, SyncFailure};
@@ -148,9 +148,35 @@ pub enum MessageBody {
         remote_blocked: u32,
         /// Tracking pixels removed (in both modes).
         trackers_removed: u32,
+        /// The trackers removed, one per domain, for the "N trackers
+        /// blocked" sheet (M5-01).
+        trackers: Vec<TrackerInfo>,
     },
     /// The body has not been downloaded yet; call `SyncEngine::fetch_body`.
     NotDownloaded,
+}
+
+/// A tracker removed from a message (M5-01).
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct TrackerInfo {
+    /// The known service's name, or `None` for an unlisted tiny or hidden
+    /// image.
+    pub service: Option<String>,
+    /// The tracker's domain; empty when the image had no web address.
+    pub domain: String,
+}
+
+impl From<TrackerHit> for TrackerInfo {
+    fn from(hit: TrackerHit) -> Self {
+        let service = match hit.kind {
+            TrackerKind::KnownService(name) => Some(one_line(&name)),
+            TrackerKind::Tiny | TrackerKind::Hidden => None,
+        };
+        Self {
+            service,
+            domain: one_line(&hit.domain),
+        }
+    }
 }
 
 /// One message, ready to show.
@@ -333,6 +359,7 @@ pub fn get_message(
                         html: html_document(&clean.html, allow_remote),
                         remote_blocked: clean.remote_resources_blocked,
                         trackers_removed: clean.trackers_removed,
+                        trackers: clean.trackers.into_iter().map(TrackerInfo::from).collect(),
                     }
                 }
                 None => MessageBody::Plain {
@@ -661,6 +688,42 @@ mod tests {
         assert!(html.contains("src=\"https://example.com/a.png\""));
         assert!(html.contains("img-src mailcrane-cid: data: https:;"));
         assert!(!html.contains("<script"));
+    }
+
+    #[test]
+    fn trackers_are_listed_for_the_apps() {
+        let (_dir, path, folder) = setup();
+        let raw = html_message(
+            "<p>Hi</p><img src=\"https://us5.list-manage.com/track/open.php?u=1\">             <img src=\"https://us5.list-manage.com/track/open.php?u=2\">             <img src=\"https://stats.example.net/o.gif\" width=\"1\" height=\"1\">",
+        );
+        let id = with_body(&path, folder, 1, &raw);
+        for allow_remote in [false, true] {
+            let m = get_message(path.clone(), id, allow_remote).expect("message");
+            let MessageBody::Html {
+                html,
+                trackers,
+                trackers_removed,
+                ..
+            } = &m.body
+            else {
+                panic!("expected HTML");
+            };
+            assert!(!html.contains("list-manage"));
+            assert_eq!(*trackers_removed, 3);
+            assert_eq!(
+                trackers,
+                &vec![
+                    TrackerInfo {
+                        service: Some("Mailchimp".into()),
+                        domain: "list-manage.com".into(),
+                    },
+                    TrackerInfo {
+                        service: None,
+                        domain: "stats.example.net".into(),
+                    },
+                ]
+            );
+        }
     }
 
     #[test]
