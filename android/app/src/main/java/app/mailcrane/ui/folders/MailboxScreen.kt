@@ -26,6 +26,7 @@ import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.mailcrane.R
 import app.mailcrane.settings.SettingsScreen
+import app.mailcrane.ui.compose.ReplyRequest
 import app.mailcrane.ui.message.MessageScreen
 import app.mailcrane.ui.messagelist.MessageListScreen
 import app.mailcrane.ui.messagelist.errorText
@@ -42,6 +43,7 @@ fun MailboxScreen(
     composeFabModifier: Modifier = Modifier,
     notice: String? = null,
     onNoticeShown: () -> Unit = {},
+    onReply: (ReplyRequest) -> Unit = {},
     viewModel: FolderDrawerViewModel =
         hiltViewModel<FolderDrawerViewModel, FolderDrawerViewModel.Factory>(
             key = "folders-$accountId",
@@ -66,7 +68,12 @@ fun MailboxScreen(
             val messageId = openMessage
             if (messageId != null) {
                 BackHandler { openMessage = null }
-                MessageScreen(messageId = messageId, onBack = { openMessage = null }, folders = state.folders)
+                MessageScreen(
+                    messageId = messageId,
+                    onBack = { openMessage = null },
+                    folders = state.folders,
+                    onReply = onReply,
+                )
                 return
             }
             val drawerState = rememberDrawerState(DrawerValue.Closed)

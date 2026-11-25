@@ -20,6 +20,7 @@ import androidx.compose.ui.platform.LocalResources
 import app.mailcrane.R
 import app.mailcrane.ui.compose.ComposeResult
 import app.mailcrane.ui.compose.ComposeScreen
+import app.mailcrane.ui.compose.ReplyRequest
 import app.mailcrane.ui.folders.MailboxScreen
 
 /**
@@ -30,6 +31,7 @@ import app.mailcrane.ui.folders.MailboxScreen
 @Composable
 fun MailHome(accountId: Long) {
     var composing by rememberSaveable { mutableStateOf(false) }
+    var reply by rememberSaveable { mutableStateOf<ReplyRequest?>(null) }
     var notice by rememberSaveable { mutableStateOf<String?>(null) }
     val resources = LocalResources.current
     val motion = MaterialTheme.motionScheme
@@ -52,6 +54,7 @@ fun MailHome(accountId: Long) {
             if (open) {
                 ComposeScreen(
                     accountId = accountId,
+                    reply = reply,
                     onDone = { result ->
                         if (result is ComposeResult.Sent) {
                             notice =
@@ -65,13 +68,21 @@ fun MailHome(accountId: Long) {
                                 }
                         }
                         composing = false
+                        reply = null
                     },
                     modifier = shared,
                 )
             } else {
                 MailboxScreen(
                     accountId = accountId,
-                    onCompose = { composing = true },
+                    onCompose = {
+                        reply = null
+                        composing = true
+                    },
+                    onReply = {
+                        reply = it
+                        composing = true
+                    },
                     composeFabModifier = shared,
                     notice = notice,
                     onNoticeShown = { notice = null },

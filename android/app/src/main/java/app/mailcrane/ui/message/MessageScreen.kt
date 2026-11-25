@@ -3,14 +3,18 @@ package app.mailcrane.ui.message
 import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
+import android.content.res.Resources
 import android.net.Uri
 import android.text.format.Formatter
+import androidx.annotation.DrawableRes
+import androidx.annotation.StringRes
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
@@ -61,6 +65,8 @@ import app.mailcrane.core.InlinePart
 import app.mailcrane.core.MessageAddress
 import app.mailcrane.core.MessageBody
 import app.mailcrane.core.MessageDetail
+import app.mailcrane.core.ReplyKind
+import app.mailcrane.ui.compose.ReplyRequest
 import app.mailcrane.ui.messagelist.errorText
 import java.time.DateTimeException
 import java.time.Instant
@@ -75,6 +81,7 @@ fun MessageScreen(
     messageId: Long,
     onBack: () -> Unit,
     folders: List<FolderSummary> = emptyList(),
+    onReply: (ReplyRequest) -> Unit = {},
     viewModel: MessageViewModel =
         hiltViewModel<MessageViewModel, MessageViewModel.Factory>(
             key = "message-$messageId",
@@ -107,6 +114,10 @@ fun MessageScreen(
         onBack = onBack,
         snackbar = snackbar,
         folders = folders,
+        onReply = { kind ->
+            val ready = state as? MessageState.Ready ?: return@MessageContent
+            onReply(ReplyRequest(ready.message.id, kind, quoteHeader(resources, ready.message, kind)))
+        },
         actions =
             MessageActions(
                 onArchive = viewModel::archive,
@@ -134,9 +145,11 @@ fun MessageContent(
     snackbar: SnackbarHostState = remember { SnackbarHostState() },
     folders: List<FolderSummary> = emptyList(),
     actions: MessageActions = MessageActions(),
+    onReply: (ReplyKind) -> Unit = {},
 ) {
     Scaffold(
         snackbarHost = { SnackbarHost(snackbar) },
+        bottomBar = { if (state is MessageState.Ready) ReplyBar(onReply) },
         topBar = {
             TopAppBar(
                 title = {},
@@ -348,6 +361,52 @@ private fun formatSize(
     context: Context,
     size: ULong,
 ): String = Formatter.formatShortFileSize(context, size.coerceAtMost(Long.MAX_VALUE.toULong()).toLong())
+
+/** Reply, Reply all and Forward, along the bottom of an open message. */
+@Composable
+private fun ReplyBar(onReply: (ReplyKind) -> Unit) {
+    Surface(tonalElevation = 2.dp) {
+        Row(
+            Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal = 8.dp, vertical = 4.dp),
+            horizontalArrangement = Arrangement.SpaceEvenly,
+        ) {
+            ReplyButton(R.drawable.ic_mc_reply, R.string.message_reply) { onReply(ReplyKind.REPLY) }
+            ReplyButton(R.drawable.ic_mc_reply, R.string.message_reply_all) { onReply(ReplyKind.REPLY_ALL) }
+            ReplyButton(R.drawable.ic_mc_forward, R.string.message_forward) { onReply(ReplyKind.FORWARD) }
+        }
+    }
+}
+
+@Composable
+private fun ReplyButton(
+    @DrawableRes icon: Int,
+    @StringRes label: Int,
+    onClick: () -> Unit,
+) {
+    TextButton(onClick = onClick) {
+        Icon(painterResource(icon), contentDescription = null, modifier = Modifier.size(18.dp))
+        Text(stringResource(label), modifier = Modifier.padding(start = 8.dp))
+    }
+}
+
+/** The localised line above the quoted text, or the forward intro line. */
+internal fun quoteHeader(
+    resources: Resources,
+    message: MessageDetail,
+    kind: ReplyKind,
+): String =
+    when (kind) {
+        ReplyKind.FORWARD -> resources.getString(R.string.forward_header)
+        else -> {
+            val sender = message.from.name.ifBlank { message.from.email }
+            val date = formatFullDate(message.date, ZoneId.systemDefault(), Locale.getDefault())
+            if (date.isEmpty()) {
+                resources.getString(R.string.reply_quote_header_no_date, sender)
+            } else {
+                resources.getString(R.string.reply_quote_header, date, sender)
+            }
+        }
+    }
 
 /** Opens a tapped link in the browser or mail app; never inside Mailcrane. */
 internal fun openLink(

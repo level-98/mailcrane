@@ -173,4 +173,15 @@
     <string name="action_no_archive_folder">This account has no Archive folder</string>
     <string name="action_not_applied">Couldn’t change this message</string>
     <string name="action_undone">The server didn’t accept a change, so it was undone</string>
+
+    <!-- Reply and forward (M2-03) -->
+    <string name="message_reply">Reply</string>
+    <string name="message_reply_all">Reply all</string>
+    <string name="message_forward">Forward</string>
+    <!-- Line above the quoted text in a reply: date, then the sender's name -->
+    <string name="reply_quote_header">On %1$s, %2$s wrote:</string>
+    <string name="reply_quote_header_no_date">%1$s wrote:</string>
+    <!-- Line above the original's headers in a forwarded message -->
+    <string name="forward_header">---------- Forwarded message ----------</string>
+    <string name="compose_error_reply_unavailable">The original message couldn’t be loaded. You can still write your message.</string>
 </resources>

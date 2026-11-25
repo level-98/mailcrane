@@ -74,6 +74,8 @@ mod compose {
             bcc: vec!["dan@example.org".into()],
             subject: "Grüße".into(),
             body_text: "Hello Bob,\nsee you at noon.\n".into(),
+            in_reply_to: None,
+            references: vec![],
         }
     }
 
@@ -120,6 +122,91 @@ mod compose {
                 "Hello Bob,\nsee you at noon.\n"
             );
         }
+    }
+
+    #[tokio::test]
+    async fn a_reply_carries_thread_headers_on_the_wire() {
+        use mailcrane_store::{Flags, NewFolder, NewMessageHeader};
+        let s = setup(&[], Security::Tls).await;
+        let folder = s
+            .store
+            .upsert_folder(&NewFolder {
+                account_id: s.account,
+                remote_name: "INBOX".into(),
+                display_name: "INBOX".into(),
+                delimiter: Some("/".into()),
+                role: None,
+                uidvalidity: Some(1),
+                uidnext: Some(2),
+                highestmodseq: None,
+                is_subscribed: true,
+            })
+            .expect("folder");
+        let raw = b"From: Bob Example <bob@example.net>\r\n\
+To: Ann Example <ann@example.org>, carol@example.com\r\n\
+Subject: Lunch\r\n\
+Message-ID: <m2@example.net>\r\n\
+References: <m1@example.net>\r\n\
+In-Reply-To: <m1@example.net>\r\n\
+\r\n\
+Noon?\r\n";
+        let id = s
+            .store
+            .upsert_message_header(&NewMessageHeader {
+                folder_id: folder,
+                uid: 1,
+                message_id_header: Some("m2@example.net".into()),
+                in_reply_to: None,
+                references_json: "[]".into(),
+                thread_id: None,
+                subject: "Lunch".into(),
+                from_name: Some("Bob Example".into()),
+                from_addr: Some("bob@example.net".into()),
+                to_json: "[]".into(),
+                cc_json: "[]".into(),
+                date: 1_795_516_920,
+                internal_date: 1_795_516_920,
+                size: raw.len() as i64,
+                flags: Flags::default(),
+                keywords_json: "[]".into(),
+                has_attachments: false,
+                snippet: String::new(),
+            })
+            .expect("message");
+        assert_eq!(
+            prepare_reply(&s.store, id, ReplyKind::Reply, "Bob wrote:"),
+            Err(ReplyError::BodyNotDownloaded)
+        );
+        s.store.store_body(id, raw, 0).expect("body");
+
+        let mut reply =
+            prepare_reply(&s.store, id, ReplyKind::ReplyAll, "Bob wrote:").expect("reply");
+        assert_eq!(
+            reply.to,
+            ["Bob Example <bob@example.net>", "carol@example.com"]
+        );
+        reply.body_text.insert_str(0, "Noon works.");
+        run(&s, &reply).await.expect("sent");
+
+        let sent = s.smtp.sent().await;
+        let parsed = parse_message(&sent[0].data).expect("parses");
+        assert_eq!(parsed.subject.as_deref(), Some("Re: Lunch"));
+        assert_eq!(parsed.in_reply_to, ["m2@example.net"]);
+        assert_eq!(parsed.references, ["m1@example.net", "m2@example.net"]);
+        let text = parsed.text_plain.unwrap_or_default().replace("\r\n", "\n");
+        assert!(
+            text.starts_with("Noon works.\n\nBob wrote:\n> Noon?"),
+            "{text}"
+        );
+        assert_eq!(
+            prepare_reply(
+                &s.store,
+                mailcrane_store::MessageId(999),
+                ReplyKind::Reply,
+                ""
+            ),
+            Err(ReplyError::NotFound)
+        );
     }
 
     #[tokio::test]

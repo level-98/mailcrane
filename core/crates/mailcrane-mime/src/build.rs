@@ -56,6 +56,12 @@ pub struct OutgoingMessage {
     /// The plain-text body. Any line endings; they become CRLF.
     pub body_text: String,
     pub encoding: TransferEncoding,
+    /// The Message-ID this replies to, without angle brackets
+    /// (RFC 5322 §3.6.4). Written as `In-Reply-To` if it is a valid id.
+    pub in_reply_to: Option<String>,
+    /// The thread's Message-IDs, oldest first, without angle brackets.
+    /// Written as `References`; invalid ids are left out.
+    pub references: Vec<String>,
 }
 
 /// Which address header a problem is in.
@@ -139,6 +145,18 @@ pub(crate) fn build_with(
     // Bcc is deliberately never written (RFC 5322 §3.6.3 allows leaving it out).
     header(&mut out, "Subject", &unstructured_units(&draft.subject));
     header(&mut out, "Message-ID", &[format!("<{id}@{domain}>")]);
+    if let Some(parent) = draft.in_reply_to.as_deref().filter(|i| is_msg_id(i)) {
+        header(&mut out, "In-Reply-To", &[format!("<{parent}>")]);
+    }
+    let references: Vec<String> = draft
+        .references
+        .iter()
+        .filter(|i| is_msg_id(i))
+        .map(|i| format!("<{i}>"))
+        .collect();
+    if !references.is_empty() {
+        header(&mut out, "References", &references);
+    }
     header(&mut out, "MIME-Version", &["1.0".to_owned()]);
     header(
         &mut out,
@@ -216,6 +234,23 @@ fn header(out: &mut Vec<u8>, name: &str, units: &[String]) {
         line_len += 1 + unit.len();
     }
     out.extend_from_slice(b"\r\n");
+}
+
+/// Longest Message-ID written into `In-Reply-To` or `References`. Real ids are
+/// far shorter; this keeps a hostile one from making a header line too long.
+const MAX_MSG_ID: usize = 250;
+
+/// Whether `id` (without angle brackets) can be written as a `msg-id`
+/// (RFC 5322 §3.6.4): printable ASCII, no spaces, no `<` or `>`, and an `@`.
+/// Ids from received mail are hostile input; anything else is left out
+/// rather than repaired, so it can't break or inject headers.
+fn is_msg_id(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= MAX_MSG_ID
+        && id.contains('@')
+        && id
+            .bytes()
+            .all(|b| b.is_ascii_graphic() && b != b'<' && b != b'>')
 }
 
 /// Replaces line breaks and tabs with spaces and drops other control
@@ -365,7 +400,7 @@ fn base64(bytes: &[u8]) -> String {
 }
 
 /// RFC 5322 §3.3 date in UTC, such as `Tue, 24 Nov 2026 21:32:00 +0000`.
-fn format_date(secs: i64) -> String {
+pub fn format_date(secs: i64) -> String {
     const DAYS: [&str; 7] = ["Thu", "Fri", "Sat", "Sun", "Mon", "Tue", "Wed"];
     const MONTHS: [&str; 12] = [
         "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",

@@ -22,6 +22,18 @@ interface ComposeCore {
     ): RecipientInput
 
     /**
+     * A reply, reply-all or forward of [messageId], prefilled by the core (recipients, `Re:`/`Fwd:`
+     * subject, quoted text under [quoteHeader], thread headers).
+     *
+     * @throws ReplyFailure when the message or its body isn't available.
+     */
+    suspend fun prepareReply(
+        messageId: Long,
+        kind: ReplyKind,
+        quoteHeader: String,
+    ): ComposeDraft
+
+    /**
      * Sends [draft] now.
      *
      * @throws SendFailure when nothing was sent.
@@ -40,6 +52,12 @@ class UniffiComposeCore(
         text: String,
         whole: Boolean,
     ): RecipientInput = app.mailcrane.core.parseRecipients(text, whole)
+
+    override suspend fun prepareReply(
+        messageId: Long,
+        kind: ReplyKind,
+        quoteHeader: String,
+    ): ComposeDraft = withContext(io) { app.mailcrane.core.prepareReply(dbPath, messageId, kind, quoteHeader) }
 
     override suspend fun send(draft: ComposeDraft): SendResult = app.mailcrane.core.send(dbPath, draft)
 }

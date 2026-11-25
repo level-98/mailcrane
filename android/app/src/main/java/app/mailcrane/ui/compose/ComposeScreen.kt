@@ -62,10 +62,11 @@ fun ComposeScreen(
     accountId: Long,
     onDone: (ComposeResult) -> Unit,
     modifier: Modifier = Modifier,
+    reply: ReplyRequest? = null,
     viewModel: ComposeViewModel = hiltViewModel(),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
-    LaunchedEffect(viewModel, accountId) { viewModel.start(accountId) }
+    LaunchedEffect(viewModel, accountId, reply) { viewModel.start(accountId, reply) }
     LaunchedEffect(state.result) {
         state.result?.let {
             viewModel.reset()
@@ -362,6 +363,7 @@ internal fun errorText(error: ComposeError): Int =
         ComposeError.REFUSED_TEMPORARY -> R.string.compose_error_refused_temporary
         ComposeError.REFUSED_PERMANENT -> R.string.compose_error_refused_permanent
         ComposeError.UNEXPECTED -> R.string.compose_error_unexpected
+        ComposeError.REPLY_UNAVAILABLE -> R.string.compose_error_reply_unavailable
     }
 
 @Composable

@@ -8,6 +8,8 @@ import app.mailcrane.core.RecipientError
 import app.mailcrane.core.RecipientField
 import app.mailcrane.core.RecipientInput
 import app.mailcrane.core.RecipientProblem
+import app.mailcrane.core.ReplyFailure
+import app.mailcrane.core.ReplyKind
 import app.mailcrane.core.SendFailure
 import app.mailcrane.core.SendResult
 import kotlinx.coroutines.CompletableDeferred
@@ -57,6 +59,28 @@ class ComposeViewModelTest {
         override suspend fun send(draft: ComposeDraft): SendResult {
             sent = draft
             return outcome()
+        }
+
+        var replies = 0
+        var replyFailure: ReplyFailure? = null
+
+        override suspend fun prepareReply(
+            messageId: Long,
+            kind: ReplyKind,
+            quoteHeader: String,
+        ): ComposeDraft {
+            replies++
+            replyFailure?.let { throw it }
+            return ComposeDraft(
+                accountId = 2,
+                to = listOf("ana@example.net"),
+                cc = if (kind == ReplyKind.REPLY_ALL) listOf("bob@example.com") else emptyList(),
+                bcc = emptyList(),
+                subject = "Re: Lunch",
+                bodyText = "\n\n$quoteHeader\n> Noon?\n",
+                inReplyTo = "m2@example.net",
+                references = listOf("m1@example.net", "m2@example.net"),
+            )
         }
     }
 
@@ -250,5 +274,62 @@ class ComposeViewModelTest {
 
         val vm3 = ComposeViewModel(core).apply { start(99) }
         assertEquals("an unknown account falls back to the first", 1L, vm3.state.value.fromAccountId)
+    }
+
+    @Test
+    fun replyIsPrefilledOnceAndSendsTheThreadHeaders() {
+        val accounts = listOf(AccountSummary(1, "a@example.org", "A"), AccountSummary(2, "b@example.org", "B"))
+        val core = FakeCore(accounts = accounts)
+        val vm = ComposeViewModel(core)
+        val request = ReplyRequest(42, ReplyKind.REPLY_ALL, "Ana wrote:")
+        vm.start(1, request)
+        val state = vm.state.value
+        assertEquals(2L, state.fromAccountId)
+        assertEquals(listOf("ana@example.net"), state.to.chips.map { it.email })
+        assertEquals(listOf("bob@example.com"), state.cc.chips.map { it.email })
+        assertTrue(state.showCcBcc)
+        assertEquals("Re: Lunch", state.subject)
+        assertEquals("\n\nAna wrote:\n> Noon?\n", state.body)
+
+        // Rotation calls start again: what the user typed is kept.
+        vm.onBodyChange("Yes!" + state.body)
+        vm.start(1, request)
+        assertEquals(1, core.replies)
+        assertTrue(
+            vm.state.value.body
+                .startsWith("Yes!"),
+        )
+
+        vm.send()
+        val sent = core.sent
+        assertEquals("m2@example.net", sent?.inReplyTo)
+        assertEquals(listOf("m1@example.net", "m2@example.net"), sent?.references)
+        assertEquals(2L, sent?.accountId)
+    }
+
+    @Test
+    fun aNewMessageHasNoThreadHeaders() {
+        val core = FakeCore()
+        val vm = started(core)
+        vm.onRecipientInput(RecipientField.TO, "bob@example.net")
+        vm.send()
+        assertNull(core.sent?.inReplyTo)
+        assertTrue(
+            core.sent
+                ?.references
+                .orEmpty()
+                .isEmpty(),
+        )
+        assertEquals(0, core.replies)
+    }
+
+    @Test
+    fun aReplyThatCantBeLoadedLeavesAnEmptyUsableScreen() {
+        val core = FakeCore().apply { replyFailure = ReplyFailure.BodyNotDownloaded() }
+        val vm = ComposeViewModel(core)
+        vm.start(1, ReplyRequest(42, ReplyKind.REPLY, "x"))
+        assertEquals(ComposeError.REPLY_UNAVAILABLE, vm.state.value.error)
+        assertFalse(vm.state.value.hasContent)
+        assertEquals(1L, vm.state.value.fromAccountId)
     }
 }
