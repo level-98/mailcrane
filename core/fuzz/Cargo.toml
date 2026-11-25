@@ -50,6 +50,13 @@ doc = false
 bench = false
 
 [[bin]]
+name = "auth_results"
+path = "fuzz_targets/auth_results.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "sieve_response"
 path = "fuzz_targets/sieve_response.rs"
 test = false

@@ -95,6 +95,25 @@
     <string name="message_trackers_explain">A tracking pixel is a tiny, often invisible image. When it loads, the sender learns that you opened the message, when, and roughly where. Mailcrane removes these images from every message, even when you load remote images.</string>
     <string name="message_trackers_unknown_service">Tiny or hidden image</string>
     <string name="message_trackers_no_domain">Embedded in the message</string>
+    <!-- Sender check chip and sheet (M5-07). -->
+    <string name="message_auth_verified">Verified</string>
+    <string name="message_auth_not_verified">Not verified</string>
+    <string name="message_auth_failed">Failed</string>
+    <string name="message_auth_explain_verified">Your email provider checked this message and confirmed it was sent by the domain in the From address.</string>
+    <string name="message_auth_explain_not_verified">Your email provider couldn’t confirm that this message was sent by the domain in the From address. Many genuine messages aren’t verified, but take care with links and attachments.</string>
+    <string name="message_auth_explain_failed">Your email provider’s checks failed: this message may not be from who it says. Don’t open links or attachments, or send personal details, unless you’re sure.</string>
+    <string name="message_auth_spf">SPF: was it sent from an allowed server?</string>
+    <string name="message_auth_dkim">DKIM: is the sender’s signature valid?</string>
+    <string name="message_auth_dmarc">DMARC: does it match the From address?</string>
+    <string name="message_auth_result_pass">Passed</string>
+    <string name="message_auth_result_fail">Failed</string>
+    <string name="message_auth_result_neutral">No answer either way</string>
+    <string name="message_auth_result_none">Not checked</string>
+    <string name="message_auth_result_temperror">Couldn’t be checked right now</string>
+    <string name="message_auth_result_permerror">The sender’s settings are broken</string>
+    <string name="message_auth_result_unknown">Unknown result</string>
+    <string name="message_auth_result_domain">%1$s (%2$s)</string>
+    <string name="message_auth_footnote">These results come from your email provider. Mailcrane doesn’t look anything up online.</string>
     <string name="message_attachments">Attachments</string>
     <string name="message_attachment_unnamed">Unnamed file</string>
 

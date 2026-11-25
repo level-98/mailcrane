@@ -1,6 +1,7 @@
 //! `List-Unsubscribe` (RFC 2369), `List-Unsubscribe-Post` (RFC 8058) and
 //! the DKIM results in `Authentication-Results` (RFC 8601) that decide
-//! whether one-click unsubscribe may be offered (M4-10).
+//! whether one-click unsubscribe may be offered (M4-10). The trust check
+//! itself is in [`crate::auth`].
 
 /// Longest URI accepted from the header.
 const MAX_URI: usize = 2048;
@@ -145,142 +146,8 @@ fn percent_decode(s: &str) -> Option<String> {
     String::from_utf8(out).ok()
 }
 
-/// The domains that passed DKIM (`dkim=pass`, from `header.d=` or the
-/// domain of `header.i=`) in one `Authentication-Results` header value
-/// (RFC 8601 §2.2). Comments are ignored. Lowercase.
-pub fn dkim_pass_domains(header: &str) -> Vec<String> {
-    let text = strip_comments(header);
-    let mut parts = text.split(';');
-    // The first part is the authserv-id (and an optional version).
-    parts.next();
-    let mut out = Vec::new();
-    for resinfo in parts {
-        let mut tokens = resinfo.split_whitespace();
-        let Some(method) = tokens.next() else {
-            continue;
-        };
-        let Some((name, result)) = method.split_once('=') else {
-            continue;
-        };
-        if !name.eq_ignore_ascii_case("dkim") || !result.eq_ignore_ascii_case("pass") {
-            continue;
-        }
-        for token in tokens {
-            let Some((key, value)) = token.split_once('=') else {
-                continue;
-            };
-            let value = value.trim_matches('"');
-            let domain = if key.eq_ignore_ascii_case("header.d") {
-                Some(value)
-            } else if key.eq_ignore_ascii_case("header.i") {
-                value.rsplit_once('@').map(|(_, d)| d)
-            } else {
-                None
-            };
-            if let Some(d) = domain {
-                let d = d.trim_end_matches('.').to_ascii_lowercase();
-                if !d.is_empty() && !out.contains(&d) {
-                    out.push(d);
-                }
-            }
-        }
-    }
-    out
-}
-
-fn strip_comments(text: &str) -> String {
-    let mut out = String::with_capacity(text.len());
-    let mut depth = 0u32;
-    let mut escaped = false;
-    for c in text.chars() {
-        if escaped {
-            escaped = false;
-            if depth == 0 {
-                out.push(c);
-            }
-            continue;
-        }
-        match c {
-            '\\' => escaped = true,
-            '(' => depth = depth.saturating_add(1),
-            ')' if depth > 0 => depth -= 1,
-            _ if depth == 0 => out.push(c),
-            _ => {}
-        }
-    }
-    out
-}
-
-/// Public suffixes with two labels that are common in mail. Without a full
-/// Public Suffix List, a domain directly under one of these is treated as
-/// an organisational domain of its own.
-const TWO_LABEL_SUFFIXES: &[&str] = &[
-    "co.uk", "org.uk", "ac.uk", "gov.uk", "me.uk", "com.au", "net.au", "org.au", "co.nz", "co.jp",
-    "ne.jp", "or.jp", "com.br", "com.cn", "com.mx", "co.in", "co.za", "com.tr", "com.sg", "com.hk",
-    "co.kr", "com.ar", "com.tw",
-];
-
-/// The organisational domain of `domain` (RFC 7489 §3.2), approximated
-/// without the full Public Suffix List: the last two labels, or three under
-/// a common two-label public suffix. Lowercase, without a trailing dot.
-pub fn org_domain(domain: &str) -> String {
-    let d = domain.trim_end_matches('.').to_ascii_lowercase();
-    let labels: Vec<&str> = d.split('.').collect();
-    let n = labels.len();
-    let take = if n >= 3 && TWO_LABEL_SUFFIXES.contains(&labels[n - 2..].join(".").as_str()) {
-        3
-    } else {
-        2
-    };
-    labels[n.saturating_sub(take)..].join(".")
-}
-
-/// Whether a DKIM signing domain is aligned with the From domain: the same
-/// organisational domain (relaxed alignment, RFC 7489 §3.1.1). A bare
-/// public suffix never aligns.
-pub fn dkim_aligned(dkim_domain: &str, from_domain: &str) -> bool {
-    let (d, f) = (org_domain(dkim_domain), org_domain(from_domain));
-    let is_suffix = |o: &str| !o.contains('.') || TWO_LABEL_SUFFIXES.contains(&o);
-    !d.is_empty() && d == f && !is_suffix(&d)
-}
-
-/// The `by` host of a Received header value (RFC 5321 §4.4), lowercase.
-pub fn received_by(received: &str) -> Option<String> {
-    let text = strip_comments(received);
-    let mut words = text.split_whitespace();
-    while let Some(w) = words.next() {
-        if w.eq_ignore_ascii_case("by") {
-            let host = words
-                .next()?
-                .trim_end_matches([';', '.'])
-                .to_ascii_lowercase();
-            let ok = !host.is_empty()
-                && host.contains('.')
-                && host
-                    .chars()
-                    .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-');
-            return ok.then_some(host);
-        }
-    }
-    None
-}
-
-/// The Authentication-Results header the user's provider added: the
-/// topmost one whose authserv-id is in the same organisation as the `by`
-/// host of the topmost Received header. Results the sender wrote
-/// themselves (lower down, or with another authserv-id) are never trusted.
-pub fn provider_results<'a>(results: &'a [String], received_by: Option<&str>) -> Option<&'a str> {
-    let provider = org_domain(received_by?);
-    if !provider.contains('.') {
-        return None;
-    }
-    results.iter().map(String::as_str).find(|r| {
-        let id = strip_comments(r);
-        let id = id.split(';').next().unwrap_or_default();
-        let id = id.split_whitespace().next().unwrap_or_default();
-        !id.is_empty() && org_domain(id) == provider
-    })
-}
+// The trust helpers live in `auth` now, shared with the sender check (M5-07).
+pub use crate::auth::{dkim_aligned, dkim_pass_domains, org_domain, provider_results, received_by};
 
 #[cfg(test)]
 mod tests;

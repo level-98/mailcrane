@@ -17,6 +17,7 @@ pub mod links;
 pub mod notify;
 pub mod oauth;
 pub mod outbox;
+pub mod phishing;
 pub mod rules;
 pub mod sasl;
 pub mod search;

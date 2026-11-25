@@ -15,6 +15,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -382,6 +384,7 @@ private fun Message(
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun Headers(message: MessageDetail) {
     val locale = LocalConfiguration.current.locales[0]
@@ -399,7 +402,13 @@ private fun Headers(message: MessageDetail) {
         }
         val sender =
             label(message.from).ifBlank { stringResource(R.string.message_unknown_sender) }
-        HeaderLine(stringResource(R.string.message_header_from), sender)
+        FlowRow(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            itemVerticalAlignment = Alignment.CenterVertically,
+        ) {
+            HeaderLine(stringResource(R.string.message_header_from), sender)
+            SenderAuthChip(message.senderCheck)
+        }
         if (message.to.isNotEmpty()) {
             HeaderLine(stringResource(R.string.message_header_to), message.to.joinToString(", ") { label(it) })
         }

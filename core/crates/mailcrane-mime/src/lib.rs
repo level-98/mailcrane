@@ -8,6 +8,7 @@
 #![forbid(unsafe_code)]
 
 pub mod address;
+pub mod auth;
 pub mod build;
 mod headers;
 pub mod limits;
@@ -201,7 +202,7 @@ pub fn parse_message(raw: &[u8]) -> Result<ParsedMessage, MimeError> {
             .iter()
             .find(|h| h.name().as_str().eq_ignore_ascii_case("Received"))
             .and_then(|h| headers::raw_value(h.raw_value()))
-            .and_then(|r| unsubscribe::received_by(&r)),
+            .and_then(|r| auth::received_by(&r)),
         text_plain,
         text_html: html.map(UnsanitisedHtml::new),
         attachments,
