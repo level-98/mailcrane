@@ -10,6 +10,8 @@ import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import app.mailcrane.security.APP_LOCK_TIMEOUT_CHOICES
+import app.mailcrane.security.DEFAULT_APP_LOCK_TIMEOUT_SECONDS
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -79,6 +81,21 @@ interface AppSettings {
 
     suspend fun setHideContentOutsideApp(hide: Boolean)
 
+    /** App lock (M5-03): biometrics or the device credential to open the app. Off by default. */
+    val appLockEnabled: Flow<Boolean>
+
+    suspend fun setAppLockEnabled(enabled: Boolean)
+
+    /** "Lock after": seconds in the background before the app locks (0: immediately). */
+    val appLockTimeoutSeconds: Flow<Int>
+
+    suspend fun setAppLockTimeoutSeconds(seconds: Int)
+
+    /** Allow screenshots and app-switcher previews while the app lock is on. Off by default. */
+    val appLockAllowScreenshots: Flow<Boolean>
+
+    suspend fun setAppLockAllowScreenshots(allow: Boolean)
+
     /** The account shown last, to open it again at start-up (M4-01); 0 for none. */
     val lastAccountId: Flow<Long>
 
@@ -131,6 +148,28 @@ class DataStoreAppSettings(
 
     override suspend fun setHideContentOutsideApp(hide: Boolean) {
         dataStore.edit { it[HIDE_OUTSIDE] = hide }
+    }
+
+    override val appLockEnabled: Flow<Boolean> = prefs.map { it[APP_LOCK] ?: false }
+
+    override suspend fun setAppLockEnabled(enabled: Boolean) {
+        dataStore.edit { it[APP_LOCK] = enabled }
+    }
+
+    override val appLockTimeoutSeconds: Flow<Int> =
+        prefs.map { p ->
+            p[APP_LOCK_TIMEOUT]?.takeIf { it in APP_LOCK_TIMEOUT_CHOICES } ?: DEFAULT_APP_LOCK_TIMEOUT_SECONDS
+        }
+
+    override suspend fun setAppLockTimeoutSeconds(seconds: Int) {
+        if (seconds !in APP_LOCK_TIMEOUT_CHOICES) return
+        dataStore.edit { it[APP_LOCK_TIMEOUT] = seconds }
+    }
+
+    override val appLockAllowScreenshots: Flow<Boolean> = prefs.map { it[APP_LOCK_SCREENSHOTS] ?: false }
+
+    override suspend fun setAppLockAllowScreenshots(allow: Boolean) {
+        dataStore.edit { it[APP_LOCK_SCREENSHOTS] = allow }
     }
 
     override val lastAccountId: Flow<Long> = prefs.map { it[LAST_ACCOUNT] ?: 0L }
@@ -221,6 +260,9 @@ class DataStoreAppSettings(
         val LAST_ACCOUNT = longPreferencesKey("last_account_id")
         val HIDE_OUTSIDE = booleanPreferencesKey("hide_content_outside_app")
         val GROUP_THREADS = booleanPreferencesKey("group_by_conversation")
+        val APP_LOCK = booleanPreferencesKey("app_lock_enabled")
+        val APP_LOCK_TIMEOUT = intPreferencesKey("app_lock_timeout_seconds")
+        val APP_LOCK_SCREENSHOTS = booleanPreferencesKey("app_lock_allow_screenshots")
     }
 }
 

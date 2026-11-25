@@ -22,6 +22,27 @@ class FakeAppSettings(
         undo.value = seconds
     }
 
+    private val lock = MutableStateFlow(false)
+    override val appLockEnabled: StateFlow<Boolean> = lock
+
+    override suspend fun setAppLockEnabled(enabled: Boolean) {
+        lock.value = enabled
+    }
+
+    private val lockAfter = MutableStateFlow(60)
+    override val appLockTimeoutSeconds: StateFlow<Int> = lockAfter
+
+    override suspend fun setAppLockTimeoutSeconds(seconds: Int) {
+        lockAfter.value = seconds
+    }
+
+    private val lockScreenshots = MutableStateFlow(false)
+    override val appLockAllowScreenshots: StateFlow<Boolean> = lockScreenshots
+
+    override suspend fun setAppLockAllowScreenshots(allow: Boolean) {
+        lockScreenshots.value = allow
+    }
+
     private val theme = MutableStateFlow(ThemeMode.SYSTEM)
     override val themeMode: StateFlow<ThemeMode> = theme
 

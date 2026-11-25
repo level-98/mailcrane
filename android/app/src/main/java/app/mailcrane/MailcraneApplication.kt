@@ -6,6 +6,7 @@ import app.mailcrane.core.LiveUpdatesEngine
 import app.mailcrane.core.LiveUpdatesObserver
 import app.mailcrane.core.TlsSetup
 import app.mailcrane.core.installSecretStore
+import app.mailcrane.security.AppLock
 import app.mailcrane.security.KeystoreSecretStore
 import app.mailcrane.work.OutboxSender
 import dagger.hilt.android.HiltAndroidApp
@@ -25,10 +26,14 @@ class MailcraneApplication : Application() {
 
     @Inject lateinit var widgets: app.mailcrane.widget.WidgetUpdater
 
+    @Inject lateinit var appLock: AppLock
+
     override fun onCreate() {
         super.onCreate()
         // Before anything connects: the core checks certificates through Android's trust store.
         TlsSetup.init(this)
+        // Before any screen shows: with the app lock on, the app starts locked (M5-03).
+        appLock.start()
         // The core reads and writes credentials only through this store.
         installSecretStore(KeystoreSecretStore(this))
         // New mail arrives within seconds while the app is in the foreground (IMAP IDLE); live
