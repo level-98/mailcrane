@@ -279,3 +279,38 @@ fn emails_parse() {
         assert_eq!(Email::parse(bad), None, "{bad}");
     }
 }
+
+#[tokio::test]
+async fn the_bundled_ispdb_covers_a_big_provider_with_no_network() {
+    let http = FakeHttp::default();
+    let found = discover_with("ana@gmail.com", &http, &FakeDns::default())
+        .await
+        .expect("found");
+    assert_eq!(found.len(), 1);
+    assert_eq!(found[0].source, Source::Ispdb);
+    assert_eq!(found[0].source_domain, "gmail.com");
+    assert_eq!(found[0].imap.host, "imap.gmail.com");
+    // The provider's own files were still tried first, and nothing else.
+    assert_eq!(http.seen().len(), 2);
+}
+
+#[tokio::test]
+async fn the_providers_own_file_beats_the_ispdb() {
+    let http = FakeHttp::default().page("https://autoconfig.gmail.com/mail/config-v1.1.xml", BASIC);
+    let found = discover_with("ana@gmail.com", &http, &FakeDns::default())
+        .await
+        .expect("found");
+    assert_eq!(found.len(), 1);
+    assert_eq!(found[0].source, Source::Autoconfig);
+}
+
+#[tokio::test]
+async fn a_hosted_domain_is_found_in_the_ispdb_through_mx() {
+    let dns = FakeDns::default().mx("example.org", &[mx(1, "aspmx.l.google.com")]);
+    let http = FakeHttp::default();
+    let found = discover_with(ADDRESS, &http, &dns).await.expect("found");
+    assert_eq!(found[0].source, Source::Ispdb);
+    assert_eq!(found[0].source_domain, "google.com");
+    assert_eq!(found[0].imap.host, "imap.gmail.com");
+    assert_eq!(found[0].username, ADDRESS);
+}

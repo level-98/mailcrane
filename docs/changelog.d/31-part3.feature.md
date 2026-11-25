@@ -1,0 +1,1 @@
+- Automatic account setup now knows the big providers too, from a snapshot of Mozilla's ISPDB built into the app; nothing is sent to Mozilla (ADR 0003, part of #31).

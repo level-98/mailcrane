@@ -5,12 +5,11 @@
 //! 1. the provider's own autoconfig file at its well-known URLs
 //!    ([`wellknown`]);
 //! 2. DNS SRV records (RFC 6186, RFC 8314) ([`srv`]);
-//! 3. if neither finds anything, the autoconfig file of the domain that
-//!    handles the user's mail according to MX ([`mx`]), as for domains
-//!    hosted by a big provider.
-//!
-//! Mozilla's ISPDB isn't used: that waits for the maintainer's decision
-//! (issue #31), because it would send the domain to a third party.
+//! 3. if neither finds anything, the bundled snapshot of Mozilla's ISPDB
+//!    ([`ispdb`], ADR 0003), looked up on the device;
+//! 4. if that has nothing either, the domain that handles the user's mail
+//!    according to MX ([`mx`]): its autoconfig file, then the ISPDB, as for
+//!    domains hosted by a big provider.
 //!
 //! Rules: HTTPS only, never `http:`; plain-text servers are never offered;
 //! the email address is never sent anywhere (placeholders are filled in
@@ -21,6 +20,8 @@
 
 pub mod dns;
 pub mod fetch;
+pub mod ispdb;
+mod ispdb_index;
 pub mod mx;
 pub mod srv;
 pub mod wellknown;
@@ -52,6 +53,9 @@ pub enum Source {
     Srv,
     /// The autoconfig file of the domain the MX records point at.
     MxAutoconfig,
+    /// The bundled ISPDB snapshot (ADR 0003), for the user's domain or the
+    /// MX's domain.
+    Ispdb,
 }
 
 /// Settings found for the user to confirm.
@@ -216,7 +220,14 @@ pub async fn discover_with<F: HttpFetcher, R: DnsResolver>(
         }
     }
 
-    // 3 only when nothing else worked.
+    // 3, on the device, only when the provider's own sources found nothing.
+    if found.is_empty() {
+        if let Some(c) = ispdb::lookup(&email.domain, &email) {
+            push(&mut found, c);
+        }
+    }
+
+    // 4 only when nothing else worked.
     if found.is_empty() {
         if let Some(remaining) = left(deadline) {
             match tokio::time::timeout(remaining, mx::lookup(&email, http, dns)).await {

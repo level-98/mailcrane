@@ -1,13 +1,15 @@
 //! The fallback for domains whose mail a big provider handles: look up MX,
 //! take the most preferred exchange's organisation domain (the last two
 //! labels, for example `aspmx.l.google.com` → `google.com`), and try that
-//! domain's autoconfig file.
+//! domain's autoconfig file, then the bundled ISPDB for it.
 //!
 //! Only the domain is involved, never the address, and only the provider
 //! that already receives the user's mail is asked.
 
 use super::dns::{parse_mx, RecordType};
-use super::{valid_host, wellknown, DiscoveredConfig, DnsResolver, Email, HttpFetcher, Source};
+use super::{
+    ispdb, valid_host, wellknown, DiscoveredConfig, DnsResolver, Email, HttpFetcher, Source,
+};
 
 /// The last two labels of `host`, or three under a country's second-level
 /// domain such as `co.uk` or `com.au` (a short label under a two-letter
@@ -42,7 +44,10 @@ pub async fn lookup<F: HttpFetcher, R: DnsResolver>(
         // Already tried as the user's own domain.
         return None;
     }
-    wellknown::lookup(&domain, email, Source::MxAutoconfig, http).await
+    match wellknown::lookup(&domain, email, Source::MxAutoconfig, http).await {
+        Some(found) => Some(found),
+        None => ispdb::lookup(&domain, email),
+    }
 }
 
 #[cfg(test)]
