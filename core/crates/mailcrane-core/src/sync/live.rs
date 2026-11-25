@@ -19,6 +19,7 @@
 //! if the server does not answer.
 
 use super::initial::{log_failure, FolderSyncer, SyncConfig, SyncError};
+use super::WriteLock;
 use crate::events::{AccountId, CoreEvent, EventListener, FolderId, SyncErrorKind};
 use mailcrane_imap::{save_folders, IdleOutcome, ImapConfig, ImapError, Secret, Session};
 use mailcrane_store::{FolderRole, Store};
@@ -122,23 +123,40 @@ pub fn live_stop() -> (LiveStop, LiveStopSignal) {
 /// report if they are missing (for example no saved password). Failures
 /// are sent to `listener` as [`CoreEvent::SyncError`] and retried with
 /// back-off; this only returns once stopped.
+///
+/// The account's [`WriteLock`] (in [`LiveAccount`]): each sync after a change
+/// holds it, so live updates never write to the database while a sync
+/// started by the app does (issue #282). Waiting in IDLE doesn't hold it.
 pub async fn run_live_updates(
     store: &Store,
-    account: AccountId,
+    account: LiveAccount,
     listener: &dyn EventListener,
     login: impl Fn() -> Result<ImapLogin, SyncErrorKind>,
     sync_config: SyncConfig,
     config: LiveConfig,
     stop: LiveStopSignal,
 ) {
+    let LiveAccount {
+        id: account,
+        write_lock,
+    } = account;
     let mut source = ImapSource {
         store,
         account,
         listener,
         login,
         sync_config,
+        write_lock,
     };
     run(&mut source, listener, account, config, stop).await;
+}
+
+/// The account live updates run for.
+pub struct LiveAccount {
+    /// Row id of the account.
+    pub id: AccountId,
+    /// The account's write lock, shared with the app's syncs.
+    pub write_lock: WriteLock,
 }
 
 /// Opens connections. A trait so the loop's timing can be tested without
@@ -332,6 +350,7 @@ struct ImapSource<'a, L> {
     listener: &'a dyn EventListener,
     login: L,
     sync_config: SyncConfig,
+    write_lock: WriteLock,
 }
 
 impl<'a, L: Fn() -> Result<ImapLogin, SyncErrorKind>> Source for ImapSource<'a, L> {
@@ -350,6 +369,7 @@ impl<'a, L: Fn() -> Result<ImapLogin, SyncErrorKind>> Source for ImapSource<'a, 
             Some(inbox) => inbox,
             None => {
                 // Folders were never listed for this account: do it now.
+                let _writing = self.write_lock.lock().await;
                 let folders = match session.list_folders().await {
                     Ok(folders) => folders,
                     Err(e) => {
@@ -374,6 +394,7 @@ impl<'a, L: Fn() -> Result<ImapLogin, SyncErrorKind>> Source for ImapSource<'a, 
             sync_config: self.sync_config,
             inbox,
             idle_refused: false,
+            write_lock: self.write_lock.clone(),
         })
     }
 }
@@ -432,6 +453,8 @@ struct ImapConn<'a> {
     inbox: FolderId,
     /// The server advertised `IDLE` but refused it: poll instead.
     idle_refused: bool,
+    /// Held while syncing, never while idle.
+    write_lock: WriteLock,
 }
 
 impl Conn for ImapConn<'_> {
@@ -440,6 +463,9 @@ impl Conn for ImapConn<'_> {
     }
 
     async fn sync(&mut self) -> Result<(), SyncErrorKind> {
+        // One writer per account: a sync the app started finishes first.
+        let lock = self.write_lock.clone();
+        let _writing = lock.lock().await;
         self.sync_inbox().await?;
         // What a sync from the app does next, so mail that arrives live is
         // treated the same: rules on new inbox mail (M4-09), the actions

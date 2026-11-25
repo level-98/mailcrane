@@ -47,7 +47,7 @@ impl Store {
         &self,
         f: impl FnOnce(&Store) -> Result<T, StoreError>,
     ) -> Result<T, StoreError> {
-        self.conn.execute_batch("BEGIN IMMEDIATE")?;
+        crate::retry_busy(|| self.conn.execute_batch("BEGIN IMMEDIATE"))?;
         match f(self) {
             Ok(value) => {
                 self.conn.execute_batch("COMMIT")?;

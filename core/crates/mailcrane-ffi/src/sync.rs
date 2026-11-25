@@ -11,8 +11,8 @@ use std::time::Duration;
 use mailcrane_core::events::{self, EventListener};
 use mailcrane_core::secrets::SecretKey;
 use mailcrane_core::sync::{
-    live_stop, log_failure, run_live_updates, FolderSyncer, ImapLogin, LiveConfig, LiveStop,
-    SyncConfig, SyncError as CoreSyncError,
+    live_stop, log_failure, run_live_updates, FolderSyncer, ImapLogin, LiveAccount, LiveConfig,
+    LiveStop, SyncConfig, SyncError as CoreSyncError, WriteLock,
 };
 use mailcrane_imap::{save_folders, ImapConfig, ImapError, ImapSecurity, Secret, Session};
 use mailcrane_store::{AccountId, FolderId, FolderRole, MessageId, Security, Store};
@@ -36,6 +36,10 @@ pub enum SyncErrorKind {
     NotFound,
     /// The folder's `UIDVALIDITY` changed; sync the folder again.
     FolderReset,
+    /// Another sync was writing to the local database and kept it busy.
+    /// Local and passing: nothing is wrong with the server or the account,
+    /// and the next sync works. Apps shouldn't show it as an error.
+    Busy,
 }
 
 impl From<events::SyncErrorKind> for SyncErrorKind {
@@ -49,6 +53,7 @@ impl From<events::SyncErrorKind> for SyncErrorKind {
             events::SyncErrorKind::Storage => Self::Storage,
             events::SyncErrorKind::NotFound => Self::NotFound,
             events::SyncErrorKind::FolderReset => Self::FolderReset,
+            events::SyncErrorKind::Busy => Self::Busy,
         }
     }
 }
@@ -187,8 +192,9 @@ pub struct SyncEngine {
     pub(crate) listener: Arc<dyn CoreEventListener>,
     config: SyncConfig,
     live_config: LiveConfig,
-    /// One lock per account, serialising that account's calls.
-    busy: Mutex<HashMap<i64, Arc<Mutex<()>>>>,
+    /// One lock per account, serialising that account's calls and its
+    /// live updates' syncs (one writer per account, issue #282).
+    busy: Mutex<HashMap<i64, WriteLock>>,
     /// Live updates, by account id.
     live: Mutex<HashMap<i64, LiveThread>>,
     /// The platform's resolver, for the `_sieve._tcp` SRV record (M4-23).
@@ -329,7 +335,7 @@ impl SyncEngine {
             return r.map(|inbox| inbox.map(|f| f.0));
         }
         let lock = self.account_lock(account);
-        let _guard = lock.lock().unwrap_or_else(|p| p.into_inner());
+        let _guard = lock.blocking_lock();
         let store = self.open_store()?;
         let report = |kind| self.report(account, kind);
         let runtime = runtime().map_err(report)?;
@@ -403,6 +409,7 @@ impl SyncEngine {
         let listener = ListenerAdapter(self.listener.clone());
         let (sync_config, live_config) = (self.config, self.live_config);
         let extra_root_cert = self.extra_root_cert();
+        let write_lock = self.account_lock(account);
         let thread = std::thread::Builder::new()
             .name(format!("mailcrane-live-{account_id}"))
             .spawn(move || {
@@ -423,7 +430,10 @@ impl SyncEngine {
                 let login = || imap_login(&store, account, extra_root_cert.as_deref());
                 runtime.block_on(run_live_updates(
                     &store,
-                    account,
+                    LiveAccount {
+                        id: account,
+                        write_lock,
+                    },
                     &listener,
                     login,
                     sync_config,
@@ -571,8 +581,9 @@ impl SyncEngine {
             .map_err(|_| failed(events::SyncErrorKind::Storage))
     }
 
-    /// The lock serialising `account`'s calls.
-    pub(crate) fn account_lock(&self, account: AccountId) -> Arc<Mutex<()>> {
+    /// The lock serialising `account`'s calls. Take it with
+    /// `blocking_lock` outside the runtime, or `lock().await` inside it.
+    pub(crate) fn account_lock(&self, account: AccountId) -> WriteLock {
         let mut locks = self.busy.lock().unwrap_or_else(|p| p.into_inner());
         locks.entry(account.0).or_default().clone()
     }
@@ -609,7 +620,7 @@ impl SyncEngine {
         // A poisoned lock only means an earlier call panicked; nothing in it
         // is left half-done.
         let lock = self.account_lock(account);
-        let _guard = lock.lock().unwrap_or_else(|p| p.into_inner());
+        let _guard = lock.blocking_lock();
         let listener = ListenerAdapter(self.listener.clone());
         let report = |kind| self.report(account, kind);
         let runtime = runtime().map_err(report)?;
@@ -712,7 +723,7 @@ impl SyncEngine {
         job: impl for<'a> FnOnce(&'a Store, &'a mut Session, &'a ListenerAdapter) -> SyncFuture<'a, T>,
     ) -> Result<T, SyncFailure> {
         let lock = self.account_lock(account);
-        let _guard = lock.lock().unwrap_or_else(|p| p.into_inner());
+        let _guard = lock.blocking_lock();
         let store = self.open_store()?;
         let listener = ListenerAdapter(self.listener.clone());
         let report = |kind| self.report(account, kind);

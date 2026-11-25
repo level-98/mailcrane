@@ -1,0 +1,1 @@
+Refreshing while new mail arrives no longer fails with "Couldn’t read or save mail on this device." Live updates and refreshes of the same account now take turns saving mail, and a briefly busy database is retried instead of shown as an error.

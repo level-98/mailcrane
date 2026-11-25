@@ -152,7 +152,7 @@ impl Store {
         messages: &[OpMessage],
         now: i64,
     ) -> Result<Option<OpId>, StoreError> {
-        let tx = self.conn.unchecked_transaction()?;
+        let tx = self.write_tx()?;
         let mut kept: Vec<OpMessage> = Vec::new();
         for m in messages {
             apply_local(&tx, kind, m.message_id)?;
@@ -245,7 +245,7 @@ impl Store {
     /// expunge that is now done; the destination's next sync brings moved
     /// messages back with their new UIDs).
     pub fn complete_op(&self, op: OpId, remove_messages: bool) -> Result<(), StoreError> {
-        let tx = self.conn.unchecked_transaction()?;
+        let tx = self.write_tx()?;
         if remove_messages {
             tx.execute(
                 "DELETE FROM messages WHERE hidden = 1 AND id IN \
@@ -262,7 +262,7 @@ impl Store {
     /// the messages that still exist and drops the action. Returns the
     /// local ids it was applied to.
     pub fn fail_op(&self, op: OpId) -> Result<Vec<MessageId>, StoreError> {
-        let tx = self.conn.unchecked_transaction()?;
+        let tx = self.write_tx()?;
         let kind: Option<String> = tx
             .query_row(
                 "SELECT kind FROM pending_ops WHERE id = ?1",
@@ -292,7 +292,7 @@ impl Store {
         op: OpId,
         refused: &[MessageId],
     ) -> Result<Vec<MessageId>, StoreError> {
-        let tx = self.conn.unchecked_transaction()?;
+        let tx = self.write_tx()?;
         let kind: Option<String> = tx
             .query_row(
                 "SELECT kind FROM pending_ops WHERE id = ?1",
@@ -351,7 +351,7 @@ impl Store {
     /// one transaction. Returns the folder the message is in, or `None` if
     /// there was nothing to undo (already sent to the server, or no action).
     pub fn cancel_queued(&self, message: MessageId) -> Result<Option<FolderId>, StoreError> {
-        let tx = self.conn.unchecked_transaction()?;
+        let tx = self.write_tx()?;
         let latest: Option<(i64, String, i64)> = tx
             .query_row(
                 "SELECT o.id, o.kind, o.folder_id FROM pending_ops o \

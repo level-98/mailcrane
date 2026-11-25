@@ -53,10 +53,61 @@ impl Store {
         Ok(Store { conn })
     }
 
+    /// How long a statement waits for another connection's write lock
+    /// before failing with `SQLITE_BUSY` (5 s by default). For tests.
+    pub fn set_busy_timeout(&self, timeout: std::time::Duration) -> Result<(), StoreError> {
+        Ok(self.conn.busy_timeout(timeout)?)
+    }
+
+    /// Starts a write transaction with `BEGIN IMMEDIATE`: the write lock is
+    /// taken up front, waiting under the busy timeout, never by upgrading a
+    /// read part-way through (which fails at once in WAL mode). If another
+    /// connection still holds the lock after the timeout (`SQLITE_BUSY`),
+    /// tries again [`BUSY_RETRIES`] times after a short pause (issue #282).
+    pub(crate) fn write_tx(&self) -> Result<rusqlite::Transaction<'_>, StoreError> {
+        retry_busy(|| {
+            rusqlite::Transaction::new_unchecked(
+                &self.conn,
+                rusqlite::TransactionBehavior::Immediate,
+            )
+        })
+    }
+
     /// The schema version of the open database.
     pub fn schema_version(&self) -> Result<i64, StoreError> {
         Ok(self
             .conn
             .query_row("PRAGMA user_version", [], |r| r.get(0))?)
     }
+}
+
+/// How often a write is retried after `SQLITE_BUSY`, on top of the busy
+/// timeout each attempt already waits.
+pub(crate) const BUSY_RETRIES: u32 = 2;
+
+/// Runs `f`, retrying [`BUSY_RETRIES`] times with a growing pause while it
+/// fails with `SQLITE_BUSY` or `SQLITE_LOCKED`.
+pub(crate) fn retry_busy<T>(
+    mut f: impl FnMut() -> Result<T, rusqlite::Error>,
+) -> Result<T, StoreError> {
+    let mut attempt = 0u32;
+    loop {
+        match f() {
+            Err(e) if is_busy(&e) && attempt < BUSY_RETRIES => {
+                attempt = attempt.saturating_add(1);
+                std::thread::sleep(std::time::Duration::from_millis(
+                    100u64.saturating_mul(u64::from(attempt)),
+                ));
+            }
+            other => return other.map_err(StoreError::from),
+        }
+    }
+}
+
+/// Whether another connection holds the lock (`SQLITE_BUSY`, `SQLITE_LOCKED`).
+pub(crate) fn is_busy(error: &rusqlite::Error) -> bool {
+    matches!(
+        error.sqlite_error_code(),
+        Some(rusqlite::ErrorCode::DatabaseBusy | rusqlite::ErrorCode::DatabaseLocked)
+    )
 }
