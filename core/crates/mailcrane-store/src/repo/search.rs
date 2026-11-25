@@ -1,7 +1,7 @@
 //! Running a search (M4-03). The core builds the FTS5 expression (every
 //! user term quoted) and the filters; this runs them with bound parameters.
 
-use super::messages::{from_row, COLS};
+use super::messages::{from_row, one_copy_each};
 use crate::{AccountId, FolderId, MessageHeader, MessageId, Store, StoreError};
 use rusqlite::{params, types::Value};
 
@@ -29,15 +29,13 @@ pub struct SearchFilter {
 
 impl Store {
     /// The messages matching `filter`, newest first, leaving out hidden ones.
+    /// A message stored in several of the searched folders comes once (see
+    /// `one_copy_each` in `repo/messages.rs`), and `limit` counts messages,
+    /// not copies.
     pub fn search_messages(&self, filter: &SearchFilter) -> Result<Vec<MessageHeader>, StoreError> {
-        let cols = COLS
-            .split(", ")
-            .map(|c| format!("m.{}", c.trim()))
-            .collect::<Vec<_>>()
-            .join(", ");
-        let mut sql = format!(
-            "SELECT {cols} FROM messages m JOIN folders f ON f.id = m.folder_id \
-             WHERE f.account_id = ?1 AND m.hidden = 0"
+        let mut sql = String::from(
+            "SELECT m.*, {RANK} FROM messages m JOIN folders f ON f.id = m.folder_id \
+             WHERE f.account_id = ?1 AND m.hidden = 0",
         );
         let mut args: Vec<Value> = vec![Value::Integer(filter.account.0)];
         let mut bind = |sql: &mut String, clause: &str, value: Value| {
@@ -76,11 +74,13 @@ impl Store {
         if let Some(before) = filter.before {
             bind(&mut sql, " AND m.date < ?", Value::Integer(before));
         }
+        let mut tail = String::new();
         bind(
-            &mut sql,
-            " ORDER BY m.date DESC, m.id DESC LIMIT ?",
+            &mut tail,
+            "ORDER BY m.date DESC, m.id DESC LIMIT ?",
             Value::Integer(i64::from(filter.limit)),
         );
+        let sql = one_copy_each(&sql, &tail);
         let mut stmt = self.conn.prepare(&sql)?;
         let mut rows = stmt.query(rusqlite::params_from_iter(args))?;
         let mut out = Vec::new();

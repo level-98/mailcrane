@@ -10,6 +10,39 @@ pub(super) const COLS: &str =
     thread_id, subject, from_name, from_addr, to_json, cc_json, date, internal_date, size, \
     seen, flagged, answered, draft, deleted, keywords_json, has_attachments, snippet, body_state";
 
+/// `COLS` with an `m.` prefix, for queries that join `folders f`.
+pub(super) fn prefixed_cols() -> String {
+    COLS.split(", ")
+        .map(|c| format!("m.{}", c.trim()))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// Wraps `inner`, a `SELECT m.*, ... FROM messages m JOIN folders f ...
+/// WHERE ...` written with `{RANK}` in its column list, so only one copy of
+/// each message is left. Gmail stores a message once per label (Inbox, each
+/// label, All Mail), and copying a message to another folder does the same
+/// on any server, so one message can be several rows.
+///
+/// Copies are rows of one account with the same Message-ID, date and size.
+/// The Message-ID alone isn't enough: anyone can send a different message
+/// that reuses it, and that one must not be hidden. A message without a
+/// Message-ID is never a copy of anything.
+///
+/// The copy kept is one outside All Mail (archiving or moving from there does
+/// nothing useful), then one whose body is downloaded, then the oldest row.
+/// Rows the caller's `WHERE` leaves out (hidden, other folders) never count.
+pub(super) fn one_copy_each(inner: &str, order_and_limit: &str) -> String {
+    let rank = "ROW_NUMBER() OVER (PARTITION BY f.account_id, m.message_id_header, \
+        CASE WHEN m.message_id_header IS NULL THEN m.id END, m.date, m.size \
+        ORDER BY COALESCE(f.role, '') = 'all', m.body_state = 'fetched' DESC, m.id) AS copy_rank";
+    format!(
+        "SELECT {cols} FROM ({inner}) m WHERE m.copy_rank = 1 {order_and_limit}",
+        cols = prefixed_cols(),
+        inner = inner.replace("{RANK}", rank),
+    )
+}
+
 fn flag(r: &Row<'_>, i: usize, column: &'static str) -> Result<bool, StoreError> {
     Ok(narrow::<u8>(r.get(i)?, column)? != 0)
 }

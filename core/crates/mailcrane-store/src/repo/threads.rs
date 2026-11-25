@@ -2,7 +2,7 @@
 //! linking rules live in `mailcrane-core`'s `threading`; these are the
 //! building blocks it runs inside [`Store::in_transaction`].
 
-use super::messages::{from_row, COLS};
+use super::messages::{from_row, one_copy_each};
 use super::narrow;
 use crate::{AccountId, FolderId, MessageHeader, MessageId, Store, StoreError, ThreadId};
 use rusqlite::params;
@@ -287,17 +287,15 @@ impl Store {
     }
 
     /// Every message of a thread across its account's folders, oldest
-    /// first, leaving out hidden ones and those in Trash or Spam.
+    /// first, leaving out hidden ones and those in Trash or Spam. A message
+    /// stored in several folders comes once (see `one_copy_each` in
+    /// `repo/messages.rs`).
     pub fn thread_messages(&self, thread: ThreadId) -> Result<Vec<MessageHeader>, StoreError> {
-        let cols = COLS
-            .split(", ")
-            .map(|c| format!("m.{}", c.trim()))
-            .collect::<Vec<_>>()
-            .join(", ");
-        let sql = format!(
-            "SELECT {cols} FROM messages m JOIN folders f ON f.id = m.folder_id \
+        let sql = one_copy_each(
+            "SELECT m.*, {RANK} FROM messages m JOIN folders f ON f.id = m.folder_id \
              WHERE m.thread_id = ?1 AND m.hidden = 0 \
-             AND COALESCE(f.role, '') NOT IN ('trash', 'spam') ORDER BY m.date, m.id"
+             AND COALESCE(f.role, '') NOT IN ('trash', 'spam')",
+            "ORDER BY m.date, m.id",
         );
         let mut stmt = self.conn.prepare(&sql)?;
         let mut rows = stmt.query(params![thread.0])?;
