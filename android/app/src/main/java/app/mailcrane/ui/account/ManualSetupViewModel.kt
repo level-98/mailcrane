@@ -4,6 +4,8 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import app.mailcrane.core.AddAccountException
 import app.mailcrane.core.ConnectionSecurity
+import app.mailcrane.core.DiscoverException
+import app.mailcrane.core.DiscoveredSettings
 import app.mailcrane.core.Field
 import app.mailcrane.core.FieldProblem
 import app.mailcrane.core.MailServer
@@ -38,6 +40,22 @@ data class SetupError(
     val server: MailServer? = null,
 )
 
+/**
+ * Which step of setup is showing (M1-15): email and password first, then the settings that were
+ * found for confirmation, or the full form when nothing was found or the user wants to edit.
+ */
+enum class SetupStep {
+    EMAIL,
+    CONFIRM,
+    MANUAL,
+}
+
+/** Why the full form is showing after a lookup, for a note above it. */
+enum class DiscoveryNote {
+    NOT_FOUND,
+    TIMED_OUT,
+}
+
 /** Everything the manual setup screen shows. Holds what the user typed, so nothing is lost on errors. */
 data class ManualSetupUiState(
     val email: String = "",
@@ -55,6 +73,10 @@ data class ManualSetupUiState(
     val fieldErrors: Map<Field, FieldProblem> = emptyMap(),
     val error: SetupError? = null,
     val addedAccountId: Long? = null,
+    val step: SetupStep = SetupStep.EMAIL,
+    val discovering: Boolean = false,
+    val found: DiscoveredSettings? = null,
+    val discoveryNote: DiscoveryNote? = null,
 )
 
 @HiltViewModel
@@ -97,6 +119,75 @@ class ManualSetupViewModel
         fun onSmtpSecurityChange(value: ConnectionSecurity) =
             edit(Field.SMTP_PORT) { copy(smtpSecurity = value, smtpPort = port(MailServer.SMTP, value)) }
 
+        /**
+         * Looks up the settings for the typed address. Found settings fill the form and show for
+         * confirmation; otherwise the full form opens with a note.
+         */
+        fun discover() {
+            val current = _state.value
+            if (current.discovering || current.checking) return
+            val email = current.email.trim()
+            val problems =
+                buildMap {
+                    if (!email.contains('@')) put(Field.EMAIL, FieldProblem.MALFORMED_EMAIL)
+                    if (current.password.isEmpty()) put(Field.PASSWORD, FieldProblem.EMPTY)
+                }
+            if (problems.isNotEmpty()) {
+                _state.update { it.copy(fieldErrors = problems) }
+                return
+            }
+            _state.update { it.copy(discovering = true, error = null, fieldErrors = emptyMap(), discoveryNote = null) }
+            viewModelScope.launch {
+                val result =
+                    try {
+                        Result.success(core.discoverSettings(email))
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        Result.failure(e)
+                    }
+                val first = result.getOrNull()?.firstOrNull()
+                _state.update { state ->
+                    when {
+                        first != null -> state.withFound(first)
+                        result.exceptionOrNull() is DiscoverException.InvalidEmail ->
+                            state.copy(
+                                discovering = false,
+                                fieldErrors =
+                                    mapOf(
+                                        Field.EMAIL to FieldProblem.MALFORMED_EMAIL,
+                                    ),
+                            )
+                        else ->
+                            state.copy(
+                                discovering = false,
+                                step = SetupStep.MANUAL,
+                                username = state.username.ifBlank { email },
+                                discoveryNote =
+                                    if (result.exceptionOrNull() is DiscoverException.Timeout) {
+                                        DiscoveryNote.TIMED_OUT
+                                    } else {
+                                        DiscoveryNote.NOT_FOUND
+                                    },
+                            )
+                    }
+                }
+            }
+        }
+
+        /** Shows the full form, with anything found already filled in. */
+        fun editSettings() = _state.update { it.copy(step = SetupStep.MANUAL, discoveryNote = null) }
+
+        /** Skips the lookup: the full form with the username filled from the address. */
+        fun setUpManually() =
+            _state.update {
+                it.copy(
+                    step = SetupStep.MANUAL,
+                    username = it.username.ifBlank { it.email.trim() },
+                    fieldErrors = emptyMap(),
+                )
+            }
+
         /** Checks the settings by logging in, and saves the account if both servers accept it. */
         fun submit() {
             val current = _state.value
@@ -120,10 +211,28 @@ class ManualSetupViewModel
             }
         }
 
+        private fun ManualSetupUiState.withFound(found: DiscoveredSettings) =
+            copy(
+                discovering = false,
+                step = SetupStep.CONFIRM,
+                found = found,
+                imapHost = found.imap.host,
+                imapPort = found.imap.port.toString(),
+                imapSecurity = found.imap.security,
+                smtpHost = found.smtp.host,
+                smtpPort = found.smtp.port.toString(),
+                smtpSecurity = found.smtp.security,
+                username = found.username,
+            )
+
         private fun ManualSetupUiState.withFailure(e: Throwable): ManualSetupUiState =
             when (e) {
                 is AddAccountException.Invalid ->
-                    copy(checking = false, fieldErrors = e.errors.associate { it.field to it.problem })
+                    copy(
+                        checking = false,
+                        step = SetupStep.MANUAL,
+                        fieldErrors = e.errors.associate { it.field to it.problem },
+                    )
                 else -> copy(checking = false, error = e.toSetupError())
             }
 

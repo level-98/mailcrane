@@ -25,6 +25,8 @@ use tokio::task::JoinHandle;
 #[derive(Debug, Default)]
 struct ConnState {
     selected: Option<String>,
+    /// The literal sent with the current command, if any (RFC 9051 §4.3).
+    literal: Option<Vec<u8>>,
     /// `ENABLE QRESYNC` succeeded (RFC 7162 §3.2.3).
     qresync: bool,
 }
@@ -324,9 +326,29 @@ async fn handle_connection(
     loop {
         let mut line = Vec::new();
         let mut byte = [0u8; 1];
+        state.literal = None;
         while tls_stream.read_exact(&mut byte).await.is_ok() {
             line.push(byte[0]);
             if line.ends_with(b"\r\n") {
+                // A synchronizing literal `{n}`: say go ahead, read n bytes,
+                // then the rest of the command line (RFC 9051 §4.3).
+                if let Some(size) = literal_size(&line) {
+                    line.truncate(line.len() - 2);
+                    while line.last().is_some_and(|b| *b != b'{') {
+                        line.pop();
+                    }
+                    line.pop();
+                    line.extend_from_slice(b"{LITERAL}");
+                    if tls_stream.write_all(b"+ go ahead\r\n").await.is_err() {
+                        return Ok(());
+                    }
+                    let mut literal = vec![0u8; size];
+                    if tls_stream.read_exact(&mut literal).await.is_err() {
+                        return Ok(());
+                    }
+                    state.literal = Some(literal);
+                    continue;
+                }
                 break;
             }
         }
@@ -384,7 +406,15 @@ async fn handle_imap_command(
     }
     let response = match command.as_str() {
         "CAPABILITY" => {
-            let mut caps = "IMAP4rev2 IMAP4rev1".to_string();
+            // IMAP4rev2 includes MOVE and UID EXPUNGE (RFC 9051 §1), so a server
+            // without either speaks only IMAP4rev1; it keeps SPECIAL-USE through
+            // LIST-EXTENDED (RFC 6154 §5.1).
+            let mut caps = if quirks.contains(&Quirk::NoMove) || quirks.contains(&Quirk::NoUidplus)
+            {
+                "IMAP4rev1 LIST-EXTENDED".to_string()
+            } else {
+                "IMAP4rev2 IMAP4rev1".to_string()
+            };
             if secure {
                 caps.push_str(" AUTH=PLAIN");
             } else {
@@ -409,6 +439,9 @@ async fn handle_imap_command(
             }
             if !quirks.contains(&Quirk::NoIdle) {
                 caps.push_str(" IDLE");
+            }
+            if !quirks.contains(&Quirk::NoMove) {
+                caps.push_str(" MOVE");
             }
             if quirks.contains(&Quirk::GmailLabels) {
                 caps.push_str(" X-GM-EXT-1");
@@ -530,9 +563,64 @@ async fn handle_imap_command(
             let list: String = enabled.iter().map(|e| format!(" {e}")).collect();
             format!("* ENABLED{list}\r\n{tag} OK ENABLE completed\r\n")
         }
+        "EXPUNGE" => {
+            // A plain EXPUNGE removes every \Deleted message (RFC 9051 §6.4.3).
+            let folder = state.selected.as_deref().unwrap_or("INBOX");
+            mailbox.expunge_deleted(folder, |_| true).await;
+            format!("{tag} OK EXPUNGE completed\r\n")
+        }
+        "CREATE" => {
+            // RFC 9051 §6.3.4; an existing name is refused with ALREADYEXISTS.
+            let name = parts.get(2).copied().unwrap_or("").trim_matches('"');
+            if name.is_empty() {
+                format!(
+                    "{tag} BAD CREATE needs a name
+"
+                )
+            } else if name.eq_ignore_ascii_case("INBOX")
+                || mailbox.folder_names().await.iter().any(|n| n == name)
+            {
+                format!(
+                    "{tag} NO [ALREADYEXISTS] folder exists
+"
+                )
+            } else {
+                mailbox.create_folder(name).await;
+                format!(
+                    "{tag} OK CREATE completed
+"
+                )
+            }
+        }
         "NOOP" => "* 0 RECENT\r\n".to_string() + &format!("{tag} OK NOOP completed\r\n"),
         "LOGOUT" => format!("{tag} OK LOGOUT completed\r\n"),
-        "APPEND" => format!("{tag} OK APPEND completed\r\n"),
+        "APPEND" => {
+            // `APPEND <folder> [(<flags>)] {LITERAL}` (RFC 9051 §6.3.12).
+            let folder = parts
+                .get(2)
+                .copied()
+                .unwrap_or("")
+                .trim_matches('"')
+                .to_string();
+            let flags: Vec<String> = parts
+                .iter()
+                .skip(3)
+                .take_while(|p| **p != "{LITERAL}")
+                .map(|p| p.trim_matches(|c| c == '(' || c == ')').to_string())
+                .filter(|p| !p.is_empty())
+                .collect();
+            match state.literal.take() {
+                None => format!("{tag} BAD APPEND needs a message\r\n"),
+                Some(raw) => match mailbox.append(&folder, raw, flags).await {
+                    None => format!("{tag} NO [TRYCREATE] no such folder\r\n"),
+                    Some(uid) if !quirks.contains(&Quirk::NoUidplus) => format!(
+                        "{tag} OK [APPENDUID {} {uid}] APPEND completed\r\n",
+                        mailbox.uidvalidity()
+                    ),
+                    Some(_) => format!("{tag} OK APPEND completed\r\n"),
+                },
+            }
+        }
         "IDLE" => {
             if quirks.contains(&Quirk::NoIdle) {
                 format!("{tag} BAD IDLE disabled\r\n")
@@ -706,6 +794,14 @@ async fn select_response(
         "* {count} EXISTS\r\n* OK [UIDVALIDITY {uidvalidity}]\r\n* OK [UIDNEXT {}]\r\n",
         mailbox.uidnext(folder).await
     );
+    // RFC 9051 §7.1: `\*` means new keywords can be stored permanently.
+    if quirks.contains(&Quirk::NoCustomKeywords) {
+        out.push_str("* OK [PERMANENTFLAGS (\\Seen \\Answered \\Flagged \\Deleted \\Draft)]\r\n");
+    } else {
+        out.push_str(
+            "* OK [PERMANENTFLAGS (\\Seen \\Answered \\Flagged \\Deleted \\Draft \\*)]\r\n",
+        );
+    }
     if quirks.contains(&Quirk::NoCondstore) {
         return out + &format!("{tag} OK {command} completed\r\n");
     }
@@ -787,6 +883,69 @@ fn in_uid_set(set: &str, uid: u32, max: u32) -> bool {
     })
 }
 
+/// Whether message `m` matches every search key in `keys` (TEXT, FROM, TO,
+/// SUBJECT with one-word values; UNSEEN; FLAGGED). Case-insensitive
+/// substring matches, like most servers.
+fn search_keys_match(m: &crate::mailbox::Message, keys: &[&str]) -> bool {
+    let text = String::from_utf8_lossy(&m.raw).to_lowercase();
+    let mut i = 0;
+    while let Some(key) = keys.get(i) {
+        let value = keys.get(i + 1).map(|v| v.trim_matches('"').to_lowercase());
+        let ok = match key.to_ascii_uppercase().as_str() {
+            "TEXT" => value.as_ref().is_some_and(|v| text.contains(v.as_str())),
+            "FROM" => value
+                .as_ref()
+                .is_some_and(|v| header_contains(&m.raw, "From", v)),
+            "TO" => value
+                .as_ref()
+                .is_some_and(|v| header_contains(&m.raw, "To", v)),
+            "SUBJECT" => value
+                .as_ref()
+                .is_some_and(|v| header_contains(&m.raw, "Subject", v)),
+            "UNSEEN" => {
+                i += 1;
+                if m.flags.iter().any(|f| f == "\\Seen") {
+                    return false;
+                }
+                continue;
+            }
+            "FLAGGED" => {
+                i += 1;
+                if !m.flags.iter().any(|f| f == "\\Flagged") {
+                    return false;
+                }
+                continue;
+            }
+            _ => false,
+        };
+        if !ok {
+            return false;
+        }
+        i += 2;
+    }
+    true
+}
+
+/// The size of a synchronizing literal `{n}` that ends a command line.
+fn literal_size(line: &[u8]) -> Option<usize> {
+    let text = std::str::from_utf8(line).ok()?.strip_suffix("\r\n")?;
+    let open = text.rfind('{')?;
+    text.get(open + 1..)?.strip_suffix('}')?.parse().ok()
+}
+
+/// Whether the message has header `name` containing `value`, both compared
+/// ignoring case.
+fn header_contains(raw: &[u8], name: &str, value: &str) -> bool {
+    let text = String::from_utf8_lossy(raw);
+    let value = value.to_ascii_lowercase();
+    text.split("\r\n")
+        .take_while(|line| !line.is_empty())
+        .filter_map(|line| line.split_once(':'))
+        .any(|(n, v)| {
+            n.trim().eq_ignore_ascii_case(name) && v.to_ascii_lowercase().contains(&value)
+        })
+}
+
 fn quoted(text: &str) -> String {
     text.replace('\\', "\\\\").replace('"', "\\\"")
 }
@@ -817,6 +976,20 @@ fn subject_of(raw: &[u8]) -> String {
         .unwrap_or_else(|| "Test".to_string())
 }
 
+/// The message's own `Message-ID` header, or `<uid@example.org>` for
+/// fixtures without one, as a real server's ENVELOPE would report it.
+fn message_id_of(raw: &[u8], uid: u32) -> String {
+    String::from_utf8_lossy(raw)
+        .split("\r\n")
+        .take_while(|line| !line.is_empty())
+        .find_map(|line| {
+            let (name, value) = line.split_once(':')?;
+            name.eq_ignore_ascii_case("Message-ID")
+                .then(|| value.trim().to_string())
+        })
+        .unwrap_or_else(|| format!("<{uid}@example.org>"))
+}
+
 fn body_structure(raw: &[u8]) -> String {
     let text = String::from_utf8_lossy(raw);
     if text.contains("Content-Disposition: attachment") {
@@ -827,6 +1000,16 @@ fn body_structure(raw: &[u8]) -> String {
             raw.len()
         )
     }
+}
+
+async fn max_uid(mailbox: &Mailbox, folder: &str) -> u32 {
+    mailbox
+        .messages(folder)
+        .await
+        .iter()
+        .map(|m| m.uid)
+        .max()
+        .unwrap_or(0)
 }
 
 async fn handle_uid_command(
@@ -890,7 +1073,7 @@ async fn handle_uid_command(
                     if message.corrupt_envelope {
                         line.push_str(" ENVELOPE (\"only\" \"two\")");
                     } else {
-                        line.push_str(&format!(" ENVELOPE (\"Wed, 24 Nov 2026 10:46:51 +0000\" \"{}\" ((\"Alice\" NIL \"alice\" \"example.org\")) ((\"Alice\" NIL \"alice\" \"example.org\")) ((\"Alice\" NIL \"alice\" \"example.org\")) ((\"Recipient\" NIL \"recipient\" \"example.net\")) NIL NIL NIL \"<{}@example.org>\")", quoted(&subject_of(&message.raw)), message.uid));
+                        line.push_str(&format!(" ENVELOPE (\"Wed, 24 Nov 2026 10:46:51 +0000\" \"{}\" ((\"Alice\" NIL \"alice\" \"example.org\")) ((\"Alice\" NIL \"alice\" \"example.org\")) ((\"Alice\" NIL \"alice\" \"example.org\")) ((\"Recipient\" NIL \"recipient\" \"example.net\")) NIL NIL NIL \"{}\")", quoted(&subject_of(&message.raw)), quoted(&message_id_of(&message.raw, message.uid))));
                     }
                 }
                 if items.contains("BODYSTRUCTURE") {
@@ -906,10 +1089,11 @@ async fn handle_uid_command(
                             "IN-REPLY-TO",
                             "LIST-UNSUBSCRIBE",
                             "LIST-UNSUBSCRIBE-POST",
+                            "LIST-ID",
                         ],
                     );
                     out.extend_from_slice(
-                        format!(" BODY[HEADER.FIELDS (REFERENCES IN-REPLY-TO LIST-UNSUBSCRIBE LIST-UNSUBSCRIBE-POST)] {{{}}}\r\n", fields.len()).as_bytes(),
+                        format!(" BODY[HEADER.FIELDS (REFERENCES IN-REPLY-TO LIST-UNSUBSCRIBE LIST-UNSUBSCRIBE-POST LIST-ID)] {{{}}}\r\n", fields.len()).as_bytes(),
                     );
                     out.extend_from_slice(&fields);
                 }
@@ -933,6 +1117,15 @@ async fn handle_uid_command(
                 .filter(
                     |m| match parts.get(3).map(|p| p.to_ascii_uppercase()).as_deref() {
                         Some("UID") => in_uid_set(parts.get(4).copied().unwrap_or(""), m.uid, max),
+                        // `HEADER <name> <value>`: a substring match on that
+                        // header, case-insensitive (RFC 9051 §6.4.4).
+                        Some("HEADER") => header_contains(
+                            &m.raw,
+                            parts.get(4).copied().unwrap_or(""),
+                            parts.get(5).copied().unwrap_or("").trim_matches('"'),
+                        ),
+                        // `CHARSET UTF-8 <keys>`: every key must match.
+                        Some("CHARSET") => search_keys_match(m, parts.get(5..).unwrap_or_default()),
                         _ => true,
                     },
                 )
@@ -945,16 +1138,57 @@ async fn handle_uid_command(
             };
             format!("* SEARCH{list}\r\n{tag} OK UID SEARCH completed\r\n")
         }
-        "STORE" => format!("{tag} OK UID STORE completed\r\n"),
-        "COPY" => format!("{tag} OK UID COPY completed\r\n"),
-        "MOVE" => {
-            if quirks.contains(&Quirk::NoMove) {
-                format!("{tag} BAD UID MOVE unsupported\r\n")
-            } else {
-                format!("{tag} OK UID MOVE completed\r\n")
+        "STORE" => {
+            // `UID STORE <set> (+|-)FLAGS[.SILENT] (<flags>)` (RFC 9051 §6.4.6).
+            let set = parts.get(3).copied().unwrap_or("");
+            let op = parts.get(4).copied().unwrap_or("").to_ascii_uppercase();
+            let flags = parts.get(5..).unwrap_or_default().join(" ");
+            let flags: Vec<&str> = flags
+                .trim_matches(|c| c == '(' || c == ')')
+                .split_whitespace()
+                .collect();
+            let add = op.starts_with('+');
+            if !(add || op.starts_with('-')) || !op.contains("FLAGS") {
+                return format!("{tag} BAD unsupported STORE\r\n");
             }
+            let max = max_uid(mailbox, folder).await;
+            for flag in flags {
+                mailbox
+                    .store_flag(folder, |uid| in_uid_set(set, uid, max), flag, add)
+                    .await;
+            }
+            format!("{tag} OK UID STORE completed\r\n")
         }
-        "EXPUNGE" => format!("{tag} OK UID EXPUNGE completed\r\n"),
+        "COPY" | "MOVE" => {
+            let set = parts.get(3).copied().unwrap_or("");
+            let to = parts.get(4).copied().unwrap_or("").trim_matches('"');
+            if subcommand == "MOVE" && quirks.contains(&Quirk::NoMove) {
+                return format!("{tag} BAD UID MOVE unsupported\r\n");
+            }
+            if !mailbox.folder_names().await.iter().any(|n| n == to) {
+                // RFC 9051 §6.4.7: the target doesn't exist.
+                return format!("{tag} NO [TRYCREATE] no such folder\r\n");
+            }
+            let max = max_uid(mailbox, folder).await;
+            let pick = |uid| in_uid_set(set, uid, max);
+            if subcommand == "MOVE" {
+                mailbox.move_messages(folder, pick, to).await;
+            } else {
+                mailbox.copy(folder, pick, to).await;
+            }
+            format!("{tag} OK UID {subcommand} completed\r\n")
+        }
+        "EXPUNGE" => {
+            if quirks.contains(&Quirk::NoUidplus) {
+                return format!("{tag} BAD UID EXPUNGE unsupported\r\n");
+            }
+            let set = parts.get(3).copied().unwrap_or("");
+            let max = max_uid(mailbox, folder).await;
+            mailbox
+                .expunge_deleted(folder, |uid| in_uid_set(set, uid, max))
+                .await;
+            format!("{tag} OK UID EXPUNGE completed\r\n")
+        }
         _ => format!("{tag} BAD unknown UID command\r\n"),
     }
 }

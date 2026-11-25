@@ -47,22 +47,22 @@ Goal: add an IMAP account and read your inbox, online and offline.
 - [x] **M1-10** Message list screen, Android 🤖
 - [x] **M1-12** Message view screen with "load remote images" button, Android 🤖
 - [x] **M1-13** Folder drawer, Android 🟢🤖
-- [ ] **M1-14** Read, unread, flag, archive, delete and move, synced back to the server 🤖
-- [ ] **M1-15** Automatic account setup: Mozilla ISPDB (Thunderbird autoconfig), `/.well-known/autoconfig`, SRV records 🤖
+- [x] **M1-14** Read, unread, flag, archive, delete and move, synced back to the server 🤖
+- [x] **M1-15** Automatic account setup: Mozilla ISPDB (Thunderbird autoconfig), `/.well-known/autoconfig`, SRV records 🤖
 - [x] **M1-16** Empty states using the illustrations in `design/` 🟢🤖
 
 ## M2 — Send mail
 
 - [x] **M2-01** SMTP sending with STARTTLS and implicit TLS 🔒🤖
-- [ ] **M2-02** Compose screen: to/cc/bcc, subject, plain-text body 🤖
-- [ ] **M2-03** Reply, reply-all and forward, with correct `In-Reply-To` and `References` headers 🤖
-- [ ] **M2-04** Attachments: add, send, preview and save 🤖
-- [ ] **M2-05** Drafts: autosave locally and to the server's Drafts folder 🤖
-- [ ] **M2-06** Offline outbox with retry 🤖
-- [ ] **M2-07** Save sent messages to Sent (skip for providers that do it themselves, such as Gmail) 🤖
-- [ ] **M2-08** Contact autocomplete from the device's contacts and past correspondents 🤖
-- [ ] **M2-09** Rich-text compose (bold, italic, lists, links) 🤖
-- [ ] **M2-10** Signatures, per account 🟢🤖
+- [x] **M2-02** Compose screen: to/cc/bcc, subject, plain-text body 🤖
+- [x] **M2-03** Reply, reply-all and forward, with correct `In-Reply-To` and `References` headers 🤖
+- [x] **M2-04** Attachments: add, send, preview and save 🤖
+- [x] **M2-05** Drafts: autosave locally and to the server's Drafts folder 🤖
+- [x] **M2-06** Offline outbox with retry 🤖
+- [x] **M2-07** Save sent messages to Sent (skip for providers that do it themselves, such as Gmail) 🤖
+- [x] **M2-08** Contact autocomplete from the device's contacts and past correspondents 🤖
+- [x] **M2-09** Rich-text compose (bold, italic, lists, links) 🤖
+- [x] **M2-10** Signatures, per account 🟢🤖
 
 ## M3 — Providers and sign-in
 
@@ -75,24 +75,24 @@ Goal: add an IMAP account and read your inbox, online and offline.
 
 ## M4 — The features that make it good
 
-- [ ] **M4-01** Multiple accounts and a unified inbox 🤖
-- [ ] **M4-02** Conversation threading (JWZ algorithm plus Gmail thread IDs) 🤖
-- [ ] **M4-03** Offline full-text search (SQLite FTS5), plus server-side IMAP SEARCH 🤖
-- [ ] **M4-04** Configurable swipe actions 🟢🤖
+- [x] **M4-01** Multiple accounts and a unified inbox 🤖
+- [x] **M4-02** Conversation threading (JWZ algorithm plus Gmail thread IDs) 🤖
+- [x] **M4-03** Offline full-text search (SQLite FTS5), plus server-side IMAP SEARCH 🤖
+- [x] **M4-04** Configurable swipe actions 🟢🤖
 - [ ] **M4-05** Push notifications on Android: foreground IDLE service and UnifiedPush (iOS is M7-10) 🧑
-- [ ] **M4-06** Snooze (stored locally, synced via a hidden folder or IMAP keyword) 🤖
-- [ ] **M4-07** Scheduled send 🤖
-- [ ] **M4-08** Undo send (short delay before sending) 🟢🤖
-- [ ] **M4-09** Local rules and filters 🤖
-- [ ] **M4-10** One-tap unsubscribe (`List-Unsubscribe`, RFC 8058) 🤖
-- [ ] **M4-11** Home-screen widgets (Android Glance) 🤖
-- [ ] **M4-12** Dark mode and dynamic colour (Material You) 🟢🤖
-- [ ] **M4-13** Tablet layouts (list and detail side by side) 🤖
+- [x] **M4-06** Snooze (stored locally, synced via a hidden folder or IMAP keyword) 🤖
+- [x] **M4-07** Scheduled send 🤖
+- [x] **M4-08** Undo send (short delay before sending) 🟢🤖
+- [x] **M4-09** Local rules and filters 🤖
+- [x] **M4-10** One-tap unsubscribe (`List-Unsubscribe`, RFC 8058) 🤖
+- [x] **M4-11** Home-screen widgets (Android Glance) 🤖
+- [x] **M4-12** Dark mode and dynamic colour (Material You) 🟢🤖
+- [x] **M4-13** Tablet layouts (list and detail side by side) 🤖
 
 ## M5 — Privacy and security
 
-- [ ] **M5-01** Tracking-pixel detection and a "trackers blocked" indicator 🤖
-- [ ] **M5-02** Strip tracking parameters from links (utm_ and similar) before opening 🟢🤖
+- [x] **M5-01** Tracking-pixel detection and a "trackers blocked" indicator 🤖
+- [x] **M5-02** Strip tracking parameters from links (utm_ and similar) before opening 🟢🤖
 - [ ] **M5-03** App lock with biometrics or PIN, Android 🔒
 - [ ] **M5-04** OpenPGP: read and send encrypted and signed mail, Autocrypt, key management 🔒
 - [ ] **M5-05** S/MIME 🔒

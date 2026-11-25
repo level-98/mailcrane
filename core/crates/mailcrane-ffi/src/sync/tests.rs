@@ -139,6 +139,33 @@ fn sync_load_older_and_fetch_body_through_the_ffi() {
         .iter()
         .any(|e| matches!(e, CoreEvent::MessagesChanged { folder_id } if *folder_id == folder.0)));
 
+    // Message actions (M1-14): applied at once, then replayed on the server.
+    let uid = message.details.uid;
+    assert_eq!(
+        engine.apply_action(vec![message.id.0], crate::actions::MessageAction::Flag),
+        Ok(Some(account.0))
+    );
+    assert_eq!(engine.mark_read(message.id.0), Ok(()));
+    let store = Store::open(&path).expect("store");
+    assert_eq!(store.count_pending_ops(account).expect("count"), 2);
+    drop(store);
+    assert_eq!(engine.replay_actions(account.0), Ok(0));
+    let mut flags = runtime
+        .block_on(imap.mailbox().flags("INBOX", uid))
+        .expect("on the server");
+    flags.sort();
+    assert_eq!(flags, ["\\Flagged", "\\Seen"]);
+    // Nothing queued: no connection at all.
+    assert_eq!(engine.replay_actions(account.0), Ok(0));
+    assert_eq!(
+        engine.apply_action(vec![9999], crate::actions::MessageAction::Flag),
+        Err(crate::actions::ActionFailure::NotFound)
+    );
+    assert_eq!(
+        engine.apply_action(vec![message.id.0], crate::actions::MessageAction::Archive),
+        Err(crate::actions::ActionFailure::NoArchiveFolder)
+    );
+
     // Unknown ids are errors, not panics.
     assert_eq!(
         engine.sync_folder(9999),

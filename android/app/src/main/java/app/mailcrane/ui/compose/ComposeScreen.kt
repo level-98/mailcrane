@@ -1,6 +1,9 @@
 package app.mailcrane.ui.compose
 
+import android.Manifest
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -39,10 +42,12 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.LiveRegionMode
@@ -53,8 +58,10 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.mailcrane.R
+import app.mailcrane.contacts.RecipientSuggestion
 import app.mailcrane.core.AccountSummary
 import app.mailcrane.core.RecipientField
+import kotlinx.coroutines.launch
 
 /** Writes a new message from account [accountId]. [onDone] is called once it is sent or closed. */
 @Composable
@@ -62,10 +69,13 @@ fun ComposeScreen(
     accountId: Long,
     onDone: (ComposeResult) -> Unit,
     modifier: Modifier = Modifier,
+    reply: ReplyRequest? = null,
+    draft: DraftRequest? = null,
+    prefill: ComposePrefill? = null,
     viewModel: ComposeViewModel = hiltViewModel(),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
-    LaunchedEffect(viewModel, accountId) { viewModel.start(accountId) }
+    LaunchedEffect(viewModel, accountId, reply, draft, prefill) { viewModel.start(accountId, reply, draft, prefill) }
     LaunchedEffect(state.result) {
         state.result?.let {
             viewModel.reset()
@@ -73,6 +83,14 @@ fun ComposeScreen(
         }
     }
     BackHandler(onBack = viewModel::requestClose)
+    val askPermission =
+        rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { viewModel.contactsAnswered() }
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val pickFiles =
+        rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+            scope.launch { viewModel.addAttachments(readAttachments(context, uris)) }
+        }
     ComposeContent(
         state = state,
         actions =
@@ -86,10 +104,24 @@ fun ComposeScreen(
                 onSubjectChange = viewModel::onSubjectChange,
                 onBodyChange = viewModel::onBodyChange,
                 onSend = viewModel::send,
+                onSchedule = viewModel::schedule,
                 onClose = viewModel::requestClose,
+                onDiscard = viewModel::requestDiscard,
                 onConfirmDiscard = viewModel::confirmDiscard,
                 onKeepEditing = viewModel::keepEditing,
                 onDismissError = viewModel::dismissError,
+                onPickSuggestion = viewModel::pickSuggestion,
+                onAllowContacts = { askPermission.launch(Manifest.permission.READ_CONTACTS) },
+                onDeclineContacts = viewModel::contactsAnswered,
+                onAttach = { pickFiles.launch(arrayOf("*/*")) },
+                rich =
+                    RichTextActions(
+                        onFormat = viewModel::format,
+                        onLink = viewModel::link,
+                        onList = viewModel::list,
+                        onPlainTextOnly = viewModel::setPlainTextOnly,
+                    ),
+                onRemoveAttachment = viewModel::removeAttachment,
             ),
         modifier = modifier,
     )
@@ -106,10 +138,18 @@ data class ComposeActions(
     val onSubjectChange: (String) -> Unit = {},
     val onBodyChange: (String) -> Unit = {},
     val onSend: () -> Unit = {},
+    val onSchedule: (Long) -> Unit = {},
     val onClose: () -> Unit = {},
+    val onDiscard: () -> Unit = {},
     val onConfirmDiscard: () -> Unit = {},
     val onKeepEditing: () -> Unit = {},
     val onDismissError: () -> Unit = {},
+    val onPickSuggestion: (RecipientField, RecipientSuggestion) -> Unit = { _, _ -> },
+    val onAttach: () -> Unit = {},
+    val rich: RichTextActions = RichTextActions(),
+    val onRemoveAttachment: (Int) -> Unit = {},
+    val onAllowContacts: () -> Unit = {},
+    val onDeclineContacts: () -> Unit = {},
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -132,7 +172,22 @@ fun ComposeContent(
                         )
                     }
                 },
-                actions = { SendButton(state, actions.onSend) },
+                actions = {
+                    IconButton(onClick = actions.onAttach, enabled = !state.sending) {
+                        Icon(
+                            painter = painterResource(R.drawable.ic_mc_attach),
+                            contentDescription = stringResource(R.string.compose_attach),
+                        )
+                    }
+                    IconButton(onClick = actions.onDiscard, enabled = !state.sending) {
+                        Icon(
+                            painter = painterResource(R.drawable.ic_mc_trash),
+                            contentDescription = stringResource(R.string.compose_discard),
+                        )
+                    }
+                    ScheduleButton(enabled = state.canSend, onSchedule = actions.onSchedule)
+                    SendButton(state, actions.onSend)
+                },
             )
         },
     ) { padding ->
@@ -176,15 +231,13 @@ fun ComposeContent(
                 modifier = Modifier.fillMaxWidth(),
             )
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-            TextField(
-                value = state.body,
-                onValueChange = actions.onBodyChange,
+            ComposeAttachments(state, actions.onRemoveAttachment)
+            RichBodyField(
+                state = state,
+                onBodyChange = actions.onBodyChange,
+                actions = actions.rich,
                 enabled = editable,
-                minLines = 8,
-                placeholder = { Text(stringResource(R.string.compose_body)) },
-                keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
                 colors = plainFieldColors(),
-                modifier = Modifier.fillMaxWidth(),
             )
         }
     }
@@ -253,6 +306,12 @@ private fun Recipient(
         enabled = enabled,
         trailing = trailing,
     )
+    if (state.suggestionsFor == which) {
+        RecipientSuggestions(state.suggestions) { actions.onPickSuggestion(which, it) }
+    }
+    if (which == RecipientField.TO && state.askContacts) {
+        ContactsPrompt(onAllow = actions.onAllowContacts, onDecline = actions.onDeclineContacts)
+    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -362,6 +421,8 @@ internal fun errorText(error: ComposeError): Int =
         ComposeError.REFUSED_TEMPORARY -> R.string.compose_error_refused_temporary
         ComposeError.REFUSED_PERMANENT -> R.string.compose_error_refused_permanent
         ComposeError.UNEXPECTED -> R.string.compose_error_unexpected
+        ComposeError.REPLY_UNAVAILABLE -> R.string.compose_error_reply_unavailable
+        ComposeError.DRAFT_UNAVAILABLE -> R.string.compose_error_draft_unavailable
     }
 
 @Composable

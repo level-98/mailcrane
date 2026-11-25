@@ -52,6 +52,26 @@ private class FakeFolders(
         return stored
     }
 
+    override suspend fun swipeAction(
+        messageId: Long,
+        action: app.mailcrane.core.MessageAction,
+        undoable: Boolean,
+    ) = Unit
+
+    override suspend fun searchMessages(
+        accountId: Long,
+        folderId: Long?,
+        query: String,
+        limit: Int,
+    ) = emptyList<app.mailcrane.core.MessageSummary>()
+
+    override suspend fun searchServer(
+        folderId: Long,
+        query: String,
+    ) = 0
+
+    override suspend fun undoAction(messageId: Long) = false
+
     override suspend fun refreshFolders(accountId: Long): Long? {
         refreshCalls++
         refreshGate?.await()

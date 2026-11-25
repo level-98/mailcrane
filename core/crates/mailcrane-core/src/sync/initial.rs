@@ -265,6 +265,23 @@ impl<'a> FolderSyncer<'a> {
                 continue;
             }
             self.store.upsert_message_headers(&rows)?;
+            // List-Id, for rules (M4-09).
+            let list_ids: Vec<(u32, Option<String>)> = fetched
+                .messages
+                .iter()
+                .filter_map(|d| {
+                    let uid = d.uid?;
+                    let list_id = d
+                        .header_fields
+                        .as_deref()
+                        .and_then(|h| mailcrane_mime::parse_message(h).ok())
+                        .and_then(|p| p.list_id);
+                    list_id.map(|l| (uid, Some(l)))
+                })
+                .collect();
+            if !list_ids.is_empty() {
+                self.store.set_list_ids(folder, &list_ids)?;
+            }
             total = total.saturating_add(rows.len());
             self.listener
                 .on_event(CoreEvent::MessagesChanged { folder_id: folder });
@@ -295,7 +312,7 @@ impl<'a> FolderSyncer<'a> {
             .uid_fetch_body(header.details.uid)
             .await?
             .ok_or(SyncError::MessageGone)?;
-        let (snippet, attachments) = match mailcrane_mime::parse_message(&raw) {
+        let (snippet, attachments, body_text) = match mailcrane_mime::parse_message(&raw) {
             Ok(parsed) => {
                 let attachments: Vec<NewAttachment> = parsed
                     .attachments
@@ -309,12 +326,17 @@ impl<'a> FolderSyncer<'a> {
                         is_inline: a.disposition == Disposition::Inline,
                     })
                     .collect();
-                (parsed.snippet, attachments)
+                // Plain text, or text derived from the HTML: indexed for search.
+                (
+                    parsed.snippet,
+                    attachments,
+                    parsed.text_plain.unwrap_or_default(),
+                )
             }
             Err(error) => {
                 // Keep the raw message so it can still be opened as source.
                 tracing::warn!(uid = header.details.uid, %error, "message could not be parsed");
-                (String::new(), Vec::new())
+                (String::new(), Vec::new(), String::new())
             }
         };
         let fetched_at = SystemTime::now()
@@ -328,6 +350,7 @@ impl<'a> FolderSyncer<'a> {
         {
             return Err(SyncError::UnknownMessage);
         }
+        self.store.index_body_text(message, &body_text)?;
         self.listener
             .on_event(CoreEvent::MessagesChanged { folder_id: folder });
         Ok(())

@@ -1,0 +1,39 @@
+package app.mailcrane.settings
+
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.UnconfinedTestDispatcher
+import kotlinx.coroutines.test.resetMain
+import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.test.setMain
+import org.junit.After
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
+import org.junit.Before
+import org.junit.Test
+
+@OptIn(ExperimentalCoroutinesApi::class)
+class SettingsViewModelTest {
+    @Before
+    fun setUp() = Dispatchers.setMain(UnconfinedTestDispatcher())
+
+    @After
+    fun tearDown() = Dispatchers.resetMain()
+
+    @Test
+    fun cleanLinksIsOnByDefaultAndCanBeTurnedOff() =
+        runTest {
+            val settings = FakeAppSettings()
+            val vm = SettingsViewModel(settings)
+            backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { vm.cleanLinks.collect {} }
+            assertTrue(vm.cleanLinks.value)
+
+            vm.setCleanLinks(false)
+            assertFalse(vm.cleanLinks.value)
+            assertFalse(settings.cleanLinks.value)
+
+            vm.setCleanLinks(true)
+            assertTrue(vm.cleanLinks.value)
+        }
+}

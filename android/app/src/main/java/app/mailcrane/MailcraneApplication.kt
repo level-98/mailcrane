@@ -6,6 +6,7 @@ import app.mailcrane.core.LiveUpdatesEngine
 import app.mailcrane.core.LiveUpdatesObserver
 import app.mailcrane.core.installSecretStore
 import app.mailcrane.security.KeystoreSecretStore
+import app.mailcrane.work.OutboxSender
 import dagger.hilt.android.HiltAndroidApp
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -19,6 +20,10 @@ class MailcraneApplication : Application() {
     // Lives as long as the process.
     private val appScope = CoroutineScope(SupervisorJob())
 
+    @Inject lateinit var outbox: OutboxSender
+
+    @Inject lateinit var widgets: app.mailcrane.widget.WidgetUpdater
+
     override fun onCreate() {
         super.onCreate()
         // The core reads and writes credentials only through this store.
@@ -29,5 +34,14 @@ class MailcraneApplication : Application() {
             .get()
             .lifecycle
             .addObserver(LiveUpdatesObserver(liveUpdates, appScope, Dispatchers.IO))
+        // Recovers sends interrupted by a stopped app, then sends what's queued.
+        outbox.start()
+        // The home-screen widget follows mail changes (M4-11).
+        widgets.start()
+        // Attachments opened more than a day ago (M2-04).
+        Thread {
+            app.mailcrane.ui.message
+                .clearOldAttachments(this)
+        }.start()
     }
 }

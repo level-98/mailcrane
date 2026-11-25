@@ -3,39 +3,69 @@ package app.mailcrane.ui.message
 import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
+import android.content.res.Resources
 import android.net.Uri
+import android.os.Build
 import android.text.format.Formatter
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.annotation.DrawableRes
+import androidx.annotation.StringRes
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.isCtrlPressed
+import androidx.compose.ui.input.key.isMetaPressed
+import androidx.compose.ui.input.key.isShiftPressed
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
@@ -51,11 +81,20 @@ import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.mailcrane.R
 import app.mailcrane.core.AttachmentInfo
+import app.mailcrane.core.FolderSummary
 import app.mailcrane.core.InlinePart
 import app.mailcrane.core.MessageAddress
 import app.mailcrane.core.MessageBody
 import app.mailcrane.core.MessageDetail
+import app.mailcrane.core.ReplyKind
+import app.mailcrane.core.TrackerInfo
+import app.mailcrane.core.sanitizeFilename
+import app.mailcrane.ui.compose.ComposePrefill
+import app.mailcrane.ui.compose.ReplyRequest
 import app.mailcrane.ui.messagelist.errorText
+import app.mailcrane.ui.theme.LocalDarkMessageBodies
+import app.mailcrane.ui.theme.LocalDarkTheme
+import kotlinx.coroutines.launch
 import java.time.DateTimeException
 import java.time.Instant
 import java.time.ZoneId
@@ -68,6 +107,10 @@ import java.util.Locale
 fun MessageScreen(
     messageId: Long,
     onBack: () -> Unit,
+    folders: List<FolderSummary> = emptyList(),
+    onReply: (ReplyRequest) -> Unit = {},
+    onComposeTo: (ComposePrefill) -> Unit = {},
+    onCreateRule: ((String) -> Unit)? = null,
     viewModel: MessageViewModel =
         hiltViewModel<MessageViewModel, MessageViewModel.Factory>(
             key = "message-$messageId",
@@ -76,13 +119,127 @@ fun MessageScreen(
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
+    val snackbar = remember { SnackbarHostState() }
+    val resources = LocalResources.current
+    val back by rememberUpdatedState(onBack)
+    LaunchedEffect(viewModel) {
+        viewModel.effects.collect { effect ->
+            when (effect) {
+                MessageEffect.Close -> back()
+                is MessageEffect.ActionRefused ->
+                    snackbar.showSnackbar(
+                        resources.getString(
+                            when (effect.reason) {
+                                ActionRefusal.NO_ARCHIVE_FOLDER -> R.string.action_no_archive_folder
+                                ActionRefusal.CANNOT_SNOOZE -> R.string.snooze_no_message_id
+                                ActionRefusal.FAILED -> R.string.action_not_applied
+                            },
+                        ),
+                    )
+                is MessageEffect.ComposeUnsubscribe -> onComposeTo(effect.prefill)
+                is MessageEffect.OpenUnsubscribePage -> openLink(context, Uri.parse(effect.url))
+                is MessageEffect.Unsubscribed ->
+                    snackbar.showSnackbar(
+                        resources.getString(
+                            if (effect.success) R.string.unsubscribe_done else R.string.unsubscribe_failed,
+                        ),
+                    )
+            }
+        }
+    }
+    // Attachments (M2-04): open in another app (asking first for risky types) or save a copy.
+    val scope = rememberCoroutineScope()
+    var confirmOpen by remember { mutableStateOf<AttachmentInfo?>(null) }
+    var saving by remember { mutableStateOf<AttachmentInfo?>(null) }
+    val openNow: (AttachmentInfo) -> Unit = { a ->
+        scope.launch {
+            val file = viewModel.attachmentFile(a.partId, attachmentCacheDir(context))
+            if (file == null || !openAttachment(context, file, a.mimeType)) {
+                snackbar.showSnackbar(resources.getString(R.string.attachment_cant_open))
+            }
+        }
+    }
+    val createDocument =
+        rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/octet-stream")) { uri ->
+            val a = saving
+            saving = null
+            if (uri != null && a != null) {
+                scope.launch {
+                    val file = viewModel.attachmentFile(a.partId, attachmentCacheDir(context))
+                    val ok = file != null && copyToDocument(context, file, uri)
+                    snackbar.showSnackbar(
+                        resources.getString(if (ok) R.string.attachment_saved else R.string.attachment_cant_save),
+                    )
+                }
+            }
+        }
+    confirmOpen?.let { a ->
+        AlertDialog(
+            onDismissRequest = { confirmOpen = null },
+            title = { Text(stringResource(R.string.attachment_risky_title)) },
+            text = { Text(stringResource(R.string.attachment_risky_text, a.name.ifBlank { a.mimeType })) },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmOpen = null
+                    openNow(a)
+                }) { Text(stringResource(R.string.attachment_open_anyway)) }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmOpen = null }) { Text(stringResource(R.string.unsubscribe_cancel)) }
+            },
+        )
+    }
+    var snoozing by rememberSaveable { mutableStateOf(false) }
+    val askNotifications = rememberNotificationPermissionRequest()
+    if (snoozing) {
+        SnoozeSheet(
+            onPick = {
+                snoozing = false
+                askNotifications()
+                viewModel.snooze(it)
+            },
+            onDismiss = { snoozing = false },
+        )
+    }
     MessageContent(
         state = state,
         onBack = onBack,
+        onUnsnooze = viewModel::unsnooze,
+        onOpenAttachment = { a -> if (isRiskyAttachment(a.name, a.mimeType)) confirmOpen = a else openNow(a) },
+        onSaveAttachment = { a ->
+            saving = a
+            createDocument.launch(sanitizeFilename(a.name.ifBlank { "attachment" }))
+        },
+        snackbar = snackbar,
+        folders = folders,
+        onReply = { kind ->
+            val ready = state as? MessageState.Ready ?: return@MessageContent
+            onReply(ReplyRequest(ready.message.id, kind, quoteHeader(resources, ready.message, kind)))
+        },
+        actions =
+            MessageActions(
+                onArchive = viewModel::archive,
+                onDelete = viewModel::delete,
+                onMarkUnread = viewModel::markUnread,
+                onToggleFlag = viewModel::toggleFlag,
+                onMove = viewModel::moveTo,
+                onSnooze = { snoozing = true },
+                onCreateRule =
+                    onCreateRule?.let { create ->
+                        {
+                            (state as? MessageState.Ready)
+                                ?.message
+                                ?.from
+                                ?.email
+                                ?.let(create)
+                        }
+                    },
+            ),
+        onUnsubscribe = viewModel::unsubscribe,
         onRetry = viewModel::load,
         onLoadRemoteImages = viewModel::loadRemoteImages,
         inlinePart = viewModel::inlinePart,
-        onOpenLink = { openLink(context, it) },
+        onOpenLink = { openLink(context, Uri.parse(viewModel.linkToOpen(it.toString()))) },
     )
 }
 
@@ -95,11 +252,36 @@ fun MessageContent(
     onLoadRemoteImages: () -> Unit,
     inlinePart: (String) -> InlinePart?,
     onOpenLink: (Uri) -> Unit,
+    snackbar: SnackbarHostState = remember { SnackbarHostState() },
+    folders: List<FolderSummary> = emptyList(),
+    actions: MessageActions = MessageActions(),
+    onReply: (ReplyKind) -> Unit = {},
+    onUnsubscribe: () -> Unit = {},
+    onUnsnooze: () -> Unit = {},
+    onOpenAttachment: (AttachmentInfo) -> Unit = {},
+    onSaveAttachment: (AttachmentInfo) -> Unit = {},
 ) {
     Scaffold(
+        modifier =
+            Modifier.messageShortcuts(
+                enabled = state is MessageState.Ready,
+                actions = actions,
+                onReply = onReply,
+            ),
+        snackbarHost = { SnackbarHost(snackbar) },
+        bottomBar = { if (state is MessageState.Ready) ReplyBar(onReply) },
         topBar = {
             TopAppBar(
                 title = {},
+                actions = {
+                    if (state is MessageState.Ready) {
+                        MessageToolbarActions(
+                            flagged = state.message.isFlagged,
+                            moveTargets = folders.filter { it.id != state.message.folderId },
+                            actions = actions,
+                        )
+                    }
+                },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(
@@ -123,7 +305,16 @@ fun MessageContent(
                         }
                     }
                 is MessageState.Ready ->
-                    Message(state, onLoadRemoteImages, inlinePart, onOpenLink)
+                    Message(
+                        state,
+                        onLoadRemoteImages,
+                        inlinePart,
+                        onOpenLink,
+                        onUnsubscribe,
+                        onUnsnooze,
+                        onOpenAttachment,
+                        onSaveAttachment,
+                    )
             }
         }
     }
@@ -135,26 +326,50 @@ private fun Message(
     onLoadRemoteImages: () -> Unit,
     inlinePart: (String) -> InlinePart?,
     onOpenLink: (Uri) -> Unit,
+    onUnsubscribe: () -> Unit,
+    onUnsnooze: () -> Unit,
+    onOpenAttachment: (AttachmentInfo) -> Unit = {},
+    onSaveAttachment: (AttachmentInfo) -> Unit = {},
 ) {
     val message = state.message
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
         Headers(message)
+        state.unsubscribe?.let { UnsubscribeAction(it, state.unsubscribing, onUnsubscribe) }
+        state.snooze?.let { SnoozedBanner(it, onUnsnooze) }
+        val trackers = (message.body as? MessageBody.Html)?.trackers.orEmpty()
+        if (trackers.isNotEmpty()) TrackersIndicator(trackers)
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
         if (state.showRemoteBanner) RemoteImagesBanner(onLoadRemoteImages)
         when (val body = message.body) {
             is MessageBody.Plain -> PlainBody(body.text, onOpenLink)
-            is MessageBody.Html ->
-                SafeWebView(
-                    html = body.html,
-                    allowRemote = state.remoteAllowed,
-                    inlinePart = inlinePart,
-                    onOpenLink = onOpenLink,
-                    modifier = Modifier.fillMaxWidth().testTag("message-html"),
-                )
+            is MessageBody.Html -> {
+                val dark = LocalDarkTheme.current
+                val darken = dark && LocalDarkMessageBodies.current && darkeningSupported
+                val webView = @Composable { m: Modifier ->
+                    SafeWebView(
+                        html = body.html,
+                        allowRemote = state.remoteAllowed,
+                        inlinePart = inlinePart,
+                        onOpenLink = onOpenLink,
+                        modifier = m.fillMaxWidth().testTag("message-html"),
+                        darken = darken,
+                    )
+                }
+                if (dark && !darken) {
+                    // Most HTML mail assumes a white page: show it on a light "paper" card in dark mode.
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = androidx.compose.ui.graphics.Color.White,
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp),
+                    ) { webView(Modifier.padding(4.dp)) }
+                } else {
+                    webView(Modifier)
+                }
+            }
             // The view model downloads the body before showing the message.
             MessageBody.NotDownloaded -> {}
         }
-        if (message.attachments.isNotEmpty()) Attachments(message.attachments)
+        if (message.attachments.isNotEmpty()) Attachments(message.attachments, onOpenAttachment, onSaveAttachment)
     }
 }
 
@@ -187,6 +402,70 @@ private fun Headers(message: MessageDetail) {
                 text = date,
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+/** "N trackers blocked" under the header; tapping lists them (M5-01). */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+internal fun TrackersIndicator(trackers: List<TrackerInfo>) {
+    var open by rememberSaveable { mutableStateOf(false) }
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .clickable { open = true }
+                .padding(horizontal = 16.dp, vertical = 8.dp)
+                .testTag("trackers-indicator"),
+    ) {
+        Icon(
+            painter = painterResource(R.drawable.ic_mc_shield),
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.size(18.dp),
+        )
+        Text(
+            text = pluralStringResource(R.plurals.message_trackers_blocked, trackers.size, trackers.size),
+            style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.primary,
+        )
+    }
+    if (open) {
+        ModalBottomSheet(onDismissRequest = { open = false }) {
+            TrackersSheet(trackers)
+        }
+    }
+}
+
+@Composable
+internal fun TrackersSheet(trackers: List<TrackerInfo>) {
+    Column(Modifier.navigationBarsPadding().padding(bottom = 16.dp).testTag("trackers-sheet")) {
+        Text(
+            text = stringResource(R.string.message_trackers_title),
+            style = MaterialTheme.typography.titleLarge,
+            modifier = Modifier.padding(horizontal = 24.dp).semantics { heading() },
+        )
+        Text(
+            text = stringResource(R.string.message_trackers_explain),
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(horizontal = 24.dp, vertical = 12.dp),
+        )
+        trackers.forEach { tracker ->
+            ListItem(
+                headlineContent = {
+                    Text(tracker.service ?: stringResource(R.string.message_trackers_unknown_service))
+                },
+                supportingContent = {
+                    Text(tracker.domain.ifEmpty { stringResource(R.string.message_trackers_no_domain) })
+                },
+                leadingContent = {
+                    Icon(painter = painterResource(R.drawable.ic_mc_shield), contentDescription = null)
+                },
             )
         }
     }
@@ -256,7 +535,11 @@ private fun PlainBody(
 }
 
 @Composable
-private fun Attachments(attachments: List<AttachmentInfo>) {
+private fun Attachments(
+    attachments: List<AttachmentInfo>,
+    onOpen: (AttachmentInfo) -> Unit,
+    onSave: (AttachmentInfo) -> Unit,
+) {
     val context = LocalContext.current
     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
     Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -266,14 +549,17 @@ private fun Attachments(attachments: List<AttachmentInfo>) {
             modifier = Modifier.semantics { heading() },
         )
         attachments.forEach { a ->
-            Row(verticalAlignment = Alignment.CenterVertically) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth().clickable { onOpen(a) }.testTag("attachment"),
+            ) {
                 Icon(
                     painter = painterResource(R.drawable.ic_mc_attach),
                     contentDescription = null,
                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.size(20.dp),
                 )
-                Column(Modifier.padding(start = 12.dp)) {
+                Column(Modifier.padding(start = 12.dp).weight(1f)) {
                     Text(
                         text = a.name.ifBlank { stringResource(R.string.message_attachment_unnamed) },
                         style = MaterialTheme.typography.bodyMedium,
@@ -284,6 +570,7 @@ private fun Attachments(attachments: List<AttachmentInfo>) {
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
+                TextButton(onClick = { onSave(a) }) { Text(stringResource(R.string.attachment_save)) }
             }
         }
     }
@@ -299,6 +586,55 @@ private fun formatSize(
     context: Context,
     size: ULong,
 ): String = Formatter.formatShortFileSize(context, size.coerceAtMost(Long.MAX_VALUE.toULong()).toLong())
+
+/** Reply, Reply all and Forward, along the bottom of an open message. */
+@Composable
+private fun ReplyBar(onReply: (ReplyKind) -> Unit) {
+    Surface(tonalElevation = 2.dp) {
+        Row(
+            Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal = 8.dp, vertical = 4.dp),
+            horizontalArrangement = Arrangement.SpaceEvenly,
+        ) {
+            ReplyButton(R.drawable.ic_mc_reply, R.string.message_reply) { onReply(ReplyKind.REPLY) }
+            ReplyButton(R.drawable.ic_mc_reply, R.string.message_reply_all) { onReply(ReplyKind.REPLY_ALL) }
+            ReplyButton(R.drawable.ic_mc_forward, R.string.message_forward) { onReply(ReplyKind.FORWARD) }
+        }
+    }
+}
+
+@Composable
+private fun ReplyButton(
+    @DrawableRes icon: Int,
+    @StringRes label: Int,
+    onClick: () -> Unit,
+) {
+    TextButton(onClick = onClick) {
+        Icon(painterResource(icon), contentDescription = null, modifier = Modifier.size(18.dp))
+        Text(stringResource(label), modifier = Modifier.padding(start = 8.dp))
+    }
+}
+
+/** The localised line above the quoted text, or the forward intro line. */
+internal fun quoteHeader(
+    resources: Resources,
+    message: MessageDetail,
+    kind: ReplyKind,
+): String =
+    when (kind) {
+        ReplyKind.FORWARD -> resources.getString(R.string.forward_header)
+        else -> {
+            val sender = message.from.name.ifBlank { message.from.email }
+            val date = formatFullDate(message.date, ZoneId.systemDefault(), Locale.getDefault())
+            if (date.isEmpty()) {
+                resources.getString(R.string.reply_quote_header_no_date, sender)
+            } else {
+                resources.getString(R.string.reply_quote_header, date, sender)
+            }
+        }
+    }
+
+/** Darkening HTML mail needs Android 13's algorithmic darkening. */
+private val darkeningSupported: Boolean get() = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
 
 /** Opens a tapped link in the browser or mail app; never inside Mailcrane. */
 internal fun openLink(
@@ -377,4 +713,27 @@ internal fun linkify(
                 end,
             )
         }
+    }
+
+/**
+ * Message shortcuts with a hardware keyboard (M4-13): Ctrl/⌘+R reply, Ctrl/⌘+Shift+R reply all,
+ * Ctrl/⌘+Shift+F forward, E archive, Delete or Backspace delete.
+ */
+private fun Modifier.messageShortcuts(
+    enabled: Boolean,
+    actions: MessageActions,
+    onReply: (ReplyKind) -> Unit,
+): Modifier =
+    onKeyEvent { e ->
+        if (!enabled || e.type != KeyEventType.KeyDown) return@onKeyEvent false
+        val command = e.isCtrlPressed || e.isMetaPressed
+        when {
+            command && e.isShiftPressed && e.key == Key.R -> onReply(ReplyKind.REPLY_ALL)
+            command && e.isShiftPressed && e.key == Key.F -> onReply(ReplyKind.FORWARD)
+            command && e.key == Key.R -> onReply(ReplyKind.REPLY)
+            !command && e.key == Key.E -> actions.onArchive()
+            !command && (e.key == Key.Delete || e.key == Key.Backspace) -> actions.onDelete()
+            else -> return@onKeyEvent false
+        }
+        true
     }

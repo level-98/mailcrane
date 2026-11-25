@@ -35,3 +35,4 @@ uniffi = { version = "0.32.2", features = ["tokio"] }
 tokio = { version = "1.54.1", features = ["macros", "rt-multi-thread", "time"] }
 mailcrane-testkit = { path = "../mailcrane-testkit" }
 tempfile = "3.27.0"
+url = "2.5.9"

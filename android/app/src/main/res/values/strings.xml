@@ -5,6 +5,18 @@
 
     <!-- Manual account setup (M1-03) -->
     <string name="setup_title">Add account</string>
+    <string name="setup_auto_intro">Enter your email address and password. Mailcrane looks up your provider’s settings for you to check before signing in. Your address isn’t sent anywhere.</string>
+    <string name="setup_auto_continue">Continue</string>
+    <string name="setup_auto_looking">Looking up settings…</string>
+    <string name="setup_auto_manual">Set up manually</string>
+    <string name="setup_auto_found_title">Check these settings</string>
+    <string name="setup_auto_source_autoconfig">From %1$s’s own settings file.</string>
+    <string name="setup_auto_source_srv">From the DNS records of %1$s.</string>
+    <string name="setup_auto_source_mx">From the settings file of %1$s, which receives mail for your domain.</string>
+    <string name="setup_auto_use">Use these settings</string>
+    <string name="setup_auto_edit">Edit settings</string>
+    <string name="setup_auto_not_found">No settings were found for this address. Enter your provider’s server details below.</string>
+    <string name="setup_auto_timed_out">Looking up settings took too long. Enter your provider’s server details below.</string>
     <string name="setup_section_account">Account</string>
     <string name="setup_section_imap">Incoming mail server (IMAP)</string>
     <string name="setup_section_smtp">Outgoing mail server (SMTP)</string>
@@ -67,6 +79,16 @@
     <string name="message_header_cc">Cc</string>
     <string name="message_remote_hidden">Remote images are hidden</string>
     <string name="message_remote_load">Load remote images</string>
+
+    <!-- Trackers (M5-01) -->
+    <plurals name="message_trackers_blocked">
+        <item quantity="one">%1$d tracker blocked</item>
+        <item quantity="other">%1$d trackers blocked</item>
+    </plurals>
+    <string name="message_trackers_title">Trackers blocked</string>
+    <string name="message_trackers_explain">A tracking pixel is a tiny, often invisible image. When it loads, the sender learns that you opened the message, when, and roughly where. Mailcrane removes these images from every message, even when you load remote images.</string>
+    <string name="message_trackers_unknown_service">Tiny or hidden image</string>
+    <string name="message_trackers_no_domain">Embedded in the message</string>
     <string name="message_attachments">Attachments</string>
     <string name="message_attachment_unnamed">Unnamed file</string>
 
@@ -127,7 +149,7 @@
     <!-- TalkBack description of a chip whose address can't be used -->
     <string name="compose_recipient_invalid">%1$s, not a valid email address</string>
     <string name="compose_discard_title">Discard draft?</string>
-    <string name="compose_discard_text">This message hasn’t been saved and will be lost.</string>
+    <string name="compose_discard_text">This message and its saved draft will be deleted.</string>
     <string name="compose_discard_confirm">Discard</string>
     <string name="compose_discard_keep">Keep editing</string>
     <string name="compose_sent">Message sent</string>
@@ -153,4 +175,270 @@
     <string name="compose_error_refused_temporary">The server couldn’t take the message right now. Try again later.</string>
     <string name="compose_error_refused_permanent">The server refused the message.</string>
     <string name="compose_error_unexpected">Something went wrong, and the message wasn’t sent.</string>
+
+    <!-- Settings -->
+    <string name="settings_title">Settings</string>
+    <string name="settings_back">Back</string>
+    <string name="settings_clean_links">Remove tracking from links</string>
+    <string name="settings_clean_links_summary">Strip tracking parameters such as utm_source from links before opening them</string>
+
+    <!-- Message actions (M1-14) -->
+    <string name="message_archive">Archive</string>
+    <string name="message_delete">Delete</string>
+    <string name="message_mark_unread">Mark as unread</string>
+    <string name="message_flag">Flag</string>
+    <string name="message_unflag">Remove flag</string>
+    <string name="message_more">More options</string>
+    <string name="message_move">Move to…</string>
+    <string name="message_move_title">Move to folder</string>
+    <string name="message_move_cancel">Cancel</string>
+
+    <!-- Widget (M4-11) -->
+    <string name="widget_name">Mailcrane inbox</string>
+    <string name="widget_description">Unread mail and the latest messages from all your inboxes</string>
+    <string name="widget_unread">unread</string>
+    <string name="settings_hide_outside">Hide message content outside the app</string>
+    <string name="settings_hide_outside_summary">Widgets show only how many messages are unread, not who sent them or their subjects</string>
+
+    <!-- Tablet layouts (M4-13) -->
+    <string name="no_message_selected">Choose a message to read it here</string>
+
+    <!-- Rich-text compose (M2-09) -->
+    <string name="rich_bold">Bold</string>
+    <string name="rich_italic">Italic</string>
+    <string name="rich_bullets">Bulleted list</string>
+    <string name="rich_numbers">Numbered list</string>
+    <string name="rich_link">Link</string>
+    <string name="rich_plain_only">Plain text</string>
+    <string name="rich_link_title">Link</string>
+    <string name="rich_link_address">Address (https:// or mailto:)</string>
+    <string name="rich_link_ok">OK</string>
+    <string name="rich_link_cancel">Cancel</string>
+
+    <!-- Accounts (M4-01) -->
+    <string name="accounts_title">Accounts</string>
+    <string name="all_inboxes">All inboxes</string>
+    <string name="accounts_add">Add account</string>
+    <string name="accounts_remove">Remove</string>
+    <string name="accounts_cancel">Cancel</string>
+    <string name="accounts_remove_title">Remove %1$s?</string>
+    <string name="accounts_remove_text">Its mail, drafts and password are deleted from this device. Nothing is deleted on the mail server.</string>
+
+    <!-- Attachments (M2-04) -->
+    <string name="compose_attach">Attach files</string>
+    <string name="compose_remove_attachment">Remove %1$s</string>
+    <string name="compose_forward_attachments">The original message’s attachments will be included.</string>
+    <string name="compose_attachments_large">These files add up to more than 25 MB. Many providers reject messages that large.</string>
+    <string name="attachment_save">Save</string>
+    <string name="attachment_saved">Saved</string>
+    <string name="attachment_cant_save">Couldn’t save the attachment.</string>
+    <string name="attachment_cant_open">No app on this device can open this attachment.</string>
+    <string name="attachment_risky_title">Open this file?</string>
+    <string name="attachment_risky_text">%1$s is a kind of file that can run code on your device. Only open it if you trust the sender and expected it.</string>
+    <string name="attachment_open_anyway">Open</string>
+
+    <!-- Local rules (M4-09) -->
+    <string name="rules_title">Rules</string>
+    <string name="rules_settings_row">Rules</string>
+    <string name="rules_settings_summary">Sort new mail automatically on this device</string>
+    <string name="rules_explain">Rules run on this device, in this order, on new mail in your inbox. Text is matched anywhere, ignoring case and accents.</string>
+    <string name="rules_empty">No rules yet.</string>
+    <string name="rules_add">Add</string>
+    <string name="rules_new">New rule</string>
+    <string name="rules_edit">Edit rule</string>
+    <string name="rules_save">Save</string>
+    <string name="rules_cancel">Cancel</string>
+    <string name="rules_name">Name</string>
+    <string name="rules_when">When a message matches</string>
+    <string name="rules_match_all">All of these</string>
+    <string name="rules_match_any">Any of these</string>
+    <string name="rules_contains">Contains</string>
+    <string name="rules_days">Days</string>
+    <string name="rules_remove">Remove</string>
+    <string name="rules_add_condition">Add condition</string>
+    <string name="rules_then">Then</string>
+    <string name="rules_add_action">Add action</string>
+    <string name="rules_pick_folder">Pick folder</string>
+    <string name="rules_stop">Don’t run later rules on it</string>
+    <string name="rules_this_account">Only this account</string>
+    <string name="rules_enabled">On</string>
+    <string name="rules_run_now">Run on the inbox now</string>
+    <string name="rules_delete">Delete rule</string>
+    <string name="rules_incomplete">Give the rule a name, fill in every condition and pick a folder for each move.</string>
+    <string name="rules_failed">Couldn’t save the rules.</string>
+    <string name="rules_create_from_message">Create rule from this message</string>
+    <plurals name="rules_summary">
+        <item quantity="one">%1$d condition</item>
+        <item quantity="other">%1$d conditions</item>
+    </plurals>
+    <plurals name="rules_ran">
+        <item quantity="one">%1$d message changed</item>
+        <item quantity="other">%1$d messages changed</item>
+    </plurals>
+    <string name="rule_cond_from">From</string>
+    <string name="rule_cond_to_cc">To or Cc</string>
+    <string name="rule_cond_subject">Subject</string>
+    <string name="rule_cond_attachment">Has attachment</string>
+    <string name="rule_cond_list_id">Mailing list (List-Id)</string>
+    <string name="rule_cond_older">Older than (days)</string>
+    <string name="rule_act_move">Move to</string>
+    <string name="rule_act_read">Mark read</string>
+    <string name="rule_act_flag">Flag</string>
+    <string name="rule_act_archive">Archive</string>
+    <string name="rule_act_delete">Delete</string>
+
+    <!-- Contact suggestions (M2-08) -->
+    <string name="contacts_prompt_title">Show suggestions from your contacts? They stay on this device.</string>
+    <string name="contacts_prompt_yes">Allow</string>
+    <string name="contacts_prompt_no">No thanks</string>
+
+    <!-- One-tap unsubscribe (M4-10) -->
+    <string name="unsubscribe_button">Unsubscribe</string>
+    <string name="unsubscribe_cancel">Cancel</string>
+    <string name="unsubscribe_confirm_title">Unsubscribe from %1$s?</string>
+    <string name="unsubscribe_how_one_click">Mailcrane will ask %1$s to remove you from this list. This contacts the sender’s server directly.</string>
+    <string name="unsubscribe_how_email">Mailcrane will prepare an email to %1$s for you to check and send.</string>
+    <string name="unsubscribe_how_web">This opens %1$s in your browser, where you can finish unsubscribing.</string>
+    <string name="unsubscribe_done">Unsubscribed</string>
+    <string name="unsubscribe_failed">Couldn’t unsubscribe automatically. Try again to use another way.</string>
+    <string name="action_no_archive_folder">This account has no Archive folder</string>
+    <string name="action_not_applied">Couldn’t change this message</string>
+
+    <!-- Snooze (M4-06) -->
+    <string name="message_snooze">Snooze</string>
+    <string name="snooze_title">Snooze until…</string>
+    <string name="snooze_later_today">Later today</string>
+    <string name="snooze_tomorrow">Tomorrow</string>
+    <string name="snooze_this_weekend">This weekend</string>
+    <string name="snooze_next_week">Next week</string>
+    <string name="snooze_pick_date_time">Pick date and time</string>
+    <string name="snooze_next">Next</string>
+    <string name="snooze_cancel">Cancel</string>
+    <string name="snooze_confirm">Snooze</string>
+    <string name="snooze_time_passed">That time has already passed.</string>
+    <string name="snooze_until">Snoozed until %1$s</string>
+    <string name="snooze_device_only">Only this device will bring it back: your mail server can’t store the wake time.</string>
+    <string name="snooze_unsnooze">Unsnooze</string>
+    <string name="snooze_no_message_id">This message can’t be snoozed.</string>
+    <string name="snooze_channel_name">Snoozed messages</string>
+    <string name="snooze_channel_description">When a snoozed message comes back</string>
+    <string name="snooze_woken_title">Back from snooze</string>
+    <string name="snooze_woken_no_subject">(no subject)</string>
+    <string name="action_undone">The server didn’t accept a change, so it was undone</string>
+
+    <!-- Reply and forward (M2-03) -->
+    <string name="message_reply">Reply</string>
+    <string name="message_reply_all">Reply all</string>
+    <string name="message_forward">Forward</string>
+    <!-- Line above the quoted text in a reply: date, then the sender's name -->
+    <string name="reply_quote_header">On %1$s, %2$s wrote:</string>
+    <string name="reply_quote_header_no_date">%1$s wrote:</string>
+    <!-- Line above the original's headers in a forwarded message -->
+    <string name="forward_header">---------- Forwarded message ----------</string>
+    <string name="compose_error_reply_unavailable">The original message couldn’t be loaded. You can still write your message.</string>
+
+    <!-- Signature (M2-10) -->
+    <string name="settings_signature_header">Signature</string>
+    <string name="settings_signature_enabled">Add a signature to new messages, replies and forwards</string>
+    <string name="settings_signature_field">Signature</string>
+    <string name="settings_signature_save">Save signature</string>
+    <string name="settings_signature_saved">Signature saved</string>
+    <string name="settings_signature_too_long">That signature is too long. Keep it under 10 KB.</string>
+    <string name="settings_signature_failed">The signature couldn’t be saved</string>
+
+    <!-- Drafts (M2-05) -->
+    <string name="compose_discard">Discard</string>
+    <string name="compose_draft_saved">Draft saved</string>
+    <string name="compose_error_draft_unavailable">The draft couldn’t be opened.</string>
+    <string name="local_drafts_title">Drafts on this device</string>
+    <string name="local_drafts_empty">No drafts saved on this device.</string>
+    <string name="local_drafts_on_server">Saved to your Drafts folder</string>
+    <string name="local_drafts_not_uploaded">Only on this device for now</string>
+    <string name="local_drafts_conflict">Changed on another device: kept as a copy</string>
+    <string name="local_drafts_no_subject">(no subject)</string>
+    <string name="local_drafts_no_recipients">No recipients yet</string>
+
+    <!-- Outbox (M2-06) -->
+    <string name="compose_queued">Saved to your Outbox. It will be sent when you’re back online.</string>
+    <string name="outbox_title">Outbox</string>
+    <string name="outbox_empty">Nothing waiting to be sent.</string>
+    <string name="outbox_sending">Sending…</string>
+    <string name="outbox_waiting">Waiting to send</string>
+    <string name="outbox_will_retry">Couldn’t send yet. Trying again automatically.</string>
+    <string name="outbox_failed">Not sent: the server refused it.</string>
+    <string name="outbox_failed_auth">Not sent: the server didn’t accept your login details.</string>
+    <string name="outbox_failed_recipients">Not sent: the server refused every recipient.</string>
+    <string name="outbox_failed_too_large">Not sent: the message is too large.</string>
+    <string name="outbox_retry">Retry</string>
+    <string name="outbox_edit">Edit</string>
+    <string name="outbox_delete">Delete</string>
+
+    <!-- Save sent messages (M2-07) -->
+    <string name="settings_save_sent_header">Save sent messages to the Sent folder</string>
+    <string name="settings_save_sent_auto">Automatic</string>
+    <string name="settings_save_sent_auto_summary">Yes, unless your provider does it itself (such as Gmail and Outlook)</string>
+    <string name="settings_save_sent_on">On</string>
+    <string name="settings_save_sent_off">Off</string>
+    <string name="outbox_not_saved">Sent, but not saved to your Sent folder</string>
+
+    <!-- Undo send (M4-08) -->
+    <string name="settings_undo_send_header">Undo send</string>
+    <string name="settings_undo_send_off">Off</string>
+    <plurals name="settings_undo_send_seconds">
+        <item quantity="one">%1$d second</item>
+        <item quantity="other">%1$d seconds</item>
+    </plurals>
+    <string name="undo_send_sending">Sending…</string>
+    <string name="undo_send_undo">Undo</string>
+    <string name="undo_send_too_late">Already sent</string>
+
+    <!-- Appearance (M4-12) -->
+    <string name="settings_appearance_header">Appearance</string>
+    <string name="settings_theme_system">Follow the system</string>
+    <string name="settings_theme_light">Light</string>
+    <string name="settings_theme_dark">Dark</string>
+    <string name="settings_dynamic_color">Use wallpaper colours</string>
+    <string name="settings_dynamic_color_summary">Take the app’s colours from your wallpaper</string>
+    <string name="settings_group_threads">Group by conversation</string>
+    <string name="settings_group_threads_summary">Show replies together with the message they answer</string>
+    <string name="thread_back">Back</string>
+    <plurals name="thread_a11y_count">
+        <item quantity="one">%1$d message</item>
+        <item quantity="other">%1$d messages</item>
+    </plurals>
+    <string name="settings_dark_bodies">Dark message bodies</string>
+    <string name="settings_dark_bodies_summary">In dark mode, darken HTML mail instead of showing it on a light page (Android 13 and later)</string>
+
+    <!-- Scheduled send (M4-07) -->
+    <string name="schedule_send">Schedule send</string>
+    <string name="schedule_tomorrow_morning">Tomorrow morning</string>
+    <string name="schedule_tomorrow_afternoon">Tomorrow afternoon</string>
+    <string name="schedule_monday_morning">Monday morning</string>
+    <string name="schedule_pick">Pick a date and time</string>
+    <string name="schedule_next">Next</string>
+    <string name="schedule_confirm">Schedule</string>
+    <string name="schedule_done">Scheduled for %1$s</string>
+    <string name="outbox_scheduled_for">Scheduled for %1$s</string>
+    <string name="outbox_scheduled_device">This phone will send it then, so it may be late if the phone is off or offline.</string>
+    <string name="outbox_scheduled_undecided">Checking whether your mail server can send it for you…</string>
+    <string name="outbox_held_by_server">Your mail server will send it on time, even with the phone off. It can no longer be cancelled.</string>
+    <!-- Swipe actions (M4-04) -->
+    <string name="settings_swipe_right">Swipe right</string>
+    <string name="settings_swipe_left">Swipe left</string>
+    <string name="swipe_none">Nothing</string>
+    <string name="swipe_archive">Archive</string>
+    <string name="swipe_delete">Delete</string>
+    <string name="swipe_read_unread">Mark read or unread</string>
+    <string name="swipe_flag">Flag or unflag</string>
+    <string name="swipe_move">Move to…</string>
+    <string name="swipe_archived">Archived</string>
+    <string name="swipe_deleted">Deleted</string>
+    <string name="swipe_undo_too_late">Too late to undo: the change already reached the server</string>
+    <string name="message_mark_read">Mark as read</string>
+
+    <!-- Search (M4-03) -->
+    <string name="search_open">Search</string>
+    <string name="search_hint">Search mail</string>
+    <string name="search_recent">Recent searches</string>
+    <string name="search_clear_recent">Clear</string>
 </resources>

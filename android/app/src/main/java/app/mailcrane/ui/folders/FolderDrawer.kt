@@ -3,8 +3,10 @@ package app.mailcrane.ui.folders
 import androidx.annotation.DrawableRes
 import androidx.annotation.StringRes
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalDrawerSheet
@@ -23,8 +25,12 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import app.mailcrane.R
+import app.mailcrane.core.AccountSummary
 import app.mailcrane.core.FolderRole
 import app.mailcrane.core.FolderSummary
+import app.mailcrane.core.UNIFIED_FOLDER_ID
+import app.mailcrane.core.accountColor
+import app.mailcrane.ui.components.AccountDot
 
 /** Indent per nesting level. */
 private val INDENT_STEP = 16.dp
@@ -42,15 +48,60 @@ fun FolderDrawer(
     selectedFolderId: Long?,
     onSelect: (Long) -> Unit,
     modifier: Modifier = Modifier,
+    onOpenSettings: (() -> Unit)? = null,
+    onOpenLocalDrafts: (() -> Unit)? = null,
+    outboxCount: Int = 0,
+    onOpenOutbox: (() -> Unit)? = null,
+    accounts: List<AccountSummary> = emptyList(),
+    currentAccountId: Long? = null,
+    onSwitchAccount: (Long) -> Unit = {},
+    unifiedUnread: Int = 0,
+    /** Always visible beside the list (wide windows, M4-13) rather than sliding in. */
+    permanent: Boolean = false,
 ) {
-    ModalDrawerSheet(modifier = modifier) {
+    val sheet: @Composable (@Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit) -> Unit =
+        if (permanent) {
+            { content ->
+                androidx.compose.material3.PermanentDrawerSheet(modifier = modifier.width(300.dp), content = content)
+            }
+        } else {
+            { content -> ModalDrawerSheet(modifier = modifier, content = content) }
+        }
+    sheet {
+        // With several accounts (M4-01): switch between them, or see every inbox together.
+        if (accounts.size > 1) {
+            Text(
+                text = stringResource(R.string.accounts_title),
+                style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = 28.dp, vertical = 12.dp).semantics { heading() },
+            )
+            accounts.forEach { account ->
+                NavigationDrawerItem(
+                    label = { Text(account.email, maxLines = 1) },
+                    icon = { AccountDot(accountColor(account.id).toInt()) },
+                    selected = account.id == currentAccountId && selectedFolderId != UNIFIED_FOLDER_ID,
+                    onClick = { onSwitchAccount(account.id) },
+                    modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding),
+                )
+            }
+            NavigationDrawerItem(
+                label = { Text(stringResource(R.string.all_inboxes)) },
+                icon = { Icon(painterResource(R.drawable.ic_mc_inbox), contentDescription = null) },
+                badge = { if (unifiedUnread > 0) Text(unifiedUnread.toString()) },
+                selected = selectedFolderId == UNIFIED_FOLDER_ID,
+                onClick = { onSelect(UNIFIED_FOLDER_ID) },
+                modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding),
+            )
+            HorizontalDivider(Modifier.padding(horizontal = 28.dp, vertical = 8.dp))
+        }
         Text(
             text = stringResource(R.string.folders_title),
             style = MaterialTheme.typography.titleSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(horizontal = 28.dp, vertical = 16.dp).semantics { heading() },
         )
-        LazyColumn {
+        LazyColumn(Modifier.weight(1f)) {
             items(items = folders, key = { it.id }) { folder ->
                 FolderItem(
                     folder = folder,
@@ -58,6 +109,37 @@ fun FolderDrawer(
                     onClick = { onSelect(folder.id) },
                 )
             }
+        }
+        if (onOpenSettings != null || onOpenLocalDrafts != null) {
+            HorizontalDivider(Modifier.padding(horizontal = 28.dp))
+        }
+        if (onOpenOutbox != null && outboxCount > 0) {
+            NavigationDrawerItem(
+                label = { Text(stringResource(R.string.outbox_title)) },
+                icon = { Icon(painterResource(R.drawable.ic_mc_sent), contentDescription = null) },
+                badge = { Text(outboxCount.toString()) },
+                selected = false,
+                onClick = onOpenOutbox,
+                modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding),
+            )
+        }
+        if (onOpenLocalDrafts != null) {
+            NavigationDrawerItem(
+                label = { Text(stringResource(R.string.local_drafts_title)) },
+                icon = { Icon(painterResource(R.drawable.ic_mc_drafts), contentDescription = null) },
+                selected = false,
+                onClick = onOpenLocalDrafts,
+                modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding),
+            )
+        }
+        if (onOpenSettings != null) {
+            NavigationDrawerItem(
+                label = { Text(stringResource(R.string.settings_title)) },
+                icon = { Icon(painterResource(R.drawable.ic_mc_settings), contentDescription = null) },
+                selected = false,
+                onClick = onOpenSettings,
+                modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding).padding(vertical = 8.dp),
+            )
         }
     }
 }

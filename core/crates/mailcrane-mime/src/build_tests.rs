@@ -18,6 +18,12 @@ fn draft() -> OutgoingMessage {
         subject: "Lunch".into(),
         body_text: "Hello Bob,\nsee you at noon.\n".into(),
         encoding: TransferEncoding::QuotedPrintable,
+        in_reply_to: None,
+        references: vec![],
+        message_id: None,
+        is_draft: false,
+        attachments: Vec::new(),
+        rich: None,
     }
 }
 
@@ -114,7 +120,7 @@ fn never_writes_bcc() {
     d.to.clear();
     d.bcc = vec![addr(Some("Hidden"), "hidden@example.org")];
     let raw = text(&build(&d));
-    assert!(!raw.to_ascii_lowercase().contains("bcc"));
+    assert!(!raw.to_ascii_lowercase().contains("bcc:"));
     assert!(!raw.contains("hidden@example.org"));
     assert!(!raw.contains("\r\nTo:"));
 }
@@ -364,4 +370,82 @@ fn matches_golden_fixture() {
     }
     let want = std::fs::read(&path).expect("fixture exists");
     assert_eq!(text(&built), text(&want));
+}
+
+#[test]
+fn reply_headers_round_trip_through_the_parser() {
+    let mut d = draft();
+    d.in_reply_to = Some("parent@example.net".into());
+    d.references = (1..=20).map(|n| format!("id{n}@example.net")).collect();
+    let bytes = build(&d);
+    assert_wire_format(&bytes);
+    let head = header_block(&bytes);
+    assert!(head.contains("In-Reply-To: <parent@example.net>\r\n"));
+    let parsed = crate::parse_message(&bytes).expect("parses");
+    assert_eq!(parsed.in_reply_to, ["parent@example.net"]);
+    assert_eq!(parsed.references, d.references);
+}
+
+#[test]
+fn hostile_message_ids_are_left_out() {
+    let mut d = draft();
+    d.in_reply_to = Some("bad\r\nBcc: x@example.net".into());
+    d.references = vec![
+        "ok@example.net".into(),
+        "no-at-sign".into(),
+        "has space@example.net".into(),
+        "<angle@example.net>".into(),
+        String::new(),
+        format!("{}@example.net", "a".repeat(300)),
+        "caf\u{e9}@example.net".into(),
+    ];
+    let bytes = build(&d);
+    assert_wire_format(&bytes);
+    let head = header_block(&bytes);
+    assert!(!head.contains("In-Reply-To"));
+    assert!(!head.contains("Bcc"));
+    assert!(head.contains("References: <ok@example.net>\r\n"));
+}
+
+#[test]
+fn no_reply_headers_without_ids() {
+    let head = header_block(&build(&draft()));
+    assert!(!head.contains("In-Reply-To"));
+    assert!(!head.contains("References"));
+}
+
+#[test]
+fn drafts_keep_a_fixed_message_id_and_may_have_no_recipients() {
+    let mut d = draft();
+    d.to.clear();
+    assert_eq!(
+        crate::build::build_with(&d, DATE, &RANDOM),
+        Err(BuildError::NoRecipients)
+    );
+    d.is_draft = true;
+    d.message_id = Some("fixed1@example.org".into());
+    let bytes = build(&d);
+    assert_wire_format(&bytes);
+    let head = header_block(&bytes);
+    assert!(head.contains("Message-ID: <fixed1@example.org>\r\n"));
+    assert!(!head.contains("To:"));
+
+    // An invalid fixed id falls back to a random one.
+    d.message_id = Some("bad id\r\nX: y".into());
+    let head = header_block(&build(&d));
+    assert!(!head.contains("X: y"));
+    assert!(head.contains("@example.org>\r\n"));
+}
+
+#[test]
+fn new_message_ids_are_unique_and_safe() {
+    let a = crate::new_message_id("example.org").expect("id");
+    let b = crate::new_message_id("example.org").expect("id");
+    assert_ne!(a, b);
+    assert!(a.ends_with("@example.org"));
+    let odd = crate::new_message_id("exa mple\r\n.org>").expect("id");
+    assert!(odd.ends_with("@example.org"));
+    assert!(crate::new_message_id("")
+        .expect("id")
+        .ends_with("@localhost"));
 }

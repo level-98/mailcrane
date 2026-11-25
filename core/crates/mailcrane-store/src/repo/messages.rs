@@ -5,7 +5,8 @@ use crate::{
 };
 use rusqlite::{params, OptionalExtension, Row};
 
-const COLS: &str = "id, folder_id, uid, message_id_header, in_reply_to, references_json, \
+pub(super) const COLS: &str =
+    "id, folder_id, uid, message_id_header, in_reply_to, references_json, \
     thread_id, subject, from_name, from_addr, to_json, cc_json, date, internal_date, size, \
     seen, flagged, answered, draft, deleted, keywords_json, has_attachments, snippet, body_state";
 
@@ -13,7 +14,7 @@ fn flag(r: &Row<'_>, i: usize, column: &'static str) -> Result<bool, StoreError>
     Ok(narrow::<u8>(r.get(i)?, column)? != 0)
 }
 
-fn from_row(r: &Row<'_>) -> Result<MessageHeader, StoreError> {
+pub(super) fn from_row(r: &Row<'_>) -> Result<MessageHeader, StoreError> {
     let body_state = match r.get::<_, String>(23)?.as_str() {
         "none" => BodyState::None,
         "fetched" => BodyState::Fetched,
@@ -158,7 +159,9 @@ impl Store {
     /// Applies what the server reported for messages already stored, in
     /// one transaction: deletes the `expunged` UIDs (with their bodies and
     /// attachment metadata) and sets the flags in `flags`. UIDs that are not
-    /// stored are ignored. Returns how many messages were deleted or had
+    /// stored are ignored, and so are the flags of messages with a queued
+    /// action (the server hasn't seen it yet, so its flags are stale).
+    /// Returns how many messages were deleted or had
     /// their flags actually changed. On error nothing is changed.
     pub fn apply_remote_changes(
         &self,
@@ -175,7 +178,8 @@ impl Store {
                 changed = changed.saturating_add(delete.execute(params![folder.0, uid])?);
             }
             let mut update = tx.prepare(
-                "UPDATE messages SET seen = ?3, flagged = ?4, answered = ?5, draft = ?6,                  deleted = ?7, keywords_json = ?8                  WHERE folder_id = ?1 AND uid = ?2 AND (seen IS NOT ?3 OR flagged IS NOT ?4                  OR answered IS NOT ?5 OR draft IS NOT ?6 OR deleted IS NOT ?7                  OR keywords_json IS NOT ?8)",
+                "UPDATE messages SET seen = ?3, flagged = ?4, answered = ?5, draft = ?6,                  deleted = ?7, keywords_json = ?8                  WHERE folder_id = ?1 AND uid = ?2 AND (seen IS NOT ?3 OR flagged IS NOT ?4                  OR answered IS NOT ?5 OR draft IS NOT ?6 OR deleted IS NOT ?7                  OR keywords_json IS NOT ?8) \
+                 AND id NOT IN (SELECT message_id FROM pending_op_messages)",
             )?;
             for f in flags {
                 changed = changed.saturating_add(update.execute(params![
@@ -212,7 +216,46 @@ impl Store {
         Ok(n > 0)
     }
 
-    /// Lists a folder's messages by `date DESC, id DESC`. Pages made with the
+    /// The Unified Inbox (M4-01): messages of every account's inbox-role
+    /// folder, by `date DESC, id DESC` (ties across accounts break on the
+    /// row id, so pages with the same `limit` and consecutive `offset`s have
+    /// no duplicates or gaps). Hidden messages are left out. Each comes with
+    /// its account.
+    pub fn list_unified_inbox(
+        &self,
+        limit: u32,
+        offset: u32,
+    ) -> Result<Vec<(MessageHeader, crate::AccountId)>, StoreError> {
+        let cols = COLS
+            .split(',')
+            .map(|c| format!("m.{}", c.trim()))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let sql = format!(
+            "SELECT {cols}, f.account_id FROM messages m JOIN folders f ON f.id = m.folder_id              WHERE f.role = 'inbox' AND m.hidden = 0              ORDER BY m.date DESC, m.id DESC LIMIT ?1 OFFSET ?2"
+        );
+        let mut stmt = self.conn.prepare(&sql)?;
+        let mut rows = stmt.query(params![limit, offset])?;
+        let mut out = Vec::new();
+        while let Some(r) = rows.next()? {
+            let header = from_row(r)?;
+            out.push((header, crate::AccountId(r.get(24)?)));
+        }
+        Ok(out)
+    }
+
+    /// Unread messages across every account's inbox.
+    pub fn count_unified_unread(&self) -> Result<u64, StoreError> {
+        let n: i64 = self.conn.query_row(
+            "SELECT count(*) FROM messages m JOIN folders f ON f.id = m.folder_id              WHERE f.role = 'inbox' AND m.hidden = 0 AND m.seen = 0",
+            [],
+            |r| r.get(0),
+        )?;
+        Ok(u64::try_from(n).unwrap_or(0))
+    }
+
+    /// Lists a folder's messages by `date DESC, id DESC`, leaving out ones
+    /// hidden by a queued move or delete. Pages made with the
     /// same `limit` and consecutive `offset`s have no duplicates or gaps.
     pub fn list_messages(
         &self,
@@ -221,7 +264,7 @@ impl Store {
         offset: u32,
     ) -> Result<Vec<MessageHeader>, StoreError> {
         let sql = format!(
-            "SELECT {COLS} FROM messages WHERE folder_id = ?1 \
+            "SELECT {COLS} FROM messages WHERE folder_id = ?1 AND hidden = 0 \
              ORDER BY date DESC, id DESC LIMIT ?2 OFFSET ?3"
         );
         let mut stmt = self.conn.prepare(&sql)?;

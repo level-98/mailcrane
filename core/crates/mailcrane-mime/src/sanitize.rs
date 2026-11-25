@@ -24,6 +24,7 @@ use std::collections::{HashMap, HashSet};
 
 use ammonia::Builder;
 
+use crate::trackers::{host_and_path, known_tracker, push_unique, TrackerHit, TrackerKind};
 use crate::UnsanitisedHtml;
 
 /// How to sanitise.
@@ -58,8 +59,10 @@ pub struct SanitizedHtml {
     pub html: String,
     /// Remote images whose `src` was removed because remote content is off.
     pub remote_resources_blocked: u32,
-    /// Tracking pixels removed.
+    /// Tracking images removed (every one, duplicates included).
     pub trackers_removed: u32,
+    /// The trackers found, one per domain (M5-01), in order of appearance.
+    pub trackers: Vec<TrackerHit>,
 }
 
 impl std::fmt::Debug for SanitizedHtml {
@@ -69,6 +72,7 @@ impl std::fmt::Debug for SanitizedHtml {
             .field("html_bytes", &self.html.len())
             .field("remote_resources_blocked", &self.remote_resources_blocked)
             .field("trackers_removed", &self.trackers_removed)
+            .field("trackers", &self.trackers.len())
             .finish()
     }
 }
@@ -83,6 +87,7 @@ pub fn sanitize_html(html: &UnsanitisedHtml, opts: &SanitizeOptions) -> Sanitize
             html: format!("<pre>{}</pre>", escape(&text)),
             remote_resources_blocked: 0,
             trackers_removed: 0,
+            trackers: Vec::new(),
         };
     }
     // The internal URL prefix `cid:` references become. Used again below so a
@@ -131,6 +136,7 @@ pub fn sanitize_html(html: &UnsanitisedHtml, opts: &SanitizeOptions) -> Sanitize
         html,
         remote_resources_blocked: counts.blocked,
         trackers_removed: counts.trackers,
+        trackers: counts.hits,
     }
 }
 
@@ -176,6 +182,7 @@ fn too_deep(html: &str) -> bool {
 struct Counts {
     blocked: u32,
     trackers: u32,
+    hits: Vec<TrackerHit>,
 }
 
 /// The URL prefix `cid_url` produces, if its scheme is acceptable.
@@ -485,29 +492,48 @@ fn parse_px(value: &str) -> Option<u32> {
     digits.parse().ok()
 }
 
-fn is_tracker(attrs: &[(&str, &str)]) -> bool {
+/// Why an `<img>` is a tracker, if it is one: a known service first, then
+/// the size and visibility rules.
+fn tracker_hit(attrs: &[(&str, &str)]) -> Option<TrackerHit> {
+    let src = attrs
+        .iter()
+        .find(|(name, _)| *name == "src")
+        .map(|(_, raw)| unescape(raw))
+        .unwrap_or_default();
+    if let Some(hit) = known_tracker(&src) {
+        return Some(hit);
+    }
+    let kind = size_or_visibility(attrs)?;
+    let domain = host_and_path(&src)
+        .map(|(host, _)| host)
+        .unwrap_or_default();
+    Some(TrackerHit { domain, kind })
+}
+
+fn size_or_visibility(attrs: &[(&str, &str)]) -> Option<TrackerKind> {
     let tiny = |v: &str| parse_px(v).is_some_and(|n| n <= policy::TRACKER_MAX_PX);
     for (name, raw) in attrs {
         let value = unescape(raw);
         match *name {
-            "width" | "height" if tiny(&value) => return true,
+            "width" | "height" if tiny(&value) => return Some(TrackerKind::Tiny),
             "style" => {
                 for declaration in value.split(';') {
                     let Some((prop, val)) = declaration.split_once(':') else {
                         continue;
                     };
                     let prop = prop.trim().to_ascii_lowercase();
-                    if (matches!(prop.as_str(), "width" | "height") && tiny(val))
-                        || hides_image(&prop, val)
-                    {
-                        return true;
+                    if matches!(prop.as_str(), "width" | "height") && tiny(val) {
+                        return Some(TrackerKind::Tiny);
+                    }
+                    if hides_image(&prop, val) {
+                        return Some(TrackerKind::Hidden);
                     }
                 }
             }
             _ => {}
         }
     }
-    false
+    None
 }
 
 fn process_images(
@@ -533,8 +559,9 @@ fn process_images(
             out.push_str(whole);
             continue;
         }
-        if is_tracker(&tag.attrs) {
+        if let Some(hit) = tracker_hit(&tag.attrs) {
             counts.trackers = counts.trackers.saturating_add(1);
+            push_unique(&mut counts.hits, hit);
             continue;
         }
         out.push_str("<img");

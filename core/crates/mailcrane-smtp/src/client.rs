@@ -101,6 +101,19 @@ impl Reply {
                 .is_some_and(|w| w.eq_ignore_ascii_case(name))
         })
     }
+    /// RFC 4865 §3: `FUTURERELEASE <max-interval> <max-date-time>`; the
+    /// longest hold in seconds, if offered.
+    fn future_release(&self) -> Option<u64> {
+        self.lines.iter().skip(1).find_map(|l| {
+            let mut words = l.split_ascii_whitespace();
+            let name = words.next()?;
+            if !name.eq_ignore_ascii_case("FUTURERELEASE") {
+                return None;
+            }
+            words.next()?.parse().ok()
+        })
+    }
+
     fn auth_mechanisms(&self) -> Vec<String> {
         self.lines
             .iter()
@@ -389,11 +402,72 @@ pub async fn send(
     envelope: &Envelope,
     message: &[u8],
 ) -> Result<SendReport, SmtpError> {
+    send_with_hold(config, auth, envelope, message, None).await
+}
+
+/// How long (in seconds) the server can hold a message for future release
+/// (RFC 4865), or `None` if it can't. Connects and says `EHLO` only: no
+/// login, nothing sent.
+pub async fn future_release_limit(config: &SmtpConfig) -> Result<Option<u64>, SmtpError> {
+    let (mut conn, caps) = open(config).await?;
+    quit(&mut conn).await;
+    Ok(caps.future_release())
+}
+
+/// [`send`], asking the server to hold the message until `hold_until`
+/// (Unix seconds) with `HOLDUNTIL` (RFC 4865 §4) when set. Check
+/// [`future_release_limit`] first: a server without `FUTURERELEASE` is
+/// refused here with [`SmtpError::InvalidInput`], and nothing is sent.
+pub async fn send_with_hold(
+    config: &SmtpConfig,
+    auth: &SmtpAuth,
+    envelope: &Envelope,
+    message: &[u8],
+    hold_until: Option<i64>,
+) -> Result<SendReport, SmtpError> {
     envelope.validate()?;
     let (mut conn, caps) = open(config).await?;
-    let result = transaction(&mut conn, &caps, config, auth, envelope, message).await;
+    if hold_until.is_some() && caps.future_release().is_none() {
+        quit(&mut conn).await;
+        return Err(SmtpError::InvalidInput);
+    }
+    let hold = hold_until.map(rfc3339_utc);
+    let result = transaction(
+        &mut conn,
+        &caps,
+        config,
+        auth,
+        envelope,
+        message,
+        hold.as_deref(),
+    )
+    .await;
     quit(&mut conn).await;
     result
+}
+
+/// `2026-11-26T08:00:00Z` for Unix seconds (RFC 3339, UTC). Times before
+/// 1970 become 1970.
+fn rfc3339_utc(secs: i64) -> String {
+    let secs = secs.max(0);
+    let days = secs.div_euclid(86_400);
+    let rem = secs.rem_euclid(86_400);
+    // Civil date from days since 1970-01-01 (Howard Hinnant's algorithm).
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = yoe + era * 400 + i64::from(month <= 2);
+    format!(
+        "{year:04}-{month:02}-{day:02}T{:02}:{:02}:{:02}Z",
+        rem / 3_600,
+        rem % 3_600 / 60,
+        rem % 60
+    )
 }
 
 async fn transaction(
@@ -403,9 +477,13 @@ async fn transaction(
     auth: &SmtpAuth,
     envelope: &Envelope,
     message: &[u8],
+    hold_until: Option<&str>,
 ) -> Result<SendReport, SmtpError> {
     authenticate(conn, caps, auth).await?;
-    conn.expect(&format!("MAIL FROM:<{}>", envelope.from), 2)
+    let hold = hold_until
+        .map(|t| format!(" HOLDUNTIL={t}"))
+        .unwrap_or_default();
+    conn.expect(&format!("MAIL FROM:<{}>{hold}", envelope.from), 2)
         .await?;
 
     let mut accepted = Vec::new();
@@ -435,4 +513,42 @@ async fn transaction(
         return Err(classify(reply.code, &reply.text()));
     }
     Ok(SendReport { accepted, rejected })
+}
+
+#[cfg(test)]
+mod hold_tests {
+    use super::*;
+
+    #[test]
+    fn hold_times_are_rfc3339_utc() {
+        assert_eq!(rfc3339_utc(0), "1970-01-01T00:00:00Z");
+        assert_eq!(rfc3339_utc(1_795_516_920), "2026-11-24T10:42:00Z");
+        assert_eq!(rfc3339_utc(951_782_400), "2000-02-29T00:00:00Z");
+        assert_eq!(rfc3339_utc(-5), "1970-01-01T00:00:00Z");
+    }
+
+    #[test]
+    fn future_release_is_read_from_ehlo() {
+        let reply = |lines: &[&str]| Reply {
+            code: 250,
+            lines: lines.iter().map(|l| (*l).to_owned()).collect(),
+        };
+        assert_eq!(
+            reply(&[
+                "mx.example.org",
+                "FUTURERELEASE 604800 2026-12-01T00:00:00Z",
+                "AUTH PLAIN"
+            ])
+            .future_release(),
+            Some(604_800)
+        );
+        assert_eq!(
+            reply(&["mx.example.org", "AUTH PLAIN"]).future_release(),
+            None
+        );
+        assert_eq!(
+            reply(&["mx.example.org", "FUTURERELEASE nonsense"]).future_release(),
+            None
+        );
+    }
 }

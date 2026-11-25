@@ -56,7 +56,48 @@ pub struct OutgoingMessage {
     /// The plain-text body. Any line endings; they become CRLF.
     pub body_text: String,
     pub encoding: TransferEncoding,
+    /// The Message-ID this replies to, without angle brackets
+    /// (RFC 5322 §3.6.4). Written as `In-Reply-To` if it is a valid id.
+    pub in_reply_to: Option<String>,
+    /// The thread's Message-IDs, oldest first, without angle brackets.
+    /// Written as `References`; invalid ids are left out.
+    pub references: Vec<String>,
+    /// A fixed Message-ID (without angle brackets) instead of a random one,
+    /// for a draft that keeps its id across versions. Ignored if invalid.
+    pub message_id: Option<String>,
+    /// A draft: may have no recipients yet.
+    pub is_draft: bool,
+    /// Files to attach (M2-04). With any, the message is `multipart/mixed`.
+    pub attachments: Vec<OutgoingAttachment>,
+    /// Rich text (M2-09). With it, the body is `multipart/alternative`: the
+    /// plain-text version (from this, not `body_text`), then the HTML.
+    pub rich: Option<crate::richtext::RichDoc>,
 }
+
+/// A file attached to a new message.
+#[derive(Clone, PartialEq, Eq, Default)]
+pub struct OutgoingAttachment {
+    /// The file name shown to the recipient. Encoded per RFC 2231 when it
+    /// isn't plain ASCII; line breaks and quotes are removed.
+    pub filename: String,
+    /// `type/subtype`; anything malformed becomes `application/octet-stream`.
+    pub mime_type: String,
+    pub bytes: Vec<u8>,
+}
+
+impl std::fmt::Debug for OutgoingAttachment {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // File contents and names are user data; keep them out of logs.
+        f.debug_struct("OutgoingAttachment")
+            .field("bytes", &self.bytes.len())
+            .finish_non_exhaustive()
+    }
+}
+
+/// Largest total size of attachments, in bytes. Base64 adds a third, which
+/// keeps a message under about 47 MB; many providers refuse over 25 MB, and
+/// the apps warn about that.
+pub const MAX_ATTACHMENT_BYTES: usize = 35 * 1024 * 1024;
 
 /// Which address header a problem is in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -112,7 +153,14 @@ pub(crate) fn build_with(
     random: &[u8; 16],
 ) -> Result<Vec<u8>, BuildError> {
     check_addresses(draft)?;
-    if draft.body_text.len() > MAX_BODY_BYTES {
+    if draft.body_text.len() > MAX_BODY_BYTES
+        || draft
+            .attachments
+            .iter()
+            .map(|a| a.bytes.len())
+            .sum::<usize>()
+            > MAX_ATTACHMENT_BYTES
+    {
         return Err(BuildError::TooLarge);
     }
     let domain = draft
@@ -138,16 +186,176 @@ pub(crate) fn build_with(
     }
     // Bcc is deliberately never written (RFC 5322 §3.6.3 allows leaving it out).
     header(&mut out, "Subject", &unstructured_units(&draft.subject));
-    header(&mut out, "Message-ID", &[format!("<{id}@{domain}>")]);
+    let message_id = match draft.message_id.as_deref().filter(|i| is_msg_id(i)) {
+        Some(fixed) => format!("<{fixed}>"),
+        None => format!("<{id}@{domain}>"),
+    };
+    header(&mut out, "Message-ID", &[message_id]);
+    if let Some(parent) = draft.in_reply_to.as_deref().filter(|i| is_msg_id(i)) {
+        header(&mut out, "In-Reply-To", &[format!("<{parent}>")]);
+    }
+    let references: Vec<String> = draft
+        .references
+        .iter()
+        .filter(|i| is_msg_id(i))
+        .map(|i| format!("<{i}>"))
+        .collect();
+    if !references.is_empty() {
+        header(&mut out, "References", &references);
+    }
     header(&mut out, "MIME-Version", &["1.0".to_owned()]);
+    if draft.attachments.is_empty() {
+        write_body(&mut out, draft, &id);
+        return Ok(out);
+    }
+    // RFC 2046 §5.1.1. `=_` can't occur in quoted-printable or base64
+    // output, so the boundary never appears inside a part.
+    let boundary = format!("=_mc_{id}");
     header(
         &mut out,
         "Content-Type",
-        &["text/plain;".to_owned(), "charset=utf-8".to_owned()],
+        &[
+            "multipart/mixed;".to_owned(),
+            format!("boundary=\"{boundary}\""),
+        ],
+    );
+    out.extend_from_slice(b"\r\n");
+    out.extend_from_slice(format!("--{boundary}\r\n").as_bytes());
+    write_body(&mut out, draft, &id);
+    for attachment in &draft.attachments {
+        out.extend_from_slice(format!("\r\n--{boundary}\r\n").as_bytes());
+        write_attachment(&mut out, attachment);
+    }
+    out.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
+    Ok(out)
+}
+
+/// One attached file: its headers, then base64 in 76-character lines
+/// (RFC 2045 §6.8).
+fn write_attachment(out: &mut Vec<u8>, a: &OutgoingAttachment) {
+    let name = clean_filename(&a.filename);
+    header(
+        out,
+        "Content-Type",
+        &[
+            format!("{};", safe_mime_type(&a.mime_type)),
+            param("name", &name),
+        ],
+    );
+    header(
+        out,
+        "Content-Disposition",
+        &["attachment;".to_owned(), param("filename", &name)],
+    );
+    header(out, "Content-Transfer-Encoding", &["base64".to_owned()]);
+    out.extend_from_slice(b"\r\n");
+    let encoded = base64(&a.bytes);
+    for chunk in encoded.as_bytes().chunks(76) {
+        out.extend_from_slice(chunk);
+        out.extend_from_slice(b"\r\n");
+    }
+}
+
+/// A file name fit for a header parameter: no control characters (line
+/// breaks included), no quotes or backslashes, at most 255 bytes;
+/// `attachment` if nothing is left.
+fn clean_filename(name: &str) -> String {
+    let mut out = String::new();
+    for c in name
+        .chars()
+        .filter(|c| !c.is_control() && !matches!(c, '"' | '\\'))
+    {
+        if out.len() + c.len_utf8() > 255 {
+            break;
+        }
+        out.push(c);
+    }
+    let trimmed = out.trim();
+    if trimmed.is_empty() {
+        "attachment".to_owned()
+    } else {
+        trimmed.to_owned()
+    }
+}
+
+/// `type/subtype` made of token characters (RFC 2045 §5.1), lower-case;
+/// otherwise `application/octet-stream`.
+fn safe_mime_type(mime: &str) -> String {
+    let m = mime.trim().to_ascii_lowercase();
+    let token = |s: &str| {
+        !s.is_empty()
+            && s.len() <= 127
+            && s.bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b"!#$&-^_.+".contains(&b))
+    };
+    match m.split_once('/') {
+        Some((t, s)) if token(t) && token(s) => m,
+        _ => "application/octet-stream".to_owned(),
+    }
+}
+
+/// `name="value"` for plain ASCII, otherwise `name*=UTF-8''percent-encoded`
+/// (RFC 2231 §4).
+fn param(name: &str, value: &str) -> String {
+    if value.bytes().all(|b| (0x20..0x7f).contains(&b)) {
+        return format!("{name}=\"{value}\"");
+    }
+    let mut encoded = String::new();
+    for b in value.bytes() {
+        if b.is_ascii_alphanumeric() || b"!#$&+-.^_`|~".contains(&b) {
+            encoded.push(char::from(b));
+        } else {
+            encoded.push_str(&format!("%{b:02X}"));
+        }
+    }
+    format!("{name}*=UTF-8''{encoded}")
+}
+
+/// The message body: plain text, or with [`OutgoingMessage::rich`] a
+/// `multipart/alternative` of the plain text and then the HTML (RFC 2046
+/// §5.1.4: the preferred, richer version last).
+fn write_body(out: &mut Vec<u8>, draft: &OutgoingMessage, id: &str) {
+    let Some(rich) = &draft.rich else {
+        write_text(out, "plain", &draft.body_text, draft.encoding);
+        return;
+    };
+    let boundary = format!("=_mca_{id}");
+    header(
+        out,
+        "Content-Type",
+        &[
+            "multipart/alternative;".to_owned(),
+            format!("boundary=\"{boundary}\""),
+        ],
+    );
+    out.extend_from_slice(b"\r\n");
+    out.extend_from_slice(format!("--{boundary}\r\n").as_bytes());
+    write_text(
+        out,
+        "plain",
+        &crate::richtext::to_plain(rich),
+        draft.encoding,
+    );
+    out.extend_from_slice(format!("\r\n--{boundary}\r\n").as_bytes());
+    let html = format!(
+        "<!DOCTYPE html>\n<html><head><meta charset=\"utf-8\"></head><body>\n{}</body></html>",
+        crate::richtext::to_html(rich)
+    );
+    write_text(out, "html", &html, draft.encoding);
+    out.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
+}
+
+/// One `text/<subtype>` part in UTF-8: its Content-Type and transfer
+/// encoding, then the text.
+fn write_text(out: &mut Vec<u8>, subtype: &str, text: &str, encoding: TransferEncoding) {
+    header(
+        out,
+        "Content-Type",
+        &[format!("text/{subtype};"), "charset=utf-8".to_owned()],
     );
 
-    let lines = body_lines(&draft.body_text);
-    let eight_bit = draft.encoding == TransferEncoding::EightBit
+    let lines = body_lines(text);
+    let eight_bit = encoding == TransferEncoding::EightBit
         && lines
             .iter()
             .all(|l| l.len() <= MAX_LINE && !l.contains('\0'));
@@ -156,17 +364,16 @@ pub(crate) fn build_with(
     } else {
         "quoted-printable"
     };
-    header(&mut out, "Content-Transfer-Encoding", &[cte.to_owned()]);
+    header(out, "Content-Transfer-Encoding", &[cte.to_owned()]);
     out.extend_from_slice(b"\r\n");
     for line in &lines {
         if eight_bit {
             out.extend_from_slice(line.as_bytes());
             out.extend_from_slice(b"\r\n");
         } else {
-            quoted_printable_line(&mut out, line.as_bytes());
+            quoted_printable_line(out, line.as_bytes());
         }
     }
-    Ok(out)
 }
 
 fn check_addresses(draft: &OutgoingMessage) -> Result<(), BuildError> {
@@ -190,7 +397,7 @@ fn check_addresses(draft: &OutgoingMessage) -> Result<(), BuildError> {
         .len()
         .saturating_add(draft.cc.len())
         .saturating_add(draft.bcc.len());
-    if count == 0 {
+    if count == 0 && !draft.is_draft {
         return Err(BuildError::NoRecipients);
     }
     if count > MAX_RECIPIENTS {
@@ -216,6 +423,23 @@ fn header(out: &mut Vec<u8>, name: &str, units: &[String]) {
         line_len += 1 + unit.len();
     }
     out.extend_from_slice(b"\r\n");
+}
+
+/// Longest Message-ID written into `In-Reply-To` or `References`. Real ids are
+/// far shorter; this keeps a hostile one from making a header line too long.
+const MAX_MSG_ID: usize = 250;
+
+/// Whether `id` (without angle brackets) can be written as a `msg-id`
+/// (RFC 5322 §3.6.4): printable ASCII, no spaces, no `<` or `>`, and an `@`.
+/// Ids from received mail are hostile input; anything else is left out
+/// rather than repaired, so it can't break or inject headers.
+fn is_msg_id(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= MAX_MSG_ID
+        && id.contains('@')
+        && id
+            .bytes()
+            .all(|b| b.is_ascii_graphic() && b != b'<' && b != b'>')
 }
 
 /// Replaces line breaks and tabs with spaces and drops other control
@@ -364,8 +588,27 @@ fn base64(bytes: &[u8]) -> String {
     out
 }
 
+/// A new random Message-ID for `domain`, without angle brackets: 32 hex
+/// characters, `@`, the domain. For drafts, which keep one id across
+/// versions.
+pub fn new_message_id(domain: &str) -> Result<String, BuildError> {
+    let mut random = [0u8; 16];
+    getrandom::fill(&mut random).map_err(|_| BuildError::Random)?;
+    let id: String = random.iter().map(|b| format!("{b:02x}")).collect();
+    let domain: String = domain
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '.' || *c == '-')
+        .collect();
+    let domain = if domain.is_empty() {
+        "localhost".to_owned()
+    } else {
+        domain
+    };
+    Ok(format!("{id}@{domain}"))
+}
+
 /// RFC 5322 §3.3 date in UTC, such as `Tue, 24 Nov 2026 21:32:00 +0000`.
-fn format_date(secs: i64) -> String {
+pub fn format_date(secs: i64) -> String {
     const DAYS: [&str; 7] = ["Thu", "Fri", "Sat", "Sun", "Mon", "Tue", "Wed"];
     const MONTHS: [&str; 12] = [
         "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",

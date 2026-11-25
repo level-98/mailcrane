@@ -128,6 +128,107 @@ pub struct ComposeDraft {
     pub bcc: Vec<String>,
     pub subject: String,
     pub body_text: String,
+    /// For a reply: the Message-ID replied to. Set by `prepare_reply`; keep
+    /// it when sending.
+    #[uniffi(default = None)]
+    pub in_reply_to: Option<String>,
+    /// For a reply: the thread's Message-IDs. Set by `prepare_reply`.
+    #[uniffi(default = [])]
+    pub references: Vec<String>,
+    /// Files to attach (M2-04).
+    #[uniffi(default = [])]
+    pub attachments: Vec<ComposeAttachment>,
+    /// For a forward: the original message, whose attachments go along.
+    /// Set by `prepare_reply`; keep it when sending.
+    #[uniffi(default = None)]
+    pub forward_attachments_of: Option<i64>,
+    /// Rich text (M2-09). When set, the message is sent as plain text plus
+    /// HTML made from it; keep `body_text` as its plain version
+    /// (`rich_to_plain`) for drafts.
+    #[uniffi(default = None)]
+    pub rich: Option<RichDoc>,
+}
+
+/// A run of text with the same formatting.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct RichSpan {
+    pub text: String,
+    pub bold: bool,
+    pub italic: bool,
+    /// Only `https:`, `http:` and `mailto:` links are kept.
+    pub link: Option<String>,
+}
+
+/// A block of rich text.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
+pub enum RichBlock {
+    Paragraph { spans: Vec<RichSpan> },
+    BulletList { items: Vec<Vec<RichSpan>> },
+    NumberedList { items: Vec<Vec<RichSpan>> },
+}
+
+/// A rich-text message body.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct RichDoc {
+    pub blocks: Vec<RichBlock>,
+}
+
+fn core_spans(spans: Vec<RichSpan>) -> Vec<mailcrane_mime::richtext::Span> {
+    spans
+        .into_iter()
+        .map(|s| mailcrane_mime::richtext::Span {
+            text: s.text,
+            bold: s.bold,
+            italic: s.italic,
+            link: s.link,
+        })
+        .collect()
+}
+
+impl From<RichDoc> for mailcrane_mime::richtext::RichDoc {
+    fn from(d: RichDoc) -> Self {
+        use mailcrane_mime::richtext::Block;
+        Self {
+            blocks: d
+                .blocks
+                .into_iter()
+                .map(|b| match b {
+                    RichBlock::Paragraph { spans } => Block::Paragraph(core_spans(spans)),
+                    RichBlock::BulletList { items } => {
+                        Block::BulletList(items.into_iter().map(core_spans).collect())
+                    }
+                    RichBlock::NumberedList { items } => {
+                        Block::NumberedList(items.into_iter().map(core_spans).collect())
+                    }
+                })
+                .collect(),
+        }
+    }
+}
+
+/// The plain-text version of a rich body: lists as `- ` and `1. `, links as
+/// `text <url>`. The same text is sent as the plain part.
+#[uniffi::export]
+pub fn rich_to_plain(doc: RichDoc) -> String {
+    mailcrane_mime::richtext::to_plain(&doc.into())
+}
+
+/// A file attached in compose.
+#[derive(Clone, PartialEq, Eq, uniffi::Record)]
+pub struct ComposeAttachment {
+    pub filename: String,
+    /// `type/subtype`; anything malformed is sent as
+    /// `application/octet-stream`.
+    pub mime_type: String,
+    pub bytes: Vec<u8>,
+}
+
+impl std::fmt::Debug for ComposeAttachment {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ComposeAttachment")
+            .field("bytes", &self.bytes.len())
+            .finish_non_exhaustive()
+    }
 }
 
 impl From<ComposeDraft> for core::ComposeDraft {
@@ -139,8 +240,104 @@ impl From<ComposeDraft> for core::ComposeDraft {
             bcc: d.bcc,
             subject: d.subject,
             body_text: d.body_text,
+            in_reply_to: d.in_reply_to,
+            references: d.references,
+            attachments: d
+                .attachments
+                .into_iter()
+                .map(|a| mailcrane_mime::OutgoingAttachment {
+                    filename: a.filename,
+                    mime_type: a.mime_type,
+                    bytes: a.bytes,
+                })
+                .collect(),
+            forward_attachments_of: d.forward_attachments_of.map(mailcrane_store::MessageId),
+            rich: d.rich.map(Into::into),
         }
     }
+}
+
+impl From<core::ComposeDraft> for ComposeDraft {
+    fn from(d: core::ComposeDraft) -> Self {
+        Self {
+            account_id: d.account_id.0,
+            to: d.to,
+            cc: d.cc,
+            bcc: d.bcc,
+            subject: d.subject,
+            body_text: d.body_text,
+            in_reply_to: d.in_reply_to,
+            references: d.references,
+            attachments: d
+                .attachments
+                .into_iter()
+                .map(|a| ComposeAttachment {
+                    filename: a.filename,
+                    mime_type: a.mime_type,
+                    bytes: a.bytes,
+                })
+                .collect(),
+            forward_attachments_of: d.forward_attachments_of.map(|m| m.0),
+            rich: None,
+        }
+    }
+}
+
+/// What kind of draft `prepare_reply` makes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum ReplyKind {
+    /// To the sender (or Reply-To).
+    Reply,
+    /// To the sender and the other recipients, except this account.
+    ReplyAll,
+    /// To nobody yet, with the original included.
+    Forward,
+}
+
+/// Why `prepare_reply` failed.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error, uniffi::Error)]
+pub enum ReplyFailure {
+    /// The message or its account doesn't exist.
+    #[error("message not found")]
+    NotFound,
+    /// The body isn't downloaded yet; call `fetch_body` first.
+    #[error("body not downloaded")]
+    BodyNotDownloaded,
+    /// The local database failed.
+    #[error("storage failure")]
+    Storage,
+}
+
+/// A reply, reply-all or forward of message `message_id`, ready for the
+/// compose screen: recipients, subject with `Re:`/`Fwd:`, the quoted or
+/// forwarded text under `quote_header` (a localised line such as "On 24 Nov
+/// 2026, at 10:42, Ana wrote:"), and the thread headers. Reads only the
+/// database.
+#[uniffi::export]
+pub fn prepare_reply(
+    db_path: String,
+    message_id: i64,
+    kind: ReplyKind,
+    quote_header: String,
+) -> Result<ComposeDraft, ReplyFailure> {
+    let store = Store::open(&db_path).map_err(|_| ReplyFailure::Storage)?;
+    let kind = match kind {
+        ReplyKind::Reply => core::ReplyKind::Reply,
+        ReplyKind::ReplyAll => core::ReplyKind::ReplyAll,
+        ReplyKind::Forward => core::ReplyKind::Forward,
+    };
+    core::prepare_reply(
+        &store,
+        mailcrane_store::MessageId(message_id),
+        kind,
+        &quote_header,
+    )
+    .map(ComposeDraft::from)
+    .map_err(|e| match e {
+        core::ReplyError::NotFound => ReplyFailure::NotFound,
+        core::ReplyError::BodyNotDownloaded => ReplyFailure::BodyNotDownloaded,
+        core::ReplyError::Storage => ReplyFailure::Storage,
+    })
 }
 
 /// Which recipient field an entry is in.
@@ -197,6 +394,10 @@ pub fn validate_recipients(draft: ComposeDraft) -> Vec<RecipientError> {
 pub struct SendResult {
     /// Recipients the server refused; everyone else got the message.
     pub rejected: Vec<String>,
+    /// Not sent yet: it's in the outbox and will be retried (from
+    /// `send_via_outbox`; always false from `send`).
+    #[uniffi(default = false)]
+    pub queued: bool,
 }
 
 /// Why the message was not sent. Nothing was sent in any of these cases.
@@ -289,6 +490,7 @@ async fn send_with(
     let report = core::send_prepared(prepared).await?;
     Ok(SendResult {
         rejected: report.rejected,
+        queued: false,
     })
 }
 
@@ -321,6 +523,11 @@ mod tests {
             bcc: vec!["carol@example.com".into()],
             subject: "Hi".into(),
             body_text: "Hello".into(),
+            in_reply_to: None,
+            references: vec![],
+            attachments: Vec::new(),
+            forward_attachments_of: None,
+            rich: None,
         }
     }
 
@@ -439,6 +646,27 @@ mod tests {
         assert_eq!(
             SendFailure::from(core::SendError::MissingCredentials),
             SendFailure::MissingCredentials
+        );
+    }
+
+    #[test]
+    fn prepare_reply_reports_missing_messages_and_databases() {
+        let dir = tempfile::tempdir().expect("dir");
+        let path = dir.path().join("m.db").to_string_lossy().into_owned();
+        drop(Store::open(&path).expect("store"));
+        assert_eq!(
+            prepare_reply(path, 1, ReplyKind::Reply, "x".into()),
+            Err(ReplyFailure::NotFound)
+        );
+        let missing = dir.path().join("no").join("such").join("m.db");
+        assert_eq!(
+            prepare_reply(
+                missing.to_string_lossy().into_owned(),
+                1,
+                ReplyKind::Forward,
+                String::new()
+            ),
+            Err(ReplyFailure::Storage)
         );
     }
 }

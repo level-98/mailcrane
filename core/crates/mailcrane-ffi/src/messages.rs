@@ -2,7 +2,7 @@
 //! page of a folder's message list, newest first; `get_message` returns one
 //! message ready to show, and `get_inline_part` the `cid:` images in it.
 
-use mailcrane_mime::{parse_message, sanitize_html, SanitizeOptions};
+use mailcrane_mime::{parse_message, sanitize_html, SanitizeOptions, TrackerHit, TrackerKind};
 use mailcrane_store::{BodyState, FolderId, MessageHeader, MessageId, Store};
 
 use crate::sync::{SyncErrorKind, SyncFailure};
@@ -35,6 +35,21 @@ pub struct MessageSummary {
     pub is_flagged: bool,
     /// Whether the message has attachments.
     pub has_attachments: bool,
+    /// Its account, in the Unified Inbox (M4-01); 0 in single-folder lists.
+    #[uniffi(default = 0)]
+    pub account_id: i64,
+    /// A colour for the account's marker (0–7), in the Unified Inbox.
+    #[uniffi(default = 0)]
+    pub account_color: u32,
+}
+
+/// Colours for account markers.
+pub const ACCOUNT_COLORS: u32 = 8;
+
+/// The marker colour of an account (stable: follows the account id).
+#[uniffi::export]
+pub fn account_color(account_id: i64) -> u32 {
+    u32::try_from(account_id.rem_euclid(i64::from(ACCOUNT_COLORS))).unwrap_or(0)
 }
 
 /// Header text as one safe line: CR, LF and NUL become spaces, and the
@@ -65,6 +80,8 @@ impl From<MessageHeader> for MessageSummary {
             is_seen: d.flags.seen,
             is_flagged: d.flags.flagged,
             has_attachments: d.has_attachments,
+            account_id: 0,
+            account_color: 0,
         }
     }
 }
@@ -87,6 +104,37 @@ pub fn list_messages(
         .list_messages(FolderId(folder_id), limit.min(MAX_PAGE), offset)
         .map_err(|_| storage())?;
     Ok(rows.into_iter().map(MessageSummary::from).collect())
+}
+
+/// The Unified Inbox (M4-01): every account's inbox, newest first, `limit`
+/// (capped at [`MAX_PAGE`]) after skipping `offset`. Each row names its
+/// account and marker colour. Reads only the local database.
+#[uniffi::export]
+pub fn list_unified_inbox(
+    db_path: String,
+    offset: u32,
+    limit: u32,
+) -> Result<Vec<MessageSummary>, SyncFailure> {
+    let store = Store::open(&db_path).map_err(|_| storage())?;
+    let rows = store
+        .list_unified_inbox(limit.min(MAX_PAGE), offset)
+        .map_err(|_| storage())?;
+    Ok(rows
+        .into_iter()
+        .map(|(header, account)| {
+            let mut summary = MessageSummary::from(header);
+            summary.account_id = account.0;
+            summary.account_color = account_color(account.0);
+            summary
+        })
+        .collect())
+}
+
+/// Unread messages across every account's inbox.
+#[uniffi::export]
+pub fn unified_unread_count(db_path: String) -> Result<u64, SyncFailure> {
+    let store = Store::open(&db_path).map_err(|_| storage())?;
+    store.count_unified_unread().map_err(|_| storage())
 }
 
 /// The scheme `cid:` images are rewritten to. The app serves it from
@@ -128,6 +176,9 @@ pub struct AttachmentInfo {
     pub mime_type: String,
     /// Size in bytes after decoding.
     pub size: u64,
+    /// Which part it is, for `save_attachment`.
+    #[uniffi(default = "")]
+    pub part_id: String,
 }
 
 /// The body of a message, ready to show.
@@ -148,9 +199,35 @@ pub enum MessageBody {
         remote_blocked: u32,
         /// Tracking pixels removed (in both modes).
         trackers_removed: u32,
+        /// The trackers removed, one per domain, for the "N trackers
+        /// blocked" sheet (M5-01).
+        trackers: Vec<TrackerInfo>,
     },
     /// The body has not been downloaded yet; call `SyncEngine::fetch_body`.
     NotDownloaded,
+}
+
+/// A tracker removed from a message (M5-01).
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct TrackerInfo {
+    /// The known service's name, or `None` for an unlisted tiny or hidden
+    /// image.
+    pub service: Option<String>,
+    /// The tracker's domain; empty when the image had no web address.
+    pub domain: String,
+}
+
+impl From<TrackerHit> for TrackerInfo {
+    fn from(hit: TrackerHit) -> Self {
+        let service = match hit.kind {
+            TrackerKind::KnownService(name) => Some(one_line(&name)),
+            TrackerKind::Tiny | TrackerKind::Hidden => None,
+        };
+        Self {
+            service,
+            domain: one_line(&hit.domain),
+        }
+    }
 }
 
 /// One message, ready to show.
@@ -172,6 +249,8 @@ pub struct MessageDetail {
     pub subject: String,
     /// Whether the message has been read (`\Seen`).
     pub is_seen: bool,
+    /// Whether the message is flagged (`\Flagged`).
+    pub is_flagged: bool,
     /// The body.
     pub body: MessageBody,
     /// Attached files, not counting inline images shown in the body.
@@ -296,6 +375,7 @@ pub fn get_message(
         date: d.date,
         subject: one_line(&d.subject),
         is_seen: d.flags.seen,
+        is_flagged: d.flags.flagged,
         body: MessageBody::NotDownloaded,
         attachments: Vec::new(),
     };
@@ -313,6 +393,7 @@ pub fn get_message(
             name: one_line(a.filename.as_deref().unwrap_or_default()),
             mime_type: one_line(&a.mime_type),
             size: u64::try_from(a.size).unwrap_or(0),
+            part_id: a.part_id,
         })
         .collect();
     detail.body = match parse_message(&raw) {
@@ -330,6 +411,7 @@ pub fn get_message(
                         html: html_document(&clean.html, allow_remote),
                         remote_blocked: clean.remote_resources_blocked,
                         trackers_removed: clean.trackers_removed,
+                        trackers: clean.trackers.into_iter().map(TrackerInfo::from).collect(),
                     }
                 }
                 None => MessageBody::Plain {
@@ -658,6 +740,42 @@ mod tests {
         assert!(html.contains("src=\"https://example.com/a.png\""));
         assert!(html.contains("img-src mailcrane-cid: data: https:;"));
         assert!(!html.contains("<script"));
+    }
+
+    #[test]
+    fn trackers_are_listed_for_the_apps() {
+        let (_dir, path, folder) = setup();
+        let raw = html_message(
+            "<p>Hi</p><img src=\"https://us5.list-manage.com/track/open.php?u=1\">             <img src=\"https://us5.list-manage.com/track/open.php?u=2\">             <img src=\"https://stats.example.net/o.gif\" width=\"1\" height=\"1\">",
+        );
+        let id = with_body(&path, folder, 1, &raw);
+        for allow_remote in [false, true] {
+            let m = get_message(path.clone(), id, allow_remote).expect("message");
+            let MessageBody::Html {
+                html,
+                trackers,
+                trackers_removed,
+                ..
+            } = &m.body
+            else {
+                panic!("expected HTML");
+            };
+            assert!(!html.contains("list-manage"));
+            assert_eq!(*trackers_removed, 3);
+            assert_eq!(
+                trackers,
+                &vec![
+                    TrackerInfo {
+                        service: Some("Mailchimp".into()),
+                        domain: "list-manage.com".into(),
+                    },
+                    TrackerInfo {
+                        service: None,
+                        domain: "stats.example.net".into(),
+                    },
+                ]
+            );
+        }
     }
 
     #[test]

@@ -5,11 +5,21 @@
 #![forbid(unsafe_code)]
 
 pub mod account;
+pub mod actions;
+pub mod attachments;
 pub mod compose;
+pub mod contacts;
+pub mod drafts;
 pub mod events;
 pub mod links;
+pub mod outbox;
+pub mod rules;
+pub mod search;
 pub mod secrets;
+pub mod snooze;
 pub mod sync;
+pub mod threading;
+pub mod unsubscribe;
 
 /// The name of this crate.
 pub const CRATE_NAME: &str = env!("CARGO_PKG_NAME");

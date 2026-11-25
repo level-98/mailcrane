@@ -1,0 +1,205 @@
+# Known email-tracking services (M5-01, #62).
+#
+# Written for Mailcrane from public vendor documentation and from the source
+# of the vendors' own emails; not copied from any other block list.
+#
+# Each entry:
+#   service = shown to the user
+#   domains = hosts; an image from the host or any subdomain of it matches
+#   paths   = optional; when given, only images whose URL path starts with
+#             one of them match (for domains that also serve real images)
+#   source  = where the information comes from
+#
+# Format: only `[[tracker]]` headers and `key = "string"` or
+# `key = ["string", ...]` lines on one line each; `#` starts a comment.
+
+[[tracker]]
+service = "Mailchimp"
+domains = ["list-manage.com"]
+source = "Mailchimp help centre, 'About open tracking': opens are counted with a tiny image served from the account's list-manage.com host."
+
+[[tracker]]
+service = "Mandrill (Mailchimp Transactional)"
+domains = ["mandrillapp.com"]
+paths = ["/track/open"]
+source = "Mandrill docs on open tracking: a tracking image under /track/open on mandrillapp.com. The domain also serves the app, so only that path is matched."
+
+[[tracker]]
+service = "SendGrid (Twilio)"
+domains = ["sendgrid.net"]
+paths = ["/wf/open"]
+source = "SendGrid docs, 'Open Tracking': an invisible image whose URL path starts with /wf/open on the sendgrid.net tracking host."
+
+[[tracker]]
+service = "Constant Contact"
+domains = ["rs6.net"]
+source = "Constant Contact help on email reporting: tracked opens and clicks go through rs6.net hosts."
+
+[[tracker]]
+service = "Campaign Monitor"
+domains = ["createsend1.com"]
+source = "Campaign Monitor help on open tracking: an invisible image on a createsend1.com host."
+
+[[tracker]]
+service = "HubSpot"
+domains = ["hubspotemail.net"]
+source = "HubSpot knowledge base on email open tracking: a tracking image served from hubspotemail.net hosts."
+
+[[tracker]]
+service = "Marketo (Adobe)"
+domains = ["mktdns.com", "mktoweb.com"]
+source = "Adobe Marketo docs on email open tracking with an invisible image on Marketo tracking hosts."
+
+[[tracker]]
+service = "Pardot (Salesforce Account Engagement)"
+domains = ["pardot.com"]
+source = "Salesforce Account Engagement docs: email opens are tracked with an image from Pardot's tracking domain."
+
+[[tracker]]
+service = "Eloqua (Oracle)"
+domains = ["en25.com"]
+source = "Oracle Eloqua docs on email tracking: open-tracking image served from en25.com hosts."
+
+[[tracker]]
+service = "Responsys (Oracle)"
+domains = ["rsys2.net", "rsys3.net", "rsys4.net", "rsys5.net"]
+source = "Oracle Responsys docs on open tracking: tracking image served from rsysN.net hosts."
+
+[[tracker]]
+service = "Klaviyo"
+domains = ["trk.klaviyo.com", "klaviyomail.com"]
+source = "Klaviyo help centre on open tracking: a hidden image served from Klaviyo tracking hosts."
+
+[[tracker]]
+service = "Brevo (Sendinblue)"
+domains = ["sendibt2.com", "sendibt3.com"]
+source = "Brevo help on open tracking: an invisible image from its sendibt tracking domains."
+
+[[tracker]]
+service = "MailerLite"
+domains = ["mlsend.com"]
+source = "MailerLite help on open rates: a tracking image served from mlsend.com."
+
+[[tracker]]
+service = "Kit (ConvertKit)"
+domains = ["convertkit-mail.com", "convertkit-mail2.com"]
+source = "Kit help centre on open tracking: an invisible image on convertkit-mail hosts."
+
+[[tracker]]
+service = "Substack"
+domains = ["substackcdn.com"]
+paths = ["/open"]
+source = "Substack support on post stats: opens are counted with an image. substackcdn.com also serves real post images, so only the /open path (on its eotrx host) is matched."
+
+[[tracker]]
+service = "Mailjet"
+domains = ["mjt.lu"]
+source = "Mailjet docs on open tracking: a 1x1 image on mjt.lu hosts."
+
+[[tracker]]
+service = "Amazon SES"
+domains = ["awstrack.me"]
+source = "Amazon SES developer guide, open and click tracking: the open image is served from the awstrack.me domain."
+
+[[tracker]]
+service = "Postmark"
+domains = ["pstmrk.it"]
+source = "Postmark docs on open tracking: an invisible image served from pstmrk.it."
+
+[[tracker]]
+service = "SparkPost (Bird)"
+domains = ["spgo.io"]
+source = "SparkPost docs on engagement tracking: the default tracking domain is spgo.io."
+
+[[tracker]]
+service = "Customer.io"
+domains = ["track.customer.io"]
+source = "Customer.io docs on open tracking: a tracking pixel served from track.customer.io."
+
+[[tracker]]
+service = "Yesware"
+domains = ["t.yesware.com"]
+source = "Yesware help on email tracking: an invisible image from t.yesware.com."
+
+[[tracker]]
+service = "Mailtrack"
+domains = ["mailtrack.io"]
+source = "Mailtrack's own description of its product: read receipts work through a tracking image served from mailtrack.io."
+
+[[tracker]]
+service = "Streak"
+domains = ["mailfoogae.appspot.com"]
+source = "Streak help on email tracking: a tracking image served from mailfoogae.appspot.com."
+
+[[tracker]]
+service = "Mixmax"
+domains = ["track.mixmax.com"]
+source = "Mixmax help on open tracking: a tracking image from its track host."
+
+[[tracker]]
+service = "Bananatag (Staffbase)"
+domains = ["bl-1.com"]
+source = "Bananatag docs on email tracking: an invisible image on bl-1.com."
+
+[[tracker]]
+service = "ContactMonkey"
+domains = ["contactmonkey.com"]
+source = "ContactMonkey docs on internal email tracking with an invisible image."
+
+[[tracker]]
+service = "Cirrus Insight"
+domains = ["cirrusinsight.com"]
+source = "Cirrus Insight help on email tracking with an invisible image."
+
+[[tracker]]
+service = "ActiveCampaign"
+domains = ["acemlna.com", "acemlnb.com", "acemlnc.com"]
+source = "ActiveCampaign help on open tracking: an invisible image from its acemln tracking domains."
+
+[[tracker]]
+service = "Drip"
+domains = ["dripemail2.com"]
+source = "Drip docs on open tracking: a tracking image from dripemail2.com."
+
+[[tracker]]
+service = "AWeber"
+domains = ["openrate.aweber.com"]
+source = "AWeber knowledge base on open tracking: an invisible image from openrate.aweber.com."
+
+[[tracker]]
+service = "Emarsys (SAP)"
+domains = ["emarsys.net"]
+source = "SAP Emarsys docs on open tracking: an invisible image from emarsys.net hosts."
+
+[[tracker]]
+service = "Litmus Email Analytics"
+domains = ["emltrk.com"]
+source = "Litmus docs on Email Analytics: a tracking code with an image served from emltrk.com."
+
+[[tracker]]
+service = "Benchmark Email"
+domains = ["bmetrack.com"]
+source = "Benchmark Email help on open tracking: a tracking image served from bmetrack.com."
+
+[[tracker]]
+service = "GetResponse"
+domains = ["gr8.com"]
+source = "GetResponse help on open tracking: an invisible image served from its gr8.com tracking domain."
+
+[[tracker]]
+service = "LinkedIn"
+domains = ["linkedin.com"]
+paths = ["/emimp/"]
+source = "LinkedIn notification emails count opens with an image under /emimp/ (visible in any LinkedIn email's source). linkedin.com also serves profile photos, so only that path is matched."
+
+[[tracker]]
+service = "Facebook (Meta)"
+domains = ["facebook.com"]
+paths = ["/email_open_log_pic.php"]
+source = "Facebook notification emails count opens with email_open_log_pic.php (visible in the email source). Only that path is matched."
+
+[[tracker]]
+service = "X (Twitter)"
+domains = ["twitter.com", "x.com"]
+paths = ["/scribe/ibis"]
+source = "X/Twitter notification emails count opens with an image under /scribe/ibis (visible in the email source). Only that path is matched."

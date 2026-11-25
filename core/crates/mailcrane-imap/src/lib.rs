@@ -23,6 +23,7 @@
 
 #![forbid(unsafe_code)]
 
+mod append;
 mod b64;
 mod command;
 mod condstore;
@@ -32,16 +33,21 @@ mod fetch;
 mod idle;
 pub mod mutf7;
 pub mod parser;
+mod quirks;
 mod roles;
 mod session;
+mod store_cmds;
 mod tls;
 
+pub use append::{AppendFlags, SearchKey};
 pub use condstore::{FetchedFlags, FlagUpdate, QresyncParams, QresyncSelect};
 pub use error::ImapError;
 pub use fetch::{parse_internal_date, FetchedHeaders, SelectInfo};
 pub use idle::IdleOutcome;
 pub use parser::{parse_response, Envelope, EnvelopeAddress, FetchData, Limits};
+pub use quirks::{detect as detect_quirks, ServerQuirk};
 pub use session::{save_folders, ImapConfig, ImapFolder, ImapSecurity, Session};
+pub use store_cmds::{ChangeError, SystemFlag};
 
 use std::fmt;
 

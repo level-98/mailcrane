@@ -1,18 +1,30 @@
 package app.mailcrane.ui.compose
 
+import app.mailcrane.contacts.DeviceContacts
+import app.mailcrane.contacts.RecipientSuggestion
 import app.mailcrane.core.AccountSummary
+import app.mailcrane.core.ComposeAttachment
 import app.mailcrane.core.ComposeCore
 import app.mailcrane.core.ComposeDraft
+import app.mailcrane.core.ContactSuggestion
+import app.mailcrane.core.DraftFailure
+import app.mailcrane.core.DraftKind
+import app.mailcrane.core.DraftSummary
+import app.mailcrane.core.OutboxEntry
 import app.mailcrane.core.RecipientEntry
 import app.mailcrane.core.RecipientError
 import app.mailcrane.core.RecipientField
 import app.mailcrane.core.RecipientInput
 import app.mailcrane.core.RecipientProblem
+import app.mailcrane.core.ReplyFailure
+import app.mailcrane.core.ReplyKind
 import app.mailcrane.core.SendFailure
 import app.mailcrane.core.SendResult
+import app.mailcrane.settings.FakeAppSettings
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.test.TestCoroutineScheduler
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.setMain
@@ -34,6 +46,14 @@ class ComposeViewModelTest {
         var outcome: suspend () -> SendResult = { SendResult(emptyList()) }
 
         override suspend fun listAccounts() = accounts
+
+        var contacts: List<ContactSuggestion> = emptyList()
+
+        override suspend fun suggestContacts(
+            accountId: Long?,
+            prefix: String,
+            limit: Int,
+        ): List<ContactSuggestion> = contacts.filter { it.email.startsWith(prefix) || it.name.startsWith(prefix, true) }
 
         override fun parseRecipients(
             text: String,
@@ -58,6 +78,119 @@ class ComposeViewModelTest {
             sent = draft
             return outcome()
         }
+
+        var replies = 0
+        var replyFailure: ReplyFailure? = null
+        var signatures = mapOf<Long, String>()
+        val drafts = mutableMapOf<Long, ComposeDraft>()
+        val deleted = mutableListOf<Long>()
+        var nextDraftId = 100L
+
+        override suspend fun saveDraft(
+            draftId: Long?,
+            draft: ComposeDraft,
+        ): Long {
+            val id = draftId ?: nextDraftId++
+            drafts[id] = draft
+            return id
+        }
+
+        override suspend fun getDraft(draftId: Long): ComposeDraft = drafts[draftId] ?: throw DraftFailure.NotFound()
+
+        override suspend fun openDraft(messageId: Long): Long {
+            drafts[7] =
+                ComposeDraft(1, listOf("bob@example.net"), emptyList(), listOf("carol@example.com"), "Old", "Body")
+            return 7
+        }
+
+        override suspend fun deleteDraft(draftId: Long) {
+            deleted += draftId
+            drafts.remove(draftId)
+        }
+
+        override suspend fun listDrafts(accountId: Long): List<DraftSummary> = emptyList()
+
+        val delayed = mutableListOf<Pair<ComposeDraft, Int>>()
+
+        override suspend fun enqueueWithDelay(
+            draft: ComposeDraft,
+            delaySeconds: Int,
+        ): Long {
+            delayed += draft to delaySeconds
+            return 77
+        }
+
+        override suspend fun scheduleMessage(
+            draft: ComposeDraft,
+            sendAt: Long,
+        ): Long {
+            scheduled += draft to sendAt
+            return 88
+        }
+
+        override suspend fun rescheduleOutbox(
+            outboxId: Long,
+            sendAt: Long,
+        ) = Unit
+
+        val scheduled = mutableListOf<Pair<ComposeDraft, Long>>()
+
+        override suspend fun cancelPending(outboxId: Long): ComposeDraft? = null
+
+        override suspend fun listOutbox(accountId: Long): List<OutboxEntry> = emptyList()
+
+        override suspend fun retryOutbox(outboxId: Long) = Unit
+
+        override suspend fun deleteOutbox(outboxId: Long) = Unit
+
+        override suspend fun editOutbox(outboxId: Long): Long = 0
+
+        override suspend fun signatureFor(accountId: Long): String? = signatures[accountId]
+
+        // Simple stand-ins for the core's rules (tested in Rust).
+        override fun applySignature(
+            body: String,
+            signature: String?,
+            kind: DraftKind,
+        ): String =
+            when {
+                signature.isNullOrBlank() -> body
+                kind == DraftKind.NEW -> "$body\n\n-- \n$signature"
+                else -> "\n\n-- \n$signature\n$body"
+            }
+
+        override fun swapSignature(
+            body: String,
+            old: String?,
+            new: String?,
+        ): String {
+            val oldBlock = old?.let { "\n\n-- \n$it" }
+            val newBlock = new?.let { "\n\n-- \n$it" }.orEmpty()
+            return when {
+                oldBlock == null -> if (body.isEmpty()) newBlock else body
+                body.endsWith(oldBlock) -> body.removeSuffix(oldBlock) + newBlock
+                else -> body
+            }
+        }
+
+        override suspend fun prepareReply(
+            messageId: Long,
+            kind: ReplyKind,
+            quoteHeader: String,
+        ): ComposeDraft {
+            replies++
+            replyFailure?.let { throw it }
+            return ComposeDraft(
+                accountId = 2,
+                to = listOf("ana@example.net"),
+                cc = if (kind == ReplyKind.REPLY_ALL) listOf("bob@example.com") else emptyList(),
+                bcc = emptyList(),
+                subject = "Re: Lunch",
+                bodyText = "\n\n$quoteHeader\n> Noon?\n",
+                inReplyTo = "m2@example.net",
+                references = listOf("m1@example.net", "m2@example.net"),
+            )
+        }
     }
 
     @Before
@@ -66,7 +199,7 @@ class ComposeViewModelTest {
     @After
     fun tearDown() = Dispatchers.resetMain()
 
-    private fun started(core: FakeCore = FakeCore()) = ComposeViewModel(core).apply { start(1) }
+    private fun started(core: FakeCore = FakeCore()) = ComposeViewModel(core, FakeAppSettings()).apply { start(1) }
 
     @Test
     fun sendStaysDisabledUntilThereIsAValidRecipient() {
@@ -209,28 +342,118 @@ class ComposeViewModelTest {
     }
 
     @Test
-    fun closingWithContentAsksFirst() {
-        val vm = started()
+    fun closingKeepsWhatWasTypedAsADraft() {
+        val core = FakeCore()
+        val vm = started(core)
         vm.requestClose()
         assertEquals("nothing typed closes at once", ComposeResult.Closed, vm.state.value.result)
+        assertTrue(core.drafts.isEmpty())
 
         vm.reset()
+        vm.start(1)
+        vm.onRecipientInput(RecipientField.TO, "half-typed")
         vm.onBodyChange("Draft text")
         vm.requestClose()
-        assertTrue(vm.state.value.confirmingDiscard)
+        assertEquals(ComposeResult.SavedDraft, vm.state.value.result)
+        val saved = core.drafts.values.single()
+        assertEquals("Draft text", saved.bodyText)
+        assertEquals("a half-typed recipient is kept", listOf("half-typed"), saved.to)
+    }
+
+    @Test
+    fun aDraftThatCantBeSavedIsNotClosedSilently() {
+        val core =
+            object : ComposeCore by FakeCore() {
+                override suspend fun saveDraft(
+                    draftId: Long?,
+                    draft: ComposeDraft,
+                ): Long = throw DraftFailure.Storage()
+            }
+        val vm = ComposeViewModel(core, FakeAppSettings()).apply { start(1) }
+        vm.onBodyChange("Precious")
+        vm.requestClose()
         assertNull(vm.state.value.result)
-        vm.keepEditing()
-        assertFalse(vm.state.value.confirmingDiscard)
-        assertEquals("Draft text", vm.state.value.body)
+        assertTrue(vm.state.value.confirmingDiscard)
+        assertEquals("Precious", vm.state.value.body)
+    }
 
+    @Test
+    fun discardAsksAndDeletesTheSavedDraft() {
+        val core = FakeCore()
+        val vm = started(core)
+        vm.onBodyChange("Draft text")
         vm.requestClose()
-        vm.confirmDiscard()
-        assertEquals(ComposeResult.Closed, vm.state.value.result)
+        val id = core.drafts.keys.single()
 
-        vm.reset()
-        vm.onRecipientInput(RecipientField.TO, "half-typed")
+        val reopened = ComposeViewModel(core, FakeAppSettings()).apply { start(1, draft = DraftRequest(draftId = id)) }
+        reopened.requestDiscard()
+        assertTrue(reopened.state.value.confirmingDiscard)
+        reopened.keepEditing()
+        assertFalse(reopened.state.value.confirmingDiscard)
+        assertEquals("Draft text", reopened.state.value.body)
+        reopened.requestDiscard()
+        reopened.confirmDiscard()
+        assertEquals(ComposeResult.Closed, reopened.state.value.result)
+        assertEquals(listOf(id), core.deleted)
+    }
+
+    @Test
+    fun editsAreSavedTwoSecondsAfterTheLastOne() {
+        val scheduler = TestCoroutineScheduler()
+        Dispatchers.setMain(UnconfinedTestDispatcher(scheduler))
+        val core = FakeCore()
+        val vm = started(core)
+        vm.onBodyChange("H")
+        scheduler.advanceTimeBy(1_500)
+        vm.onBodyChange("Hi")
+        scheduler.advanceTimeBy(1_500)
+        scheduler.runCurrent()
+        assertTrue("not yet: the timer restarts on each edit", core.drafts.isEmpty())
+        scheduler.advanceTimeBy(600)
+        scheduler.runCurrent()
+        assertEquals(
+            "Hi",
+            core.drafts.values
+                .single()
+                .bodyText,
+        )
+        val id = vm.state.value.draftId
+        vm.onBodyChange("Hi there")
+        scheduler.advanceTimeBy(2_100)
+        scheduler.runCurrent()
+        assertEquals("the same draft is updated", id, vm.state.value.draftId)
+        assertEquals(1, core.drafts.size)
+    }
+
+    @Test
+    fun sendingDeletesTheDraft() {
+        val core = FakeCore()
+        val vm = started(core)
+        vm.onRecipientInput(RecipientField.TO, "bob@example.net")
         vm.requestClose()
-        assertTrue("a half-typed recipient counts as content", vm.state.value.confirmingDiscard)
+        val id = core.drafts.keys.single()
+        val again = ComposeViewModel(core, FakeAppSettings()).apply { start(1, draft = DraftRequest(draftId = id)) }
+        again.send()
+        assertEquals(ComposeResult.Sent(emptyList()), again.state.value.result)
+        assertEquals(listOf(id), core.deleted)
+    }
+
+    @Test
+    fun aDraftsFolderMessageOpensAsADraft() {
+        val core = FakeCore()
+        val vm = ComposeViewModel(core, FakeAppSettings())
+        vm.start(1, draft = DraftRequest(messageId = 55))
+        val state = vm.state.value
+        assertEquals(7L, state.draftId)
+        assertEquals(listOf("bob@example.net"), state.to.chips.map { it.email })
+        assertEquals(listOf("carol@example.com"), state.bcc.chips.map { it.email })
+        assertTrue(state.showCcBcc)
+        assertEquals("Old", state.subject)
+        assertEquals("Body", state.body)
+        // Rotation doesn't reload over the user's typing.
+        vm.onBodyChange("Edited")
+        vm.start(1, draft = DraftRequest(messageId = 55))
+        assertEquals("Edited", vm.state.value.body)
     }
 
     @Test
@@ -241,14 +464,268 @@ class ComposeViewModelTest {
         assertEquals(1L, vm.state.value.fromAccountId)
 
         core.accounts = listOf(AccountSummary(1, "ann@example.org", "Ann"), AccountSummary(2, "ann@example.net", ""))
-        val vm2 = ComposeViewModel(core).apply { start(2) }
+        val vm2 = ComposeViewModel(core, FakeAppSettings()).apply { start(2) }
         assertTrue(vm2.state.value.showFromPicker)
         assertEquals(2L, vm2.state.value.fromAccountId)
         vm2.onFromChange(1)
         vm2.start(2)
         assertEquals("starting again (rotation) keeps the choice", 1L, vm2.state.value.fromAccountId)
 
-        val vm3 = ComposeViewModel(core).apply { start(99) }
+        val vm3 = ComposeViewModel(core, FakeAppSettings()).apply { start(99) }
         assertEquals("an unknown account falls back to the first", 1L, vm3.state.value.fromAccountId)
+    }
+
+    @Test
+    fun replyIsPrefilledOnceAndSendsTheThreadHeaders() {
+        val accounts = listOf(AccountSummary(1, "a@example.org", "A"), AccountSummary(2, "b@example.org", "B"))
+        val core = FakeCore(accounts = accounts)
+        val vm = ComposeViewModel(core, FakeAppSettings())
+        val request = ReplyRequest(42, ReplyKind.REPLY_ALL, "Ana wrote:")
+        vm.start(1, request)
+        val state = vm.state.value
+        assertEquals(2L, state.fromAccountId)
+        assertEquals(listOf("ana@example.net"), state.to.chips.map { it.email })
+        assertEquals(listOf("bob@example.com"), state.cc.chips.map { it.email })
+        assertTrue(state.showCcBcc)
+        assertEquals("Re: Lunch", state.subject)
+        assertEquals("\n\nAna wrote:\n> Noon?\n", state.body)
+
+        // Rotation calls start again: what the user typed is kept.
+        vm.onBodyChange("Yes!" + state.body)
+        vm.start(1, request)
+        assertEquals(1, core.replies)
+        assertTrue(
+            vm.state.value.body
+                .startsWith("Yes!"),
+        )
+
+        vm.send()
+        val sent = core.sent
+        assertEquals("m2@example.net", sent?.inReplyTo)
+        assertEquals(listOf("m1@example.net", "m2@example.net"), sent?.references)
+        assertEquals(2L, sent?.accountId)
+    }
+
+    @Test
+    fun aNewMessageHasNoThreadHeaders() {
+        val core = FakeCore()
+        val vm = started(core)
+        vm.onRecipientInput(RecipientField.TO, "bob@example.net")
+        vm.send()
+        assertNull(core.sent?.inReplyTo)
+        assertTrue(
+            core.sent
+                ?.references
+                .orEmpty()
+                .isEmpty(),
+        )
+        assertEquals(0, core.replies)
+    }
+
+    @Test
+    fun aReplyThatCantBeLoadedLeavesAnEmptyUsableScreen() {
+        val core = FakeCore().apply { replyFailure = ReplyFailure.BodyNotDownloaded() }
+        val vm = ComposeViewModel(core, FakeAppSettings())
+        vm.start(1, ReplyRequest(42, ReplyKind.REPLY, "x"))
+        assertEquals(ComposeError.REPLY_UNAVAILABLE, vm.state.value.error)
+        assertFalse(vm.state.value.hasContent)
+        assertEquals(1L, vm.state.value.fromAccountId)
+    }
+
+    @Test
+    fun aNewMessageGetsTheSignatureOnce() {
+        val core = FakeCore().apply { signatures = mapOf(1L to "Ann") }
+        val vm = started(core)
+        assertEquals("\n\n-- \nAnn", vm.state.value.body)
+        // Rotation starts the screen again: no second signature.
+        vm.start(1)
+        assertEquals("\n\n-- \nAnn", vm.state.value.body)
+    }
+
+    @Test
+    fun aReplyGetsTheSignatureAboveTheQuote() {
+        val core = FakeCore().apply { signatures = mapOf(2L to "Bea") }
+        val vm = ComposeViewModel(core, FakeAppSettings())
+        vm.start(1, ReplyRequest(42, ReplyKind.REPLY, "Ana wrote:"))
+        assertEquals("\n\n-- \nBea\n\n\nAna wrote:\n> Noon?\n", vm.state.value.body)
+    }
+
+    @Test
+    fun changingFromSwapsAnUneditedSignatureOnly() {
+        val accounts = listOf(AccountSummary(1, "a@example.org", "A"), AccountSummary(2, "b@example.org", "B"))
+        val core = FakeCore(accounts).apply { signatures = mapOf(1L to "Ann", 2L to "Bea") }
+        val vm = started(core)
+        vm.onFromChange(2)
+        assertEquals("\n\n-- \nBea", vm.state.value.body)
+        vm.onFromChange(1)
+        assertEquals("\n\n-- \nAnn", vm.state.value.body)
+
+        vm.onBodyChange(vm.state.value.body + " (on holiday)")
+        vm.onFromChange(2)
+        assertEquals("\n\n-- \nAnn (on holiday)", vm.state.value.body)
+    }
+
+    @Test
+    fun noSignatureMeansNoSeparator() {
+        val vm = started(FakeCore())
+        assertEquals("", vm.state.value.body)
+        assertFalse(vm.state.value.hasContent)
+    }
+
+    @Test
+    fun aQueuedMessageClosesAsQueued() {
+        val core = FakeCore().apply { outcome = { SendResult(emptyList(), queued = true) } }
+        val vm = started(core)
+        vm.onRecipientInput(RecipientField.TO, "bob@example.net")
+        vm.send()
+        assertEquals(ComposeResult.Queued, vm.state.value.result)
+    }
+
+    @Test
+    fun withUndoSendTheMessageWaitsAndCanBeTakenBack() {
+        val core = FakeCore()
+        val vm = ComposeViewModel(core, FakeAppSettings(undoSendSeconds = 10)).apply { start(1) }
+        vm.onRecipientInput(RecipientField.TO, "bob@example.net")
+        vm.send()
+        assertEquals(ComposeResult.Undoable(77, 10), vm.state.value.result)
+        assertEquals(10, core.delayed.single().second)
+        assertNull("not sent directly", core.sent)
+    }
+
+    @Test
+    fun aScheduledMessageIsQueuedForItsTimeAndClosesTheScreen() {
+        val core = FakeCore()
+        val vm = started(core)
+        vm.onRecipientInput(RecipientField.TO, "bob@example.net")
+        vm.schedule(1_900_000_000)
+        assertEquals(ComposeResult.Scheduled(1_900_000_000), vm.state.value.result)
+        assertEquals(1_900_000_000L, core.scheduled.single().second)
+        assertNull("not sent now", core.sent)
+    }
+
+    private class FakeDevice(
+        override val available: Boolean,
+        val people: List<RecipientSuggestion> = emptyList(),
+    ) : DeviceContacts {
+        var searched = 0
+
+        override suspend fun search(
+            prefix: String,
+            limit: Int,
+        ): List<RecipientSuggestion> {
+            searched++
+            return if (available) people.filter { it.name.startsWith(prefix, true) } else emptyList()
+        }
+    }
+
+    @Test
+    fun typingSuggestsAndPickingAddsAChip() {
+        val core = FakeCore().apply { contacts = listOf(ContactSuggestion("ana@example.net", "Ana Silva")) }
+        val device = FakeDevice(true, listOf(RecipientSuggestion("Anabel", "anabel@example.net", fromDevice = true)))
+        val vm = ComposeViewModel(core, FakeAppSettings(), device).apply { start(1) }
+        vm.onRecipientInput(RecipientField.TO, "ana")
+        val state = vm.state.value
+        assertEquals(RecipientField.TO, state.suggestionsFor)
+        assertEquals(listOf("ana@example.net", "anabel@example.net"), state.suggestions.map { it.email })
+        assertFalse("allowed already: no question", state.askContacts)
+        vm.pickSuggestion(RecipientField.TO, state.suggestions[0])
+        val after = vm.state.value
+        assertEquals(listOf("\"Ana Silva\" <ana@example.net>"), after.to.chips.map { it.text })
+        assertEquals("", after.to.input)
+        assertNull(after.suggestionsFor)
+    }
+
+    @Test
+    fun theContactsQuestionIsAskedOnceAndDecliningKeepsPastCorrespondents() {
+        val settings = FakeAppSettings()
+        val core = FakeCore().apply { contacts = listOf(ContactSuggestion("bob@example.net", "Bob")) }
+        val device = FakeDevice(false)
+        val vm = ComposeViewModel(core, settings, device).apply { start(1) }
+        vm.onRecipientInput(RecipientField.TO, "b")
+        assertTrue(vm.state.value.askContacts)
+        assertEquals(
+            listOf("bob@example.net"),
+            vm.state.value.suggestions
+                .map { it.email },
+        )
+        vm.contactsAnswered()
+        assertFalse(vm.state.value.askContacts)
+        val again = ComposeViewModel(core, settings, device).apply { start(1) }
+        again.onRecipientInput(RecipientField.TO, "b")
+        assertFalse("not asked twice", again.state.value.askContacts)
+        assertEquals(
+            listOf("bob@example.net"),
+            again.state.value.suggestions
+                .map { it.email },
+        )
+    }
+
+    @Test
+    fun committingOrClearingHidesSuggestions() {
+        val core = FakeCore().apply { contacts = listOf(ContactSuggestion("bob@example.net", "Bob")) }
+        val vm = ComposeViewModel(core, FakeAppSettings(), FakeDevice(true)).apply { start(1) }
+        vm.onRecipientInput(RecipientField.CC, "bo")
+        assertEquals(RecipientField.CC, vm.state.value.suggestionsFor)
+        vm.onRecipientInput(RecipientField.CC, "")
+        assertNull(vm.state.value.suggestionsFor)
+        vm.onRecipientInput(RecipientField.CC, "bo")
+        vm.commitRecipient(RecipientField.CC)
+        assertNull(vm.state.value.suggestionsFor)
+    }
+
+    @Test
+    fun attachmentsAreAddedRemovedAndSent() {
+        val core = FakeCore()
+        val vm = started(core)
+        vm.addAttachments(
+            listOf(
+                ComposeAttachment("a.pdf", "application/pdf", byteArrayOf(1, 2, 3)),
+                ComposeAttachment("b.png", "image/png", byteArrayOf(4)),
+            ),
+        )
+        vm.removeAttachment(0)
+        assertEquals(
+            listOf("b.png"),
+            vm.state.value.attachments
+                .map { it.filename },
+        )
+        assertFalse(vm.state.value.attachmentsTooLarge)
+        vm.onRecipientInput(RecipientField.TO, "bob@example.net,")
+        vm.send()
+        assertEquals(listOf("b.png"), core.sent?.attachments?.map { it.filename })
+    }
+
+    @Test
+    fun overTwentyFiveMegabytesWarns() {
+        val vm = started()
+        vm.addAttachments(listOf(ComposeAttachment("big.bin", "application/octet-stream", ByteArray(26 * 1024 * 1024))))
+        assertTrue(vm.state.value.attachmentsTooLarge)
+    }
+
+    @Test
+    fun formattedBodiesAreSentRichUnlessPlainIsChosen() {
+        val core = FakeCore()
+        val vm = started(core)
+        vm.onRecipientInput(RecipientField.TO, "bob@example.net,")
+        vm.onBodyChange("Hello world")
+        vm.format(0, 5, InlineFormat.BOLD)
+        vm.send()
+        assertTrue(core.sent?.rich != null)
+
+        val plainCore = FakeCore()
+        val plain = started(plainCore)
+        plain.onRecipientInput(RecipientField.TO, "bob@example.net,")
+        plain.onBodyChange("Hello world")
+        plain.format(0, 5, InlineFormat.BOLD)
+        plain.setPlainTextOnly(true)
+        plain.send()
+        assertNull(plainCore.sent?.rich)
+
+        val unformatted = FakeCore()
+        val text = started(unformatted)
+        text.onRecipientInput(RecipientField.TO, "bob@example.net,")
+        text.onBodyChange("Just text")
+        text.send()
+        assertNull("no formatting: plain text", unformatted.sent?.rich)
     }
 }

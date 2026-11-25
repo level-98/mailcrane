@@ -1,6 +1,9 @@
 package app.mailcrane.core
 
 import android.content.Context
+import app.mailcrane.contacts.AndroidDeviceContacts
+import app.mailcrane.contacts.DeviceContacts
+import app.mailcrane.work.OutboxSender
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -12,9 +15,6 @@ import javax.inject.Singleton
 @Module
 @InstallIn(SingletonComponent::class)
 object CoreModule {
-    // The database lives in app-private storage that is never backed up.
-    private fun dbPath(context: Context): String = File(context.noBackupFilesDir, "mailcrane.sqlite").path
-
     @Provides
     @Singleton
     fun provideMailcraneCore(
@@ -42,5 +42,29 @@ object CoreModule {
     @Singleton
     fun provideComposeCore(
         @ApplicationContext context: Context,
-    ): ComposeCore = UniffiComposeCore(dbPath = dbPath(context))
+        outbox: OutboxSender,
+    ): ComposeCore = UniffiComposeCore(dbPath = dbPath(context), outbox = outbox)
+
+    @Provides
+    fun provideLinkCleaner(): LinkCleaner = CoreLinkCleaner
+
+    @Provides
+    fun provideDeviceContacts(contacts: AndroidDeviceContacts): DeviceContacts = contacts
+
+    @Provides
+    @Singleton
+    fun provideAccountSettingsCore(
+        @ApplicationContext context: Context,
+    ): AccountSettingsCore = UniffiAccountSettingsCore(dbPath = dbPath(context))
+
+    @Provides
+    @Singleton
+    fun provideRulesCore(
+        @ApplicationContext context: Context,
+    ): RulesCore = UniffiRulesCore(dbPath = dbPath(context))
+
+    private fun dbPath(context: Context): String = databasePath(context)
 }
+
+/** The app's database: in app-private storage that is never backed up. */
+fun databasePath(context: Context): String = File(context.noBackupFilesDir, "mailcrane.sqlite").path

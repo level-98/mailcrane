@@ -263,10 +263,15 @@ mod suite {
             .await
             .expect("select");
         let mut output = String::new();
-        for _ in 0..5 {
-            output.push_str(&imap_read_line(&mut stream).await);
+        for _ in 0..10 {
+            let line = imap_read_line(&mut stream).await;
+            output.push_str(&line);
+            if line.starts_with("a3 ") {
+                break;
+            }
         }
         assert!(output.contains("EXISTS"));
+        assert!(output.contains("PERMANENTFLAGS"));
         stream
             .write_all(b"a4 UID SEARCH ALL\r\n")
             .await

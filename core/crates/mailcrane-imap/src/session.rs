@@ -194,6 +194,11 @@ impl Session {
         &self.caps
     }
 
+    /// The host name connected to.
+    pub fn host(&self) -> &str {
+        &self.host
+    }
+
     /// Sends a command and collects its responses within the command
     /// timeout.
     async fn run(&mut self, name: &str, args: &[Arg<'_>]) -> Result<Done, ImapError> {

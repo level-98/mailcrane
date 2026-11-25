@@ -3,6 +3,12 @@
 
     <!-- Connecting to the user's mail servers, and remote images when the user asks for them. -->
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- To send the outbox when the network comes back (M2-06). -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- Recipient suggestions from the device's contacts (M2-08), only if the user allows it. -->
+    <uses-permission android:name="android.permission.READ_CONTACTS" />
+    <!-- To say when a snoozed message comes back (M4-06). Asked for when the user first snoozes. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <application
         android:name=".MailcraneApplication"
@@ -22,5 +28,27 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+        <!-- The inbox widget (M4-11). -->
+        <receiver
+            android:name=".widget.InboxWidgetReceiver"
+            android:exported="true"
+            android:label="@string/widget_name">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/inbox_widget_info" />
+        </receiver>
+        <!-- Opens downloaded attachments in other apps (M2-04). -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.files"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
     </application>
 </manifest>

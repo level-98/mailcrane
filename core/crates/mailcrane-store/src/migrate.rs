@@ -4,7 +4,20 @@ use crate::error::StoreError;
 use rusqlite::Connection;
 
 /// Migrations in order. Entry `n` upgrades the schema from v`n` to v`n+1`.
-pub(crate) const MIGRATIONS: &[&str] = &[include_str!("../migrations/0001_init.sql")];
+pub(crate) const MIGRATIONS: &[&str] = &[
+    include_str!("../migrations/0001_init.sql"),
+    include_str!("../migrations/0002_pending_ops.sql"),
+    include_str!("../migrations/0003_account_settings.sql"),
+    include_str!("../migrations/0004_drafts.sql"),
+    include_str!("../migrations/0005_outbox.sql"),
+    include_str!("../migrations/0006_save_sent.sql"),
+    include_str!("../migrations/0007_scheduled_send.sql"),
+    include_str!("../migrations/0008_search.sql"),
+    include_str!("../migrations/0009_snooze.sql"),
+    include_str!("../migrations/0010_contacts.sql"),
+    include_str!("../migrations/0011_threading.sql"),
+    include_str!("../migrations/0012_rules.sql"),
+];
 
 fn user_version(conn: &Connection) -> Result<i64, StoreError> {
     Ok(conn.query_row("PRAGMA user_version", [], |r| r.get(0))?)

@@ -1,13 +1,22 @@
 package app.mailcrane.core
 
 import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.channels.awaitClose
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.buffer
 import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArraySet
 
 /**
@@ -39,7 +48,82 @@ interface MailboxCore {
 
     /** The account's stored folders in display order, with unread counts. */
     suspend fun listFolders(accountId: Long): List<FolderSummary>
+
+    /**
+     * A swipe action: applied at once and queued like [MessageCore.applyAction]. With [undoable], the
+     * server copy waits [UNDO_WINDOW_MS] first so [undoAction] can still take it back.
+     * @throws ActionFailure
+     */
+    suspend fun swipeAction(
+        messageId: Long,
+        action: MessageAction,
+        undoable: Boolean,
+    )
+
+    /** Undoes the newest action on the message if it hasn't reached the server; false if too late. */
+    suspend fun undoAction(messageId: Long): Boolean
+
+    /** Searches the stored mail (works offline), newest first. */
+    suspend fun searchMessages(
+        accountId: Long,
+        folderId: Long?,
+        query: String,
+        limit: Int,
+    ): List<MessageSummary>
+
+    /** Asks the server for matches in the folder that were never downloaded; returns how many were stored. */
+    suspend fun searchServer(
+        folderId: Long,
+        query: String,
+    ): Int
+
+    /**
+     * Wakes every snooze that is due and starts moving those messages back; returns them, once each,
+     * for a notification. @throws SnoozeFailure
+     */
+    suspend fun wakeDueSnoozes(): List<WokenMessage> = emptyList()
+
+    /** The Unified Inbox: every account's inbox, newest first (M4-01). */
+    suspend fun listUnifiedInbox(
+        offset: Int,
+        limit: Int,
+    ): List<MessageSummary> = emptyList()
+
+    /** Syncs every account's inbox; one account failing doesn't stop the others. @throws SyncFailure if all fail */
+    suspend fun syncUnifiedInbox() {}
+
+    /** Unread messages across every account's inbox. */
+    suspend fun unifiedUnreadCount(): Int = 0
+
+    /**
+     * Runs a rule on the messages now in [folderId] of [accountId] and sends the changes to the server;
+     * returns how many messages it changed (M4-09). @throws RulesFailure
+     */
+    suspend fun runRuleOnExisting(
+        ruleId: Long,
+        folderId: Long,
+        accountId: Long,
+    ): Int = 0
+
+    /** Conversations with messages in the folder, newest first (M4-02). */
+    suspend fun listThreads(
+        folderId: Long,
+        offset: Int,
+        limit: Int,
+    ): List<ThreadSummary> = emptyList()
+
+    /** Every message of a conversation across folders, oldest first. */
+    suspend fun listThreadMessages(threadId: Long): List<MessageSummary> = emptyList()
+
+    /** The next time a snoozed message wakes (Unix seconds), or null. @throws SnoozeFailure */
+    suspend fun nextSnoozeWake(): Long? = null
 }
+
+/** The folder id the apps use for the Unified Inbox, every account's inbox together (M4-01). */
+const val UNIFIED_FOLDER_ID = -1L
+
+/** How long Undo is offered after archiving or deleting with a swipe. */
+const val UNDO_WINDOW_MS = 5_000L
 
 /** Forwards events from the core to every collector of [flow]. Called by the core on any thread. */
 private class EventHub : CoreEventListener {
@@ -108,8 +192,187 @@ class UniffiMailboxCore(
     }
 
     override suspend fun markRead(messageId: Long) {
-        withContext(io) { engine.markRead(messageId) }
+        try {
+            applyAction(messageId, MessageAction.MarkRead)
+        } catch (_: ActionFailure.NotFound) {
+            throw SyncFailure.Failed(SyncErrorKind.NOT_FOUND)
+        } catch (_: ActionFailure) {
+            throw SyncFailure.Failed(SyncErrorKind.STORAGE)
+        }
     }
+
+    override suspend fun applyAction(
+        messageId: Long,
+        action: MessageAction,
+    ) {
+        val account = withContext(io) { engine.applyAction(listOf(messageId), action) }
+        if (account != null) replaySoon(account)
+    }
+
+    override suspend fun swipeAction(
+        messageId: Long,
+        action: MessageAction,
+        undoable: Boolean,
+    ) {
+        val account = withContext(io) { engine.applyAction(listOf(messageId), action) }
+        if (account != null) replaySoon(account, if (undoable) UNDO_WINDOW_MS + 500 else 0)
+    }
+
+    override suspend fun undoAction(messageId: Long): Boolean = withContext(io) { engine.undoAction(messageId) }
+
+    override suspend fun snooze(
+        messageId: Long,
+        wakeAt: Long,
+    ) {
+        withContext(io) { engine.snoozeMessages(listOf(messageId), wakeAt) }.forEach { replaySoon(it) }
+    }
+
+    override suspend fun unsnooze(messageId: Long) {
+        withContext(io) { engine.unsnoozeMessages(listOf(messageId)) }.forEach { replaySoon(it) }
+    }
+
+    override suspend fun snoozeInfo(messageId: Long): SnoozeInfo? = withContext(io) { engine.snoozeInfo(messageId) }
+
+    override suspend fun wakeDueSnoozes(): List<WokenMessage> {
+        val woken = withContext(io) { engine.wakeDueSnoozes() }
+        woken.map { it.accountId }.distinct().forEach { replaySoon(it) }
+        return woken
+    }
+
+    override suspend fun nextSnoozeWake(): Long? = withContext(io) { engine.nextSnoozeWake() }
+
+    override suspend fun listUnifiedInbox(
+        offset: Int,
+        limit: Int,
+    ): List<MessageSummary> =
+        withContext(io) {
+            listUnifiedInbox(dbPath, offset.coerceAtLeast(0).toUInt(), limit.coerceAtLeast(0).toUInt())
+        }
+
+    override suspend fun syncUnifiedInbox() {
+        val inboxes =
+            withContext(io) {
+                listAccounts(dbPath).mapNotNull { account ->
+                    listFolders(dbPath, account.id).firstOrNull { it.role == FolderRole.INBOX }?.id
+                }
+            }
+        // Accounts sync side by side; each has its own lock in the core.
+        val failures =
+            coroutineScope {
+                inboxes
+                    .map { inbox ->
+                        async(io) {
+                            try {
+                                engine.syncFolder(inbox)
+                                null
+                            } catch (e: SyncFailure) {
+                                e
+                            }
+                        }
+                    }.awaitAll()
+                    .filterNotNull()
+            }
+        if (inboxes.isNotEmpty() && failures.size == inboxes.size) throw failures.first()
+    }
+
+    override suspend fun unifiedUnreadCount(): Int =
+        withContext(io) {
+            try {
+                unifiedUnreadCount(dbPath).coerceAtMost(Int.MAX_VALUE.toULong()).toInt()
+            } catch (_: SyncFailure) {
+                0
+            }
+        }
+
+    override suspend fun runRuleOnExisting(
+        ruleId: Long,
+        folderId: Long,
+        accountId: Long,
+    ): Int {
+        val changed = withContext(io) { engine.runRuleOnExisting(ruleId, folderId).toInt() }
+        if (changed > 0) replaySoon(accountId)
+        return changed
+    }
+
+    override suspend fun listThreads(
+        folderId: Long,
+        offset: Int,
+        limit: Int,
+    ): List<ThreadSummary> =
+        withContext(io) {
+            listThreads(dbPath, folderId, offset.coerceAtLeast(0).toUInt(), limit.coerceAtLeast(0).toUInt())
+        }
+
+    override suspend fun listThreadMessages(threadId: Long): List<MessageSummary> =
+        withContext(io) { listThreadMessages(dbPath, threadId) }
+
+    override suspend fun searchMessages(
+        accountId: Long,
+        folderId: Long?,
+        query: String,
+        limit: Int,
+    ): List<MessageSummary> =
+        withContext(io) { searchMessages(dbPath, accountId, folderId, query, limit.coerceAtLeast(0).toUInt()) }
+
+    override suspend fun searchServer(
+        folderId: Long,
+        query: String,
+    ): Int = withContext(io) { engine.searchServer(folderId, query).toInt() }
+
+    // Replays outlive the screen that started them (an archived message's screen closes at once).
+    private val background = CoroutineScope(SupervisorJob() + io)
+    private val replays = ConcurrentHashMap<Long, Job>()
+
+    /**
+     * Sends the account's queued actions to the server now, then again with back-off while some are
+     * left (offline, or the server busy). One loop per account; a newer action restarts it.
+     */
+    private fun replaySoon(
+        accountId: Long,
+        firstDelayMs: Long = 0,
+    ) {
+        replays[accountId]?.cancel()
+        replays[accountId] =
+            background.launch {
+                delay(firstDelayMs)
+                var wait = FIRST_RETRY_MS
+                while (true) {
+                    val left =
+                        try {
+                            engine.replayActions(accountId).toInt()
+                        } catch (_: SyncFailure) {
+                            -1
+                        }
+                    if (left == 0) break
+                    delay(wait)
+                    wait = (wait * 2).coerceAtMost(MAX_RETRY_MS)
+                }
+            }
+    }
+
+    private companion object {
+        const val FIRST_RETRY_MS = 5_000L
+        const val MAX_RETRY_MS = 600_000L
+    }
+
+    override suspend fun unsubscribeOptions(messageId: Long): UnsubscribeInfo? =
+        withContext(io) {
+            try {
+                unsubscribeOptions(dbPath, messageId)
+            } catch (_: UnsubscribeFailure) {
+                null
+            }
+        }
+
+    override suspend fun oneClickUnsubscribe(messageId: Long) {
+        withContext(io) { oneClickUnsubscribe(dbPath, messageId) }
+    }
+
+    override suspend fun saveAttachment(
+        messageId: Long,
+        partId: String,
+        destDir: String,
+    ): String = withContext(io) { saveAttachment(dbPath, messageId, partId, destDir) }
 
     override fun inlinePart(
         messageId: Long,

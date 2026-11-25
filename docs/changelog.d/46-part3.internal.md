@@ -1,0 +1,1 @@
+- JMAP client: marking read and flagged, moving and deleting with Email/set, and sending through upload, Email/import and EmailSubmission/set with the copy filed in Sent by the server (part 3 of #46).

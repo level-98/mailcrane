@@ -22,6 +22,11 @@ use mailcrane_store::{AccountId, Security, Store};
 
 use crate::secrets::{SecretKey, SecretStore};
 
+pub(crate) mod reply;
+pub mod signature;
+
+pub use reply::{prepare_reply, ReplyError, ReplyKind};
+
 /// A message the user is writing. Each recipient entry is one chip or field
 /// value as typed, such as `Ann <ann@example.org>`; an entry may also hold
 /// several addresses separated by commas.
@@ -34,6 +39,18 @@ pub struct ComposeDraft {
     pub bcc: Vec<String>,
     pub subject: String,
     pub body_text: String,
+    /// For a reply: the Message-ID replied to, without angle brackets.
+    pub in_reply_to: Option<String>,
+    /// For a reply: the thread's Message-IDs, oldest first.
+    pub references: Vec<String>,
+    /// Files to attach (M2-04).
+    pub attachments: Vec<mailcrane_mime::OutgoingAttachment>,
+    /// For a forward: attach the original message's attachments too (read
+    /// from its downloaded body when sending).
+    pub forward_attachments_of: Option<mailcrane_store::MessageId>,
+    /// Rich text (M2-09): sent as plain text plus HTML; `body_text` then
+    /// holds the plain version for drafts.
+    pub rich: Option<mailcrane_mime::richtext::RichDoc>,
 }
 
 /// Which recipient field an entry is in.
@@ -205,27 +222,47 @@ pub struct PreparedSend {
     message: Vec<u8>,
 }
 
-/// Validates the draft, reads the account and its password, and builds the
-/// message. Nothing goes over the network.
-pub fn prepare_send(
+/// A message built for sending, without credentials: what the outbox keeps.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BuiltMessage {
+    pub envelope: Envelope,
+    /// The exact bytes to send; never a Bcc header.
+    pub raw: Vec<u8>,
+    /// Its Message-ID, without angle brackets.
+    pub message_id: String,
+}
+
+/// The draft's own attachments, then the forwarded message's.
+fn all_attachments(
     store: &Store,
-    secrets: &dyn SecretStore,
     draft: &ComposeDraft,
-    options: &SendOptions,
-) -> Result<PreparedSend, SendError> {
+) -> Result<Vec<mailcrane_mime::OutgoingAttachment>, SendError> {
+    let mut out = draft.attachments.clone();
+    if let Some(original) = draft.forward_attachments_of {
+        let raw = store
+            .get_body(original)
+            .map_err(|_| SendError::Storage)?
+            .ok_or(SendError::Storage)?;
+        for a in mailcrane_mime::attachments_of(&raw).map_err(|_| SendError::Storage)? {
+            out.push(mailcrane_mime::OutgoingAttachment {
+                filename: a.filename.unwrap_or_default(),
+                mime_type: a.mime_type,
+                bytes: a.bytes,
+            });
+        }
+    }
+    Ok(out)
+}
+
+/// Validates the draft, reads the account and builds the message with a
+/// fresh Message-ID. Nothing goes over the network; no password is read.
+pub fn build_for_sending(store: &Store, draft: &ComposeDraft) -> Result<BuiltMessage, SendError> {
     let recipients = validate_recipients(draft)?;
     let account = store
         .get_account(draft.account_id)
         .map_err(|_| SendError::Storage)?
         .ok_or(SendError::AccountNotFound)?
         .details;
-    let password = secrets
-        .get(&SecretKey::account_password(draft.account_id.0))
-        .map_err(|_| SendError::MissingCredentials)?
-        .ok_or(SendError::MissingCredentials)?;
-    let password =
-        std::str::from_utf8(password.expose()).map_err(|_| SendError::MissingCredentials)?;
-
     let from = Address {
         name: Some(account.display_name.trim().to_owned()).filter(|n| !n.is_empty()),
         email: account.email.clone(),
@@ -234,7 +271,13 @@ pub fn prepare_send(
         from: account.email.clone(),
         to: recipients.envelope(),
     };
-    let message = build_message(&OutgoingMessage {
+    let domain = account
+        .email
+        .rsplit_once('@')
+        .map(|(_, d)| d)
+        .unwrap_or_default();
+    let message_id = mailcrane_mime::new_message_id(domain).map_err(|_| SendError::Internal)?;
+    let raw = build_message(&OutgoingMessage {
         from,
         to: recipients.to,
         cc: recipients.cc,
@@ -243,6 +286,12 @@ pub fn prepare_send(
         body_text: draft.body_text.clone(),
         // The SMTP client doesn't negotiate 8BITMIME yet, so stay 7-bit.
         encoding: TransferEncoding::QuotedPrintable,
+        in_reply_to: draft.in_reply_to.clone(),
+        references: draft.references.clone(),
+        message_id: Some(message_id.clone()),
+        is_draft: false,
+        attachments: all_attachments(store, draft)?,
+        rich: draft.rich.clone(),
     })
     .map_err(|e| match e {
         BuildError::InvalidAddress { .. } => SendError::InvalidSender,
@@ -251,7 +300,32 @@ pub fn prepare_send(
         BuildError::TooLarge => SendError::TooLarge,
         BuildError::Random => SendError::Internal,
     })?;
+    Ok(BuiltMessage {
+        envelope,
+        raw,
+        message_id,
+    })
+}
 
+/// The account's SMTP server and credentials (the password from the secret
+/// store, never the database).
+pub(crate) fn smtp_settings(
+    store: &Store,
+    secrets: &dyn SecretStore,
+    account_id: AccountId,
+    options: &SendOptions,
+) -> Result<(SmtpConfig, SmtpAuth), SendError> {
+    let account = store
+        .get_account(account_id)
+        .map_err(|_| SendError::Storage)?
+        .ok_or(SendError::AccountNotFound)?
+        .details;
+    let password = secrets
+        .get(&SecretKey::account_password(account_id.0))
+        .map_err(|_| SendError::MissingCredentials)?
+        .ok_or(SendError::MissingCredentials)?;
+    let password =
+        std::str::from_utf8(password.expose()).map_err(|_| SendError::MissingCredentials)?;
     let security = match account.smtp_security {
         Security::Tls => SmtpSecurity::ImplicitTls,
         Security::Starttls => SmtpSecurity::StartTls,
@@ -264,12 +338,35 @@ pub fn prepare_send(
         username: account.username,
         password: mailcrane_smtp::Secret::new(password),
     };
-    Ok(PreparedSend {
+    Ok((config, auth))
+}
+
+/// A built message with its server and credentials, ready to send.
+pub(crate) fn prepared(
+    config: SmtpConfig,
+    auth: SmtpAuth,
+    envelope: Envelope,
+    message: Vec<u8>,
+) -> PreparedSend {
+    PreparedSend {
         config,
         auth,
         envelope,
         message,
-    })
+    }
+}
+
+/// Validates the draft, reads the account and its password, and builds the
+/// message. Nothing goes over the network.
+pub fn prepare_send(
+    store: &Store,
+    secrets: &dyn SecretStore,
+    draft: &ComposeDraft,
+    options: &SendOptions,
+) -> Result<PreparedSend, SendError> {
+    let built = build_for_sending(store, draft)?;
+    let (config, auth) = smtp_settings(store, secrets, draft.account_id, options)?;
+    Ok(prepared(config, auth, built.envelope, built.raw))
 }
 
 /// Sends a prepared message.
@@ -309,7 +406,7 @@ pub async fn send(
     send_prepared(prepared).await
 }
 
-fn map_smtp(err: SmtpError) -> SendError {
+pub(crate) fn map_smtp(err: SmtpError) -> SendError {
     match err {
         SmtpError::CannotConnect => SendError::CannotConnect,
         SmtpError::TlsFailure => SendError::TlsFailure,
@@ -338,6 +435,11 @@ mod tests {
             bcc: v(bcc),
             subject: "Hi".into(),
             body_text: "Body".into(),
+            in_reply_to: None,
+            references: vec![],
+            attachments: Vec::new(),
+            forward_attachments_of: None,
+            rich: None,
         }
     }
 

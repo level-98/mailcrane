@@ -1,0 +1,1 @@
+- Core for automatic account setup: server settings are found from the email address via the provider's own autoconfig file, DNS SRV records and the MX provider's autoconfig file, never offering plain-text servers or sending the address anywhere (part of #31; the screen comes next, ISPDB waits for a decision).

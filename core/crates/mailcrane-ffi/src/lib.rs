@@ -8,12 +8,27 @@
 uniffi::setup_scaffolding!();
 
 pub mod account;
+#[cfg(test)]
+mod accounts_tests;
+pub mod actions;
+pub mod attachments;
+pub mod autoconfig;
 pub mod compose;
+pub mod contacts;
+pub mod drafts;
 pub mod folders;
 pub mod links;
 pub mod messages;
+pub mod outbox;
+pub mod rules;
+pub mod search;
 pub mod secrets;
+pub mod settings;
+pub mod snooze;
 pub mod sync;
+pub mod threads;
+pub mod unsubscribe;
+pub mod widget;
 
 /// The name of this crate.
 pub const CRATE_NAME: &str = env!("CARGO_PKG_NAME");

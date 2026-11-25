@@ -96,6 +96,15 @@ pub struct ParsedMessage {
     pub list_unsubscribe: Option<String>,
     /// List-Unsubscribe-Post as written (RFC 8058), cleaned.
     pub list_unsubscribe_post: Option<String>,
+    /// The id part of List-Id (RFC 2919), lower-case: `list.example.org`
+    /// from `Name <list.example.org>`.
+    pub list_id: Option<String>,
+    /// Authentication-Results headers (RFC 8601), cleaned, topmost first
+    /// (at most 20).
+    pub authentication_results: Vec<String>,
+    /// The `by` host of the topmost Received header: the user's provider,
+    /// whose Authentication-Results can be trusted.
+    pub received_by: Option<String>,
     /// The plain-text body, or text derived from the HTML if there is only
     /// HTML.
     pub text_plain: Option<String>,

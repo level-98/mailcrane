@@ -1,4 +1,4 @@
-//! Schema v1 shape, migrations and file handling.
+//! Schema shape, migrations and file handling.
 
 use mailcrane_store::{Store, StoreError};
 use rusqlite::Connection;
@@ -24,9 +24,27 @@ fn every_table_and_index_exists() -> R {
         [
             "accounts",
             "attachments",
+            "correspondents",
+            "drafts",
             "folders",
             "message_bodies",
             "messages",
+            // FTS5 search (M4-03) and its shadow tables.
+            "messages_fts",
+            "messages_fts_config",
+            "messages_fts_content",
+            "messages_fts_data",
+            "messages_fts_docsize",
+            "messages_fts_idx",
+            "outbox",
+            "pending_op_messages",
+            "pending_ops",
+            "rule_actions",
+            "rule_conditions",
+            "rules",
+            "rules_seen",
+            "snoozes",
+            "thread_keys",
             "threads"
         ]
     );
@@ -35,6 +53,8 @@ fn every_table_and_index_exists() -> R {
         "idx_messages_folder_date",
         "idx_messages_message_id_header",
         "idx_messages_thread_id",
+        "idx_pending_ops_account",
+        "idx_pending_op_messages_message",
     ] {
         assert!(indexes.iter().any(|i| i == want), "missing index {want}");
     }
@@ -66,7 +86,7 @@ fn reopen_runs_no_migrations_and_keeps_data() -> R {
     let dir = tempfile::tempdir()?;
     let path = dir.path().join("m.db");
     let store = Store::open(&path)?;
-    assert_eq!(store.schema_version()?, 1);
+    assert_eq!(store.schema_version()?, 12);
     drop(store);
     let conn = Connection::open(&path)?;
     conn.execute(
@@ -77,7 +97,7 @@ fn reopen_runs_no_migrations_and_keeps_data() -> R {
     )?;
     drop(conn);
     let store = Store::open(&path)?;
-    assert_eq!(store.schema_version()?, 1);
+    assert_eq!(store.schema_version()?, 12);
     assert_eq!(store.list_accounts()?.len(), 1);
     Ok(())
 }
