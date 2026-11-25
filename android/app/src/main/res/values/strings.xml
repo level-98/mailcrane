@@ -72,6 +72,39 @@
     <string name="message_unknown_sender">Unknown sender</string>
     <!-- TalkBack reads one row as these parts joined by spaces, e.g. "Unread. From Ana. Subject: Lunch. 10:42. Has attachment." -->
     <string name="message_a11y_unread">Unread.</string>
+    <string name="message_a11y_selected">Selected.</string>
+    <!-- TalkBack's name for long-press on a message row (M4-14). -->
+    <string name="message_select">Select</string>
+    <!-- Multi-select in the message list (M4-14). -->
+    <plurals name="bulk_selected_count">
+        <item quantity="one">%d selected</item>
+        <item quantity="other">%d selected</item>
+    </plurals>
+    <string name="bulk_clear">Clear selection</string>
+    <plurals name="bulk_archived">
+        <item quantity="one">%d archived</item>
+        <item quantity="other">%d archived</item>
+    </plurals>
+    <plurals name="bulk_deleted">
+        <item quantity="one">%d deleted</item>
+        <item quantity="other">%d deleted</item>
+    </plurals>
+    <plurals name="bulk_deleted_for_good">
+        <item quantity="one">%d deleted for good</item>
+        <item quantity="other">%d deleted for good</item>
+    </plurals>
+    <plurals name="bulk_moved">
+        <item quantity="one">%d moved</item>
+        <item quantity="other">%d moved</item>
+    </plurals>
+    <string name="bulk_move_one_account">Choose messages from one account to move them.</string>
+    <string name="bulk_undo_partly_late">Some messages had already reached the server and weren\'t put back.</string>
+    <plurals name="bulk_delete_forever_title">
+        <item quantity="one">Delete %d message for good?</item>
+        <item quantity="other">Delete %d messages for good?</item>
+    </plurals>
+    <string name="bulk_delete_forever_text">Messages already in Trash, or in an account without a Trash folder, are deleted for good. This can\'t be undone.</string>
+    <string name="bulk_delete_forever_confirm">Delete for good</string>
     <string name="message_a11y_flagged">Flagged.</string>
     <string name="message_a11y_from">From %1$s.</string>
     <string name="message_a11y_subject">Subject: %1$s.</string>

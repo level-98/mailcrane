@@ -6,7 +6,7 @@
 use crate::sync::{CoreEvent, ListenerAdapter, SyncEngine, SyncErrorKind, SyncFailure};
 use mailcrane_core::actions::{self, Action, ActionError};
 use mailcrane_core::events;
-use mailcrane_store::{AccountId, FolderId, MessageId};
+use mailcrane_store::{AccountId, FolderId, MessageId, ThreadId};
 
 /// What the user asked to do with a message.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
@@ -88,6 +88,12 @@ pub enum ActionFailure {
     /// The messages are in different folders.
     #[error("the messages are in different folders")]
     MixedFolders,
+    /// A move of messages from several accounts (M4-14).
+    #[error("the messages are in different accounts")]
+    MixedAccounts,
+    /// More messages than one action takes.
+    #[error("too many messages")]
+    TooMany,
     /// The local database failed.
     #[error("storage failure")]
     Storage,
@@ -99,9 +105,71 @@ impl From<ActionError> for ActionFailure {
             ActionError::NoArchiveFolder => Self::NoArchiveFolder,
             ActionError::UnknownMessage | ActionError::UnknownFolder => Self::NotFound,
             ActionError::MixedFolders => Self::MixedFolders,
+            ActionError::MixedAccounts => Self::MixedAccounts,
+            ActionError::TooMany => Self::TooMany,
             ActionError::Store(_) => Self::Storage,
         }
     }
+}
+
+/// What a multi-select action (M4-14) applies to: messages, plus
+/// conversation rows of one folder's list, each standing for its visible
+/// messages in that folder.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct BulkSelection {
+    /// Selected message rows, from any folder or account.
+    pub message_ids: Vec<i64>,
+    /// The folder whose conversation rows were selected (ignored when
+    /// `thread_ids` is empty).
+    pub folder_id: i64,
+    /// Selected conversation rows of `folder_id`.
+    pub thread_ids: Vec<i64>,
+}
+
+/// What [`SyncEngine::apply_bulk_action`] did.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct BulkApplied {
+    /// Accounts whose queues to replay with [`SyncEngine::replay_actions`].
+    pub account_ids: Vec<i64>,
+    /// The messages that changed; pass them to
+    /// [`SyncEngine::undo_bulk_action`] for Undo.
+    pub message_ids: Vec<i64>,
+    /// Some messages were deleted for good (they were in Trash, or the
+    /// account has none) rather than moved to Trash.
+    pub deleted_for_good: bool,
+}
+
+/// What [`SyncEngine::undo_bulk_action`] did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Record)]
+pub struct BulkUndo {
+    /// Messages put back.
+    pub undone: u32,
+    /// Messages whose action had already reached the server.
+    pub too_late: u32,
+}
+
+/// The messages a selection stands for: its message rows, plus each
+/// conversation row's visible messages in the selection's folder.
+fn expand(
+    store: &mailcrane_store::Store,
+    selection: BulkSelection,
+) -> Result<Vec<MessageId>, ActionFailure> {
+    if selection
+        .message_ids
+        .len()
+        .saturating_add(selection.thread_ids.len())
+        > actions::MAX_BULK
+    {
+        return Err(ActionFailure::TooMany);
+    }
+    let mut ids: Vec<MessageId> = selection.message_ids.into_iter().map(MessageId).collect();
+    for thread in selection.thread_ids {
+        let in_folder = store
+            .thread_message_ids_in_folder(FolderId(selection.folder_id), ThreadId(thread))
+            .map_err(|_| ActionFailure::Storage)?;
+        ids.extend(in_folder);
+    }
+    Ok(ids)
 }
 
 /// Unix seconds now. A clock before 1970 counts as 0; it only delays retries.
@@ -129,6 +197,49 @@ impl SyncEngine {
         let listener = ListenerAdapter(self.listener.clone());
         let applied = actions::apply_action(&store, &ids, action.into(), now(), &listener)?;
         Ok(applied.filter(|a| a.queued).map(|a| a.account.0))
+    }
+
+    /// Multi-select (M4-14): applies `action` to everything in `selection`,
+    /// across folders and accounts, all or nothing, one queued op per
+    /// folder. Delete moves to each account's Trash, or deletes for good in
+    /// Trash or without one. A move needs messages of one account
+    /// (`MixedAccounts` otherwise). Doesn't wait for a running sync.
+    pub fn apply_bulk_action(
+        &self,
+        selection: BulkSelection,
+        action: MessageAction,
+    ) -> Result<BulkApplied, ActionFailure> {
+        let store = self.open_store().map_err(|_| ActionFailure::Storage)?;
+        let ids = expand(&store, selection)?;
+        let listener = ListenerAdapter(self.listener.clone());
+        let applied = actions::apply_bulk_action(&store, &ids, action.into(), now(), &listener)?;
+        Ok(BulkApplied {
+            account_ids: applied.accounts.into_iter().map(|a| a.0).collect(),
+            message_ids: applied.messages.into_iter().map(|m| m.0).collect(),
+            deleted_for_good: applied.deleted_for_good,
+        })
+    }
+
+    /// How many messages in `selection` a Delete would delete for good
+    /// (already in Trash, or in an account without one), so the app can
+    /// ask first. Changes nothing.
+    pub fn count_deleted_for_good(&self, selection: BulkSelection) -> Result<u32, ActionFailure> {
+        let store = self.open_store().map_err(|_| ActionFailure::Storage)?;
+        let ids = expand(&store, selection)?;
+        Ok(actions::count_deleted_for_good(&store, &ids)?)
+    }
+
+    /// Undo for [`SyncEngine::apply_bulk_action`]: puts back every one of
+    /// `message_ids` whose action hasn't reached the server yet.
+    pub fn undo_bulk_action(&self, message_ids: Vec<i64>) -> Result<BulkUndo, ActionFailure> {
+        let store = self.open_store().map_err(|_| ActionFailure::Storage)?;
+        let ids: Vec<MessageId> = message_ids.into_iter().map(MessageId).collect();
+        let listener = ListenerAdapter(self.listener.clone());
+        let undo = actions::undo_bulk(&store, &ids, &listener)?;
+        Ok(BulkUndo {
+            undone: undo.undone,
+            too_late: undo.too_late,
+        })
     }
 
     /// Undoes the newest action on `message_id` if it hasn't reached the

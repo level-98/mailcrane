@@ -92,6 +92,126 @@ pub struct PendingOp {
     pub messages: Vec<OpMessage>,
 }
 
+/// One action for [`Store::queue_ops`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NewOp {
+    pub account: AccountId,
+    pub kind: OpKind,
+    /// The folder the messages are in.
+    pub folder: FolderId,
+    /// Where they go, for [`OpKind::Move`].
+    pub dest: Option<FolderId>,
+    pub messages: Vec<OpMessage>,
+}
+
+/// What [`Store::cancel_queued_many`] did.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CancelReport {
+    /// Messages whose action was taken back.
+    pub undone: u32,
+    /// Messages whose action had already been tried (or had none).
+    pub too_late: u32,
+    /// The folders of the undone messages, each once.
+    pub folders: Vec<FolderId>,
+}
+
+/// [`Store::queue_op`]'s work inside an open transaction.
+fn queue_in_tx(
+    tx: &Transaction<'_>,
+    account: AccountId,
+    kind: OpKind,
+    folder: FolderId,
+    dest: Option<FolderId>,
+    messages: &[OpMessage],
+    now: i64,
+) -> Result<Option<OpId>, StoreError> {
+    let mut kept: Vec<OpMessage> = Vec::new();
+    for m in messages {
+        apply_local(tx, kind, m.message_id)?;
+        if let Some(opposite) = kind.opposite() {
+            // The newest queued action on this message, if untried.
+            let latest: Option<(i64, String)> = tx
+                .query_row(
+                    "SELECT o.id, o.kind FROM pending_ops o \
+                         JOIN pending_op_messages pm ON pm.op_id = o.id \
+                         WHERE pm.message_id = ?1 AND o.attempts = 0 AND o.step = 0 \
+                         ORDER BY o.id DESC LIMIT 1",
+                    params![m.message_id.0],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )
+                .optional()?;
+            if let Some((op, latest_kind)) = latest {
+                if OpKind::parse(&latest_kind)? == opposite {
+                    tx.execute(
+                        "DELETE FROM pending_op_messages WHERE op_id = ?1 AND message_id = ?2",
+                        params![op, m.message_id.0],
+                    )?;
+                    tx.execute(
+                        "DELETE FROM pending_ops WHERE id = ?1 AND NOT EXISTS \
+                             (SELECT 1 FROM pending_op_messages WHERE op_id = ?1)",
+                        params![op],
+                    )?;
+                    continue;
+                }
+            }
+        }
+        kept.push(*m);
+    }
+    Ok(if kept.is_empty() {
+        None
+    } else {
+        tx.execute(
+            "INSERT INTO pending_ops (account_id, kind, folder_id, dest_folder_id, \
+                 next_attempt_at, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?5)",
+            params![account.0, kind.as_str(), folder.0, dest.map(|d| d.0), now],
+        )?;
+        let op = tx.last_insert_rowid();
+        let mut insert = tx.prepare(
+            "INSERT OR IGNORE INTO pending_op_messages (op_id, message_id, uid) \
+                 VALUES (?1, ?2, ?3)",
+        )?;
+        for m in &kept {
+            insert.execute(params![op, m.message_id.0, m.uid])?;
+        }
+        Some(OpId(op))
+    })
+}
+
+/// [`Store::cancel_queued`]'s work inside an open transaction.
+fn cancel_in_tx(tx: &Transaction<'_>, message: MessageId) -> Result<Option<FolderId>, StoreError> {
+    let latest: Option<(i64, String, i64)> = tx
+        .query_row(
+            "SELECT o.id, o.kind, o.folder_id FROM pending_ops o \
+                 JOIN pending_op_messages pm ON pm.op_id = o.id \
+                 WHERE pm.message_id = ?1 ORDER BY o.id DESC LIMIT 1",
+            params![message.0],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .optional()?;
+    let Some((op, kind, folder)) = latest else {
+        return Ok(None);
+    };
+    let untried: bool = tx.query_row(
+        "SELECT attempts = 0 AND step = 0 FROM pending_ops WHERE id = ?1",
+        params![op],
+        |r| r.get(0),
+    )?;
+    if !untried {
+        return Ok(None);
+    }
+    revert_local(tx, OpKind::parse(&kind)?, message)?;
+    tx.execute(
+        "DELETE FROM pending_op_messages WHERE op_id = ?1 AND message_id = ?2",
+        params![op, message.0],
+    )?;
+    tx.execute(
+        "DELETE FROM pending_ops WHERE id = ?1 AND NOT EXISTS \
+             (SELECT 1 FROM pending_op_messages WHERE op_id = ?1)",
+        params![op],
+    )?;
+    Ok(Some(FolderId(folder)))
+}
+
 fn apply_local(tx: &Transaction<'_>, kind: OpKind, id: MessageId) -> Result<(), StoreError> {
     let sql = match kind {
         OpKind::MarkRead => "UPDATE messages SET seen = 1 WHERE id = ?1",
@@ -153,58 +273,31 @@ impl Store {
         now: i64,
     ) -> Result<Option<OpId>, StoreError> {
         let tx = self.write_tx()?;
-        let mut kept: Vec<OpMessage> = Vec::new();
-        for m in messages {
-            apply_local(&tx, kind, m.message_id)?;
-            if let Some(opposite) = kind.opposite() {
-                // The newest queued action on this message, if untried.
-                let latest: Option<(i64, String)> = tx
-                    .query_row(
-                        "SELECT o.id, o.kind FROM pending_ops o \
-                         JOIN pending_op_messages pm ON pm.op_id = o.id \
-                         WHERE pm.message_id = ?1 AND o.attempts = 0 AND o.step = 0 \
-                         ORDER BY o.id DESC LIMIT 1",
-                        params![m.message_id.0],
-                        |r| Ok((r.get(0)?, r.get(1)?)),
-                    )
-                    .optional()?;
-                if let Some((op, latest_kind)) = latest {
-                    if OpKind::parse(&latest_kind)? == opposite {
-                        tx.execute(
-                            "DELETE FROM pending_op_messages WHERE op_id = ?1 AND message_id = ?2",
-                            params![op, m.message_id.0],
-                        )?;
-                        tx.execute(
-                            "DELETE FROM pending_ops WHERE id = ?1 AND NOT EXISTS \
-                             (SELECT 1 FROM pending_op_messages WHERE op_id = ?1)",
-                            params![op],
-                        )?;
-                        continue;
-                    }
-                }
-            }
-            kept.push(*m);
-        }
-        let id = if kept.is_empty() {
-            None
-        } else {
-            tx.execute(
-                "INSERT INTO pending_ops (account_id, kind, folder_id, dest_folder_id, \
-                 next_attempt_at, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?5)",
-                params![account.0, kind.as_str(), folder.0, dest.map(|d| d.0), now],
-            )?;
-            let op = tx.last_insert_rowid();
-            let mut insert = tx.prepare(
-                "INSERT OR IGNORE INTO pending_op_messages (op_id, message_id, uid) \
-                 VALUES (?1, ?2, ?3)",
-            )?;
-            for m in &kept {
-                insert.execute(params![op, m.message_id.0, m.uid])?;
-            }
-            Some(OpId(op))
-        };
+        let id = queue_in_tx(&tx, account, kind, folder, dest, messages, now)?;
         tx.commit()?;
         Ok(id)
+    }
+
+    /// Several [`Store::queue_op`]s (e.g. one per folder for a multi-select
+    /// action, M4-14) in one transaction: all are applied and queued, or on
+    /// error none is. Returns each op in order, `None` where every message
+    /// cancelled out.
+    pub fn queue_ops(&self, ops: &[NewOp], now: i64) -> Result<Vec<Option<OpId>>, StoreError> {
+        let tx = self.write_tx()?;
+        let mut ids = Vec::with_capacity(ops.len());
+        for op in ops {
+            ids.push(queue_in_tx(
+                &tx,
+                op.account,
+                op.kind,
+                op.folder,
+                op.dest,
+                &op.messages,
+                now,
+            )?);
+        }
+        tx.commit()?;
+        Ok(ids)
     }
 
     /// The account's queued actions in the order they were made, including
@@ -352,38 +445,30 @@ impl Store {
     /// there was nothing to undo (already sent to the server, or no action).
     pub fn cancel_queued(&self, message: MessageId) -> Result<Option<FolderId>, StoreError> {
         let tx = self.write_tx()?;
-        let latest: Option<(i64, String, i64)> = tx
-            .query_row(
-                "SELECT o.id, o.kind, o.folder_id FROM pending_ops o \
-                 JOIN pending_op_messages pm ON pm.op_id = o.id \
-                 WHERE pm.message_id = ?1 ORDER BY o.id DESC LIMIT 1",
-                params![message.0],
-                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
-            )
-            .optional()?;
-        let Some((op, kind, folder)) = latest else {
-            return Ok(None);
-        };
-        let untried: bool = tx.query_row(
-            "SELECT attempts = 0 AND step = 0 FROM pending_ops WHERE id = ?1",
-            params![op],
-            |r| r.get(0),
-        )?;
-        if !untried {
-            return Ok(None);
-        }
-        revert_local(&tx, OpKind::parse(&kind)?, message)?;
-        tx.execute(
-            "DELETE FROM pending_op_messages WHERE op_id = ?1 AND message_id = ?2",
-            params![op, message.0],
-        )?;
-        tx.execute(
-            "DELETE FROM pending_ops WHERE id = ?1 AND NOT EXISTS \
-             (SELECT 1 FROM pending_op_messages WHERE op_id = ?1)",
-            params![op],
-        )?;
+        let folder = cancel_in_tx(&tx, message)?;
         tx.commit()?;
-        Ok(Some(FolderId(folder)))
+        Ok(folder)
+    }
+
+    /// Undo for a multi-select action (M4-14): [`Store::cancel_queued`] for
+    /// each of `messages`, in one transaction. Messages whose action has
+    /// already been tried stay as they are and count as too late.
+    pub fn cancel_queued_many(&self, messages: &[MessageId]) -> Result<CancelReport, StoreError> {
+        let tx = self.write_tx()?;
+        let mut report = CancelReport::default();
+        for message in messages {
+            match cancel_in_tx(&tx, *message)? {
+                Some(folder) => {
+                    report.undone = report.undone.saturating_add(1);
+                    if !report.folders.contains(&folder) {
+                        report.folders.push(folder);
+                    }
+                }
+                None => report.too_late = report.too_late.saturating_add(1),
+            }
+        }
+        tx.commit()?;
+        Ok(report)
     }
 
     /// How many actions are queued for the account.

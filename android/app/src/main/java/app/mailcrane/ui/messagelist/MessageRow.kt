@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -24,6 +25,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -39,7 +41,8 @@ import java.util.Locale
 
 /**
  * One message in the list. Unread rows are bold with a dot; flag and attachment have icons, so no
- * state is shown by colour alone. TalkBack reads the whole row as one item.
+ * state is shown by colour alone. TalkBack reads the whole row as one item. While [selecting] (M4-14) a
+ * checkbox replaces the unread dot and a [selected] row is tinted.
  */
 @Composable
 fun MessageRow(
@@ -47,12 +50,14 @@ fun MessageRow(
     now: ZonedDateTime,
     locale: Locale,
     modifier: Modifier = Modifier,
+    selecting: Boolean = false,
+    selected: Boolean = false,
 ) {
     val resources = LocalResources.current
     val sender = senderLabel(message, resources)
     val subject = message.subject.ifBlank { stringResource(R.string.message_no_subject) }
     val date = remember(message.date, now.toLocalDate(), now.zone, locale) { formatListDate(message.date, now, locale) }
-    val description = rowDescription(message, sender, subject, date, resources)
+    val description = rowDescription(message, sender, subject, date, resources, selected)
     val unread = !message.isSeen
     val weight = if (unread) FontWeight.Bold else FontWeight.Normal
     val colors = MaterialTheme.colorScheme
@@ -67,13 +72,26 @@ fun MessageRow(
         modifier =
             modifier
                 .fillMaxWidth()
-                .clearAndSetSemantics { contentDescription = description }
+                .clearAndSetSemantics {
+                    contentDescription = description
+                    if (selecting) this.selected = selected
+                }.then(if (selected) Modifier.background(colors.secondaryContainer) else Modifier)
                 .padding(start = 8.dp, end = 16.dp, top = 10.dp, bottom = 10.dp),
         verticalAlignment = Alignment.Top,
     ) {
-        Box(modifier = Modifier.width(16.dp + dotSize / 2).padding(top = dotTop), contentAlignment = Alignment.Center) {
-            if (unread) {
-                Box(Modifier.size(dotSize).background(colors.primary, CircleShape))
+        if (selecting) {
+            // Not clickable itself: the row handles taps, so the target stays the whole row.
+            Box(Modifier.padding(end = 8.dp), contentAlignment = Alignment.Center) {
+                Checkbox(checked = selected, onCheckedChange = null)
+            }
+        } else {
+            Box(
+                modifier = Modifier.width(16.dp + dotSize / 2).padding(top = dotTop),
+                contentAlignment = Alignment.Center,
+            ) {
+                if (unread) {
+                    Box(Modifier.size(dotSize).background(colors.primary, CircleShape))
+                }
             }
         }
         Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
@@ -150,15 +168,17 @@ internal fun senderLabel(
         resources.getString(R.string.message_unknown_sender)
     }
 
-/** What TalkBack reads, e.g. "Unread. From Ana. Subject: Lunch. 10:42. Has attachment." */
+/** What TalkBack reads, e.g. "Unread. From Ana. Subject: Lunch. 10:42. Has attachment.", led by "Selected." */
 internal fun rowDescription(
     message: MessageSummary,
     sender: String,
     subject: String,
     date: String,
     resources: Resources,
+    selected: Boolean = false,
 ): String =
     buildList {
+        if (selected) add(resources.getString(R.string.message_a11y_selected))
         if (!message.isSeen) add(resources.getString(R.string.message_a11y_unread))
         if (message.isFlagged) add(resources.getString(R.string.message_a11y_flagged))
         add(resources.getString(R.string.message_a11y_from, sender))

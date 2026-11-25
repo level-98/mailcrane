@@ -509,3 +509,86 @@ async fn bad_requests_change_nothing() {
     assert_eq!(s.store.count_pending_ops(s.account).expect("count"), 0);
     assert!(events.all().is_empty());
 }
+
+/// Multi-select (M4-14): every selected message in one op, one server move.
+#[tokio::test]
+async fn bulk_archive_is_one_op_and_reaches_the_server() {
+    let imap = fake(&[], &[]).await;
+    let s = setup(&imap, Store::open_in_memory().expect("store")).await;
+    let events = Events::default();
+    let ids = [s.message(1), s.message(2), s.message(3)];
+
+    let applied =
+        apply_bulk_action(&s.store, &ids, Action::Archive, NOW, &events).expect("applies");
+    assert_eq!(applied.accounts, [s.account]);
+    assert_eq!(applied.messages.len(), 3);
+    assert!(s.visible_uids(s.inbox).is_empty(), "hidden at once");
+    let ops = s.store.pending_ops(s.account).expect("ops");
+    assert_eq!(ops.len(), 1, "one op for the folder");
+    assert_eq!(ops[0].messages.len(), 3);
+    assert_eq!(
+        events.all(),
+        [CoreEvent::MessagesChanged { folder_id: s.inbox }]
+    );
+
+    let report = replay_now(&imap, &s, &events, NOW).await;
+    assert_eq!(report.done, 1);
+    assert!(server_uids(&imap, "INBOX").await.is_empty());
+    assert_eq!(server_uids(&imap, "Archive").await.len(), 3);
+}
+
+#[tokio::test]
+async fn bulk_undo_before_replay_puts_everything_back_and_sends_nothing() {
+    let imap = fake(&[], &[]).await;
+    let s = setup(&imap, Store::open_in_memory().expect("store")).await;
+    let events = Events::default();
+    let ids = [s.message(1), s.message(2)];
+    let applied = apply_bulk_action(&s.store, &ids, Action::Delete, NOW, &events).expect("applies");
+    assert_eq!(s.visible_uids(s.inbox), [3]);
+
+    let undo = undo_bulk(&s.store, &applied.messages, &events).expect("undoes");
+    assert_eq!(
+        undo,
+        BulkUndo {
+            undone: 2,
+            too_late: 0
+        }
+    );
+    assert_eq!(s.visible_uids(s.inbox), [1, 2, 3]);
+    assert_eq!(s.store.count_pending_ops(s.account).expect("count"), 0);
+    replay_now(&imap, &s, &events, NOW).await;
+    assert_eq!(server_uids(&imap, "INBOX").await.len(), 3);
+    assert!(server_uids(&imap, "Trash").await.is_empty());
+}
+
+#[tokio::test]
+async fn bulk_undo_after_replay_is_too_late() {
+    let imap = fake(&[], &[]).await;
+    let s = setup(&imap, Store::open_in_memory().expect("store")).await;
+    let events = Events::default();
+    let applied = apply_bulk_action(&s.store, &[s.message(1)], Action::Archive, NOW, &events)
+        .expect("applies");
+    replay_now(&imap, &s, &events, NOW).await;
+    let undo = undo_bulk(&s.store, &applied.messages, &events).expect("runs");
+    assert_eq!(
+        undo,
+        BulkUndo {
+            undone: 0,
+            too_late: 1
+        }
+    );
+}
+
+#[tokio::test]
+async fn bulk_flag_skips_messages_already_flagged_and_counts_each_once() {
+    let imap = fake(&[], &[]).await;
+    let s = setup(&imap, Store::open_in_memory().expect("store")).await;
+    let events = Events::default();
+    act(&s, 1, Action::Flag, &events);
+    let ids = [s.message(1), s.message(2), s.message(2)];
+    let applied = apply_bulk_action(&s.store, &ids, Action::Flag, NOW, &events).expect("applies");
+    assert_eq!(applied.messages, [s.message(2)]);
+    let none = apply_bulk_action(&s.store, &[s.message(1)], Action::Flag, NOW, &events)
+        .expect("nothing to do");
+    assert_eq!(none, BulkApplied::default());
+}

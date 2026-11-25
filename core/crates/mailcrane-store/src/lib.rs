@@ -11,10 +11,10 @@ pub use error::StoreError;
 pub use model::*;
 pub use repo::NewMail;
 pub use repo::{
-    Correspondent, Draft, DraftFields, DraftId, NewOutboxMessage, NewRule, OpId, OpKind, OpMessage,
-    OutboxId, OutboxMessage, OutboxState, PendingOp, Rule, RuleAction, RuleCondition, RuleId,
-    SaveSentCopy, ScheduleMode, SearchFilter, SentCopy, ServerCopy, SignatureSetting,
-    ThreadSummary, UnthreadedMessage, ACCOUNT_COLOR_COUNT, MAX_SIGNATURE_BYTES,
+    CancelReport, Correspondent, Draft, DraftFields, DraftId, NewOp, NewOutboxMessage, NewRule,
+    OpId, OpKind, OpMessage, OutboxId, OutboxMessage, OutboxState, PendingOp, Rule, RuleAction,
+    RuleCondition, RuleId, SaveSentCopy, ScheduleMode, SearchFilter, SentCopy, ServerCopy,
+    SignatureSetting, ThreadSummary, UnthreadedMessage, ACCOUNT_COLOR_COUNT, MAX_SIGNATURE_BYTES,
 };
 pub use repo::{JmapRow, Protocol};
 pub use repo::{KeywordedMessage, NewSnooze, Snooze, SnoozeId, SnoozeState};
