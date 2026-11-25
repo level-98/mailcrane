@@ -208,8 +208,9 @@ class UniffiMailboxCore(
     NotificationsCore {
     private val hub = EventHub()
 
-    // Created on first use, so the native library loads only when mail is needed.
-    private val engine by lazy { SyncEngine(dbPath, hub) }
+    // Created on first use, so the native library loads only when mail is needed. The system
+    // resolver finds the account's ManageSieve server through SRV (M4-23).
+    private val engine by lazy { SyncEngine(dbPath, hub).also { it.setPlatformDns(AndroidDns()) } }
 
     override val events: Flow<CoreEvent> = hub.flow()
 

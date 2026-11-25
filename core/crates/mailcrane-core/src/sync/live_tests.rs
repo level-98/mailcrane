@@ -510,7 +510,10 @@ async fn with_live<F: Future<Output = ()>>(
     tokio::join!(
         run_live_updates(
             store,
-            account,
+            super::super::LiveAccount {
+                id: account,
+                write_lock: super::super::WriteLock::default(),
+            },
             events,
             login(imap),
             SyncConfig::default(),
@@ -657,7 +660,10 @@ async fn bad_credentials_are_reported_once_and_the_loop_ends() {
         Duration::from_secs(5),
         run_live_updates(
             &store,
-            account,
+            super::super::LiveAccount {
+                id: account,
+                write_lock: super::super::WriteLock::default(),
+            },
             &events,
             wrong,
             SyncConfig::default(),

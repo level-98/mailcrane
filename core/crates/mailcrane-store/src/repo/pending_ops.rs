@@ -272,7 +272,7 @@ impl Store {
         messages: &[OpMessage],
         now: i64,
     ) -> Result<Option<OpId>, StoreError> {
-        let tx = self.conn.unchecked_transaction()?;
+        let tx = self.write_tx()?;
         let id = queue_in_tx(&tx, account, kind, folder, dest, messages, now)?;
         tx.commit()?;
         Ok(id)
@@ -283,7 +283,7 @@ impl Store {
     /// error none is. Returns each op in order, `None` where every message
     /// cancelled out.
     pub fn queue_ops(&self, ops: &[NewOp], now: i64) -> Result<Vec<Option<OpId>>, StoreError> {
-        let tx = self.conn.unchecked_transaction()?;
+        let tx = self.write_tx()?;
         let mut ids = Vec::with_capacity(ops.len());
         for op in ops {
             ids.push(queue_in_tx(
@@ -338,7 +338,7 @@ impl Store {
     /// expunge that is now done; the destination's next sync brings moved
     /// messages back with their new UIDs).
     pub fn complete_op(&self, op: OpId, remove_messages: bool) -> Result<(), StoreError> {
-        let tx = self.conn.unchecked_transaction()?;
+        let tx = self.write_tx()?;
         if remove_messages {
             tx.execute(
                 "DELETE FROM messages WHERE hidden = 1 AND id IN \
@@ -355,7 +355,7 @@ impl Store {
     /// the messages that still exist and drops the action. Returns the
     /// local ids it was applied to.
     pub fn fail_op(&self, op: OpId) -> Result<Vec<MessageId>, StoreError> {
-        let tx = self.conn.unchecked_transaction()?;
+        let tx = self.write_tx()?;
         let kind: Option<String> = tx
             .query_row(
                 "SELECT kind FROM pending_ops WHERE id = ?1",
@@ -385,7 +385,7 @@ impl Store {
         op: OpId,
         refused: &[MessageId],
     ) -> Result<Vec<MessageId>, StoreError> {
-        let tx = self.conn.unchecked_transaction()?;
+        let tx = self.write_tx()?;
         let kind: Option<String> = tx
             .query_row(
                 "SELECT kind FROM pending_ops WHERE id = ?1",
@@ -444,7 +444,7 @@ impl Store {
     /// one transaction. Returns the folder the message is in, or `None` if
     /// there was nothing to undo (already sent to the server, or no action).
     pub fn cancel_queued(&self, message: MessageId) -> Result<Option<FolderId>, StoreError> {
-        let tx = self.conn.unchecked_transaction()?;
+        let tx = self.write_tx()?;
         let folder = cancel_in_tx(&tx, message)?;
         tx.commit()?;
         Ok(folder)
@@ -454,7 +454,7 @@ impl Store {
     /// each of `messages`, in one transaction. Messages whose action has
     /// already been tried stay as they are and count as too late.
     pub fn cancel_queued_many(&self, messages: &[MessageId]) -> Result<CancelReport, StoreError> {
-        let tx = self.conn.unchecked_transaction()?;
+        let tx = self.write_tx()?;
         let mut report = CancelReport::default();
         for message in messages {
             match cancel_in_tx(&tx, *message)? {

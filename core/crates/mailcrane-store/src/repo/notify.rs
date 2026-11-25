@@ -46,7 +46,7 @@ impl Store {
         now: i64,
         limit: u32,
     ) -> Result<Vec<NewMail>, StoreError> {
-        let tx = self.conn.unchecked_transaction()?;
+        let tx = self.write_tx()?;
         let synced: Option<Option<i64>> = tx
             .query_row(
                 "SELECT uidvalidity FROM folders WHERE id = ?1 AND account_id = ?2",

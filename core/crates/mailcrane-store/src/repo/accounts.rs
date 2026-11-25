@@ -67,7 +67,7 @@ impl Store {
     /// Inserts a local-only account (#289): it lives only on this device,
     /// and the core never syncs it or connects anywhere for it.
     pub fn insert_local_account(&self, a: &NewAccount) -> Result<AccountId, StoreError> {
-        let tx = self.conn.unchecked_transaction()?;
+        let tx = self.write_tx()?;
         let id = self.insert_account(a)?;
         tx.execute(
             "UPDATE accounts SET local_only = 1 WHERE id = ?1",

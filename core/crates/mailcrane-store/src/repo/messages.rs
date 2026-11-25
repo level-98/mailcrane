@@ -155,7 +155,7 @@ impl Store {
         &self,
         headers: &[NewMessageHeader],
     ) -> Result<Vec<MessageId>, StoreError> {
-        let tx = self.conn.unchecked_transaction()?;
+        let tx = self.write_tx()?;
         let mut ids = Vec::with_capacity(headers.len());
         for h in headers {
             ids.push(self.upsert_message_header(h)?);
@@ -210,7 +210,7 @@ impl Store {
         expunged: &[u32],
         flags: &[RemoteFlags],
     ) -> Result<usize, StoreError> {
-        let tx = self.conn.unchecked_transaction()?;
+        let tx = self.write_tx()?;
         let mut changed = 0usize;
         {
             let mut delete =
@@ -325,7 +325,7 @@ impl Store {
         raw: &[u8],
         fetched_at: i64,
     ) -> Result<bool, StoreError> {
-        let tx = self.conn.unchecked_transaction()?;
+        let tx = self.write_tx()?;
         let n = tx.execute(
             "UPDATE messages SET body_state = 'fetched' WHERE id = ?1",
             params![id.0],
@@ -355,7 +355,7 @@ impl Store {
         snippet: &str,
         attachments: &[NewAttachment],
     ) -> Result<bool, StoreError> {
-        let tx = self.conn.unchecked_transaction()?;
+        let tx = self.write_tx()?;
         let n = tx.execute(
             "UPDATE messages SET body_state = 'fetched', snippet = ?2, has_attachments = ?3 \
              WHERE id = ?1",

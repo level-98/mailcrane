@@ -102,7 +102,7 @@ impl From<DiscoveredConfig> for DiscoveredSettings {
 }
 
 /// Adapts the platform's blocking resolver to the core's async trait.
-struct ForeignDns(Option<Arc<dyn PlatformDns>>);
+pub(crate) struct ForeignDns(pub(crate) Option<Arc<dyn PlatformDns>>);
 
 impl DnsResolver for ForeignDns {
     fn query(&self, name: &str, rtype: RecordType) -> impl Future<Output = Option<Vec<u8>>> + Send {

@@ -115,8 +115,11 @@ class MessageListViewModel
 
         private val _errors = Channel<SyncErrorKind>(Channel.BUFFERED)
 
-        /** One-off sync failures, shown in a snackbar. */
-        val errors: Flow<SyncErrorKind> = _errors.receiveAsFlow()
+        /**
+         * One-off sync failures, shown in a snackbar. [SyncErrorKind.BUSY] is left out: another sync
+         * was saving mail at the same time and fetches it anyway (issue #282).
+         */
+        val errors: Flow<SyncErrorKind> = _errors.receiveAsFlow().filter { it != SyncErrorKind.BUSY }
 
         private val _actionsUndone = Channel<Unit>(Channel.CONFLATED)
 

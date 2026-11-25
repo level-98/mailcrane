@@ -528,6 +528,7 @@ internal fun errorText(kind: SyncErrorKind): Int =
         SyncErrorKind.STORAGE -> R.string.sync_error_storage
         SyncErrorKind.NOT_FOUND -> R.string.sync_error_not_found
         SyncErrorKind.FOLDER_RESET -> R.string.sync_error_folder_reset
+        SyncErrorKind.BUSY -> R.string.sync_error_busy
     }
 
 /**

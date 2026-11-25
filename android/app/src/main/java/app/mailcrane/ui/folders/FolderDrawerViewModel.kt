@@ -109,6 +109,8 @@ class FolderDrawerViewModel
 
         /** Shows [kind] if there are no folders to show instead. */
         private fun failed(kind: SyncErrorKind) {
+            // Another sync was saving at the same time; nothing to show (issue #282).
+            if (kind == SyncErrorKind.BUSY) return
             _state.update { if (it.folders.isEmpty()) it.copy(loadError = kind) else it }
         }
 
