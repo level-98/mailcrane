@@ -1,0 +1,202 @@
+//! Where a link really goes (M5-07, part A). Every result is a hint: the
+//! user can always open the link. Nothing here touches the network.
+
+use mailcrane_mime::unsubscribe::org_domain;
+use url::{Host, Url};
+
+/// Longest link examined in full (bytes).
+const MAX_LINK_BYTES: usize = 2048;
+
+/// Why a link deserves a second look.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LinkWarning {
+    /// Not an `http` or `https` link; never opened by the preview dialog.
+    UnsupportedScheme,
+    /// The host mixes scripts inside one label (a lookalike); it is shown
+    /// in punycode.
+    MixedScript,
+    /// The visible text names a different site than the link goes to.
+    TextHostMismatch {
+        /// The host the text shows (Unicode form, without `www.`).
+        text_host: String,
+    },
+    /// The host is an IP address.
+    IpAddress,
+    /// The URL has `user@` before the host.
+    UserInfo,
+    /// The link is `http`, not `https` ("Not secure").
+    Http,
+    /// Longer than 2,048 bytes; the text was not compared.
+    TooLong,
+}
+
+/// What a link points at.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct LinkCheck {
+    /// The host to show: Unicode when every label is in one script,
+    /// otherwise the punycode form. Empty when the link has no host.
+    pub display_host: String,
+    /// The host in ASCII (punycode) form. Empty when the link has no host.
+    pub ascii_host: String,
+    /// The scheme is `http`.
+    pub is_http: bool,
+    /// Everything worth a warning, in a fixed order.
+    pub warnings: Vec<LinkWarning>,
+}
+
+/// Checks a link. `text` is what the reader sees for it, when known.
+/// Never panics.
+pub fn check_link(href: &str, text: Option<&str>) -> LinkCheck {
+    let mut out = LinkCheck::default();
+    let too_long = href.len() > MAX_LINK_BYTES;
+    if too_long {
+        out.warnings.push(LinkWarning::TooLong);
+    }
+    let Ok(url) = Url::parse(href.trim()) else {
+        out.warnings.push(LinkWarning::UnsupportedScheme);
+        return out;
+    };
+    if !matches!(url.scheme(), "http" | "https") {
+        out.warnings.push(LinkWarning::UnsupportedScheme);
+        return out;
+    }
+    out.is_http = url.scheme() == "http";
+    let host = url.host();
+    let mut ip = false;
+    if let Some(h) = &host {
+        out.ascii_host = h.to_string();
+        out.display_host = out.ascii_host.clone();
+        ip = !matches!(h, Host::Domain(_));
+    }
+    if let Some(Host::Domain(d)) = &host {
+        let unicode = url::quirks::domain_to_unicode(d);
+        if one_script_per_label(&unicode) {
+            out.display_host = unicode;
+        } else {
+            out.warnings.push(LinkWarning::MixedScript);
+        }
+    }
+    if ip {
+        out.warnings.push(LinkWarning::IpAddress);
+    }
+    if !url.username().is_empty() || url.password().is_some() {
+        out.warnings.push(LinkWarning::UserInfo);
+    }
+    if out.is_http {
+        out.warnings.push(LinkWarning::Http);
+    }
+    if !too_long {
+        if let Some(text_host) = text.and_then(text_site) {
+            if org_domain(&text_host.ascii) != org_domain(&out.ascii_host) {
+                out.warnings.push(LinkWarning::TextHostMismatch {
+                    text_host: text_host.display,
+                });
+            }
+        }
+    }
+    out
+}
+
+struct TextSite {
+    ascii: String,
+    display: String,
+}
+
+/// File extensions that look like a top-level domain in link text.
+const FILE_EXTENSIONS: &[&str] = &[
+    "pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "txt", "zip", "png", "jpg", "jpeg", "gif",
+    "html", "htm", "csv", "rtf",
+];
+
+/// The site link text names, if it looks like a URL or a bare domain.
+fn text_site(text: &str) -> Option<TextSite> {
+    let t = text.trim();
+    if t.is_empty() || t.len() > MAX_LINK_BYTES || t.contains(char::is_whitespace) {
+        return None;
+    }
+    let lower = t.to_lowercase();
+    let candidate = if lower.starts_with("http://") || lower.starts_with("https://") {
+        t.to_owned()
+    } else {
+        // `www.…` or `label.tld`, optionally with a path.
+        let head = t.split(['/', '?', '#']).next().unwrap_or_default();
+        let labels: Vec<&str> = head.split('.').collect();
+        let tld = labels.last().copied().unwrap_or_default().to_lowercase();
+        let looks_like_host = labels.len() >= 2
+            && labels
+                .iter()
+                .all(|l| !l.is_empty() && l.chars().all(|c| c.is_alphanumeric() || c == '-'))
+            && tld.chars().count() >= 2
+            && tld.chars().all(char::is_alphabetic)
+            && !FILE_EXTENSIONS.contains(&tld.as_str());
+        if !looks_like_host {
+            return None;
+        }
+        format!("https://{t}")
+    };
+    let url = Url::parse(&candidate).ok()?;
+    let Some(Host::Domain(d)) = url.host() else {
+        // An IP in the text: compare it as it is.
+        let ip = url.host()?.to_string();
+        return Some(TextSite {
+            display: ip.clone(),
+            ascii: ip,
+        });
+    };
+    let ascii = d.strip_prefix("www.").unwrap_or(d).to_owned();
+    let display = url::quirks::domain_to_unicode(&ascii);
+    Some(TextSite { ascii, display })
+}
+
+/// The scripts we tell apart. Japanese and Korean text mixes several
+/// writing systems in one word, so those share a group.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Script {
+    Latin,
+    Cyrillic,
+    Greek,
+    Cjk,
+    Arabic,
+    Hebrew,
+    Thai,
+    Devanagari,
+    Other,
+}
+
+fn script_of(c: char) -> Script {
+    match u32::from(c) {
+        0x41..=0x5A | 0x61..=0x7A | 0xAA | 0xBA | 0xC0..=0x24F | 0x1E00..=0x1EFF => Script::Latin,
+        0x370..=0x3FF | 0x1F00..=0x1FFF => Script::Greek,
+        0x400..=0x52F | 0x1C80..=0x1C8F | 0x2DE0..=0x2DFF | 0xA640..=0xA69F => Script::Cyrillic,
+        0x590..=0x5FF => Script::Hebrew,
+        0x600..=0x6FF | 0x750..=0x77F => Script::Arabic,
+        0x900..=0x97F => Script::Devanagari,
+        0xE00..=0xE7F => Script::Thai,
+        0x3040..=0x30FF
+        | 0x3100..=0x312F
+        | 0x3400..=0x4DBF
+        | 0x4E00..=0x9FFF
+        | 0xAC00..=0xD7AF
+        | 0x20000..=0x2A6DF => Script::Cjk,
+        _ => Script::Other,
+    }
+}
+
+/// Whether every label of `host` is written in a single script. ASCII
+/// digits and `-` go with any script; an unknown script counts as mixed.
+fn one_script_per_label(host: &str) -> bool {
+    host.split('.').all(|label| {
+        let mut seen: Option<Script> = None;
+        for c in label.chars().filter(|c| !c.is_ascii_digit() && *c != '-') {
+            let s = script_of(c);
+            if s == Script::Other || seen.is_some_and(|prev| prev != s) {
+                return false;
+            }
+            seen = Some(s);
+        }
+        true
+    })
+}
+
+#[cfg(test)]
+mod tests;

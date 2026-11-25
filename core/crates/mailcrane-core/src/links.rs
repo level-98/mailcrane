@@ -1,6 +1,10 @@
-//! Removing tracking parameters from links before they are opened.
+//! Removing tracking parameters from links before they are opened, and
+//! showing where a link really goes.
 
+mod check;
 mod params;
+
+pub use check::{check_link, LinkCheck, LinkWarning};
 
 /// Removes known tracking parameters (`utm_*`, `fbclid`, `gclid` and others,
 /// listed in `links/params.rs`) from an `http` or `https` link.

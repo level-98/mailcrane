@@ -36,4 +36,17 @@ class SettingsViewModelTest {
             vm.setCleanLinks(true)
             assertTrue(vm.cleanLinks.value)
         }
+
+    @Test
+    fun confirmLinksIsOnByDefaultAndCanBeTurnedOff() =
+        runTest {
+            val settings = FakeAppSettings()
+            val vm = SettingsViewModel(settings)
+            backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { vm.confirmLinks.collect {} }
+            assertTrue(vm.confirmLinks.value)
+
+            vm.setConfirmLinks(false)
+            assertFalse(vm.confirmLinks.value)
+            assertFalse(settings.confirmLinks.value)
+        }
 }
