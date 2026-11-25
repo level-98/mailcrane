@@ -64,6 +64,52 @@ impl Store {
         Ok(out)
     }
 
+    /// Inserts a local-only account (#289): it lives only on this device,
+    /// and the core never syncs it or connects anywhere for it.
+    pub fn insert_local_account(&self, a: &NewAccount) -> Result<AccountId, StoreError> {
+        let tx = self.write_tx()?;
+        let id = self.insert_account(a)?;
+        tx.execute(
+            "UPDATE accounts SET local_only = 1 WHERE id = ?1",
+            params![id.0],
+        )?;
+        tx.commit()?;
+        Ok(id)
+    }
+
+    /// Whether the account is local-only. `false` for an account that
+    /// doesn't exist.
+    pub fn is_local_account(&self, id: AccountId) -> Result<bool, StoreError> {
+        let found: Option<i64> = self
+            .conn
+            .query_row(
+                "SELECT local_only FROM accounts WHERE id = ?1",
+                params![id.0],
+                |r| r.get(0),
+            )
+            .map(Some)
+            .or_else(|e| match e {
+                rusqlite::Error::QueryReturnedNoRows => Ok(None),
+                e => Err(e),
+            })?;
+        Ok(found == Some(1))
+    }
+
+    /// The local-only account with this address, if there is one.
+    pub fn find_local_account(&self, email: &str) -> Result<Option<AccountId>, StoreError> {
+        self.conn
+            .query_row(
+                "SELECT id FROM accounts WHERE local_only = 1 AND email = ?1 ORDER BY id LIMIT 1",
+                params![email],
+                |r| r.get(0),
+            )
+            .map(|id| Some(AccountId(id)))
+            .or_else(|e| match e {
+                rusqlite::Error::QueryReturnedNoRows => Ok(None),
+                e => Err(e.into()),
+            })
+    }
+
     /// Deletes an account and, by cascade, everything under it. Returns
     /// whether an account was deleted.
     pub fn delete_account(&self, id: AccountId) -> Result<bool, StoreError> {

@@ -10,6 +10,11 @@ repository.workspace = true
 [lints]
 workspace = true
 
+[features]
+# Debug builds only (#289): importing tests/fixtures into a local-only
+# account. Turned on by mailcrane-ffi's `debug-fixtures`; never in release.
+fixtures = []
+
 [dependencies]
 # Only for SHA-256 (PKCE); the same backend rustls uses, with no extra features.
 aws-lc-rs = { version = "1.19.0", default-features = false, features = ["aws-lc-sys"] }

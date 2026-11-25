@@ -150,6 +150,15 @@ impl SyncEngine {
     pub fn replay_actions(&self, account_id: i64) -> Result<u32, SyncFailure> {
         let account = AccountId(account_id);
         let storage = |_| crate::sync::failed(events::SyncErrorKind::Storage);
+        // A local-only account (#289) has no server: its actions are already
+        // done locally, so they are confirmed here instead of replayed.
+        if self.is_local(account)? {
+            let store = self.open_store()?;
+            for op in store.pending_ops(account).map_err(storage)? {
+                store.complete_op(op.id, true).map_err(storage)?;
+            }
+            return Ok(0);
+        }
         let (ops, drafts) = {
             let store = self.open_store()?;
             let snoozes = store

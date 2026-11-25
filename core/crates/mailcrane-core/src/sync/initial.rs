@@ -447,7 +447,7 @@ impl<'a> FolderSyncer<'a> {
 /// Stores a downloaded message: the raw bytes, its snippet and attachment
 /// list, and its text for search. A message that can't be parsed is still
 /// kept, so it can be opened as source. Shared by IMAP and JMAP.
-pub(super) fn save_body(store: &Store, message: MessageId, raw: &[u8]) -> Result<(), SyncError> {
+pub(crate) fn save_body(store: &Store, message: MessageId, raw: &[u8]) -> Result<(), SyncError> {
     let (snippet, attachments, body_text) = match mailcrane_mime::parse_message(raw) {
         Ok(parsed) => {
             let attachments: Vec<NewAttachment> = parsed

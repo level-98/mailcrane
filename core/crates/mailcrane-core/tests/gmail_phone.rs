@@ -229,13 +229,17 @@ async fn a_v15_database_with_partial_gmail_rows_syncs_with_v16_code() {
             "UPDATE folders SET uidvalidity = 1, uidnext = 5 WHERE remote_name = 'INBOX';
              UPDATE messages SET uid = uid + 100000 WHERE uid % 7 = 0;
              ALTER TABLE folders DROP COLUMN selectable;
+             ALTER TABLE accounts DROP COLUMN local_only;
              PRAGMA user_version = 15;",
         )
         .expect("back to v15 with partial rows");
     }
 
-    let store = Store::open(&path).expect("migrates to v16");
-    assert_eq!(store.schema_version().expect("version"), 16);
+    let store = Store::open(&path).expect("migrates to the newest schema");
+    let newest = Store::open_in_memory()
+        .and_then(|s| s.schema_version())
+        .expect("newest");
+    assert_eq!(store.schema_version().expect("version"), newest);
     let mut session = connect(&imap).await;
     // Folders listed again, as the app does on start.
     let folders = session.list_folders().await.expect("list");
