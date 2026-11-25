@@ -29,6 +29,9 @@ pub(crate) enum Arg<'a> {
     /// A string from data: sent as an atom, a quoted string or a literal,
     /// whichever fits.
     Str(&'a [u8]),
+    /// Data always sent as a literal, such as a whole message for `APPEND`
+    /// (RFC 9051 §4.3). May not contain NUL.
+    Literal(&'a [u8]),
 }
 
 /// A command ready to send. Every segment but the last ends with a
@@ -67,6 +70,14 @@ pub(crate) fn build(tag: String, name: &str, args: &[Arg<'_>]) -> Result<Command
                     segments.push(std::mem::take(&mut current));
                     current.extend_from_slice(literal);
                 }
+            }
+            Arg::Literal(bytes) => {
+                if bytes.contains(&0) {
+                    return Err(ImapError::InvalidInput);
+                }
+                current.extend_from_slice(format!("{{{}}}\r\n", bytes.len()).as_bytes());
+                segments.push(std::mem::take(&mut current));
+                current.extend_from_slice(bytes);
             }
         }
     }
@@ -108,6 +119,18 @@ mod tests {
         build("A0001".into(), "LOGIN", args)
             .map(|c| c.segments)
             .unwrap_or_default()
+    }
+
+    #[test]
+    fn literal_args_are_always_literals() {
+        let segments = build("A1".into(), "APPEND", &[Arg::Str(b"Drafts"), Arg::Literal(b"ab")])
+            .map(|c| c.segments)
+            .unwrap_or_default();
+        assert_eq!(
+            segments,
+            [b"A1 APPEND Drafts {2}\r\n".to_vec(), b"ab\r\n".to_vec()]
+        );
+        assert!(build("A1".into(), "APPEND", &[Arg::Literal(b"a\0b")]).is_err());
     }
 
     #[test]
