@@ -23,15 +23,24 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.SemanticsPropertyKey
+import androidx.compose.ui.semantics.SemanticsPropertyReceiver
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.mailcrane.R
 import app.mailcrane.core.MessageSummary
+import app.mailcrane.settings.MailboxDensity
+import app.mailcrane.ui.components.SenderAvatar
+import app.mailcrane.ui.theme.LocalMailboxDensity
 import java.time.DateTimeException
 import java.time.Instant
 import java.time.ZonedDateTime
@@ -41,8 +50,13 @@ import java.util.Locale
 
 /**
  * One message in the list. Unread rows are bold with a dot; flag and attachment have icons, so no
- * state is shown by colour alone. TalkBack reads the whole row as one item. While [selecting] (M4-14) a
- * checkbox replaces the unread dot and a [selected] row is tinted.
+ * state is shown by colour alone. TalkBack reads the whole row as one item. A [selected] row (M4-14) is
+ * tinted.
+ *
+ * Comfortable density (M4-24, the default) leads with the sender's picture: tapping it ([onAvatarClick])
+ * selects the row, and a selected row shows a check mark there. Compact has no picture, puts subject and
+ * preview on one line and uses tighter padding; while [selecting] a checkbox replaces the unread dot.
+ * [avatarName] is the name the picture's initials come from (a conversation passes its newest sender).
  */
 @Composable
 fun MessageRow(
@@ -52,7 +66,10 @@ fun MessageRow(
     modifier: Modifier = Modifier,
     selecting: Boolean = false,
     selected: Boolean = false,
+    onAvatarClick: (() -> Unit)? = null,
+    avatarName: String = message.fromName,
 ) {
+    val comfortable = LocalMailboxDensity.current == MailboxDensity.COMFORTABLE
     val resources = LocalResources.current
     val sender = senderLabel(message, resources)
     val subject = message.subject.ifBlank { stringResource(R.string.message_no_subject) }
@@ -75,11 +92,55 @@ fun MessageRow(
                 .clearAndSetSemantics {
                     contentDescription = description
                     if (selecting) this.selected = selected
+                    rowLeading =
+                        when {
+                            comfortable && selected -> RowLeading.CHECK_MARK
+                            comfortable -> RowLeading.PICTURE
+                            selecting -> RowLeading.CHECKBOX
+                            else -> RowLeading.UNREAD_DOT
+                        }
                 }.then(if (selected) Modifier.background(colors.secondaryContainer) else Modifier)
-                .padding(start = 8.dp, end = 16.dp, top = 10.dp, bottom = 10.dp),
+                .padding(
+                    start = 8.dp,
+                    end = 16.dp,
+                    top = if (comfortable) 10.dp else 6.dp,
+                    bottom = if (comfortable) 10.dp else 6.dp,
+                ),
         verticalAlignment = Alignment.Top,
     ) {
-        if (selecting) {
+        if (comfortable) {
+            // The unread dot stays beside the picture, so read state isn't only bold text.
+            Box(
+                modifier = Modifier.width(dotSize + 4.dp).padding(top = dotTop),
+                contentAlignment = Alignment.CenterStart,
+            ) {
+                if (unread) {
+                    Box(Modifier.size(dotSize).background(colors.primary, CircleShape))
+                }
+            }
+            Box(Modifier.padding(end = 12.dp)) {
+                SenderAvatar(
+                    name = avatarName,
+                    address = message.fromAddr,
+                    selected = selected,
+                    onClick = onAvatarClick,
+                )
+                // In the Unified Inbox the account colour sits on the picture's corner (M4-01).
+                if (message.accountId != 0L) {
+                    Box(
+                        modifier =
+                            Modifier
+                                .align(Alignment.BottomEnd)
+                                .size(dotSize + 6.dp)
+                                .background(colors.surface, CircleShape),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        app.mailcrane.ui.components
+                            .AccountDot(message.accountColor.toInt(), size = dotSize + 2.dp)
+                    }
+                }
+            }
+        } else if (selecting) {
             // Not clickable itself: the row handles taps, so the target stays the whole row.
             Box(Modifier.padding(end = 8.dp), contentAlignment = Alignment.Center) {
                 Checkbox(checked = selected, onCheckedChange = null)
@@ -96,8 +157,8 @@ fun MessageRow(
         }
         Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                // In the Unified Inbox, which account it came to (M4-01).
-                if (message.accountId != 0L) {
+                // In the Unified Inbox, which account it came to (M4-01); on the picture when there is one.
+                if (message.accountId != 0L && !comfortable) {
                     Box(Modifier.padding(end = 6.dp)) {
                         app.mailcrane.ui.components
                             .AccountDot(message.accountColor.toInt(), size = dotSize)
@@ -121,8 +182,21 @@ fun MessageRow(
                 )
             }
             Row(verticalAlignment = Alignment.CenterVertically) {
+                val subjectLine =
+                    if (comfortable || message.snippet.isBlank()) {
+                        AnnotatedString(subject)
+                    } else {
+                        // Compact: subject and preview share one line.
+                        buildAnnotatedString {
+                            append(subject)
+                            withStyle(SpanStyle(color = colors.onSurfaceVariant, fontWeight = FontWeight.Normal)) {
+                                append("  ")
+                                append(message.snippet)
+                            }
+                        }
+                    }
                 Text(
-                    text = subject,
+                    text = subjectLine,
                     modifier = Modifier.weight(1f),
                     style = MaterialTheme.typography.bodyMedium,
                     fontWeight = weight,
@@ -146,7 +220,7 @@ fun MessageRow(
                     )
                 }
             }
-            if (message.snippet.isNotBlank()) {
+            if (comfortable && message.snippet.isNotBlank()) {
                 Text(
                     text = message.snippet,
                     style = MaterialTheme.typography.bodySmall,
@@ -158,6 +232,12 @@ fun MessageRow(
         }
     }
 }
+
+/** What leads a message row (M4-24); for tests only, since TalkBack reads the row as one item. */
+enum class RowLeading { PICTURE, CHECK_MARK, CHECKBOX, UNREAD_DOT }
+
+internal val RowLeadingKey = SemanticsPropertyKey<RowLeading>("RowLeading")
+internal var SemanticsPropertyReceiver.rowLeading by RowLeadingKey
 
 /** The sender's name, else their address, else "Unknown sender". */
 internal fun senderLabel(

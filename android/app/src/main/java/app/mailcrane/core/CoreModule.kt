@@ -1,7 +1,9 @@
 package app.mailcrane.core
 
 import android.content.Context
+import app.mailcrane.contacts.AndroidContactPhotos
 import app.mailcrane.contacts.AndroidDeviceContacts
+import app.mailcrane.contacts.ContactPhotos
 import app.mailcrane.contacts.DeviceContacts
 import app.mailcrane.work.OutboxSender
 import dagger.Module
@@ -56,6 +58,9 @@ object CoreModule {
 
     @Provides
     fun provideDeviceContacts(contacts: AndroidDeviceContacts): DeviceContacts = contacts
+
+    @Provides
+    fun provideContactPhotos(photos: AndroidContactPhotos): ContactPhotos = photos
 
     @Provides
     @Singleton

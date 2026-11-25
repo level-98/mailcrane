@@ -7,3 +7,6 @@ val LocalDarkMessageBodies = staticCompositionLocalOf { false }
 
 /** Whether the app is showing its dark theme (which may differ from the system setting). */
 val LocalDarkTheme = staticCompositionLocalOf { false }
+
+/** How tightly the message list packs its rows (M4-24): Comfortable with sender pictures, or Compact. */
+val LocalMailboxDensity = staticCompositionLocalOf { app.mailcrane.settings.MailboxDensity.COMFORTABLE }

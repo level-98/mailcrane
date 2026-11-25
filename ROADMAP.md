@@ -114,6 +114,7 @@ Goal: add an IMAP account and read your inbox, online and offline.
 - [x] **M4-21** Search filter chips (from, has attachment, unread, flagged, date range, account) built on the existing search syntax, adding `account:` to it 🟢🤖
 - [ ] **M4-22** Create, rename, move and delete folders from the phone 🤖
 - [x] **M4-23** Server-side rules through ManageSieve (RFC 5804), so rules run when the phone is off; local rules (M4-09) stay for servers without it 🤖
+- [x] **M4-24** Sender pictures in the message list (initials on a stable colour, contact photos only after opting in, never from the network), and a Compact mailbox density without them 🤖
 
 ## M5 — Privacy and security
 

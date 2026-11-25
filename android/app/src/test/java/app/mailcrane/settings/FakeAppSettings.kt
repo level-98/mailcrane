@@ -145,4 +145,18 @@ class FakeAppSettings(
     override suspend fun setHideContentOutsideApp(hide: Boolean) {
         hideOutside.value = hide
     }
+
+    val density = MutableStateFlow(MailboxDensity.COMFORTABLE)
+    override val mailboxDensity: StateFlow<MailboxDensity> = density
+
+    override suspend fun setMailboxDensity(density: MailboxDensity) {
+        this.density.value = density
+    }
+
+    val photos = MutableStateFlow(false)
+    override val contactPhotos: StateFlow<Boolean> = photos
+
+    override suspend fun setContactPhotos(enabled: Boolean) {
+        photos.value = enabled
+    }
 }
