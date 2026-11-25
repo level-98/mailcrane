@@ -157,6 +157,9 @@ pub enum SendError {
 pub struct SendReport {
     /// Recipients the server refused; the message went to everyone else.
     pub rejected: Vec<String>,
+    /// The server filed the message in Sent itself (JMAP with a Sent
+    /// mailbox, RFC 8621 §7.5), so there is no copy to upload.
+    pub filed_in_sent: bool,
 }
 
 /// Options for sending. The defaults are what the apps use.
@@ -449,6 +452,7 @@ pub async fn send_prepared(prepared: PreparedSend) -> Result<SendReport, SendErr
     }
     Ok(SendReport {
         rejected: report.rejected,
+        filed_in_sent: false,
     })
 }
 
@@ -516,6 +520,7 @@ async fn send_jmap(
         .or_else(|| with_role(mailcrane_jmap::MailboxRole::Inbox))
         .or_else(|| mailboxes.first().map(|m| m.id.clone()))
         .ok_or(SendError::Refused { temporary: false })?;
+    let filed_in_sent = sent.is_some();
     let out = mailcrane_jmap::Outgoing {
         raw,
         identity_id: identity.id.clone(),
@@ -529,6 +534,7 @@ async fn send_jmap(
         .map_err(map_jmap)?;
     Ok(SendReport {
         rejected: Vec::new(),
+        filed_in_sent,
     })
 }
 

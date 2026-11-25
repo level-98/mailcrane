@@ -156,6 +156,8 @@ async fn an_unknown_identity_is_a_method_error_and_nothing_is_sent() {
         .expect_err("refused");
     assert_eq!(err, JmapError::Method("invalidProperties".into()));
     assert!(server.submissions().is_empty());
+    // The imported copy was destroyed again (#277).
+    assert!(server.emails_in("mb-drafts").is_empty());
 }
 
 #[tokio::test]
