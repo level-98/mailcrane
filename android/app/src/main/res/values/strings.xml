@@ -181,6 +181,9 @@
     <string name="message_move_title">Move to folder</string>
     <string name="message_move_cancel">Cancel</string>
 
+    <!-- Tablet layouts (M4-13) -->
+    <string name="no_message_selected">Choose a message to read it here</string>
+
     <!-- Rich-text compose (M2-09) -->
     <string name="rich_bold">Bold</string>
     <string name="rich_italic">Italic</string>
