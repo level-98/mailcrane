@@ -29,7 +29,6 @@ import app.mailcrane.core.AccountSummary
 import app.mailcrane.core.FolderRole
 import app.mailcrane.core.FolderSummary
 import app.mailcrane.core.UNIFIED_FOLDER_ID
-import app.mailcrane.core.accountColor
 import app.mailcrane.ui.components.AccountDot
 
 /** Indent per nesting level. */
@@ -79,7 +78,7 @@ fun FolderDrawer(
             accounts.forEach { account ->
                 NavigationDrawerItem(
                     label = { Text(account.email, maxLines = 1) },
-                    icon = { AccountDot(accountColor(account.id).toInt()) },
+                    icon = { AccountDot(account.color.toInt()) },
                     selected = account.id == currentAccountId && selectedFolderId != UNIFIED_FOLDER_ID,
                     onClick = { onSwitchAccount(account.id) },
                     modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding),

@@ -76,7 +76,7 @@ Goal: add an IMAP account and read your inbox, online and offline.
 
 ## M3 — Providers and sign-in
 
-- [ ] **M3-01** OAuth 2.0 framework with PKCE, using the system browser (AppAuth on Android; iOS sign-in is M7-09) 🔒
+- [x] **M3-01** OAuth 2.0 framework with PKCE, using the system browser (AppAuth on Android; iOS sign-in is M7-09) 🔒
 - [ ] **M3-02** Gmail: OAuth, XOAUTH2, and labels mapped to folders 🔒🧑 (needs Google app verification)
   - Start verification early and budget for the yearly CASA security assessment: other open-source clients have been shown "App blocked" while waiting. Keep the app-password IMAP route working as a fallback.
 - [ ] **M3-03** Microsoft 365 and Outlook.com: OAuth and XOAUTH2 🔒🧑
@@ -110,7 +110,7 @@ Goal: add an IMAP account and read your inbox, online and offline.
 - [ ] **M4-17** Templates and canned replies: save, insert while composing, edit and delete 🟢🤖
 - [ ] **M4-18** Settings backup and restore to an encrypted, password-protected file: accounts (server settings only, never passwords or tokens), signatures, rules, templates and app settings 🔒🤖
 - [ ] **M4-19** Date headers in the message list: Today, Yesterday, This week, then by month 🟢🤖
-- [ ] **M4-20** Let users choose each account's colour (the automatic colours from M4-01 stay the default) 🟢🤖
+- [x] **M4-20** Let users choose each account's colour (the automatic colours from M4-01 stay the default) 🟢🤖
 - [ ] **M4-21** Search filter chips (from, has attachment, unread, flagged, date range, account) built on the existing search syntax, adding `account:` to it 🟢🤖
 - [ ] **M4-22** Create, rename, move and delete folders from the phone 🤖
 - [ ] **M4-23** Server-side rules through ManageSieve (RFC 5804), so rules run when the phone is off; local rules (M4-09) stay for servers without it 🤖

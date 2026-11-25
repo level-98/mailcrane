@@ -66,7 +66,6 @@ import app.mailcrane.core.SearchFilters
 import app.mailcrane.core.SearchFlag
 import app.mailcrane.core.SyncFailure
 import app.mailcrane.core.UNIFIED_FOLDER_ID
-import app.mailcrane.core.accountColor
 import app.mailcrane.settings.AppSettings
 import app.mailcrane.ui.components.AccountDot
 import app.mailcrane.ui.components.NoResultsState
@@ -474,7 +473,7 @@ private fun SearchChips(
                     )
                     actions.accounts.forEach { account ->
                         DropdownMenuItem(
-                            leadingIcon = { AccountDot(accountColor(account.id).toInt()) },
+                            leadingIcon = { AccountDot(account.color.toInt()) },
                             text = { Text(account.email, maxLines = 1) },
                             onClick = {
                                 pickingAccount = false

@@ -1,7 +1,10 @@
-//! Per-account settings for the apps: the signature (M2-10).
+//! Per-account settings for the apps: the signature (M2-10) and the
+//! marker colour (M4-20).
 
 use mailcrane_core::compose::signature;
-use mailcrane_store::{AccountId, SaveSentCopy, SignatureSetting, Store, MAX_SIGNATURE_BYTES};
+use mailcrane_store::{
+    AccountId, SaveSentCopy, SignatureSetting, Store, ACCOUNT_COLOR_COUNT, MAX_SIGNATURE_BYTES,
+};
 
 /// An account's signature, as the settings screen edits it.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
@@ -24,6 +27,9 @@ pub enum SettingsFailure {
     /// The local database failed.
     #[error("storage failure")]
     Storage,
+    /// The colour is not one of the 8 marker colours.
+    #[error("no such colour")]
+    InvalidColor,
 }
 
 /// Whether to save sent messages to the Sent folder.
@@ -282,5 +288,44 @@ mod tests {
             swap_signature(body, Some("Ann".into()), Some("Bob".into())),
             "Hi\n\n-- \nBob"
         );
+    }
+}
+
+/// The colour the user chose for the account's marker (0–7), or `None` when
+/// it is automatic (see [`crate::messages::account_color`]).
+#[uniffi::export]
+pub fn get_account_color(db_path: String, account_id: i64) -> Result<Option<u32>, SettingsFailure> {
+    let store = open(&db_path)?;
+    let id = AccountId(account_id);
+    if store
+        .get_account(id)
+        .map_err(|_| SettingsFailure::Storage)?
+        .is_none()
+    {
+        return Err(SettingsFailure::NotFound);
+    }
+    store
+        .get_account_color(id)
+        .map_err(|_| SettingsFailure::Storage)
+}
+
+/// Chooses the account's marker colour (0–7), or `None` to go back to the
+/// automatic one. Anything else is refused and nothing changes.
+#[uniffi::export]
+pub fn set_account_color(
+    db_path: String,
+    account_id: i64,
+    color: Option<u32>,
+) -> Result<(), SettingsFailure> {
+    if color.is_some_and(|c| c >= ACCOUNT_COLOR_COUNT) {
+        return Err(SettingsFailure::InvalidColor);
+    }
+    let saved = open(&db_path)?
+        .set_account_color(AccountId(account_id), color)
+        .map_err(|_| SettingsFailure::Storage)?;
+    if saved {
+        Ok(())
+    } else {
+        Err(SettingsFailure::NotFound)
     }
 }

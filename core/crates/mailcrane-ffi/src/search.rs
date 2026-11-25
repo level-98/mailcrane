@@ -4,7 +4,7 @@
 
 use std::collections::HashMap;
 
-use crate::messages::{account_color, MessageSummary};
+use crate::messages::{marker_color, marker_colors, MessageSummary};
 use crate::sync::{failed, SyncEngine, SyncFailure};
 use mailcrane_core::events;
 use mailcrane_core::search::{
@@ -69,6 +69,7 @@ pub fn search_all_accounts(
     let store = Store::open(&db_path).map_err(storage)?;
     let found =
         local_search_all(&store, &parse_query(&query), limit.min(MAX_RESULTS)).map_err(storage)?;
+    let colors = marker_colors(&store).map_err(storage)?;
     // Which account each folder belongs to.
     let mut owner: HashMap<i64, i64> = HashMap::new();
     for account in store.list_accounts().map_err(storage)? {
@@ -82,7 +83,7 @@ pub fn search_all_accounts(
             let account = owner.get(&header.details.folder_id.0).copied().unwrap_or(0);
             let mut summary = MessageSummary::from(header);
             summary.account_id = account;
-            summary.account_color = account_color(account);
+            summary.account_color = marker_color(&colors, account);
             summary
         })
         .collect())
