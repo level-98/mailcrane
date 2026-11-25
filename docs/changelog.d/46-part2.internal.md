@@ -1,0 +1,1 @@
+- JMAP client: listing a mailbox newest first, reading emails, following changes (with the resync signal) and downloading the raw message (part 2 of #46).

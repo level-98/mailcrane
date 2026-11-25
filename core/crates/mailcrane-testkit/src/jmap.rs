@@ -29,11 +29,27 @@ pub struct FakeMailbox {
     pub parent_id: Option<String>,
 }
 
+/// An email the fake serves from `Email/query`, `Email/get` and the
+/// download URL (its blob id is `blob-<id>`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FakeEmail {
+    pub id: String,
+    pub mailbox_id: String,
+    /// RFC 3339 in UTC, for example `2026-11-25T08:00:00Z`.
+    pub received_at: String,
+    pub subject: String,
+    pub from: String,
+    pub seen: bool,
+    /// The raw message served by the download URL.
+    pub raw: String,
+}
+
 pub struct FakeJmapBuilder {
     faults: Vec<Fault>,
     quirks: Vec<Quirk>,
     user: Option<(String, String)>,
     mailboxes: Vec<FakeMailbox>,
+    emails: Vec<FakeEmail>,
     redirect_session: bool,
 }
 
@@ -51,6 +67,7 @@ struct Config {
     faults: Vec<Fault>,
     user: Option<(String, String)>,
     mailboxes: Vec<FakeMailbox>,
+    emails: Vec<FakeEmail>,
     redirect_session: bool,
 }
 
@@ -82,6 +99,13 @@ impl FakeJmapBuilder {
             role: role.map(Into::into),
             parent_id: parent_id.map(Into::into),
         });
+        self
+    }
+    /// Adds an email. With any, the email state is `e1`; `Email/changes`
+    /// from `e0` reports every email as created, from `e1` nothing, and
+    /// from anything else `cannotCalculateChanges`.
+    pub fn email(mut self, email: FakeEmail) -> Self {
+        self.emails.push(email);
         self
     }
     /// `/.well-known/jmap` answers with a redirect to `/jmap/session`, as
@@ -126,6 +150,7 @@ impl FakeJmapBuilder {
             faults: self.faults,
             user: self.user,
             mailboxes,
+            emails: self.emails,
             redirect_session: self.redirect_session,
         });
         let _quirks = self.quirks;
@@ -172,6 +197,7 @@ impl FakeJmap {
             quirks: Vec::new(),
             user: None,
             mailboxes: Vec::new(),
+            emails: Vec::new(),
             redirect_session: false,
         }
     }
@@ -269,7 +295,24 @@ fn session(config: &Config) -> String {
     .to_string()
 }
 
-fn method_response(name: &str, id: &str, config: &Config) -> Value {
+fn email_json(e: &FakeEmail) -> Value {
+    let keywords = if e.seen {
+        json!({"$seen": true})
+    } else {
+        json!({})
+    };
+    json!({
+        "id": e.id, "blobId": format!("blob-{}", e.id), "threadId": format!("t-{}", e.id),
+        "mailboxIds": {e.mailbox_id.clone(): true}, "keywords": keywords,
+        "size": e.raw.len(), "receivedAt": e.received_at, "sentAt": e.received_at,
+        "messageId": [format!("{}@example.org", e.id)], "inReplyTo": null, "references": null,
+        "from": [{"name": null, "email": e.from}], "to": [], "cc": [],
+        "subject": e.subject, "hasAttachment": false, "preview": ""
+    })
+}
+
+fn method_response(name: &str, args: &Value, id: &str, config: &Config) -> Value {
+    let emails = &config.emails;
     match name {
         "Mailbox/get" => {
             let list: Vec<Value> = config
@@ -284,12 +327,68 @@ fn method_response(name: &str, id: &str, config: &Config) -> Value {
                 .collect();
             json!(["Mailbox/get", {"accountId": "A1", "state": "mb-state-1", "list": list, "notFound": []}, id])
         }
-        "Email/query" => json!(["Email/query", {"ids": [], "position": 0, "total": 0}, id]),
-        "Email/get" => json!(["Email/get", {"list": []}, id]),
-        "Email/changes" => json!(["Email/changes", {
+        "Email/query" if emails.is_empty() => {
+            json!(["Email/query", {"ids": [], "position": 0, "total": 0}, id])
+        }
+        "Email/query" => {
+            let mailbox = args
+                .pointer("/filter/inMailbox")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            // Newest first; RFC 3339 in UTC sorts as text.
+            let mut matching: Vec<&FakeEmail> =
+                emails.iter().filter(|e| e.mailbox_id == mailbox).collect();
+            matching.sort_by(|a, b| b.received_at.cmp(&a.received_at));
+            let position = args.get("position").and_then(Value::as_u64).unwrap_or(0);
+            let limit = args.get("limit").and_then(Value::as_u64).unwrap_or(100);
+            let ids: Vec<&str> = matching
+                .iter()
+                .skip(usize::try_from(position).unwrap_or(usize::MAX))
+                .take(usize::try_from(limit).unwrap_or(usize::MAX))
+                .map(|e| e.id.as_str())
+                .collect();
+            json!(["Email/query", {
+                "accountId": "A1", "queryState": "q1", "canCalculateChanges": false,
+                "position": position, "ids": ids, "total": matching.len()
+            }, id])
+        }
+        "Email/get" if emails.is_empty() => json!(["Email/get", {"list": []}, id]),
+        "Email/get" => {
+            let wanted: Vec<&str> = args
+                .get("ids")
+                .and_then(Value::as_array)
+                .map(|a| a.iter().filter_map(Value::as_str).collect())
+                .unwrap_or_default();
+            let list: Vec<Value> = wanted
+                .iter()
+                .filter_map(|w| emails.iter().find(|e| e.id == *w))
+                .map(email_json)
+                .collect();
+            let not_found: Vec<&str> = wanted
+                .iter()
+                .copied()
+                .filter(|w| !emails.iter().any(|e| e.id == *w))
+                .collect();
+            json!(["Email/get", {"accountId": "A1", "state": "e1", "list": list, "notFound": not_found}, id])
+        }
+        "Email/changes" if emails.is_empty() => json!(["Email/changes", {
             "oldState": "0", "newState": "1", "hasMoreChanges": false,
             "created": [], "updated": [], "destroyed": []
         }, id]),
+        "Email/changes" => match args.get("sinceState").and_then(Value::as_str) {
+            Some("e1") => json!(["Email/changes", {
+                "accountId": "A1", "oldState": "e1", "newState": "e1", "hasMoreChanges": false,
+                "created": [], "updated": [], "destroyed": []
+            }, id]),
+            Some("e0") => {
+                let created: Vec<&str> = emails.iter().map(|e| e.id.as_str()).collect();
+                json!(["Email/changes", {
+                    "accountId": "A1", "oldState": "e0", "newState": "e1", "hasMoreChanges": false,
+                    "created": created, "updated": [], "destroyed": []
+                }, id])
+            }
+            _ => json!(["error", {"type": "cannotCalculateChanges"}, id]),
+        },
         _ => json!(["error", {"type": "unknownMethod"}, id]),
     }
 }
@@ -322,6 +421,17 @@ async fn jmap_response(
             Some("/jmap/session"),
         ),
         "/.well-known/jmap" | "/jmap/session" => reply(StatusCode::OK, session(&config), None),
+        p if p.starts_with("/download/A1/") => {
+            let blob = p.trim_start_matches("/download/A1/").split('/').next();
+            match config
+                .emails
+                .iter()
+                .find(|e| blob == Some(format!("blob-{}", e.id).as_str()))
+            {
+                Some(e) => reply(StatusCode::OK, e.raw.clone(), None),
+                None => reply(StatusCode::NOT_FOUND, String::new(), None),
+            }
+        }
         "/api" if method == Method::POST.as_str() => {
             let bytes = request
                 .collect()
@@ -342,6 +452,7 @@ async fn jmap_response(
                             let c = c.as_array()?;
                             Some(method_response(
                                 c.first()?.as_str()?,
+                                c.get(1).unwrap_or(&Value::Null),
                                 c.get(2)?.as_str()?,
                                 &config,
                             ))

@@ -246,7 +246,7 @@ pub(crate) async fn get_following(
 }
 
 /// The last two labels of a host (`api.fastmail.com` → `fastmail.com`).
-fn org(host: &str) -> String {
+pub(crate) fn org(host: &str) -> String {
     let labels: Vec<&str> = host.trim_end_matches('.').split('.').collect();
     labels[labels.len().saturating_sub(2)..]
         .join(".")

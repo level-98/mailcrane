@@ -1,5 +1,5 @@
-//! JMAP client (RFC 8620 core, RFC 8621 mail), part 1 of M3-04: session
-//! discovery, method calls and mailboxes.
+//! JMAP client (RFC 8620 core, RFC 8621 mail), M3-04: session discovery,
+//! method calls, mailboxes and emails.
 //!
 //! Everything goes over HTTPS with the platform's certificate checks, which
 //! can't be turned off; tests may add one extra trusted root. Responses are
@@ -8,12 +8,17 @@
 
 #![forbid(unsafe_code)]
 
+pub mod email;
 mod error;
 mod http;
 pub mod mailbox;
 pub mod request;
 pub mod session;
 
+pub use email::{
+    download_blob, email_changes, get_emails, query_mailbox, EmailChanges, EmailPage, JmapAddress,
+    JmapEmail,
+};
 pub use error::JmapError;
 pub use http::{Auth, ClientConfig, MAX_RESPONSE_BYTES};
 pub use mailbox::{get_mailboxes, JmapMailbox, MailboxRole};

@@ -15,7 +15,7 @@ mod tls;
 pub use fault::{Fault, Quirk};
 pub use https::{FakeHttps, HttpsRequest};
 pub use imap::{FakeImap, FakeImapBuilder};
-pub use jmap::{FakeJmap, FakeMailbox, JmapSentRequest};
+pub use jmap::{FakeEmail, FakeJmap, FakeMailbox, JmapSentRequest};
 pub use mailbox::{Mailbox, Message};
 pub use secrets::MemorySecretStore;
 pub use smtp::{FakeSmtp, SentMessage};
