@@ -189,6 +189,24 @@
     <string name="settings_back">Back</string>
     <string name="settings_clean_links">Remove tracking from links</string>
     <string name="settings_clean_links_summary">Strip tracking parameters such as utm_source from links before opening them</string>
+    <string name="settings_confirm_links">Confirm links before opening</string>
+    <string name="settings_confirm_links_summary">Show where a link goes before opening it. Links with a warning are always confirmed.</string>
+
+    <!-- Link preview (M5-07) -->
+    <string name="link_preview_title">Open this link?</string>
+    <string name="link_preview_open">Open</string>
+    <string name="link_preview_copy">Copy link</string>
+    <string name="link_preview_cancel">Cancel</string>
+    <string name="link_preview_copied">Link copied</string>
+    <string name="link_preview_host_label">Goes to</string>
+    <string name="link_warning_unsupported">This is not a web link, so it can\'t be opened from here.</string>
+    <string name="link_warning_mixed_script">The address mixes alphabets, which is often used to imitate another site. It is shown in its technical form.</string>
+    <string name="link_warning_lookalike">The address is written in another alphabet with letters that look like Latin ones, which is often used to imitate another site. It is shown in its technical form.</string>
+    <string name="link_warning_mismatch">The text shows %1$s, but the link goes to %2$s.</string>
+    <string name="link_warning_ip">The address is a number, not a name.</string>
+    <string name="link_warning_userinfo">Everything before the @ is not the site. The link goes to %1$s.</string>
+    <string name="link_warning_http">Not secure: this link does not use encryption.</string>
+    <string name="link_warning_too_long">This link is very long. Only the site is shown.</string>
 
     <!-- Message actions (M1-14) -->
     <string name="message_archive">Archive</string>

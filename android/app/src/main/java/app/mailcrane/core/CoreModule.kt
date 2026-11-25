@@ -52,6 +52,9 @@ object CoreModule {
     fun provideLinkCleaner(): LinkCleaner = CoreLinkCleaner
 
     @Provides
+    fun provideLinkChecker(): LinkChecker = CoreLinkChecker
+
+    @Provides
     fun provideDeviceContacts(contacts: AndroidDeviceContacts): DeviceContacts = contacts
 
     @Provides
