@@ -323,6 +323,17 @@ pub fn cancel_pending(store: &Store, id: OutboxId) -> Result<Option<ComposeDraft
         body_text: m.fields.body,
         in_reply_to: m.fields.in_reply_to,
         references: m.fields.references,
+        // The built message has them; take them back out.
+        attachments: mailcrane_mime::attachments_of(&m.raw)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|a| mailcrane_mime::OutgoingAttachment {
+                filename: a.filename.unwrap_or_default(),
+                mime_type: a.mime_type,
+                bytes: a.bytes,
+            })
+            .collect(),
+        forward_attachments_of: None,
     }))
 }
 

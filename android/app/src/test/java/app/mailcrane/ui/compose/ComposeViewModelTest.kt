@@ -3,6 +3,7 @@ package app.mailcrane.ui.compose
 import app.mailcrane.contacts.DeviceContacts
 import app.mailcrane.contacts.RecipientSuggestion
 import app.mailcrane.core.AccountSummary
+import app.mailcrane.core.ComposeAttachment
 import app.mailcrane.core.ComposeCore
 import app.mailcrane.core.ComposeDraft
 import app.mailcrane.core.ContactSuggestion
@@ -670,5 +671,34 @@ class ComposeViewModelTest {
         vm.onRecipientInput(RecipientField.CC, "bo")
         vm.commitRecipient(RecipientField.CC)
         assertNull(vm.state.value.suggestionsFor)
+    }
+
+    @Test
+    fun attachmentsAreAddedRemovedAndSent() {
+        val core = FakeCore()
+        val vm = started(core)
+        vm.addAttachments(
+            listOf(
+                ComposeAttachment("a.pdf", "application/pdf", byteArrayOf(1, 2, 3)),
+                ComposeAttachment("b.png", "image/png", byteArrayOf(4)),
+            ),
+        )
+        vm.removeAttachment(0)
+        assertEquals(
+            listOf("b.png"),
+            vm.state.value.attachments
+                .map { it.filename },
+        )
+        assertFalse(vm.state.value.attachmentsTooLarge)
+        vm.onRecipientInput(RecipientField.TO, "bob@example.net,")
+        vm.send()
+        assertEquals(listOf("b.png"), core.sent?.attachments?.map { it.filename })
+    }
+
+    @Test
+    fun overTwentyFiveMegabytesWarns() {
+        val vm = started()
+        vm.addAttachments(listOf(ComposeAttachment("big.bin", "application/octet-stream", ByteArray(26 * 1024 * 1024))))
+        assertTrue(vm.state.value.attachmentsTooLarge)
     }
 }

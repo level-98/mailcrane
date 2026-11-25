@@ -128,6 +128,9 @@ pub struct AttachmentInfo {
     pub mime_type: String,
     /// Size in bytes after decoding.
     pub size: u64,
+    /// Which part it is, for `save_attachment`.
+    #[uniffi(default = "")]
+    pub part_id: String,
 }
 
 /// The body of a message, ready to show.
@@ -342,6 +345,7 @@ pub fn get_message(
             name: one_line(a.filename.as_deref().unwrap_or_default()),
             mime_type: one_line(&a.mime_type),
             size: u64::try_from(a.size).unwrap_or(0),
+            part_id: a.part_id,
         })
         .collect();
     detail.body = match parse_message(&raw) {

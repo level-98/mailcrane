@@ -292,6 +292,21 @@ class MessageViewModel
                 null
             }
 
+        /**
+         * Writes an attachment into [dir] (created if needed) and returns the file, or null if it couldn't
+         * be written (M2-04).
+         */
+        suspend fun attachmentFile(
+            partId: String,
+            dir: java.io.File,
+        ): java.io.File? =
+            try {
+                dir.mkdirs()
+                java.io.File(core.saveAttachment(messageId, partId, dir.path))
+            } catch (_: app.mailcrane.core.AttachmentFailure) {
+                null
+            }
+
         /** Flags or unflags the message; the screen shows the new state at once. */
         fun toggleFlag() {
             val ready = _state.value as? MessageState.Ready ?: return

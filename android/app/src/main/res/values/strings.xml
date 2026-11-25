@@ -181,6 +181,19 @@
     <string name="message_move_title">Move to folder</string>
     <string name="message_move_cancel">Cancel</string>
 
+    <!-- Attachments (M2-04) -->
+    <string name="compose_attach">Attach files</string>
+    <string name="compose_remove_attachment">Remove %1$s</string>
+    <string name="compose_forward_attachments">The original message’s attachments will be included.</string>
+    <string name="compose_attachments_large">These files add up to more than 25 MB. Many providers reject messages that large.</string>
+    <string name="attachment_save">Save</string>
+    <string name="attachment_saved">Saved</string>
+    <string name="attachment_cant_save">Couldn’t save the attachment.</string>
+    <string name="attachment_cant_open">No app on this device can open this attachment.</string>
+    <string name="attachment_risky_title">Open this file?</string>
+    <string name="attachment_risky_text">%1$s is a kind of file that can run code on your device. Only open it if you trust the sender and expected it.</string>
+    <string name="attachment_open_anyway">Open</string>
+
     <!-- Local rules (M4-09) -->
     <string name="rules_title">Rules</string>
     <string name="rules_settings_row">Rules</string>

@@ -303,6 +303,12 @@ class UniffiMailboxCore(
         withContext(io) { oneClickUnsubscribe(dbPath, messageId) }
     }
 
+    override suspend fun saveAttachment(
+        messageId: Long,
+        partId: String,
+        destDir: String,
+    ): String = withContext(io) { saveAttachment(dbPath, messageId, partId, destDir) }
+
     override fun inlinePart(
         messageId: Long,
         contentId: String,

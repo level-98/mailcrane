@@ -43,6 +43,11 @@ pub struct ComposeDraft {
     pub in_reply_to: Option<String>,
     /// For a reply: the thread's Message-IDs, oldest first.
     pub references: Vec<String>,
+    /// Files to attach (M2-04).
+    pub attachments: Vec<mailcrane_mime::OutgoingAttachment>,
+    /// For a forward: attach the original message's attachments too (read
+    /// from its downloaded body when sending).
+    pub forward_attachments_of: Option<mailcrane_store::MessageId>,
 }
 
 /// Which recipient field an entry is in.
@@ -224,6 +229,28 @@ pub struct BuiltMessage {
     pub message_id: String,
 }
 
+/// The draft's own attachments, then the forwarded message's.
+fn all_attachments(
+    store: &Store,
+    draft: &ComposeDraft,
+) -> Result<Vec<mailcrane_mime::OutgoingAttachment>, SendError> {
+    let mut out = draft.attachments.clone();
+    if let Some(original) = draft.forward_attachments_of {
+        let raw = store
+            .get_body(original)
+            .map_err(|_| SendError::Storage)?
+            .ok_or(SendError::Storage)?;
+        for a in mailcrane_mime::attachments_of(&raw).map_err(|_| SendError::Storage)? {
+            out.push(mailcrane_mime::OutgoingAttachment {
+                filename: a.filename.unwrap_or_default(),
+                mime_type: a.mime_type,
+                bytes: a.bytes,
+            });
+        }
+    }
+    Ok(out)
+}
+
 /// Validates the draft, reads the account and builds the message with a
 /// fresh Message-ID. Nothing goes over the network; no password is read.
 pub fn build_for_sending(store: &Store, draft: &ComposeDraft) -> Result<BuiltMessage, SendError> {
@@ -260,6 +287,7 @@ pub fn build_for_sending(store: &Store, draft: &ComposeDraft) -> Result<BuiltMes
         references: draft.references.clone(),
         message_id: Some(message_id.clone()),
         is_draft: false,
+        attachments: all_attachments(store, draft)?,
     })
     .map_err(|e| match e {
         BuildError::InvalidAddress { .. } => SendError::InvalidSender,
@@ -405,6 +433,8 @@ mod tests {
             body_text: "Body".into(),
             in_reply_to: None,
             references: vec![],
+            attachments: Vec::new(),
+            forward_attachments_of: None,
         }
     }
 
