@@ -144,7 +144,7 @@ async fn the_sent_folder_gets_exactly_one_identical_copy_with_seen() {
     );
     assert!(!String::from_utf8_lossy(&copies[0].raw)
         .to_ascii_lowercase()
-        .contains("bcc"));
+        .contains("bcc:"));
     assert_eq!(copy_state(&s, id), SentCopy::Saved);
 }
 

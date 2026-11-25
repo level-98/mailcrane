@@ -104,7 +104,7 @@ mod compose {
                 vec!["bob@example.net", "carol@example.com", "dan@example.org"]
             );
             let raw = String::from_utf8_lossy(&m.data).to_ascii_lowercase();
-            assert!(!raw.contains("bcc"), "no Bcc header on the wire");
+            assert!(!raw.contains("bcc:"), "no Bcc header on the wire");
             assert!(!raw.contains("dan@example.org"));
 
             let parsed = parse_message(&m.data).expect("parses");

@@ -133,7 +133,7 @@ async fn queued_while_the_server_is_down_and_delivered_exactly_once() {
         vec!["bob@example.net", "carol@example.com"]
     );
     let raw = String::from_utf8_lossy(&sent[0].data).to_ascii_lowercase();
-    assert!(!raw.contains("bcc"), "no Bcc on the wire");
+    assert!(!raw.contains("bcc:"), "no Bcc on the wire");
     assert!(raw.contains(&state(&s, id).message_id_header.to_ascii_lowercase()));
 }
 

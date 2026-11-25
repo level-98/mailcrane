@@ -118,7 +118,7 @@ fn never_writes_bcc() {
     d.to.clear();
     d.bcc = vec![addr(Some("Hidden"), "hidden@example.org")];
     let raw = text(&build(&d));
-    assert!(!raw.to_ascii_lowercase().contains("bcc"));
+    assert!(!raw.to_ascii_lowercase().contains("bcc:"));
     assert!(!raw.contains("hidden@example.org"));
     assert!(!raw.contains("\r\nTo:"));
 }

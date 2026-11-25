@@ -62,7 +62,12 @@ private fun detail(
 private fun html(
     remoteBlocked: UInt,
     allowRemote: Boolean,
-) = MessageBody.Html(html = "<p>remote=$allowRemote</p>", remoteBlocked = remoteBlocked, trackersRemoved = 0u)
+) = MessageBody.Html(
+    html = "<p>remote=$allowRemote</p>",
+    remoteBlocked = remoteBlocked,
+    trackersRemoved = 0u,
+    trackers = emptyList(),
+)
 
 private class FakeMessageCore(
     var downloaded: Boolean = true,

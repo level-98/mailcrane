@@ -67,6 +67,16 @@
     <string name="message_header_cc">Cc</string>
     <string name="message_remote_hidden">Remote images are hidden</string>
     <string name="message_remote_load">Load remote images</string>
+
+    <!-- Trackers (M5-01) -->
+    <plurals name="message_trackers_blocked">
+        <item quantity="one">%1$d tracker blocked</item>
+        <item quantity="other">%1$d trackers blocked</item>
+    </plurals>
+    <string name="message_trackers_title">Trackers blocked</string>
+    <string name="message_trackers_explain">A tracking pixel is a tiny, often invisible image. When it loads, the sender learns that you opened the message, when, and roughly where. Mailcrane removes these images from every message, even when you load remote images.</string>
+    <string name="message_trackers_unknown_service">Tiny or hidden image</string>
+    <string name="message_trackers_no_domain">Embedded in the message</string>
     <string name="message_attachments">Attachments</string>
     <string name="message_attachment_unnamed">Unnamed file</string>
 

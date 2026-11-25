@@ -3,7 +3,9 @@
 
 #![allow(clippy::expect_used)] // test helpers may panic
 
-use mailcrane_mime::{sanitize_html, SanitizeOptions, SanitizedHtml, UnsanitisedHtml};
+use mailcrane_mime::{
+    sanitize_html, SanitizeOptions, SanitizedHtml, TrackerHit, TrackerKind, UnsanitisedHtml,
+};
 
 type R = Result<(), Box<dyn std::error::Error>>;
 
@@ -432,4 +434,90 @@ fn sanitize_inline_data_image_fixture() -> R {
 fn sanitize_debug_does_not_print_content() {
     let out = run("<p>secret text</p>", false);
     assert!(!format!("{out:?}").contains("secret"));
+}
+
+fn tracker_fixture(name: &str) -> Result<String, Box<dyn std::error::Error>> {
+    read_fixture(&format!("trackers/{name}"))
+}
+
+fn known(service: &str, domain: &str) -> TrackerHit {
+    TrackerHit {
+        domain: domain.into(),
+        kind: TrackerKind::KnownService(service.into()),
+    }
+}
+
+#[test]
+fn sanitize_known_tracking_services_removed_in_both_modes() -> R {
+    let html = tracker_fixture("known-services.html")?;
+    for allow in [false, true] {
+        let out = run(&html, allow);
+        assert_eq!(
+            out.html.matches("<img").count(),
+            0,
+            "allow={allow}: {}",
+            out.html
+        );
+        assert_eq!(out.trackers_removed, 6);
+        assert_eq!(out.remote_resources_blocked, 0);
+        assert_eq!(
+            out.trackers,
+            vec![
+                known("Mailchimp", "list-manage.com"),
+                known("SendGrid (Twilio)", "sendgrid.net"),
+                known("Amazon SES", "awstrack.me"),
+                known("Substack", "substackcdn.com"),
+                known("LinkedIn", "linkedin.com"),
+            ],
+            "allow={allow}"
+        );
+        // Nothing left to find the second time.
+        let again = sanitize_html(&unsanitised(&out.html), &opts(allow));
+        assert!(again.trackers.is_empty());
+        assert_eq!(again.html, out.html);
+    }
+    Ok(())
+}
+
+#[test]
+fn sanitize_tiny_and_hidden_images_reported_by_host() -> R {
+    let html = tracker_fixture("size-and-hidden.html")?;
+    for allow in [false, true] {
+        let out = run(&html, allow);
+        assert_eq!(out.trackers_removed, 4, "allow={allow}");
+        assert_eq!(
+            out.trackers,
+            vec![
+                TrackerHit {
+                    domain: "stats.example.net".into(),
+                    kind: TrackerKind::Tiny
+                },
+                TrackerHit {
+                    domain: "img.example.org".into(),
+                    kind: TrackerKind::Hidden
+                },
+                TrackerHit {
+                    domain: String::new(),
+                    kind: TrackerKind::Tiny
+                },
+            ]
+        );
+        // The real photo stays (blocked or shown per the setting).
+        assert_eq!(out.html.matches("<img").count(), 1);
+        assert_eq!(out.remote_resources_blocked, u32::from(!allow));
+    }
+    Ok(())
+}
+
+#[test]
+fn sanitize_real_images_on_a_tracker_domain_are_kept() -> R {
+    let html = tracker_fixture("cdn-content.html")?;
+    let out = run(&html, true);
+    assert_eq!(out.html.matches("<img").count(), 3, "{}", out.html);
+    assert!(out.html.contains("substackcdn.com/image/fetch"));
+    assert_eq!(out.trackers, vec![known("Substack", "substackcdn.com")]);
+    let blocked = run(&html, false);
+    assert_eq!(blocked.remote_resources_blocked, 3);
+    assert_eq!(blocked.trackers_removed, 1);
+    Ok(())
 }
