@@ -386,6 +386,10 @@ async fn smtp_plain_stream(
     let mut params_store = Vec::new();
     let mail_params = &mut params_store;
     loop {
+        // Everything answered so far goes out before waiting for the
+        // client: over TLS an unflushed reply can sit in the buffer and
+        // both sides wait (#313).
+        stream.flush().await.map_err(|error| error.to_string())?;
         let mut line = Vec::new();
         let mut byte = [0u8; 1];
         while stream.read_exact(&mut byte).await.is_ok() {
@@ -484,6 +488,10 @@ async fn smtp_plain_stream(
                 }
                 let mut data = Vec::new();
                 loop {
+                    // Everything answered so far goes out before waiting for the
+                    // client: over TLS an unflushed reply can sit in the buffer and
+                    // both sides wait (#313).
+                    stream.flush().await.map_err(|error| error.to_string())?;
                     let mut line = Vec::new();
                     let mut byte = [0u8; 1];
                     while stream.read_exact(&mut byte).await.is_ok() {
