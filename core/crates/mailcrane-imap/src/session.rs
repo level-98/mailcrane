@@ -84,6 +84,8 @@ pub struct Session {
     host: String,
     /// Whether `ENABLE QRESYNC` succeeded (RFC 7162 §3.2.3).
     pub(crate) qresync_enabled: bool,
+    /// The last command sent, as a fixed label (see [`command_label`]).
+    pub(crate) last_command: Option<&'static str>,
 }
 
 impl std::fmt::Debug for Session {
@@ -159,6 +161,7 @@ impl Session {
             command_timeout: timeout,
             host: config.host.clone(),
             qresync_enabled: false,
+            last_command: None,
         };
         let (condition, greeting_text) = greeting;
         // RFC 9051 §6.2.1: after STARTTLS, forget anything learned before;
@@ -186,6 +189,7 @@ impl Session {
             command_timeout,
             host: "test.example.org".into(),
             qresync_enabled: false,
+            last_command: None,
         }
     }
 
@@ -202,6 +206,7 @@ impl Session {
     /// Sends a command and collects its responses within the command
     /// timeout.
     async fn run(&mut self, name: &str, args: &[Arg<'_>]) -> Result<Done, ImapError> {
+        self.last_command = Some(command_label(name, args));
         let cmd = command::build(self.tags.next(), name, args)?;
         let limit = self.command_timeout;
         within(limit, exchange(&mut self.conn, cmd.tag, cmd.segments)).await?
@@ -213,6 +218,13 @@ impl Session {
         args: &[Arg<'_>],
     ) -> Result<Done, ImapError> {
         self.run(name, args).await
+    }
+
+    /// The last command sent on this session as a fixed label, e.g.
+    /// `"SELECT"` or `"UID FETCH"`, for logging which step failed. Never
+    /// holds arguments or server text.
+    pub fn last_command(&self) -> Option<&'static str> {
+        self.last_command
     }
 
     /// `CAPABILITY` (RFC 9051 §6.1.1).
@@ -255,6 +267,7 @@ impl Session {
         username: &str,
         password: &Secret,
     ) -> Result<Done, ImapError> {
+        self.last_command = Some("AUTHENTICATE");
         let tag = self.tags.next();
         let start = format!("{tag} AUTHENTICATE PLAIN\r\n").into_bytes();
         // RFC 4616 §2: empty authzid, NUL, authcid, NUL, passwd.
@@ -317,7 +330,7 @@ impl Session {
             });
         }
         if skipped > 0 {
-            tracing::warn!(host = %self.host, skipped, "skipped folders whose names are not UTF-8");
+            tracing::warn!(skipped, "skipped folders whose names are not UTF-8");
         }
 
         let delimiters: Vec<Option<String>> = folders
@@ -387,6 +400,65 @@ pub fn save_folders(
         })
         .collect();
     Ok(store.upsert_folders(&rows)?)
+}
+
+/// A fixed label for a command, safe to log: the command name, and for `UID`
+/// its subcommand, e.g. `"UID FETCH"`. Never an argument. A name not in the
+/// list becomes `"OTHER"`, so nothing that came from data can reach a log.
+pub(crate) fn command_label(name: &str, args: &[Arg<'_>]) -> &'static str {
+    const NAMES: &[&str] = &[
+        "APPEND",
+        "AUTHENTICATE",
+        "CAPABILITY",
+        "CLOSE",
+        "CREATE",
+        "DELETE",
+        "ENABLE",
+        "EXAMINE",
+        "EXPUNGE",
+        "FETCH",
+        "ID",
+        "IDLE",
+        "LIST",
+        "LOGIN",
+        "LOGOUT",
+        "NAMESPACE",
+        "NOOP",
+        "RENAME",
+        "SEARCH",
+        "SELECT",
+        "STARTTLS",
+        "STATUS",
+        "STORE",
+        "UNSELECT",
+    ];
+    const UID: &[&str] = &[
+        "UID COPY",
+        "UID EXPUNGE",
+        "UID FETCH",
+        "UID MOVE",
+        "UID SEARCH",
+        "UID STORE",
+    ];
+    if name.eq_ignore_ascii_case("UID") {
+        let Some(Arg::Raw(sub)) = args.first() else {
+            return "UID";
+        };
+        return UID
+            .iter()
+            .find(|label| {
+                label
+                    .strip_prefix("UID ")
+                    .is_some_and(|l| l.eq_ignore_ascii_case(sub))
+            })
+            .copied()
+            .unwrap_or("UID");
+    }
+    NAMES
+        .iter()
+        .find(|label| label.eq_ignore_ascii_case(name))
+        .copied()
+        .unwrap_or("OTHER")
 }
 
 pub(crate) fn expect_ok(done: &Done) -> Result<(), ImapError> {
@@ -536,4 +608,59 @@ fn push_untagged(untagged: &mut Vec<Untagged>, u: Untagged) -> Result<(), ImapEr
     }
     untagged.push(u);
     Ok(())
+}
+
+#[cfg(test)]
+mod label_tests {
+    use super::command_label;
+    use crate::command::Arg;
+    use crate::ImapError;
+
+    #[test]
+    fn command_labels_are_names_and_uid_subcommands_only() {
+        assert_eq!(command_label("SELECT", &[Arg::Str(b"INBOX")]), "SELECT");
+        assert_eq!(command_label("select", &[]), "SELECT");
+        assert_eq!(
+            command_label("UID", &[Arg::Raw("FETCH"), Arg::Built("1:*")]),
+            "UID FETCH"
+        );
+        assert_eq!(command_label("UID", &[Arg::Raw("EXPUNGE")]), "UID EXPUNGE");
+        // A subcommand we don't know, or none, is just "UID".
+        assert_eq!(command_label("UID", &[Arg::Raw("THREAD")]), "UID");
+        assert_eq!(command_label("UID", &[Arg::Str(b"FETCH")]), "UID");
+        assert_eq!(command_label("UID", &[]), "UID");
+    }
+
+    #[test]
+    fn an_unknown_command_name_never_reaches_the_label() {
+        // Whatever a caller passes, the label is one of our fixed strings.
+        for name in ["X-SECRET hunter2", "alice@example.org", "", "SELECT INBOX"] {
+            assert_eq!(command_label(name, &[]), "OTHER");
+        }
+    }
+
+    #[test]
+    fn error_names_are_fixed_identifiers() {
+        let errors = [
+            ImapError::InvalidInput,
+            ImapError::CannotConnect,
+            ImapError::TlsFailure,
+            ImapError::StartTlsNotOffered,
+            ImapError::LoginDisabled,
+            ImapError::AuthFailed,
+            ImapError::CommandFailed,
+            ImapError::ServerBye,
+            ImapError::ConnectionClosed,
+            ImapError::Protocol,
+            ImapError::LineTooLong,
+            ImapError::ResponseTooLarge,
+            ImapError::Timeout,
+        ];
+        for error in errors {
+            let name = error.name();
+            assert!(!name.is_empty());
+            assert!(name.chars().all(|c| c.is_ascii_alphabetic()), "{name}");
+            assert_eq!(format!("{error:?}"), name);
+        }
+    }
 }

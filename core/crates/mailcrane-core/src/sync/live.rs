@@ -18,7 +18,7 @@
 //! Stopping sends `DONE` and `LOGOUT`, and returns within 2 seconds even
 //! if the server does not answer.
 
-use super::initial::{FolderSyncer, SyncConfig, SyncError};
+use super::initial::{log_failure, FolderSyncer, SyncConfig, SyncError};
 use crate::events::{AccountId, CoreEvent, EventListener, FolderId, SyncErrorKind};
 use mailcrane_imap::{save_folders, IdleOutcome, ImapConfig, ImapError, Secret, Session};
 use mailcrane_store::{FolderRole, Store};
@@ -339,16 +339,30 @@ impl<'a, L: Fn() -> Result<ImapLogin, SyncErrorKind>> Source for ImapSource<'a, 
 
     async fn connect(&mut self) -> Result<ImapConn<'a>, SyncErrorKind> {
         let login = (self.login)()?;
-        let kind = |e: ImapError| SyncError::from(e).kind();
         let mut session = Session::connect(&login.config, &login.username, &login.password)
             .await
-            .map_err(kind)?;
+            .map_err(|e| {
+                let e = SyncError::from(e);
+                log_failure("live connect", &e, None);
+                e.kind()
+            })?;
         let inbox = match find_inbox(self.store, self.account)? {
             Some(inbox) => inbox,
             None => {
                 // Folders were never listed for this account: do it now.
-                let folders = session.list_folders().await.map_err(kind)?;
-                save_folders(self.store, self.account, &folders).map_err(kind)?;
+                let folders = match session.list_folders().await {
+                    Ok(folders) => folders,
+                    Err(e) => {
+                        let e = SyncError::from(e);
+                        log_failure("live list folders", &e, session.last_command());
+                        return Err(e.kind());
+                    }
+                };
+                save_folders(self.store, self.account, &folders).map_err(|e| {
+                    let e = SyncError::from(e);
+                    log_failure("live save folders", &e, None);
+                    e.kind()
+                })?;
                 find_inbox(self.store, self.account)?.ok_or(SyncErrorKind::NotFound)?
             }
         };
@@ -461,7 +475,11 @@ impl Conn for ImapConn<'_> {
                 self.idle_refused = true;
                 Ok(IdleOutcome::TimedOut)
             }
-            Err(e) => Err(SyncError::from(e).kind()),
+            Err(e) => {
+                let e = SyncError::from(e);
+                log_failure("idle", &e, session.last_command());
+                Err(e.kind())
+            }
         }
     }
 

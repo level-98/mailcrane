@@ -74,6 +74,7 @@ impl Session {
         debounce: Duration,
         stop: impl Future<Output = ()>,
     ) -> Result<IdleOutcome, ImapError> {
+        self.last_command = Some("IDLE");
         let tag = self.tags.next();
         let limit = self.command_timeout;
         let deadline = Instant::now() + max;
