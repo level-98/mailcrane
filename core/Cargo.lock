@@ -1021,11 +1021,13 @@ dependencies = [
 name = "mailcrane-ffi"
 version = "0.0.0"
 dependencies = [
+ "jni",
  "mailcrane-core",
  "mailcrane-imap",
  "mailcrane-mime",
  "mailcrane-store",
  "mailcrane-testkit",
+ "rustls-platform-verifier",
  "tempfile",
  "thiserror",
  "tokio",

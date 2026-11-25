@@ -11,6 +11,8 @@ material3 = "1.5.0"
 activityCompose = "1.13.0"
 lifecycle = "2.11.1"
 jna = "5.19.1"
+# Must match rustls-platform-verifier-android in core/Cargo.lock (checked by the build).
+rustlsPlatformVerifier = "0.2.0"
 junit = "4.13.2"
 coroutines = "1.11.0"
 datastore = "1.3.0"
@@ -35,6 +37,7 @@ androidx-lifecycle-process = { module = "androidx.lifecycle:lifecycle-process", 
 hilt-android = { module = "com.google.dagger:hilt-android", version.ref = "hilt" }
 hilt-compiler = { module = "com.google.dagger:hilt-android-compiler", version.ref = "hilt" }
 hilt-navigation-compose = { module = "androidx.hilt:hilt-navigation-compose", version.ref = "hiltNavigationCompose" }
+rustls-platform-verifier = { module = "org.rustls:rustls-platform-verifier", version.ref = "rustlsPlatformVerifier" }
 jna = { module = "net.java.dev.jna:jna", version.ref = "jna" }
 junit = { module = "junit:junit", version.ref = "junit" }
 kotlinx-coroutines-test = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-test", version.ref = "coroutines" }
