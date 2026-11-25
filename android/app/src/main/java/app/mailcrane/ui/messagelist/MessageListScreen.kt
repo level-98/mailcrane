@@ -57,7 +57,6 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.mailcrane.R
-import app.mailcrane.core.FolderRole
 import app.mailcrane.core.FolderSummary
 import app.mailcrane.core.MessageSummary
 import app.mailcrane.core.SyncErrorKind
@@ -150,10 +149,16 @@ fun MessageListScreen(
     LaunchedEffect(viewModel) {
         viewModel.bulkUndoOffers.collect { offer ->
             val count = offer.messageIds.size
+            val text = resources.getQuantityString(bulkUndoLabel(offer.kind), count, count)
+            // A permanent delete is said, with no Undo it couldn't keep.
+            if (offer.kind == BulkUndoKind.DELETED_FOR_GOOD) {
+                snackbar.showSnackbar(text)
+                return@collect
+            }
             val result =
                 withTimeoutOrNull(UNDO_WINDOW_MS) {
                     snackbar.showSnackbar(
-                        message = resources.getQuantityString(bulkUndoLabel(offer.kind), count, count),
+                        message = text,
                         actionLabel = resources.getString(R.string.undo_send_undo),
                         duration = SnackbarDuration.Indefinite,
                     )
@@ -165,17 +170,12 @@ fun MessageListScreen(
     moveTargets?.let { targets ->
         MoveDialog(folders = targets, onPick = viewModel::bulkMove, onDismiss = viewModel::cancelMove)
     }
-    // Deleting from Trash deletes for good, so it asks first.
-    val inTrash = folders.firstOrNull { it.id == folderId }?.role == FolderRole.TRASH
-    var confirmDelete by rememberSaveable { mutableStateOf(false) }
-    if (confirmDelete && state.selecting) {
+    // A Delete that would be permanent (in Trash, or an account without one) asks first.
+    if (state.confirmDeleteForGood > 0) {
         DeleteForGoodDialog(
-            count = state.selectedCount,
-            onConfirm = {
-                confirmDelete = false
-                viewModel.bulk(BulkAction.DELETE)
-            },
-            onDismiss = { confirmDelete = false },
+            count = state.confirmDeleteForGood,
+            onConfirm = viewModel::confirmDeleteForGood,
+            onDismiss = viewModel::cancelDeleteForGood,
         )
     }
     val selection =
@@ -183,9 +183,7 @@ fun MessageListScreen(
             onToggleMessage = viewModel::toggleMessage,
             onToggleThread = viewModel::toggleThread,
             onClear = viewModel::clearSelection,
-            onAction = { action ->
-                if (action == BulkAction.DELETE && inTrash) confirmDelete = true else viewModel.bulk(action)
-            },
+            onAction = viewModel::bulk,
             onMove = { viewModel.startMove(folders) },
         )
     val noticeShown by rememberUpdatedState(onNoticeShown)

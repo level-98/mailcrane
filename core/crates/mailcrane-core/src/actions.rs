@@ -235,23 +235,7 @@ pub fn apply_bulk_action(
     if messages.len() > MAX_BULK {
         return Err(ActionError::TooMany);
     }
-    // Groups by folder, in the order the folders first appear; a message
-    // listed twice counts once.
-    let mut groups: Vec<(FolderId, Vec<MessageHeader>)> = Vec::new();
-    let mut seen = std::collections::HashSet::with_capacity(messages.len());
-    for id in messages {
-        if !seen.insert(*id) {
-            continue;
-        }
-        let header = store
-            .get_message_header(*id)?
-            .ok_or(ActionError::UnknownMessage)?;
-        let folder = header.details.folder_id;
-        match groups.iter_mut().find(|(f, _)| *f == folder) {
-            Some((_, group)) => group.push(header),
-            None => groups.push((folder, vec![header])),
-        }
-    }
+    let groups = group_by_folder(store, messages)?;
     // Before planning: a move's destination fits only one account's groups.
     if matches!(action, Action::Move { .. }) {
         let mut account = None;
@@ -297,6 +281,48 @@ pub fn apply_bulk_action(
         "bulk message action applied"
     );
     Ok(applied)
+}
+
+/// The messages grouped by folder, in the order the folders first appear;
+/// a message listed twice counts once.
+fn group_by_folder(
+    store: &Store,
+    messages: &[MessageId],
+) -> Result<Vec<(FolderId, Vec<MessageHeader>)>, ActionError> {
+    let mut groups: Vec<(FolderId, Vec<MessageHeader>)> = Vec::new();
+    let mut seen = std::collections::HashSet::with_capacity(messages.len());
+    for id in messages {
+        if !seen.insert(*id) {
+            continue;
+        }
+        let header = store
+            .get_message_header(*id)?
+            .ok_or(ActionError::UnknownMessage)?;
+        let folder = header.details.folder_id;
+        match groups.iter_mut().find(|(f, _)| *f == folder) {
+            Some((_, group)) => group.push(header),
+            None => groups.push((folder, vec![header])),
+        }
+    }
+    Ok(groups)
+}
+
+/// How many of `messages` a Delete would delete for good rather than move
+/// to Trash: those already in Trash, and those in an account without one.
+/// The apps ask first when this isn't 0 (M4-14). Changes nothing.
+pub fn count_deleted_for_good(store: &Store, messages: &[MessageId]) -> Result<u32, ActionError> {
+    if messages.len() > MAX_BULK {
+        return Err(ActionError::TooMany);
+    }
+    let mut count: u32 = 0;
+    for (folder, headers) in group_by_folder(store, messages)? {
+        let op = plan(store, folder, &headers, Action::Delete)?;
+        if op.kind == OpKind::Expunge {
+            let n = u32::try_from(op.messages.len()).unwrap_or(u32::MAX);
+            count = count.saturating_add(n);
+        }
+    }
+    Ok(count)
 }
 
 /// What [`undo_bulk`] did.

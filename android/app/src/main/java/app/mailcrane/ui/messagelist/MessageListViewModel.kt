@@ -61,6 +61,8 @@ data class MessageListState(
     val selectedMessages: Set<Long> = emptySet(),
     /** Selected conversation rows, by thread id, when [grouped]. */
     val selectedThreads: Set<Long> = emptySet(),
+    /** How many selected messages a Delete would delete for good, while asking first; 0 when not asking. */
+    val confirmDeleteForGood: Int = 0,
 ) {
     /** Multi-select is on: taps toggle rows and the top bar shows the bulk actions. */
     val selecting: Boolean get() = selectedMessages.isNotEmpty() || selectedThreads.isNotEmpty()
@@ -201,10 +203,13 @@ class MessageListViewModel
             }
 
         /** Back or the top bar's Clear: ends selection. */
-        fun clearSelection() = _state.update { it.copy(selectedMessages = emptySet(), selectedThreads = emptySet()) }
+        fun clearSelection() =
+            _state.update { it.copy(selectedMessages = emptySet(), selectedThreads = emptySet(), confirmDeleteForGood = 0) }
 
         /** Runs [action] on every selected row through the core, then ends selection. */
         fun bulk(action: BulkAction) {
+            // Delete may be permanent: it asks first when it would be.
+            if (action == BulkAction.DELETE) return requestDelete()
             val coreAction =
                 when (action) {
                     BulkAction.READ -> MessageAction.MarkRead
@@ -264,29 +269,62 @@ class MessageListViewModel
             runBulk(MessageAction.Move(folderId), BulkUndoKind.MOVED)
         }
 
+        /**
+         * The selection's Delete: asks the core how many messages it would delete for good (already in Trash,
+         * or in an account without one). If any, the screen asks first; otherwise they go to Trash at once.
+         */
+        private fun requestDelete() {
+            val selection = currentSelection() ?: return
+            viewModelScope.launch {
+                val forGood =
+                    try {
+                        core.countDeletedForGood(selection)
+                    } catch (_: ActionFailure) {
+                        _notices.send(R.string.action_not_applied)
+                        return@launch
+                    }
+                if (forGood > 0) {
+                    _state.update { it.copy(confirmDeleteForGood = forGood) }
+                } else {
+                    runBulk(MessageAction.Delete, BulkUndoKind.DELETED)
+                }
+            }
+        }
+
+        /** "Delete for good" in the dialog: deletes with no Undo, since a permanent delete can't promise one. */
+        fun confirmDeleteForGood() {
+            _state.update { it.copy(confirmDeleteForGood = 0) }
+            runBulk(MessageAction.Delete, undo = null)
+        }
+
+        /** The dialog was dismissed: nothing is deleted and the selection stays. */
+        fun cancelDeleteForGood() = _state.update { it.copy(confirmDeleteForGood = 0) }
+
+        private fun currentSelection(): BulkSelection? {
+            val current = _state.value
+            if (!current.selecting) return null
+            return BulkSelection(
+                messageIds = current.selectedMessages.toList(),
+                folderId = folderId,
+                threadIds = current.selectedThreads.toList(),
+            )
+        }
+
         private fun runBulk(
             action: MessageAction,
             undo: BulkUndoKind?,
         ) {
-            val current = _state.value
-            if (!current.selecting) return
-            val selection =
-                BulkSelection(
-                    messageIds = current.selectedMessages.toList(),
-                    folderId = folderId,
-                    threadIds = current.selectedThreads.toList(),
-                )
+            val selection = currentSelection() ?: return
             clearSelection()
             viewModelScope.launch {
                 try {
                     val applied = core.bulkAction(selection, action, undoable = undo != null)
-                    if (undo != null && applied.messageIds.isNotEmpty()) {
-                        _bulkUndoOffers.send(
-                            BulkUndoOffer(
-                                messageIds = applied.messageIds,
-                                kind = if (applied.deletedForGood) BulkUndoKind.DELETED_FOR_GOOD else undo,
-                            ),
-                        )
+                    when {
+                        applied.messageIds.isEmpty() -> Unit
+                        // Said, never silent, but with no Undo: it can't be promised for a permanent delete.
+                        applied.deletedForGood ->
+                            _bulkUndoOffers.send(BulkUndoOffer(applied.messageIds, BulkUndoKind.DELETED_FOR_GOOD))
+                        undo != null -> _bulkUndoOffers.send(BulkUndoOffer(applied.messageIds, undo))
                     }
                 } catch (e: ActionFailure.NoArchiveFolder) {
                     _notices.send(R.string.action_no_archive_folder)
@@ -442,7 +480,7 @@ class MessageListViewModel
         /** Drops selected rows that left the list (moved, deleted, or changed elsewhere). */
         private fun pruneSelection() =
             _state.update { s ->
-                if (!s.selecting) return@update s
+                if (!s.selecting) return@update s.copy(confirmDeleteForGood = 0)
                 val ids = s.messages.mapTo(HashSet()) { it.id }
                 val threads = s.threads.mapTo(HashSet()) { it.threadId }
                 s.copy(
@@ -519,7 +557,7 @@ class MessageListViewModel
 /** What a bulk action did, for its snackbar. */
 enum class BulkUndoKind { ARCHIVED, DELETED, DELETED_FOR_GOOD, MOVED }
 
-/** Undo is offered for [messageIds] after a bulk action (M4-14). */
+/** Undo is offered for [messageIds] after a bulk action (M4-14); never for [BulkUndoKind.DELETED_FOR_GOOD]. */
 data class BulkUndoOffer(
     val messageIds: List<Long>,
     val kind: BulkUndoKind,

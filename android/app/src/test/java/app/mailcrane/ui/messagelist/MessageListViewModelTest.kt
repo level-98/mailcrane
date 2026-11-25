@@ -171,6 +171,12 @@ private class FakeMailbox(
     }
 
     var accountFolders: List<FolderSummary> = emptyList()
+    var forGood = 0
+
+    override suspend fun countDeletedForGood(selection: BulkSelection): Int {
+        actionFailure?.let { throw it }
+        return forGood
+    }
 }
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -602,5 +608,51 @@ class MessageListViewModelTest {
         vm.toggleMessage(2)
         vm.refresh()
         assertEquals(setOf(2L), vm.state.value.selectedMessages)
+    }
+    @Test
+    fun aDeleteThatWouldBePermanentAsksFirstAndOffersNoUndo() =
+        runTest {
+            val core = FakeMailbox(stored = 3).apply { forGood = 2 }
+            val vm = MessageListViewModel(core, FakeAppSettings(), FOLDER)
+            vm.toggleMessage(3)
+            vm.toggleMessage(2)
+            vm.bulk(BulkAction.DELETE)
+            assertEquals("asks before anything is deleted", 2, vm.state.value.confirmDeleteForGood)
+            assertTrue(core.bulkCalls.isEmpty())
+            vm.cancelDeleteForGood()
+            assertEquals(0, vm.state.value.confirmDeleteForGood)
+            assertEquals("cancel keeps the selection", 2, vm.state.value.selectedCount)
+
+            vm.bulk(BulkAction.DELETE)
+            core.deletedForGood = true
+            vm.confirmDeleteForGood()
+            val (_, action, undoable) = core.bulkCalls.single()
+            assertEquals(MessageAction.Delete, action)
+            assertFalse("no undo window for a permanent delete", undoable)
+            assertEquals(BulkUndoKind.DELETED_FOR_GOOD, vm.bulkUndoOffers.first().kind)
+            assertFalse(vm.state.value.selecting)
+        }
+
+    @Test
+    fun aDeleteToTrashDoesNotAskAndOffersUndo() =
+        runTest {
+            val core = FakeMailbox(stored = 3)
+            val vm = MessageListViewModel(core, FakeAppSettings(), FOLDER)
+            vm.toggleMessage(3)
+            vm.bulk(BulkAction.DELETE)
+            assertEquals(0, vm.state.value.confirmDeleteForGood)
+            assertTrue(core.bulkCalls.single().third)
+            assertEquals(BulkUndoKind.DELETED, vm.bulkUndoOffers.first().kind)
+        }
+
+    @Test
+    fun clearingTheSelectionDropsThePermanentDeleteQuestion() {
+        val core = FakeMailbox(stored = 3).apply { forGood = 1 }
+        val vm = MessageListViewModel(core, FakeAppSettings(), FOLDER)
+        vm.toggleMessage(3)
+        vm.bulk(BulkAction.DELETE)
+        assertEquals(1, vm.state.value.confirmDeleteForGood)
+        vm.clearSelection()
+        assertEquals(0, vm.state.value.confirmDeleteForGood)
     }
 }

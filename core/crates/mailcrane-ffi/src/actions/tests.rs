@@ -117,6 +117,9 @@ mod bulk {
         a: Vec<i64>,
         /// B's inbox: one message.
         b: Vec<i64>,
+        /// Account C has no Trash folder: its inbox's two messages.
+        c_inbox: FolderId,
+        c: Vec<i64>,
     }
 
     fn account(store: &Store, name: &str) -> AccountId {
@@ -197,6 +200,12 @@ mod bulk {
             message(&store, a_inbox, 3, "a3@x", "[]"),
         ];
         let b = vec![message(&store, b_inbox, 1, "b1@x", "[]")];
+        let c_account = account(&store, "c");
+        let c_inbox = folder(&store, c_account, "INBOX", Some(FolderRole::Inbox));
+        let c = vec![
+            message(&store, c_inbox, 1, "c1@x", "[]"),
+            message(&store, c_inbox, 2, "c2@x", "[]"),
+        ];
         drop(store);
         let engine = SyncEngine::new(path.clone(), std::sync::Arc::new(Quiet));
         Fixture {
@@ -209,6 +218,8 @@ mod bulk {
             b_inbox,
             a,
             b,
+            c_inbox,
+            c,
         }
     }
 
@@ -365,5 +376,58 @@ mod bulk {
                 .apply_bulk_action(f.select(&ids), MessageAction::Flag),
             Err(ActionFailure::TooMany)
         );
+    }
+
+    #[test]
+    fn the_app_can_tell_ahead_which_deletes_are_for_good() {
+        let f = fixture();
+        // A and B have a Trash: nothing would be deleted for good.
+        assert_eq!(f.engine.count_deleted_for_good(f.select(&f.all())), Ok(0));
+        // C has none, so its messages would be.
+        let mixed: Vec<i64> = f.a.iter().chain(&f.c).copied().collect();
+        assert_eq!(f.engine.count_deleted_for_good(f.select(&mixed)), Ok(2));
+        // In Trash, a delete is for good too.
+        let store = Store::open(&f.path).expect("store");
+        let in_trash = message(&store, f.a_trash, 60, "t2@x", "[]");
+        drop(store);
+        assert_eq!(
+            f.engine.count_deleted_for_good(f.select(&[in_trash])),
+            Ok(1)
+        );
+        // Only a question: nothing changed.
+        assert_eq!(f.visible(f.c_inbox), 2);
+        assert_eq!(f.visible(f.a_inbox), 3);
+    }
+
+    #[test]
+    fn undo_of_a_pending_delete_for_good_brings_the_rows_back() {
+        let f = fixture();
+        let applied = f
+            .engine
+            .apply_bulk_action(f.select(&f.c), MessageAction::Delete)
+            .expect("deletes");
+        assert!(applied.deleted_for_good, "C has no Trash");
+        assert_eq!(f.visible(f.c_inbox), 0, "hidden at once");
+        // The expunge is still queued (never replayed): undo puts both back.
+        let undo = f
+            .engine
+            .undo_bulk_action(applied.message_ids)
+            .expect("undoes");
+        assert_eq!(
+            undo,
+            BulkUndo {
+                undone: 2,
+                too_late: 0
+            }
+        );
+        assert_eq!(f.visible(f.c_inbox), 2);
+        let store = Store::open(&f.path).expect("store");
+        let c_account = store
+            .get_folder(f.c_inbox)
+            .expect("read")
+            .expect("folder")
+            .details
+            .account_id;
+        assert_eq!(store.count_pending_ops(c_account).expect("count"), 0);
     }
 }

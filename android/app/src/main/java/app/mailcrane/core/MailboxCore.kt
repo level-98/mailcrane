@@ -78,6 +78,9 @@ interface MailboxCore {
     /** Undo for [bulkAction]: puts back the messages whose action hasn't reached the server. @throws ActionFailure */
     suspend fun undoBulk(messageIds: List<Long>): BulkUndo = BulkUndo(0u, 0u)
 
+    /** How many messages in [selection] a Delete would delete for good (asked before deleting). @throws ActionFailure */
+    suspend fun countDeletedForGood(selection: BulkSelection): Int = 0
+
     /** Searches the stored mail (works offline), newest first. */
     suspend fun searchMessages(
         accountId: Long,
@@ -288,6 +291,9 @@ class UniffiMailboxCore(
 
     override suspend fun undoBulk(messageIds: List<Long>): BulkUndo =
         withContext(io) { engine.undoBulkAction(messageIds) }
+
+    override suspend fun countDeletedForGood(selection: BulkSelection): Int =
+        withContext(io) { engine.countDeletedForGood(selection) }.coerceAtMost(Int.MAX_VALUE.toUInt()).toInt()
 
     override suspend fun snooze(
         messageId: Long,

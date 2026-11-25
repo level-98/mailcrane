@@ -148,6 +148,30 @@ pub struct BulkUndo {
     pub too_late: u32,
 }
 
+/// The messages a selection stands for: its message rows, plus each
+/// conversation row's visible messages in the selection's folder.
+fn expand(
+    store: &mailcrane_store::Store,
+    selection: BulkSelection,
+) -> Result<Vec<MessageId>, ActionFailure> {
+    if selection
+        .message_ids
+        .len()
+        .saturating_add(selection.thread_ids.len())
+        > actions::MAX_BULK
+    {
+        return Err(ActionFailure::TooMany);
+    }
+    let mut ids: Vec<MessageId> = selection.message_ids.into_iter().map(MessageId).collect();
+    for thread in selection.thread_ids {
+        let in_folder = store
+            .thread_message_ids_in_folder(FolderId(selection.folder_id), ThreadId(thread))
+            .map_err(|_| ActionFailure::Storage)?;
+        ids.extend(in_folder);
+    }
+    Ok(ids)
+}
+
 /// Unix seconds now. A clock before 1970 counts as 0; it only delays retries.
 pub(crate) fn now() -> i64 {
     std::time::SystemTime::now()
@@ -186,21 +210,7 @@ impl SyncEngine {
         action: MessageAction,
     ) -> Result<BulkApplied, ActionFailure> {
         let store = self.open_store().map_err(|_| ActionFailure::Storage)?;
-        if selection
-            .message_ids
-            .len()
-            .saturating_add(selection.thread_ids.len())
-            > actions::MAX_BULK
-        {
-            return Err(ActionFailure::TooMany);
-        }
-        let mut ids: Vec<MessageId> = selection.message_ids.into_iter().map(MessageId).collect();
-        for thread in selection.thread_ids {
-            let in_folder = store
-                .thread_message_ids_in_folder(FolderId(selection.folder_id), ThreadId(thread))
-                .map_err(|_| ActionFailure::Storage)?;
-            ids.extend(in_folder);
-        }
+        let ids = expand(&store, selection)?;
         let listener = ListenerAdapter(self.listener.clone());
         let applied = actions::apply_bulk_action(&store, &ids, action.into(), now(), &listener)?;
         Ok(BulkApplied {
@@ -208,6 +218,15 @@ impl SyncEngine {
             message_ids: applied.messages.into_iter().map(|m| m.0).collect(),
             deleted_for_good: applied.deleted_for_good,
         })
+    }
+
+    /// How many messages in `selection` a Delete would delete for good
+    /// (already in Trash, or in an account without one), so the app can
+    /// ask first. Changes nothing.
+    pub fn count_deleted_for_good(&self, selection: BulkSelection) -> Result<u32, ActionFailure> {
+        let store = self.open_store().map_err(|_| ActionFailure::Storage)?;
+        let ids = expand(&store, selection)?;
+        Ok(actions::count_deleted_for_good(&store, &ids)?)
     }
 
     /// Undo for [`SyncEngine::apply_bulk_action`]: puts back every one of

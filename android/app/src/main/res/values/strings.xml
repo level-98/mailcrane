@@ -103,7 +103,7 @@
         <item quantity="one">Delete %d message for good?</item>
         <item quantity="other">Delete %d messages for good?</item>
     </plurals>
-    <string name="bulk_delete_forever_text">They\'re already in Trash. This can\'t be undone once it reaches the server.</string>
+    <string name="bulk_delete_forever_text">Messages already in Trash, or in an account without a Trash folder, are deleted for good. This can\'t be undone.</string>
     <string name="bulk_delete_forever_confirm">Delete for good</string>
     <string name="message_a11y_flagged">Flagged.</string>
     <string name="message_a11y_from">From %1$s.</string>

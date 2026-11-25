@@ -135,4 +135,15 @@ class SelectionUiTest {
         row(3).performClick()
         assertEquals(listOf(3L), opened)
     }
+
+    @Test
+    fun thePermanentDeleteDialogNamesTheCountAndConfirms() {
+        var confirmed = false
+        compose.setContent {
+            MailcraneTheme { DeleteForGoodDialog(count = 2, onConfirm = { confirmed = true }, onDismiss = {}) }
+        }
+        compose.onNodeWithText("Delete 2 messages for good?").assertExists()
+        compose.onNodeWithText("Delete for good").performClick()
+        assertEquals(true, confirmed)
+    }
 }
