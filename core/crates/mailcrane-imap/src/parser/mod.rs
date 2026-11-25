@@ -139,6 +139,12 @@ pub enum Untagged {
         earlier: bool,
         uids: Vec<(u32, u32)>,
     },
+    /// `* NAMESPACE` (RFC 2342 §5): the first personal namespace, if the
+    /// server has one: its prefix (raw, such as `INBOX.`) and delimiter.
+    /// Other users' and shared namespaces aren't kept.
+    Namespace {
+        personal: Option<(Vec<u8>, Option<char>)>,
+    },
     /// Something this parser does not interpret yet, named by its keyword.
     Other {
         name: String,
@@ -479,6 +485,8 @@ impl Cursor<'_> {
             "SEARCH" => self.search_response(),
             // RFC 7162 §3.2.10
             "VANISHED" => self.vanished_response(),
+            // RFC 2342 §5
+            "NAMESPACE" => self.namespace_response(),
             // RFC 9051 §7.3.1
             "LIST" => {
                 self.expect(b' ')?;
@@ -554,6 +562,57 @@ impl Cursor<'_> {
 
     /// `mailbox-list` (RFC 9051 §9), then the line end. Extended data
     /// after the name (RFC 5258) is skipped.
+    /// `namespace-response` (RFC 2342 §5), reading only the first personal
+    /// namespace description; the rest of the line is skipped.
+    fn namespace_response(&mut self) -> Result<Untagged, ParseError> {
+        self.expect(b' ')?;
+        if !self.eat(b'(') {
+            let nil = self.atom()?;
+            if !nil.eq_ignore_ascii_case("NIL") {
+                return Err(self.err());
+            }
+            self.skip_to_end();
+            return Ok(Untagged::Namespace { personal: None });
+        }
+        self.expect(b'(')?;
+        let prefix = match self.peek() {
+            Some(b'{') => self.literal()?,
+            _ => self.quoted()?,
+        };
+        self.expect(b' ')?;
+        let delimiter = self.quoted_char_or_nil()?;
+        self.skip_to_end();
+        Ok(Untagged::Namespace {
+            personal: Some((prefix, delimiter)),
+        })
+    }
+
+    /// `DQUOTE QUOTED-CHAR DQUOTE / nil`, as for a hierarchy delimiter.
+    fn quoted_char_or_nil(&mut self) -> Result<Option<char>, ParseError> {
+        if self.eat(b'"') {
+            let c = match self.peek() {
+                Some(b'\\') => {
+                    self.bump();
+                    match self.peek() {
+                        Some(q @ (b'\\' | b'"')) => q,
+                        _ => return Err(self.err()),
+                    }
+                }
+                Some(b) if (0x20..=0x7e).contains(&b) && b != b'"' => b,
+                _ => return Err(self.err()),
+            };
+            self.bump();
+            self.expect(b'"')?;
+            Ok(Some(char::from(c)))
+        } else {
+            let nil = self.atom()?;
+            if !nil.eq_ignore_ascii_case("NIL") {
+                return Err(self.err());
+            }
+            Ok(None)
+        }
+    }
+
     fn mailbox_list(&mut self) -> Result<ListItem, ParseError> {
         self.expect(b'(')?;
         let mut attributes = Vec::new();

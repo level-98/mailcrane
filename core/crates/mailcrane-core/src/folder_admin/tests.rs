@@ -442,3 +442,174 @@ fn move_targets_leave_out_the_folder_its_subfolders_and_where_it_is() {
     // A standard folder can't move anywhere.
     assert_eq!(move_targets(&all, FolderId(1)), (false, Vec::new()));
 }
+
+/// Courier-style: every personal folder under `INBOX.`, `.` as delimiter.
+fn namespaced() -> Vec<Folder> {
+    let mut all = vec![
+        folder(1, "INBOX", Some(FolderRole::Inbox)),
+        folder(2, "INBOX.Sent", Some(FolderRole::Sent)),
+        folder(3, "INBOX.Projects", None),
+        folder(4, "INBOX.Projects.2026", None),
+        folder(5, "INBOX.Notes", None),
+    ];
+    for f in &mut all {
+        f.details.delimiter = Some(".".into());
+    }
+    all
+}
+
+const NS: Option<&str> = Some("INBOX.");
+
+#[test]
+fn top_level_create_goes_under_the_namespace() {
+    let all = namespaced();
+    let p = plan_create_in(&all, ACCOUNT, None, "Receipts", None, NS).expect("plan");
+    assert_eq!(p.remote_name, "INBOX.Receipts");
+    // Under a folder it's as before; without a namespace, as before.
+    let p = plan_create_in(&all, ACCOUNT, Some(FolderId(3)), "Q1", None, NS).expect("plan");
+    assert_eq!(p.remote_name, "INBOX.Projects.Q1");
+    assert_eq!(
+        plan_create(&all, ACCOUNT, None, "Receipts", None).expect("plan").remote_name,
+        "Receipts"
+    );
+    assert!(matches!(
+        plan_create_in(&all, ACCOUNT, None, "Notes", None, NS),
+        Err(FolderAdminError::AlreadyExists)
+    ));
+    assert!(matches!(
+        plan_create_in(&all, ACCOUNT, None, "a.b", None, NS),
+        Err(FolderAdminError::InvalidName(FolderNameError::Delimiter('.')))
+    ));
+}
+
+#[test]
+fn moving_to_the_top_stays_in_the_namespace() {
+    let all = namespaced();
+    let p = plan_move_in(&all, FolderId(4), None, NS).expect("plan");
+    assert_eq!(p.new_remote, "INBOX.2026");
+    // Already at the top of the namespace.
+    assert!(plan_move_in(&all, FolderId(3), None, NS).expect("plan").is_noop());
+    // Renames keep their place.
+    assert_eq!(
+        plan_rename(&all, FolderId(3), "Work").expect("plan").rows,
+        vec![
+            (FolderId(3), "INBOX.Work".into(), "INBOX.Work".into()),
+            (FolderId(4), "INBOX.Work.2026".into(), "INBOX.Work.2026".into()),
+        ]
+    );
+}
+
+#[test]
+fn the_namespace_folder_is_the_top_in_the_move_picker() {
+    let all = namespaced();
+    assert_eq!(namespace_root(&all, "INBOX."), Some(FolderId(1)));
+    assert_eq!(namespace_root(&all, "Other/"), None);
+    let (top, under) = move_targets_in(&all, FolderId(4), NS);
+    assert!(top);
+    assert!(!under.contains(&FolderId(1)), "INBOX is the top, not a target");
+    assert!(under.contains(&FolderId(5)));
+    let (top, under) = move_targets_in(&all, FolderId(5), NS);
+    assert!(!top, "already at the top");
+    assert!(!under.contains(&FolderId(1)));
+}
+
+mod namespace_imap {
+    use super::*;
+    use mailcrane_imap::{save_folders, ImapConfig, ImapSecurity, Secret};
+    use mailcrane_testkit::{FakeImap, Quirk};
+    use std::time::Duration;
+
+    const USER: &str = "ann@example.org";
+    const PASSWORD: &str = "app-password";
+
+    async fn connect(imap: &FakeImap) -> Session {
+        let mut config = ImapConfig::new("localhost", imap.addr().port(), ImapSecurity::ImplicitTls)
+            .with_extra_root_cert(imap.root_cert_der().to_vec());
+        config.command_timeout = Duration::from_millis(500);
+        Session::connect(&config, USER, &Secret::new(PASSWORD))
+            .await
+            .expect("connects")
+    }
+
+    #[tokio::test]
+    async fn create_move_and_rename_under_an_inbox_namespace() {
+        let imap = FakeImap::builder()
+            .user(USER, PASSWORD)
+            .namespace("INBOX.", '.')
+            .folder("INBOX", Vec::new())
+            .folder("INBOX.Projects", Vec::new())
+            .folder("INBOX.Projects.2026", Vec::new())
+            .start()
+            .await
+            .expect("fake imap starts");
+        let store = Store::open_in_memory().expect("store");
+        let account = store
+            .insert_account(&mailcrane_store::NewAccount {
+                display_name: "Ann".into(),
+                email: USER.into(),
+                imap_host: "localhost".into(),
+                imap_port: 993,
+                imap_security: mailcrane_store::Security::Tls,
+                smtp_host: "localhost".into(),
+                smtp_port: 465,
+                smtp_security: mailcrane_store::Security::Tls,
+                username: USER.into(),
+            })
+            .expect("account");
+        let mut session = connect(&imap).await;
+        let ns = session.personal_namespace().await.expect("namespace");
+        assert_eq!(ns.as_deref(), Some("INBOX."));
+        save_folders(&store, account, &session.list_folders().await.expect("list")).expect("save");
+        let id = |remote: &str| {
+            store
+                .list_folders(account)
+                .expect("list")
+                .into_iter()
+                .find(|f| f.details.remote_name == remote)
+                .map(|f| f.id)
+        };
+
+        let listed = store.list_folders(account).expect("list");
+        let plan = plan_create_in(&listed, account, None, "Receipts", None, ns.as_deref())
+            .expect("plan");
+        create_on_server(&mut session, &plan).await.expect("create");
+        save_created(&store, &plan).expect("save");
+
+        let listed = store.list_folders(account).expect("list");
+        let year = id("INBOX.Projects.2026").expect("2026");
+        let plan = plan_move_in(&listed, year, None, ns.as_deref()).expect("plan");
+        rename_on_server(&mut session, &plan).await.expect("move");
+        save_renamed(&store, &plan).expect("save");
+
+        let listed = store.list_folders(account).expect("list");
+        let plan = plan_rename(&listed, id("INBOX.Projects").expect("projects"), "Work")
+            .expect("plan");
+        rename_on_server(&mut session, &plan).await.expect("rename");
+        save_renamed(&store, &plan).expect("save");
+        session.logout().await;
+
+        let mut server = imap.mailbox().folder_names().await;
+        server.sort();
+        assert_eq!(server, ["INBOX", "INBOX.2026", "INBOX.Receipts", "INBOX.Work"]);
+    }
+
+    #[tokio::test]
+    async fn servers_without_a_namespace_behave_as_before() {
+        for builder in [
+            // IMAP4rev2 without a personal namespace: NAMESPACE says NIL.
+            FakeImap::builder(),
+            // IMAP4rev1 without NAMESPACE: nothing is asked.
+            FakeImap::builder().quirk(Quirk::NoMove),
+        ] {
+            let imap = builder
+                .user(USER, PASSWORD)
+                .folder("INBOX", Vec::new())
+                .start()
+                .await
+                .expect("fake imap starts");
+            let mut session = connect(&imap).await;
+            assert_eq!(session.personal_namespace().await.expect("namespace"), None);
+            session.logout().await;
+        }
+    }
+}

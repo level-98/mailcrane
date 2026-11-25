@@ -125,12 +125,14 @@ impl SyncEngine {
         let account = AccountId(account_id);
         let (store, kind) = self.admin_open(account)?;
         let folders = list(&store, account)?;
-        let plan = admin::plan_create(
+        let namespace = namespace(&store, account)?;
+        let plan = admin::plan_create_in(
             &folders,
             account,
             parent_id.map(FolderId),
             &name,
             Some(LOCAL_SEPARATOR),
+            namespace.as_deref(),
         )?;
         if let Kind::Imap = kind {
             let target = plan.clone();
@@ -145,15 +147,15 @@ impl SyncEngine {
 
     /// Renames the folder, keeping its place. Its subfolders follow.
     pub fn rename_folder(&self, folder_id: i64, name: String) -> Result<(), FolderFailure> {
-        self.change(folder_id, |folders, id| {
+        self.change(folder_id, |folders, id, _| {
             admin::plan_rename(folders, id, &name)
         })
     }
 
     /// Moves the folder under `parent_id`, or to the top with `None`.
     pub fn move_folder(&self, folder_id: i64, parent_id: Option<i64>) -> Result<(), FolderFailure> {
-        self.change(folder_id, |folders, id| {
-            admin::plan_move(folders, id, parent_id.map(FolderId))
+        self.change(folder_id, |folders, id, namespace| {
+            admin::plan_move_in(folders, id, parent_id.map(FolderId), namespace)
         })
     }
 
@@ -186,11 +188,13 @@ impl SyncEngine {
         plan: impl Fn(
             &[mailcrane_store::Folder],
             FolderId,
+            Option<&str>,
         ) -> Result<admin::RenamePlan, FolderAdminError>,
     ) -> Result<(), FolderFailure> {
         let (store, account, kind) = self.admin_folder(folder_id)?;
         let folders = list(&store, account)?;
-        let p = plan(&folders, FolderId(folder_id))?;
+        let namespace = namespace(&store, account)?;
+        let p = plan(&folders, FolderId(folder_id), namespace.as_deref())?;
         if p.is_noop() {
             return Ok(());
         }
@@ -267,6 +271,14 @@ impl SyncEngine {
             Ok(result?)
         })
     }
+}
+
+/// The account's personal namespace prefix (#325), as `refresh_folders`
+/// last saw it.
+fn namespace(store: &Store, account: AccountId) -> Result<Option<String>, FolderFailure> {
+    store
+        .get_personal_namespace(account)
+        .map_err(|_| FolderFailure::Storage)
 }
 
 fn list(store: &Store, account: AccountId) -> Result<Vec<mailcrane_store::Folder>, FolderFailure> {

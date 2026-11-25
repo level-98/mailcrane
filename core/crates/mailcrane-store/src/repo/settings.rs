@@ -113,3 +113,40 @@ impl Store {
         Ok(n > 0)
     }
 }
+
+impl Store {
+    /// The account's personal namespace prefix (RFC 2342), such as
+    /// `INBOX.`, or `None` (#325).
+    pub fn get_personal_namespace(&self, account: AccountId) -> Result<Option<String>, StoreError> {
+        Ok(self
+            .conn
+            .query_row(
+                "SELECT personal_namespace FROM accounts WHERE id = ?1",
+                params![account.0],
+                |r| r.get::<_, Option<String>>(0),
+            )
+            .optional()?
+            .flatten())
+    }
+
+    /// Saves the personal namespace prefix the server reported, or `None`.
+    /// An empty prefix is stored as `None`; one longer than 200 bytes is
+    /// refused.
+    pub fn set_personal_namespace(
+        &self,
+        account: AccountId,
+        prefix: Option<&str>,
+    ) -> Result<(), StoreError> {
+        let prefix = prefix.filter(|p| !p.is_empty());
+        if prefix.is_some_and(|p| p.len() > 200) {
+            return Err(StoreError::Invalid {
+                field: "personal_namespace",
+            });
+        }
+        self.conn.execute(
+            "UPDATE accounts SET personal_namespace = ?2 WHERE id = ?1",
+            params![account.0, prefix],
+        )?;
+        Ok(())
+    }
+}

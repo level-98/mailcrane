@@ -9,6 +9,9 @@ use mailcrane_store::{AccountId, FolderId, FolderRole, NewFolder, Store};
 use std::collections::HashMap;
 use std::time::Duration;
 
+/// The longest personal namespace prefix kept.
+const MAX_NAMESPACE_PREFIX: usize = 200;
+
 /// How the connection is protected. There is no plain-text option.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ImapSecurity {
@@ -292,6 +295,30 @@ impl Session {
         let response = format!("{}\r\n", b64::encode(&payload)).into_bytes();
         let limit = self.command_timeout;
         within(limit, exchange(&mut self.conn, tag, vec![start, response])).await?
+    }
+
+    /// The personal namespace prefix (RFC 2342), such as `INBOX.`, when the
+    /// server advertises `NAMESPACE` (or IMAP4rev2, which includes it) and
+    /// has one; `None` otherwise, and for an empty prefix. Personal folders
+    /// are created under it. A prefix that isn't UTF-8, is too long or
+    /// contains control characters is ignored.
+    pub async fn personal_namespace(&mut self) -> Result<Option<String>, ImapError> {
+        if !has_cap(&self.caps, "NAMESPACE") && !has_cap(&self.caps, "IMAP4rev2") {
+            return Ok(None);
+        }
+        let done = self.run("NAMESPACE", &[]).await?;
+        expect_ok(&done)?;
+        let prefix = done.untagged.into_iter().find_map(|u| match u {
+            Untagged::Namespace { personal } => personal,
+            _ => None,
+        });
+        Ok(prefix
+            .and_then(|(raw, _)| String::from_utf8(raw).ok())
+            .filter(|p| {
+                !p.is_empty()
+                    && p.len() <= MAX_NAMESPACE_PREFIX
+                    && !p.chars().any(char::is_control)
+            }))
     }
 
     /// Lists every folder (`LIST "" "*"`, RFC 9051 §6.3.9), asking for

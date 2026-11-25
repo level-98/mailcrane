@@ -769,3 +769,67 @@ fn an_unreadable_local_marker_fails_loudly_and_never_connects() {
     drop(store);
     let _ = std::fs::remove_file(&path);
 }
+
+#[test]
+fn refresh_folders_saves_the_personal_namespace() {
+    // #325: a Courier-style server with every personal folder under INBOX.
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(1)
+        .enable_all()
+        .build()
+        .expect("runtime");
+    let imap = runtime.block_on(async {
+        FakeImap::builder()
+            .user("ns@example.org", "pw")
+            .namespace("INBOX.", '.')
+            .folder("INBOX", Vec::new())
+            .folder("INBOX.Projects", Vec::new())
+            .start()
+            .await
+            .expect("fake imap")
+    });
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("ns.db");
+    let store = Store::open(&path).expect("store");
+    let account = store
+        .insert_account(&NewAccount {
+            display_name: "Ns".into(),
+            email: "ns@example.org".into(),
+            imap_host: "localhost".into(),
+            imap_port: imap.addr().port(),
+            imap_security: Security::Tls,
+            smtp_host: "localhost".into(),
+            smtp_port: 587,
+            smtp_security: Security::Starttls,
+            username: "ns@example.org".into(),
+        })
+        .expect("account");
+    drop(store);
+    let platform = Arc::new(Platform::default());
+    platform
+        .put(
+            SecretKey::account_password(account.0).as_str().to_owned(),
+            b"pw".to_vec(),
+        )
+        .expect("password");
+    install_secret_store(platform);
+    let engine = SyncEngine::new(path.to_string_lossy().into_owned(), Arc::new(Collect::default()));
+    *engine.extra_root_cert.lock().expect("lock") = Some(imap.root_cert_der().to_vec());
+
+    engine.refresh_folders(account.0).expect("refresh");
+    let store = Store::open(&path).expect("store");
+    assert_eq!(
+        store.get_personal_namespace(account).expect("namespace").as_deref(),
+        Some("INBOX.")
+    );
+    // The new folder goes under it on the server.
+    let id = engine
+        .create_folder(account.0, None, "Receipts".into())
+        .expect("create");
+    assert_eq!(
+        store.get_folder(FolderId(id)).expect("get").expect("folder").details.remote_name,
+        "INBOX.Receipts"
+    );
+    let names = runtime.block_on(imap.mailbox().folder_names());
+    assert!(names.iter().any(|n| n == "INBOX.Receipts"), "{names:?}");
+}

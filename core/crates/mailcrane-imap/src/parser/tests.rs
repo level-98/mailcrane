@@ -413,6 +413,26 @@ fn encode(r: &Response) -> Vec<u8> {
                     out.push(b' ');
                     encode_astring(&item.name, &mut out);
                 }
+                Untagged::Namespace { personal } => {
+                    out.extend_from_slice(b"NAMESPACE ");
+                    match personal {
+                        None => out.extend_from_slice(b"NIL"),
+                        Some((prefix, delimiter)) => {
+                            out.extend_from_slice(b"((");
+                            encode_astring(prefix, &mut out);
+                            out.push(b' ');
+                            match delimiter {
+                                Some(c @ ('"' | '\\')) => {
+                                    out.extend_from_slice(format!("\"\\{c}\"").as_bytes())
+                                }
+                                Some(c) => out.extend_from_slice(format!("\"{c}\"").as_bytes()),
+                                None => out.extend_from_slice(b"NIL"),
+                            }
+                            out.extend_from_slice(b"))");
+                        }
+                    }
+                    out.extend_from_slice(b" NIL NIL");
+                }
                 Untagged::Other { name } => out.extend_from_slice(name.as_bytes()),
                 Untagged::Exists(n) => out.extend_from_slice(format!("{n} EXISTS").as_bytes()),
                 Untagged::Expunge(n) => out.extend_from_slice(format!("{n} EXPUNGE").as_bytes()),
@@ -667,3 +687,39 @@ proptest! {
         }
     }
 }
+
+#[test]
+fn namespace_responses() {
+    let ns = |line: &[u8]| match parse_response(line) {
+        Ok((Response::Untagged(Untagged::Namespace { personal }), _)) => Ok(personal),
+        other => Err(format!("{other:?}")),
+    };
+    // Courier and older Dovecot: personal folders under INBOX.
+    assert_eq!(
+        ns(b"* NAMESPACE ((\"INBOX.\" \".\")) NIL ((\"#shared.\" \".\"))\r\n"),
+        Ok(Some((b"INBOX.".to_vec(), Some('.'))))
+    );
+    // Dovecot's default: an empty prefix, several personal namespaces.
+    assert_eq!(
+        ns(b"* NAMESPACE ((\"\" \"/\")(\"Other/\" \"/\")) ((\"~\" \"/\")) NIL\r\n"),
+        Ok(Some((Vec::new(), Some('/'))))
+    );
+    assert_eq!(ns(b"* NAMESPACE NIL NIL NIL\r\n"), Ok(None));
+    assert_eq!(ns(b"* namespace ((\"INBOX.\" NIL)) NIL NIL\r\n"), Ok(Some((b"INBOX.".to_vec(), None))));
+    // A literal prefix and an extension after the delimiter.
+    assert_eq!(
+        ns(b"* NAMESPACE (({6}\r\nINBOX. \".\" \"X-PARAM\" (\"a\"))) NIL NIL\r\n"),
+        Ok(Some((b"INBOX.".to_vec(), Some('.'))))
+    );
+    // Garbage is an error, not a panic.
+    for bad in [
+        &b"* NAMESPACE\r\n"[..],
+        b"* NAMESPACE ((\r\n",
+        b"* NAMESPACE ((\"INBOX.\"\r\n",
+        b"* NAMESPACE ((\"INBOX.\" x)) NIL NIL\r\n",
+        b"* NAMESPACE FOO\r\n",
+    ] {
+        assert!(ns(bad).is_err(), "{:?}", String::from_utf8_lossy(bad));
+    }
+}
+
