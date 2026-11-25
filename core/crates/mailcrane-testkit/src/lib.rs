@@ -8,6 +8,7 @@ pub mod imap;
 pub mod jmap;
 mod loopback;
 pub mod mailbox;
+pub mod oauth;
 pub mod secrets;
 pub mod smtp;
 mod tls;
@@ -17,6 +18,7 @@ pub use https::{FakeHttps, HttpsRequest};
 pub use imap::{FakeImap, FakeImapBuilder};
 pub use jmap::{FakeEmail, FakeJmap, FakeMailbox, JmapSentRequest};
 pub use mailbox::{Mailbox, Message};
+pub use oauth::FakeTokenEndpoint;
 pub use secrets::MemorySecretStore;
 pub use smtp::{FakeSmtp, SentMessage};
 

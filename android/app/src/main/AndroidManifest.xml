@@ -75,5 +75,24 @@
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="Keeps a connection to the user's own mail server open (IMAP IDLE) so new mail is notified within a minute. Turned on by the user in Settings." />
         </service>
+        <!-- OAuth sign-in (M3-01): the browser comes back here. Exported so the browser can
+             reach it; the core trusts nothing in the intent until `state` matches a sign-in it
+             started. -->
+        <activity
+            android:name=".oauth.OAuthRedirectActivity"
+            android:exported="true"
+            android:excludeFromRecents="true"
+            android:launchMode="singleTask"
+            android:noHistory="true"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <!-- The scheme only: a private-use redirect has no host (RFC 8252 §7.1), and
+                     a path filter needs one. OAuthSignIn.isRedirect checks the path. -->
+                <data android:scheme="app.mailcrane" />
+            </intent-filter>
+        </activity>
     </application>
 </manifest>
