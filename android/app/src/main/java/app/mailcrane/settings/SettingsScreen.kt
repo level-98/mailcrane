@@ -50,10 +50,13 @@ class SettingsViewModel
 @Composable
 fun SettingsScreen(
     onBack: () -> Unit,
+    accountId: Long? = null,
     viewModel: SettingsViewModel = hiltViewModel(),
 ) {
     val cleanLinks by viewModel.cleanLinks.collectAsStateWithLifecycle()
-    SettingsContent(cleanLinks = cleanLinks, onCleanLinksChange = viewModel::setCleanLinks, onBack = onBack)
+    SettingsContent(cleanLinks = cleanLinks, onCleanLinksChange = viewModel::setCleanLinks, onBack = onBack) {
+        if (accountId != null) SignatureSection(accountId)
+    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -62,6 +65,7 @@ fun SettingsContent(
     cleanLinks: Boolean,
     onCleanLinksChange: (Boolean) -> Unit,
     onBack: () -> Unit,
+    accountSection: @Composable () -> Unit = {},
 ) {
     Scaffold(
         topBar = {
@@ -88,6 +92,7 @@ fun SettingsContent(
             ) {
                 Text(stringResource(R.string.settings_clean_links))
             }
+            accountSection()
         }
     }
 }

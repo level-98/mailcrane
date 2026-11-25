@@ -62,7 +62,7 @@ fun MailboxScreen(
             var showSettings by rememberSaveable { mutableStateOf(false) }
             if (showSettings) {
                 BackHandler { showSettings = false }
-                SettingsScreen(onBack = { showSettings = false })
+                SettingsScreen(onBack = { showSettings = false }, accountId = accountId)
                 return
             }
             val messageId = openMessage
