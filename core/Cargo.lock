@@ -996,10 +996,14 @@ dependencies = [
 name = "mailcrane-core"
 version = "0.0.0"
 dependencies = [
+ "aws-lc-rs",
+ "base64",
+ "getrandom 0.4.3",
  "http-body-util",
  "hyper",
  "hyper-util",
  "mailcrane-imap",
+ "mailcrane-jmap",
  "mailcrane-mime",
  "mailcrane-smtp",
  "mailcrane-store",
@@ -1008,6 +1012,7 @@ dependencies = [
  "quick-xml",
  "rustls",
  "rustls-platform-verifier",
+ "serde_json",
  "tempfile",
  "thiserror",
  "tokio",
@@ -1024,6 +1029,7 @@ dependencies = [
  "jni",
  "mailcrane-core",
  "mailcrane-imap",
+ "mailcrane-jmap",
  "mailcrane-mime",
  "mailcrane-store",
  "mailcrane-testkit",
@@ -1113,6 +1119,7 @@ dependencies = [
  "serde_json",
  "tokio",
  "tokio-rustls",
+ "url",
 ]
 
 [[package]]

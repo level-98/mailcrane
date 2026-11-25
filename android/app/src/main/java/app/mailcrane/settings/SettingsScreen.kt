@@ -130,6 +130,7 @@ fun SettingsScreen(
     accounts: List<app.mailcrane.core.AccountSummary> = emptyList(),
     onAddAccount: (() -> Unit)? = null,
     onRemoveAccount: (Long) -> Unit = {},
+    onAccountsChanged: () -> Unit = {},
     viewModel: SettingsViewModel = hiltViewModel(),
 ) {
     val cleanLinks by viewModel.cleanLinks.collectAsStateWithLifecycle()
@@ -172,6 +173,7 @@ fun SettingsScreen(
         if (accountId != null) {
             SignatureSection(accountId)
             SaveSentSection(accountId)
+            AccountColorSection(accountId, onChanged = onAccountsChanged)
         }
         if (onAddAccount != null) {
             AccountsSection(accounts, onAddAccount, onRemoveAccount)

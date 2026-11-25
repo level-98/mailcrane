@@ -8,6 +8,7 @@ import app.mailcrane.core.DiscoverException
 import app.mailcrane.core.DiscoveredSettings
 import app.mailcrane.core.Field
 import app.mailcrane.core.FieldProblem
+import app.mailcrane.core.JmapAccountSetup
 import app.mailcrane.core.MailServer
 import app.mailcrane.core.MailcraneCore
 import app.mailcrane.core.ManualAccountConfig
@@ -77,6 +78,9 @@ data class ManualSetupUiState(
     val discovering: Boolean = false,
     val found: DiscoveredSettings? = null,
     val discoveryNote: DiscoveryNote? = null,
+    /** JMAP instead of IMAP+SMTP (M3-04): one server, a domain or session URL. */
+    val jmap: Boolean = false,
+    val jmapServer: String = "",
 )
 
 @HiltViewModel
@@ -109,6 +113,12 @@ class ManualSetupViewModel
         fun onUsernameChange(value: String) = edit(Field.USERNAME) { copy(username = value) }
 
         fun onPasswordChange(value: String) = edit(Field.PASSWORD) { copy(password = value) }
+
+        fun onJmapChange(value: Boolean) =
+            _state.update { it.copy(jmap = value, fieldErrors = emptyMap(), error = null) }
+
+        // The core reports a bad JMAP server under the incoming-server field.
+        fun onJmapServerChange(value: String) = edit(Field.IMAP_HOST) { copy(jmapServer = value) }
 
         fun onTogglePasswordVisible() = _state.update { it.copy(passwordVisible = !it.passwordVisible) }
 
@@ -196,7 +206,11 @@ class ManualSetupViewModel
             viewModelScope.launch {
                 val result =
                     try {
-                        Result.success(core.addAccountManual(current.toConfig(), current.password))
+                        if (current.jmap) {
+                            Result.success(core.addAccountJmap(current.toJmapSetup(), current.password))
+                        } else {
+                            Result.success(core.addAccountManual(current.toConfig(), current.password))
+                        }
                     } catch (e: CancellationException) {
                         throw e
                     } catch (e: Exception) {
@@ -260,6 +274,14 @@ internal fun ManualSetupUiState.toConfig() =
         displayName = displayName.trim(),
         imap = ServerConfig(host = imapHost.trim(), port = imapPort.toPort(), security = imapSecurity),
         smtp = ServerConfig(host = smtpHost.trim(), port = smtpPort.toPort(), security = smtpSecurity),
+        username = username.trim(),
+    )
+
+internal fun ManualSetupUiState.toJmapSetup() =
+    JmapAccountSetup(
+        email = email.trim(),
+        displayName = displayName.trim(),
+        server = jmapServer.trim(),
         username = username.trim(),
     )
 

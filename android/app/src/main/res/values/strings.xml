@@ -392,6 +392,17 @@
     <string name="outbox_delete">Delete</string>
 
     <!-- Save sent messages (M2-07) -->
+    <string name="settings_account_color_header">Account colour</string>
+    <string name="settings_account_color_auto">Automatic</string>
+    <string name="settings_account_color_auto_summary">Picked for you, so each account looks different</string>
+    <string name="account_color_blue">Blue</string>
+    <string name="account_color_pink">Pink</string>
+    <string name="account_color_green">Green</string>
+    <string name="account_color_orange">Orange</string>
+    <string name="account_color_purple">Purple</string>
+    <string name="account_color_teal">Teal</string>
+    <string name="account_color_red">Red</string>
+    <string name="account_color_brown">Brown</string>
     <string name="settings_save_sent_header">Save sent messages to the Sent folder</string>
     <string name="settings_save_sent_auto">Automatic</string>
     <string name="settings_save_sent_auto_summary">Yes, unless your provider does it itself (such as Gmail and Outlook)</string>
@@ -459,6 +470,21 @@
     <string name="search_hint">Search mail</string>
     <string name="search_recent">Recent searches</string>
     <string name="search_clear_recent">Clear</string>
+    <string name="search_chip_from">From</string>
+    <string name="search_chip_from_value">From: %1$s</string>
+    <string name="search_chip_attachment">Has attachment</string>
+    <string name="search_chip_unread">Unread</string>
+    <string name="search_chip_flagged">Flagged</string>
+    <string name="search_chip_date">Date</string>
+    <string name="search_chip_date_range">%1$s – %2$s</string>
+    <string name="search_chip_date_from">From %1$s</string>
+    <string name="search_chip_date_until">Until %1$s</string>
+    <string name="search_chip_account">Account</string>
+    <string name="search_chip_all_accounts">All accounts</string>
+    <string name="search_date_title">Dates to search</string>
+    <string name="search_date_ok">Search</string>
+    <string name="search_date_clear">Clear</string>
+    <string name="search_date_cancel">Cancel</string>
     <!-- App lock (M5-03) -->
     <string name="app_lock_header">Security</string>
     <string name="app_lock_title">App lock</string>
@@ -496,4 +522,11 @@
     <string name="settings_notifications_blocked">Notifications are turned off for Mailcrane in your phone’s settings</string>
     <string name="settings_always_on">Always-on sync</string>
     <string name="settings_always_on_summary">Notify within a minute of new mail by keeping a connection open. Uses more battery and shows a permanent notification. When off, Mailcrane checks about every 15 minutes.</string>
+    <!-- JMAP accounts (M3-04) -->
+    <string name="setup_section_type">Type of account</string>
+    <string name="setup_type_imap">IMAP</string>
+    <string name="setup_type_jmap">JMAP</string>
+    <string name="setup_section_jmap">JMAP server</string>
+    <string name="setup_jmap_server">Server</string>
+    <string name="setup_jmap_server_hint">Your provider’s domain (such as example.org) or its JMAP session URL. Use an app password if your provider has them.</string>
 </resources>

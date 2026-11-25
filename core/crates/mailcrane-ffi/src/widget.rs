@@ -1,7 +1,7 @@
 //! Data for the home-screen widget (M4-11): the Unified Inbox's unread count
 //! and newest messages, read-only and quick.
 
-use crate::messages::{account_color, one_line};
+use crate::messages::{marker_color, marker_colors, one_line};
 use crate::sync::{failed, SyncFailure};
 use mailcrane_core::events;
 use mailcrane_store::Store;
@@ -43,6 +43,7 @@ pub fn widget_snapshot(db_path: String, limit: u32) -> Result<WidgetSnapshot, Sy
     let rows = store
         .list_unified_inbox(limit.min(MAX_WIDGET_MESSAGES), 0)
         .map_err(storage)?;
+    let colors = marker_colors(&store).map_err(storage)?;
     let messages = rows
         .into_iter()
         .map(|(h, account)| {
@@ -55,7 +56,7 @@ pub fn widget_snapshot(db_path: String, limit: u32) -> Result<WidgetSnapshot, Sy
             WidgetMessage {
                 id: h.id.0,
                 account_id: account.0,
-                account_color: account_color(account.0),
+                account_color: marker_color(&colors, account.0),
                 from_name: one_line(&from),
                 subject: one_line(&d.subject),
                 date: d.date,

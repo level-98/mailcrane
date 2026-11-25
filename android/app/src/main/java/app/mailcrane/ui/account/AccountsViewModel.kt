@@ -59,6 +59,11 @@ class AccountsViewModel
             viewModelScope.launch { settings.setLastAccountId(id) }
         }
 
+        /** Something about the accounts changed, such as a colour (M4-20): load them again. */
+        fun refresh() {
+            viewModelScope.launch { reload(preferred = _state.value.currentId) }
+        }
+
         /** A new account was saved: show it. */
         fun added(id: Long) {
             viewModelScope.launch { reload(preferred = id) }

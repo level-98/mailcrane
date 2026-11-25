@@ -1,7 +1,10 @@
 //! A fake JMAP server (RFC 8620, RFC 8621) over TLS on loopback: a session,
 //! mailboxes, emails that can be queried, changed, imported, uploaded,
 //! downloaded and submitted. Enough for the client's tests, not a full
-//! server: the email state stays `e1` whatever changes.
+//! server. The email state is `e<n>`, starting at `e1`; every change bumps
+//! it and is logged, so `Email/changes` reports what happened since a state.
+//! From `e0` every email counts as created; a state the fake never gave
+//! answers `cannotCalculateChanges`.
 
 use crate::loopback::Loopback;
 use crate::tls;
@@ -75,15 +78,74 @@ struct Stored {
     keywords: BTreeSet<String>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Change {
+    Created,
+    Updated,
+    Destroyed,
+}
+
 #[derive(Debug, Default)]
 struct State {
     emails: Vec<Stored>,
     blobs: HashMap<String, Vec<u8>>,
     submissions: Vec<FakeSubmission>,
     next: u32,
+    /// The email state number; the state string is `e<version>`.
+    version: u64,
+    /// Every change: (version it led to, what, email id).
+    log: Vec<(u64, Change, String)>,
+    /// Emails whose updates and destroys are refused with `forbidden`.
+    refused: BTreeSet<String>,
 }
 
 impl State {
+    fn email_state(&self) -> String {
+        format!("e{}", self.version)
+    }
+    fn bump(&mut self, change: Change, id: &str) {
+        self.version += 1;
+        self.log.push((self.version, change, id.to_owned()));
+    }
+    /// `Email/changes` arguments since `since`, or `None` for a state this
+    /// fake never gave (RFC 8620 §5.2: `cannotCalculateChanges`).
+    fn changes_since(&self, since: &str) -> Option<Value> {
+        let n: u64 = since.strip_prefix('e')?.parse().ok()?;
+        if n > self.version {
+            return None;
+        }
+        let (mut created, mut updated, mut destroyed) = (Vec::new(), Vec::new(), Vec::new());
+        if n == 0 {
+            created = self.emails.iter().map(|e| e.id.clone()).collect();
+        } else {
+            let mut seen: Vec<&str> = Vec::new();
+            for (_, _, id) in self.log.iter().filter(|(v, _, _)| *v > n) {
+                if seen.contains(&id.as_str()) {
+                    continue;
+                }
+                seen.push(id);
+                let kinds: Vec<Change> = self
+                    .log
+                    .iter()
+                    .filter(|(v, _, i)| *v > n && i == id)
+                    .map(|(_, c, _)| *c)
+                    .collect();
+                let was_created = kinds.contains(&Change::Created);
+                let gone = kinds.contains(&Change::Destroyed);
+                match (was_created, gone) {
+                    (true, true) => {}
+                    (true, false) => created.push(id.clone()),
+                    (false, true) => destroyed.push(id.clone()),
+                    (false, false) => updated.push(id.clone()),
+                }
+            }
+        }
+        Some(json!({
+            "accountId": "A1", "oldState": since, "newState": self.email_state(),
+            "hasMoreChanges": false,
+            "created": created, "updated": updated, "destroyed": destroyed
+        }))
+    }
     fn next_id(&mut self, prefix: &str) -> String {
         self.next += 1;
         format!("{prefix}-{}", self.next)
@@ -172,10 +234,10 @@ impl FakeJmapBuilder {
         self
     }
     pub async fn start(self) -> Result<FakeJmap, String> {
-        // The certificate is made once per process (see tls::generate);
-        // the time limit is for starting the server itself.
+        // The certificate is made once per process (see tls::generate).
+        // Starting is quick (see `servers_start_in_under_100_ms`), but it is
+        // not timed here: a busy machine would fail unrelated tests (#268).
         let tls = tls::generate()?;
-        let started = std::time::Instant::now();
         let listener = Loopback::bind().await?;
         let addr = listener.addr();
         let requests = Arc::new(RwLock::new(Vec::new()));
@@ -217,6 +279,7 @@ impl FakeJmapBuilder {
                     from: e.from,
                 })
                 .collect(),
+            version: 1,
             ..State::default()
         }));
         let config = Arc::new(Config {
@@ -251,10 +314,6 @@ impl FakeJmapBuilder {
                 });
             }
         });
-        if started.elapsed() >= std::time::Duration::from_millis(100) {
-            handle.abort();
-            return Err("JMAP server start exceeded 100 ms".into());
-        }
         Ok(FakeJmap {
             addr,
             root_cert_der: tls.cert_der,
@@ -306,6 +365,32 @@ impl FakeJmap {
         lock(&self.state).email(id).map(|e| e.raw.clone())
     }
     /// The submissions accepted so far.
+    /// Adds an email to the running server, as if it had just arrived.
+    pub fn deliver(&self, e: FakeEmail) {
+        let mut state = lock(&self.state);
+        state.emails.push(Stored {
+            blob_id: format!("blob-{}", e.id),
+            mailboxes: BTreeSet::from([e.mailbox_id]),
+            keywords: if e.seen {
+                BTreeSet::from(["$seen".to_owned()])
+            } else {
+                BTreeSet::new()
+            },
+            raw: e.raw.into_bytes(),
+            id: e.id.clone(),
+            received_at: e.received_at,
+            subject: e.subject,
+            from: e.from,
+        });
+        state.bump(Change::Created, &e.id);
+    }
+
+    /// From now on, changes to email `id` are refused with `forbidden`
+    /// (RFC 8620 §5.3 SetError), as for a message the user may not change.
+    pub fn refuse_changes(&self, id: &str) {
+        lock(&self.state).refused.insert(id.to_owned());
+    }
+
     pub fn submissions(&self) -> Vec<FakeSubmission> {
         lock(&self.state).submissions.clone()
     }
@@ -472,14 +557,20 @@ fn resolve(id: &str, created: &HashMap<String, String>) -> Option<String> {
 }
 
 fn email_set(state: &mut State, args: &Value, id: &str) -> Value {
+    let old_state = state.email_state();
     let mut updated = Map::new();
     let mut not_updated = Map::new();
     if let Some(update) = args.get("update").and_then(Value::as_object) {
         for (eid, patch) in update {
+            if state.refused.contains(eid) {
+                not_updated.insert(eid.clone(), json!({"type": "forbidden"}));
+                continue;
+            }
             match (state.email(eid), patch.as_object()) {
                 (Some(e), Some(p)) => {
                     apply_patch(e, p);
                     updated.insert(eid.clone(), Value::Null);
+                    state.bump(Change::Updated, eid);
                 }
                 (None, _) => {
                     not_updated.insert(eid.clone(), json!({"type": "notFound"}));
@@ -494,17 +585,23 @@ fn email_set(state: &mut State, args: &Value, id: &str) -> Value {
     let mut not_destroyed = Map::new();
     if let Some(ids) = args.get("destroy").and_then(Value::as_array) {
         for eid in ids.iter().filter_map(Value::as_str) {
+            if state.refused.contains(eid) {
+                not_destroyed.insert(eid.to_owned(), json!({"type": "forbidden"}));
+                continue;
+            }
             let before = state.emails.len();
             state.emails.retain(|e| e.id != eid);
             if state.emails.len() < before {
                 destroyed.push(eid.to_owned());
+                state.bump(Change::Destroyed, eid);
             } else {
                 not_destroyed.insert(eid.to_owned(), json!({"type": "notFound"}));
             }
         }
     }
+    let new_state = state.email_state();
     json!(["Email/set", {
-        "accountId": "A1", "oldState": "e1", "newState": "e1",
+        "accountId": "A1", "oldState": old_state, "newState": new_state,
         "updated": updated, "notUpdated": not_updated,
         "destroyed": destroyed, "notDestroyed": not_destroyed
     }, id])
@@ -516,6 +613,7 @@ fn email_import(
     id: &str,
     created_ids: &mut HashMap<String, String>,
 ) -> Value {
+    let old_state = state.email_state();
     let mut created = Map::new();
     let mut not_created = Map::new();
     if let Some(emails) = args.get("emails").and_then(Value::as_object) {
@@ -550,10 +648,12 @@ fn email_import(
                 cid.clone(),
                 json!({"id": new_id, "blobId": blob_id, "threadId": format!("t-{new_id}"), "size": raw.len()}),
             );
+            state.bump(Change::Created, &new_id);
         }
     }
+    let new_state = state.email_state();
     json!(["Email/import", {
-        "accountId": "A1", "oldState": "e1", "newState": "e1",
+        "accountId": "A1", "oldState": old_state, "newState": new_state,
         "created": created, "notCreated": not_created
     }, id])
 }
@@ -711,25 +811,20 @@ fn method_responses(
                 .copied()
                 .filter(|w| !state.emails.iter().any(|e| e.id == *w))
                 .collect();
-            json!(["Email/get", {"accountId": "A1", "state": "e1", "list": list, "notFound": not_found}, id])
+            json!(["Email/get", {"accountId": "A1", "state": state.email_state(), "list": list, "notFound": not_found}, id])
         }
-        "Email/changes" if state.emails.is_empty() => json!(["Email/changes", {
-            "oldState": "0", "newState": "1", "hasMoreChanges": false,
-            "created": [], "updated": [], "destroyed": []
+        // No sinceState at all: the smoke test's bare call gets an empty answer.
+        "Email/changes" if args.get("sinceState").is_none() => json!(["Email/changes", {
+            "accountId": "A1", "oldState": state.email_state(), "newState": state.email_state(),
+            "hasMoreChanges": false, "created": [], "updated": [], "destroyed": []
         }, id]),
-        "Email/changes" => match args.get("sinceState").and_then(Value::as_str) {
-            Some("e1") => json!(["Email/changes", {
-                "accountId": "A1", "oldState": "e1", "newState": "e1", "hasMoreChanges": false,
-                "created": [], "updated": [], "destroyed": []
-            }, id]),
-            Some("e0") => {
-                let created: Vec<&str> = state.emails.iter().map(|e| e.id.as_str()).collect();
-                json!(["Email/changes", {
-                    "accountId": "A1", "oldState": "e0", "newState": "e1", "hasMoreChanges": false,
-                    "created": created, "updated": [], "destroyed": []
-                }, id])
-            }
-            _ => json!(["error", {"type": "cannotCalculateChanges"}, id]),
+        "Email/changes" => match args
+            .get("sinceState")
+            .and_then(Value::as_str)
+            .and_then(|since| state.changes_since(since))
+        {
+            Some(changes) => json!(["Email/changes", changes, id]),
+            None => json!(["error", {"type": "cannotCalculateChanges"}, id]),
         },
         "Email/set" => email_set(state, args, id),
         "Email/import" => email_import(state, args, id, created_ids),

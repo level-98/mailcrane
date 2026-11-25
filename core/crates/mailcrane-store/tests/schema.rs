@@ -27,6 +27,10 @@ fn every_table_and_index_exists() -> R {
             "correspondents",
             "drafts",
             "folders",
+            // JMAP (M3-04).
+            "jmap_emails",
+            "jmap_mailboxes",
+            "jmap_state",
             "message_bodies",
             "messages",
             // FTS5 search (M4-03) and its shadow tables.
@@ -90,7 +94,7 @@ fn reopen_runs_no_migrations_and_keeps_data() -> R {
     let dir = tempfile::tempdir()?;
     let path = dir.path().join("m.db");
     let store = Store::open(&path)?;
-    assert_eq!(store.schema_version()?, 13);
+    assert_eq!(store.schema_version()?, 15);
     drop(store);
     let conn = Connection::open(&path)?;
     conn.execute(
@@ -101,7 +105,7 @@ fn reopen_runs_no_migrations_and_keeps_data() -> R {
     )?;
     drop(conn);
     let store = Store::open(&path)?;
-    assert_eq!(store.schema_version()?, 13);
+    assert_eq!(store.schema_version()?, 15);
     assert_eq!(store.list_accounts()?.len(), 1);
     Ok(())
 }

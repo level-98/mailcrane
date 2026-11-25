@@ -29,6 +29,15 @@ interface MailcraneCore {
      */
     suspend fun discoverSettings(email: String): List<DiscoveredSettings> = throw DiscoverException.NotFound()
 
+    /**
+     * Adds a JMAP account (M3-04): finds the session for [JmapAccountSetup.server] (a domain or the
+     * session URL), logs in to check, then saves. Same errors as [addAccountManual].
+     */
+    suspend fun addAccountJmap(
+        setup: JmapAccountSetup,
+        password: String,
+    ): Long = throw AddAccountException.NotReady()
+
     /** The saved accounts, oldest first (M4-01). */
     suspend fun listAccounts(): List<AccountSummary> = emptyList()
 
@@ -58,6 +67,11 @@ class UniffiMailcraneCore(
         config: ManualAccountConfig,
         password: String,
     ): Long = app.mailcrane.core.addAccountManual(dbPath, config, password)
+
+    override suspend fun addAccountJmap(
+        setup: JmapAccountSetup,
+        password: String,
+    ): Long = app.mailcrane.core.addAccountJmap(dbPath, setup, password)
 
     override suspend fun discoverSettings(email: String): List<DiscoveredSettings> =
         app.mailcrane.core.discoverSettings(email, dns)

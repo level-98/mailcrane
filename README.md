@@ -16,7 +16,7 @@
 
 ---
 
-> **Status: pre-alpha.** Not ready for everyday use yet. The foundations (milestone **M0**) are almost done, and most of the Rust mail engine for reading mail (**M1**) is built: it can connect to an IMAP server, sync your recent mail, and parse and sanitise messages. Sending over SMTP works in the core too. On Android you can set up an account by hand; the message list and message view screens are next. This is a good time to join and help shape it.
+> **Status: pre-alpha.** Not ready for everyday use yet. The foundations (**M0**), reading mail (**M1**) and sending mail (**M2**) are built, along with most of the everyday features (**M4**). Much of the Android UI has not yet been tested on a real device. OAuth sign-in for Gmail and Microsoft (**M3**), UnifiedPush and OpenPGP are still to come. This is a good time to join and help shape it.
 
 ## What Mailcrane will be
 
@@ -24,18 +24,20 @@
 - **Private by default.** No tracking, analytics or ads, and no servers of ours reading your mail. Remote images and tracking pixels are blocked until you allow them.
 - **Fast and works offline.** Mail is cached on the device, search works without a connection, and messages written offline wait in the outbox.
 - **Lots of features.** A unified inbox, conversation threads, full-text search, swipe actions, snooze, scheduled send, multiple accounts, and OpenPGP encryption.
-- **Native on each platform.** Material 3 on Android, and later SwiftUI on iOS, sharing one engine written in Rust. Android comes first; the iOS app follows after the Android release.
+- **Native on each platform.** Material 3 Expressive on Android, and later SwiftUI on iOS, sharing one engine written in Rust. Android comes first; the iOS app follows after the Android release.
 
 ## Project status
 
 | Area | State |
 |---|---|
-| Repo, CI, contributor workflow | 🟢 Done: `cargo xtask ci`, cargo-deny licence checks, Dependabot, nightly fuzzing, release-notes script. Cross-platform CI (Android on Linux, core on Windows) still to do (M0-17) |
-| Rust core: storage and accounts | 🟢 SQLite store schema v1 with migrations; credentials in Android Keystore / iOS Keychain; manual IMAP/SMTP account setup with login checks |
-| Rust core: reading mail (IMAP, MIME) | 🟡 TLS connect, login and folder list; initial sync of recent headers with paging and body fetch; MIME parsing; HTML sanitiser. Incremental sync (M1-06) in progress, IDLE (M1-07) next |
-| Rust core: sending mail (SMTP) | 🟡 Sending over implicit TLS or STARTTLS done. Compose, reply, drafts and outbox to come (M2) |
-| Android app (Kotlin + Jetpack Compose) | 🟡 App shell, generated theme, manual account setup screen. Message list (M1-10) in progress |
-| Privacy features | 🟡 Remote content blocked by the sanitiser. Link tracking-parameter stripping (M5-02) in review |
+| Repo, CI, contributor workflow | 🟢 Done: `cargo xtask ci`, cargo-deny licence checks, Dependabot, nightly fuzzing, release-notes script, and Android (Linux) and core (Windows) checks on every PR |
+| Rust core: storage and accounts | 🟢 SQLite store with migrations; credentials in Android Keystore / iOS Keychain; manual and automatic account setup (autoconfig, SRV, bundled ISPDB) |
+| Rust core: reading mail (IMAP, MIME) | 🟢 TLS, initial and incremental sync (CONDSTORE/QRESYNC), IDLE, MIME parsing, HTML sanitiser, message actions synced back to the server |
+| Rust core: sending mail (SMTP) | 🟢 SMTP over implicit TLS or STARTTLS; reply and forward, attachments, drafts, offline outbox, save to Sent |
+| JMAP | 🟡 Protocol client built (M3-04); not yet connected to sync and the app |
+| OAuth sign-in (Gmail, Microsoft) | ⚪ Not started (M3) |
+| Android app (Kotlin + Jetpack Compose) | 🟡 Message list and view, folders, compose, multiple accounts, threads, search, swipe actions, snooze, scheduled and undo send, rules, widget, tablet layouts, app lock, new-mail notifications (periodic or always-on). Much of it not yet tested on a real device. UnifiedPush and the rest of M4-05 to come |
+| Privacy features | 🟡 Remote content and tracking pixels blocked, tracking parameters stripped from links, one-tap unsubscribe. OpenPGP and S/MIME to come (M5) |
 | Website and user docs | 🟢 [mailcrane.app](https://mailcrane.app) (M6-07) |
 | iOS app (Swift + SwiftUI) | ⏸️ Shell only, paused until after the Android release (M7) |
 | Brand and design | 🟢 v1 done (see below) |

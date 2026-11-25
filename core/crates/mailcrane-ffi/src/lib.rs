@@ -21,6 +21,7 @@ pub mod drafts;
 pub mod folders;
 pub mod links;
 pub mod messages;
+pub mod oauth;
 pub mod outbox;
 pub mod rules;
 pub mod search;

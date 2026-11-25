@@ -8,6 +8,16 @@ This is the plan. **The live to-do list is the GitHub issues**: `scripts/roadmap
 
 Task IDs never change when a task moves milestone: `M1-11` keeps its ID (and its issue) now that it sits under M7.
 
+**Product principles.** Check new features against these:
+
+- Mail only: no bundled chat, video calls or ads, ever.
+- Mail goes straight between the device and the user's mail server. No credentials or message content on our servers; any push relay must be self-hostable and carry no content.
+- Every account type gets the same features: search, rules, notifications and unified views work the same for IMAP, JMAP, Gmail and Microsoft.
+- Simple defaults, with power-user options under "Advanced".
+- Automatic sorting or categorising is opt-in. Badge counts and notifications follow the user's settings, not a category.
+- If AI is ever added: off by default, on-device or bring-your-own-key, small tasks the user can check, and never acting silently.
+- Free, with nothing behind a subscription.
+
 ---
 
 ## M0 — Foundations
@@ -66,10 +76,11 @@ Goal: add an IMAP account and read your inbox, online and offline.
 
 ## M3 — Providers and sign-in
 
-- [ ] **M3-01** OAuth 2.0 framework with PKCE, using the system browser (AppAuth on Android; iOS sign-in is M7-09) 🔒
+- [x] **M3-01** OAuth 2.0 framework with PKCE, using the system browser (AppAuth on Android; iOS sign-in is M7-09) 🔒
 - [ ] **M3-02** Gmail: OAuth, XOAUTH2, and labels mapped to folders 🔒🧑 (needs Google app verification)
+  - Start verification early and budget for the yearly CASA security assessment: other open-source clients have been shown "App blocked" while waiting. Keep the app-password IMAP route working as a fallback.
 - [ ] **M3-03** Microsoft 365 and Outlook.com: OAuth and XOAUTH2 🔒🧑
-- [ ] **M3-04** JMAP client (Fastmail, Stalwart and others) 🤖
+- [x] **M3-04** JMAP client (Fastmail, Stalwart and others) 🤖
 - [ ] **M3-05** iCloud, Yahoo and AOL guided app-password setup 🧑
 - [ ] **M3-06** Provider test matrix: a doc recording which providers have been tested, by whom, and when 🧑
 
@@ -80,6 +91,11 @@ Goal: add an IMAP account and read your inbox, online and offline.
 - [x] **M4-03** Offline full-text search (SQLite FTS5), plus server-side IMAP SEARCH 🤖
 - [x] **M4-04** Configurable swipe actions 🟢🤖
 - [ ] **M4-05** Push notifications on Android: foreground IDLE service and UnifiedPush (iOS is M7-10) 🧑
+  - Notification settings per account and per folder. Folders that rules move mail into notify by default.
+  - Quiet hours per account, which can also pause syncing (e.g. work account at weekends).
+  - The user picks the notification actions (mark as read, archive, delete, reply).
+  - Opening from a notification shows the cached message at once and syncs behind it.
+  - Battery and sync tested on real devices; sync status visible in the app.
 - [x] **M4-06** Snooze (stored locally, synced via a hidden folder or IMAP keyword) 🤖
 - [x] **M4-07** Scheduled send 🤖
 - [x] **M4-08** Undo send (short delay before sending) 🟢🤖
@@ -88,6 +104,16 @@ Goal: add an IMAP account and read your inbox, online and offline.
 - [x] **M4-11** Home-screen widgets (Android Glance) 🤖
 - [x] **M4-12** Dark mode and dynamic colour (Material You) 🟢🤖
 - [x] **M4-13** Tablet layouts (list and detail side by side) 🤖
+- [ ] **M4-14** Multi-select and bulk actions in the message list: long-press to start, then read, unread, flag, archive, delete and move on all selected 🤖
+- [ ] **M4-15** Mark-as-read setting (on open, after a few seconds, or only by hand) and an "after delete or move" setting (next message, previous message, or back to the list) 🟢🤖
+- [ ] **M4-16** Choose which view the app opens on: unified inbox, a chosen account's inbox, or the last one used 🟢🤖
+- [ ] **M4-17** Templates and canned replies: save, insert while composing, edit and delete 🟢🤖
+- [ ] **M4-18** Settings backup and restore to an encrypted, password-protected file: accounts (server settings only, never passwords or tokens), signatures, rules, templates and app settings 🔒🤖
+- [ ] **M4-19** Date headers in the message list: Today, Yesterday, This week, then by month 🟢🤖
+- [x] **M4-20** Let users choose each account's colour (the automatic colours from M4-01 stay the default) 🟢🤖
+- [x] **M4-21** Search filter chips (from, has attachment, unread, flagged, date range, account) built on the existing search syntax, adding `account:` to it 🟢🤖
+- [ ] **M4-22** Create, rename, move and delete folders from the phone 🤖
+- [ ] **M4-23** Server-side rules through ManageSieve (RFC 5804), so rules run when the phone is off; local rules (M4-09) stay for servers without it 🤖
 
 ## M5 — Privacy and security
 
@@ -97,6 +123,7 @@ Goal: add an IMAP account and read your inbox, online and offline.
 - [ ] **M5-04** OpenPGP: read and send encrypted and signed mail, Autocrypt, key management 🔒
 - [ ] **M5-05** S/MIME 🔒
 - [ ] **M5-06** Independent security review before 1.0 🧑
+- [ ] **M5-07** Phishing help: show a link's real destination before opening it, show SPF/DKIM/DMARC results from `Authentication-Results`, and warn when the display name pretends to be a different address 🔒🤖
 
 ## M6 — Release
 
@@ -132,6 +159,15 @@ Goal: bring the iOS app up to the Android 1.0 feature set and ship it on the App
 - [ ] **M7-14** Accessibility pass on iOS: VoiceOver, Dynamic Type, contrast 🧑
 - [ ] **M7-15** iOS release builds and signing in CI 🔒🧑
 - [ ] **M6-06** TestFlight beta and App Store release 🧑
+
+## M8 — After 1.0
+
+Good ideas that wait until Android 1.0 is out. Issues get the `post-1.0` label: please don't claim them yet.
+
+- [ ] **M8-01** Attachments browser: every file across all mail, filterable by type, sender and account 🤖
+- [ ] **M8-02** Multi-colour flags, synced through IMAP keywords (Thunderbird-compatible where possible) 🤖
+- [ ] **M8-03** Calendar invites: show an `.ics` invite (`METHOD:REQUEST`) and reply accept, tentative or decline, without building a calendar app 🤖
+- [ ] **M8-04** Read receipts (MDN, RFC 8098): ask before sending one, optionally request one; show and set the priority header 🤖
 
 ## Before going public (from the name decision)
 

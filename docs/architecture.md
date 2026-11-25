@@ -1,6 +1,6 @@
 # Architecture
 
-> Status: **proposed**, see [ADR 0001](decisions/0001-tech-stack.md). Once the owner accepts it, this becomes "accepted, see ADR 0001".
+> Status: **accepted**, see [ADR 0001](decisions/0001-tech-stack.md).
 
 ## Overview
 
@@ -19,18 +19,18 @@ Mailcrane has one shared engine and two native apps.
 
 ## Crates
 
-| Crate | Job | Likely libraries |
+| Crate | Job | Main libraries |
 |---|---|---|
-| `mailcrane-core` | Accounts, sync scheduling, the public API | `tokio` |
-| `mailcrane-imap` | IMAP client, IDLE, CONDSTORE/QRESYNC, server quirks | `async-imap` or own, `rustls` |
-| `mailcrane-smtp` | Sending | `lettre` |
-| `mailcrane-jmap` | JMAP client | `jmap-client` |
-| `mailcrane-mime` | Parsing, building and sanitising messages | `mail-parser`, `mail-builder`, `ammonia` |
+| `mailcrane-core` | Accounts, sync scheduling, the public API | `tokio`, `hyper` (autoconfig, unsubscribe), `quick-xml`, `url` |
+| `mailcrane-imap` | IMAP client (our own), IDLE, CONDSTORE/QRESYNC, server quirks | `rustls` |
+| `mailcrane-smtp` | Sending (our own SMTP client) | `rustls` |
+| `mailcrane-jmap` | JMAP client (our own). Not yet connected to `mailcrane-core` | `hyper`, `serde_json` |
+| `mailcrane-mime` | Parsing, building and sanitising messages | `mail-parser`, `ammonia` |
 | `mailcrane-store` | SQLite storage, migrations, FTS5 search | `rusqlite` |
 | `mailcrane-ffi` | The only API the apps see | `uniffi` |
-| `mailcrane-testkit` | Fake IMAP, SMTP and JMAP servers for tests, able to misbehave on purpose | — |
+| `mailcrane-testkit` | Fake IMAP, SMTP and JMAP servers for tests, able to misbehave on purpose | `rcgen`, `hyper` |
 
-Library choices are suggestions until an ADR confirms them.
+[ADR 0001](decisions/0001-tech-stack.md#library-choices) records which of these were decided and where.
 
 ## Portability
 
@@ -45,6 +45,8 @@ To keep it portable, the core never reaches into the operating system for anythi
 
 Platform-specific code (`#[cfg(target_os = …)]`, `std::os::unix`, crates that only work on mobile) stays out of the core crates. If it is unavoidable, it goes behind a feature or a trait with an implementation for every platform, and it needs a decision record first.
 
+**Known exception, not yet recorded:** TLS certificate checking uses `rustls-platform-verifier`, which needs Android-specific setup. The TLS code in `mailcrane-imap`, `mailcrane-smtp`, `mailcrane-jmap`, `mailcrane-core` (autoconfig and unsubscribe) and `mailcrane-ffi` (`android_tls`) has `#[cfg(target_os = "android")]` branches. It needs a decision record, or to move behind a trait as described above.
+
 ## Data flow
 
 1. The app asks the core to sync an account.
@@ -55,4 +57,5 @@ Platform-specific code (`#[cfg(target_os = …)]`, `std::os::unix`, crates that 
 ## Open questions
 
 - **Push notifications on iOS.** iOS doesn't allow a permanent IMAP connection in the background. Options are background fetch only, or an optional self-hostable push relay. Needs an ADR (M7-10).
-- **Licence check.** MPL-2.0 is proposed because it works with the App Store, unlike GPL.
+- **Network calls beyond the user's mail server.** AGENTS.md §4.7 allows them only with an accepted decision. The bundled ISPDB has one ([ADR 0003](decisions/0003-bundled-ispdb.md)). These don't yet: one-click unsubscribe (M4-10) sends an HTTPS POST to the sender's unsubscribe URL, and automatic setup fetches autoconfig files from the domain of the address's MX provider.
+- **JMAP storage.** The store is built around IMAP (integer UIDs, one folder per message). Connecting `mailcrane-jmap` needs a maintainer decision on the schema before its migration ships, because migrations can't be undone once released.

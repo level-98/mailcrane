@@ -1,0 +1,1 @@
+The README status, architecture doc, decision records and contributing guide now match the code and roadmap: current progress, the libraries actually used, the `app.mailcrane` app ID, and the decisions still to be recorded.

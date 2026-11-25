@@ -63,6 +63,7 @@ fun MailboxScreen(
     onSwitchAccount: (Long) -> Unit = {},
     onAddAccount: () -> Unit = {},
     onRemoveAccount: (Long) -> Unit = {},
+    onAccountsChanged: () -> Unit = {},
     /** A message to open now (from a widget, M4-11). */
     openMessageId: Long? = null,
     onMessageOpened: () -> Unit = {},
@@ -142,6 +143,7 @@ fun MailboxScreen(
                     accounts = accounts,
                     onAddAccount = onAddAccount,
                     onRemoveAccount = onRemoveAccount,
+                    onAccountsChanged = onAccountsChanged,
                     onOpenRules = { showRules = true },
                 )
                 return
@@ -180,6 +182,7 @@ fun MailboxScreen(
                         folderId = selected.id,
                         onOpenMessage = { openMessage = it },
                         onBack = { showSearch = false },
+                        accounts = accounts,
                     )
                     return
                 }
@@ -262,6 +265,7 @@ fun MailboxScreen(
                             folderId = selected.id,
                             onOpenMessage = { openMessage = it },
                             onBack = { showSearch = false },
+                            accounts = accounts,
                         )
                     layout != MailLayout.ONE_PANE && thread != null ->
                         ConversationScreen(

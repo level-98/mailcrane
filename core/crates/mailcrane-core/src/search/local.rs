@@ -54,11 +54,32 @@ pub fn local_search(
     q: &SearchQuery,
     limit: u32,
 ) -> Result<Vec<MessageHeader>, StoreError> {
+    search(store, Some(account), folder, q, limit)
+}
+
+/// Searches the stored messages of every account (M4-21), newest first;
+/// `account:` in `q` narrows it. Works offline.
+pub fn local_search_all(
+    store: &Store,
+    q: &SearchQuery,
+    limit: u32,
+) -> Result<Vec<MessageHeader>, StoreError> {
+    search(store, None, None, q, limit)
+}
+
+fn search(
+    store: &Store,
+    account: Option<AccountId>,
+    folder: Option<FolderId>,
+    q: &SearchQuery,
+    limit: u32,
+) -> Result<Vec<MessageHeader>, StoreError> {
     if q.is_empty() {
         return Ok(Vec::new());
     }
     store.search_messages(&SearchFilter {
         account,
+        account_name: q.account.clone(),
         folder,
         folder_name: q.folder.clone(),
         fts: fts_expression(q),

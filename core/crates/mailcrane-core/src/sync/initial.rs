@@ -37,6 +37,9 @@ pub enum SyncError {
     /// Talking to the server failed.
     #[error("IMAP error: {0}")]
     Imap(#[from] ImapError),
+    /// Talking to a JMAP server failed (M3-04).
+    #[error("JMAP error: {0}")]
+    Jmap(#[from] mailcrane_jmap::JmapError),
     /// The local database failed.
     #[error("store error: {0}")]
     Store(#[from] StoreError),
@@ -69,6 +72,16 @@ impl SyncError {
                 ImapError::Store(_) => SyncErrorKind::Storage,
                 _ => SyncErrorKind::Protocol,
             },
+            SyncError::Jmap(e) => {
+                use mailcrane_jmap::JmapError as J;
+                match e {
+                    J::Network => SyncErrorKind::Network,
+                    J::Tls => SyncErrorKind::Tls,
+                    J::Unauthorized => SyncErrorKind::Auth,
+                    J::Timeout => SyncErrorKind::Timeout,
+                    _ => SyncErrorKind::Protocol,
+                }
+            }
             SyncError::Store(_) => SyncErrorKind::Storage,
             SyncError::UnknownFolder | SyncError::UnknownMessage | SyncError::MessageGone => {
                 SyncErrorKind::NotFound
@@ -312,49 +325,53 @@ impl<'a> FolderSyncer<'a> {
             .uid_fetch_body(header.details.uid)
             .await?
             .ok_or(SyncError::MessageGone)?;
-        let (snippet, attachments, body_text) = match mailcrane_mime::parse_message(&raw) {
-            Ok(parsed) => {
-                let attachments: Vec<NewAttachment> = parsed
-                    .attachments
-                    .into_iter()
-                    .map(|a| NewAttachment {
-                        part_id: a.part_id,
-                        filename: a.filename,
-                        mime_type: a.mime_type,
-                        size: i64::try_from(a.size).unwrap_or(i64::MAX),
-                        content_id: a.content_id,
-                        is_inline: a.disposition == Disposition::Inline,
-                    })
-                    .collect();
-                // Plain text, or text derived from the HTML: indexed for search.
-                (
-                    parsed.snippet,
-                    attachments,
-                    parsed.text_plain.unwrap_or_default(),
-                )
-            }
-            Err(error) => {
-                // Keep the raw message so it can still be opened as source.
-                tracing::warn!(uid = header.details.uid, %error, "message could not be parsed");
-                (String::new(), Vec::new(), String::new())
-            }
-        };
-        let fetched_at = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .ok()
-            .and_then(|d| i64::try_from(d.as_secs()).ok())
-            .unwrap_or(0);
-        if !self
-            .store
-            .store_parsed_body(message, &raw, fetched_at, &snippet, &attachments)?
-        {
-            return Err(SyncError::UnknownMessage);
-        }
-        self.store.index_body_text(message, &body_text)?;
+        save_body(self.store, message, &raw)?;
         self.listener
             .on_event(CoreEvent::MessagesChanged { folder_id: folder });
         Ok(())
     }
+}
+
+/// Stores a downloaded message: the raw bytes, its snippet and attachment
+/// list, and its text for search. A message that can't be parsed is still
+/// kept, so it can be opened as source. Shared by IMAP and JMAP.
+pub(super) fn save_body(store: &Store, message: MessageId, raw: &[u8]) -> Result<(), SyncError> {
+    let (snippet, attachments, body_text) = match mailcrane_mime::parse_message(raw) {
+        Ok(parsed) => {
+            let attachments: Vec<NewAttachment> = parsed
+                .attachments
+                .into_iter()
+                .map(|a| NewAttachment {
+                    part_id: a.part_id,
+                    filename: a.filename,
+                    mime_type: a.mime_type,
+                    size: i64::try_from(a.size).unwrap_or(i64::MAX),
+                    content_id: a.content_id,
+                    is_inline: a.disposition == Disposition::Inline,
+                })
+                .collect();
+            // Plain text, or text derived from the HTML: indexed for search.
+            (
+                parsed.snippet,
+                attachments,
+                parsed.text_plain.unwrap_or_default(),
+            )
+        }
+        Err(error) => {
+            tracing::warn!(message = message.0, %error, "message could not be parsed");
+            (String::new(), Vec::new(), String::new())
+        }
+    };
+    let fetched_at = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .ok()
+        .and_then(|d| i64::try_from(d.as_secs()).ok())
+        .unwrap_or(0);
+    if !store.store_parsed_body(message, raw, fetched_at, &snippet, &attachments)? {
+        return Err(SyncError::UnknownMessage);
+    }
+    store.index_body_text(message, &body_text)?;
+    Ok(())
 }
 
 #[cfg(test)]

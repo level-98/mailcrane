@@ -217,6 +217,16 @@ impl SyncEngine {
     /// message actions of the account due by now are replayed first, so the
     /// server's flags already include them.
     pub fn sync_folder(&self, folder_id: i64) -> Result<u32, SyncFailure> {
+        let account = self.folder_account(FolderId(folder_id))?;
+        if let Some(r) = self.run_jmap(account, |s| {
+            Box::pin(async move {
+                // Queued actions first, so the server's flags already include them.
+                let _ = s.replay_actions(crate::actions::now()).await;
+                s.sync_folder(FolderId(folder_id)).await
+            })
+        }) {
+            return r.map(|n| u32::try_from(n).unwrap_or(u32::MAX));
+        }
         let stored = self.run_replaying(FolderId(folder_id), true, |syncer| {
             Box::pin(async move { syncer.sync_folder(FolderId(folder_id)).await })
         })?;
@@ -226,6 +236,13 @@ impl SyncEngine {
     /// Fetches the next `count` messages older than the oldest stored one.
     /// Returns how many were stored.
     pub fn load_older(&self, folder_id: i64, count: u32) -> Result<u32, SyncFailure> {
+        let account = self.folder_account(FolderId(folder_id))?;
+        let wanted = usize::try_from(count).unwrap_or(usize::MAX);
+        if let Some(r) = self.run_jmap(account, |s| {
+            Box::pin(async move { s.load_older(FolderId(folder_id), wanted).await })
+        }) {
+            return r.map(|n| u32::try_from(n).unwrap_or(u32::MAX));
+        }
         let stored = self.run(FolderId(folder_id), |syncer| {
             Box::pin(async move {
                 syncer
@@ -250,6 +267,12 @@ impl SyncEngine {
             .details
             .folder_id;
         drop(store);
+        let account = self.folder_account(folder)?;
+        if let Some(r) = self.run_jmap(account, |s| {
+            Box::pin(async move { s.fetch_body(MessageId(message_id)).await })
+        }) {
+            return r;
+        }
         self.run(folder, |syncer| {
             Box::pin(async move { syncer.fetch_body(MessageId(message_id)).await })
         })
@@ -274,6 +297,11 @@ impl SyncEngine {
     /// the server has no inbox. On failure the saved folders are unchanged.
     pub fn refresh_folders(&self, account_id: i64) -> Result<Option<i64>, SyncFailure> {
         let account = AccountId(account_id);
+        if let Some(r) = self.run_jmap(account, |s| {
+            Box::pin(async move { s.refresh_mailboxes().await })
+        }) {
+            return r.map(|inbox| inbox.map(|f| f.0));
+        }
         let lock = self.account_lock(account);
         let _guard = lock.lock().unwrap_or_else(|p| p.into_inner());
         let store = self.open_store()?;
@@ -307,6 +335,11 @@ impl SyncEngine {
     /// failures as `SyncError` events, retried with back-off. Returns at
     /// once. Calling it again while it runs does nothing.
     pub fn start_live_updates(&self, account_id: i64) -> Result<(), SyncFailure> {
+        // JMAP push (EventSource) is a later issue; JMAP accounts are kept
+        // up to date by the app's syncs and the periodic check until then.
+        if self.is_jmap(AccountId(account_id)) {
+            return Ok(());
+        }
         let mut live = self.live.lock().unwrap_or_else(|p| p.into_inner());
         if let Some(running) = live.get(&account_id) {
             if !running.thread.is_finished() {
@@ -706,6 +739,8 @@ fn imap_login(
         password: Secret::new(password),
     })
 }
+
+mod jmap;
 
 #[cfg(test)]
 mod tests;

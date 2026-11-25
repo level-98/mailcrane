@@ -12,7 +12,7 @@ The project required a distinct, official application name and primary internet 
 
 1. The project application name is **Mailcrane**.
 2. The official domain for the project will be **`mailcrane.app`**.
-3. **Application Identifiers:** The root reverse-DNS prefix for all client builds and store packages will be **`app.mailcrane`** (`app.mailcrane.client` across Android, iOS, and Windows, with `.dev` suffixes for local debug builds).
+3. **Application Identifiers:** The Android application ID and the iOS bundle identifier are both **`app.mailcrane`**. There is no Windows app (see [`docs/architecture.md`](../architecture.md#portability)).
 
 ## Key Drivers & Findings
 
@@ -34,6 +34,6 @@ Searches conducted across UKIPO, USPTO, EUIPO, and WIPO databases in Nice Classe
 ## Consequences
 
 * **Branding & Assets:** All project branding, logos, documentation, and interface references are finalized around **Mailcrane**.
-* **App Infrastructure & IDs (P-05):** Package names and app bundle identifiers will use `app.mailcrane.*`.
+* **App Infrastructure & IDs (P-05):** The Android package and iOS bundle identifier are `app.mailcrane`; reserving it in the stores and on F-Droid is still open (P-05).
 * **Services & Hosting (#74, #75):** Static site deployment (#74) will target `mailcrane.app`. Forwarding for `security@mailcrane.app` and `privacy@mailcrane.app` will be routed directly to maintainers.
 * **Refactoring Risk:** Future renaming would require updates across domain routing, app bundle IDs, app store listings, and design assets.

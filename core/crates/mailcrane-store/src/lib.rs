@@ -14,8 +14,9 @@ pub use repo::{
     Correspondent, Draft, DraftFields, DraftId, NewOutboxMessage, NewRule, OpId, OpKind, OpMessage,
     OutboxId, OutboxMessage, OutboxState, PendingOp, Rule, RuleAction, RuleCondition, RuleId,
     SaveSentCopy, ScheduleMode, SearchFilter, SentCopy, ServerCopy, SignatureSetting,
-    ThreadSummary, UnthreadedMessage, MAX_SIGNATURE_BYTES,
+    ThreadSummary, UnthreadedMessage, ACCOUNT_COLOR_COUNT, MAX_SIGNATURE_BYTES,
 };
+pub use repo::{JmapRow, Protocol};
 pub use repo::{KeywordedMessage, NewSnooze, Snooze, SnoozeId, SnoozeState};
 
 use rusqlite::Connection;

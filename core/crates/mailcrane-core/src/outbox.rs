@@ -25,7 +25,7 @@ use mailcrane_store::{
 };
 
 use crate::compose::{
-    build_for_sending, prepared, send_prepared, smtp_settings, ComposeDraft, PreparedSend,
+    build_for_sending, prepared, send_prepared, send_settings, ComposeDraft, PreparedSend,
     SendError, SendOptions,
 };
 use crate::secrets::SecretStore;
@@ -145,10 +145,9 @@ pub fn prepare(
     if !store.claim_outbox(id).map_err(|_| SendError::Storage)? {
         return Ok(None);
     }
-    match smtp_settings(store, secrets, message.account_id, options) {
-        Ok((config, auth)) => Ok(Some(prepared(
-            config,
-            auth,
+    match send_settings(store, secrets, message.account_id, options) {
+        Ok(transport) => Ok(Some(prepared(
+            transport,
             mailcrane_smtp::Envelope {
                 from: message.envelope_from,
                 to: message.envelope_to,
@@ -185,6 +184,14 @@ pub fn record(
     Ok(match result {
         Ok(report) => {
             store.outbox_sent(id, &report.rejected, now)?;
+            // A JMAP server files the message in Sent itself (RFC 8621 §7.5
+            // onSuccessUpdateEmail): there is no copy to append.
+            if matches!(
+                store.account_protocol(message.account_id)?,
+                Some(mailcrane_store::Protocol::Jmap { .. })
+            ) {
+                store.set_sent_copy(id, mailcrane_store::SentCopy::Saved)?;
+            }
             crate::contacts::record_sent(store, &message, now)?;
             SendOutcome::Sent {
                 rejected: report.rejected,

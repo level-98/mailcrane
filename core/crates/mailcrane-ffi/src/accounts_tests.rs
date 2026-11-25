@@ -2,8 +2,11 @@
 //! per-account sync locks.
 
 use crate::account::{remove_account, RemoveAccountFailure};
+use crate::compose::list_accounts;
 use crate::messages::{account_color, list_unified_inbox, unified_unread_count};
 use crate::secrets::{install_secret_store, PlatformSecretStore, SecretStoreError};
+use crate::settings::{get_account_color, set_account_color, SettingsFailure};
+use crate::widget::widget_snapshot;
 use mailcrane_store::{
     AccountId, Flags, FolderId, FolderRole, NewAccount, NewFolder, NewMessageHeader, Security,
     Store,
@@ -203,4 +206,90 @@ fn each_account_has_its_own_sync_lock() {
     let _held = one.lock().expect("lock 1");
     assert!(two.try_lock().is_ok());
     assert!(again.try_lock().is_err());
+}
+
+#[test]
+fn searching_every_account_names_each_rows_account() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("s.db").to_string_lossy().into_owned();
+    let store = Store::open(&path).expect("store");
+    let a = account(&store, "a@example.org");
+    let b = account(&store, "b@example.net");
+    let ia = folder(&store, a, "INBOX", Some(FolderRole::Inbox));
+    let ib = folder(&store, b, "INBOX", Some(FolderRole::Inbox));
+    message(&store, ia, 1, 100, false);
+    message(&store, ib, 1, 200, false);
+    drop(store);
+    // A chosen colour shows in the results; the other account stays automatic.
+    let chosen = (account_color(a.0) + 3) % 8;
+    set_account_color(path.clone(), a.0, Some(chosen)).expect("colour");
+    let all =
+        crate::search::search_all_accounts(path.clone(), "is:unread".into(), 50).expect("all");
+    assert_eq!(
+        all.iter()
+            .map(|m| (m.account_id, m.account_color))
+            .collect::<Vec<_>>(),
+        [(b.0, account_color(b.0)), (a.0, chosen)]
+    );
+    let only_b =
+        crate::search::search_all_accounts(path, "is:unread account:example.net".into(), 50)
+            .expect("b");
+    assert_eq!(
+        only_b.iter().map(|m| m.account_id).collect::<Vec<_>>(),
+        [b.0]
+    );
+}
+
+#[test]
+fn a_chosen_account_color_reaches_every_list_and_can_be_reset() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("c.db").to_string_lossy().into_owned();
+    let store = Store::open(&path).expect("store");
+    let a = account(&store, "a@example.org");
+    let b = account(&store, "b@example.org");
+    let ia = folder(&store, a, "INBOX", Some(FolderRole::Inbox));
+    message(&store, ia, 1, 100, false);
+    drop(store);
+    let chosen = (account_color(a.0) + 3) % 8;
+
+    assert_eq!(get_account_color(path.clone(), a.0), Ok(None));
+    set_account_color(path.clone(), a.0, Some(chosen)).expect("set");
+    assert_eq!(get_account_color(path.clone(), a.0), Ok(Some(chosen)));
+
+    let accounts = list_accounts(path.clone()).expect("accounts");
+    assert_eq!(accounts[0].color, chosen);
+    assert_eq!(accounts[1].color, account_color(b.0), "b stays automatic");
+    let inbox = list_unified_inbox(path.clone(), 0, 10).expect("unified");
+    assert_eq!(inbox[0].account_color, chosen);
+    let widget = widget_snapshot(path.clone(), 5).expect("widget");
+    assert_eq!(widget.messages[0].account_color, chosen);
+
+    set_account_color(path.clone(), a.0, None).expect("reset");
+    assert_eq!(get_account_color(path.clone(), a.0), Ok(None));
+    let accounts = list_accounts(path).expect("accounts");
+    assert_eq!(accounts[0].color, account_color(a.0));
+}
+
+#[test]
+fn bad_account_colors_and_unknown_accounts_are_refused() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("c.db").to_string_lossy().into_owned();
+    let store = Store::open(&path).expect("store");
+    let a = account(&store, "a@example.org");
+    drop(store);
+    set_account_color(path.clone(), a.0, Some(4)).expect("set");
+    assert_eq!(
+        set_account_color(path.clone(), a.0, Some(8)),
+        Err(SettingsFailure::InvalidColor)
+    );
+    assert_eq!(
+        set_account_color(path.clone(), a.0, Some(u32::MAX)),
+        Err(SettingsFailure::InvalidColor)
+    );
+    assert_eq!(get_account_color(path.clone(), a.0), Ok(Some(4)));
+    assert_eq!(
+        set_account_color(path.clone(), 999, Some(1)),
+        Err(SettingsFailure::NotFound)
+    );
+    assert_eq!(get_account_color(path, 999), Err(SettingsFailure::NotFound));
 }

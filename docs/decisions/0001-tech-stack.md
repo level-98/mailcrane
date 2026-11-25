@@ -1,6 +1,6 @@
 # 0001: Shared Rust core with native UIs, bound through UniFFI
 
-Status: proposed
+Status: accepted
 Date: 2026-11-24
 
 ## Context
@@ -22,7 +22,7 @@ The apps must ship on the App Store, Google Play and F-Droid. That rules out GPL
 - **Storage:** SQLite through `rusqlite`, with FTS5 for offline search and numbered migrations.
 - **TLS:** `rustls` only. Never OpenSSL or the platform TLS stack from inside the core.
 - **Licences:** dependencies must be MPL-2.0-compatible (MIT, Apache-2.0, BSD, ISC, MPL-2.0, Zlib and the other licences in `core/deny.toml`). No GPL, LGPL or AGPL. `cargo deny` enforces this.
-- **Portability:** the core must keep building and passing its tests on Windows as well as the mobile targets, and never reaches into the OS for things that differ between platforms; the apps pass in file locations, secret storage, OAuth redirects and scheduling, as described in [`docs/architecture.md`](../architecture.md#portability). A CI check for the Windows build is planned (task M0-17).
+- **Portability:** the core must keep building and passing its tests on Windows as well as the mobile targets, and never reaches into the OS for things that differ between platforms; the apps pass in file locations, secret storage, OAuth redirects and scheduling, as described in [`docs/architecture.md`](../architecture.md#portability). CI checks the Windows build on every PR (task M0-17).
 
 ## Alternatives considered
 
@@ -62,10 +62,10 @@ From the "likely libraries" column in [`docs/architecture.md`](../architecture.m
 | `rustls` (with `tokio-rustls`) | Confirmed by this decision. |
 | `rusqlite` (SQLite with FTS5) | Confirmed by this decision. |
 | `uniffi` | Confirmed by this decision. |
-| `async-imap` or our own IMAP client | Open. Decided in the IMAP client issue. |
-| `lettre` | Open. Decided in the SMTP issue. |
-| `jmap-client` | Open. Decided in the JMAP issue. |
-| `mail-parser`, `mail-builder` | Open. Decided in the MIME parsing issue. |
-| `ammonia` | Open. Decided in the HTML sanitiser issue (security-sensitive). |
+| `async-imap` or our own IMAP client | Our own client in `mailcrane-imap` (#122). `async-imap` is not used. |
+| `lettre` | Not used. `mailcrane-smtp` has its own SMTP client (#114). |
+| `jmap-client` | Not used. `mailcrane-jmap` has its own client on `hyper` and `serde_json` (#233). |
+| `mail-parser`, `mail-builder` | `mail-parser` is used (#121). `mail-builder` is not; messages are built in our own code. |
+| `ammonia` | Used for the HTML sanitiser (#127). |
 
-Each open choice needs its own decision record, or a note in the PR that adds the dependency, following the "Decisions that only maintainers make" rules in [CONTRIBUTING.md](../../CONTRIBUTING.md#decisions-that-only-maintainers-make).
+These were chosen in the PRs listed, not in decision records. Later dependencies not covered by this table (for example `hyper`, `quick-xml`, `rustls-platform-verifier`, `url`, `zeroize`, and on Android Glance, WorkManager and `androidx.biometric`) were also added in their PRs. New choices follow the "Decisions that only maintainers make" rules in [CONTRIBUTING.md](../../CONTRIBUTING.md#decisions-that-only-maintainers-make).

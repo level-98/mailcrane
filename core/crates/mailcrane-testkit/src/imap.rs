@@ -5,7 +5,6 @@ use crate::tls;
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::{Mutex, RwLock};
 use tokio::task::AbortHandle;
@@ -95,10 +94,10 @@ impl FakeImapBuilder {
     }
 
     pub async fn start(self) -> Result<FakeImap, String> {
-        // The certificate is made once per process (see tls::generate);
-        // the time limit is for starting the server itself.
+        // The certificate is made once per process (see tls::generate).
+        // Starting is quick (see `servers_start_in_under_100_ms`), but it is
+        // not timed here: a busy machine would fail unrelated tests (#268).
         let tls = tls::generate()?;
-        let started = Instant::now();
         // Like a real server (993 and 143), one port is implicit TLS and the
         // other starts in plain text for STARTTLS. Guessing the mode from
         // whether a TLS hello arrives in time fails when the client is slow
@@ -153,9 +152,6 @@ impl FakeImapBuilder {
                 }
             }
         });
-        if started.elapsed() >= Duration::from_millis(100) {
-            return Err("IMAP server start exceeded 100 ms".into());
-        }
         Ok(FakeImap {
             addr,
             starttls_addr,

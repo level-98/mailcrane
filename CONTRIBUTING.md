@@ -105,7 +105,7 @@ The agent runs on a maintainer's Claude token, so:
 | `accepted` | A feature request maintainers have agreed to |
 | `security` | Touches sign-in, credentials, TLS, encryption or the sanitiser |
 | `post-1.0` | Not until after 1.0. Please don't claim yet. |
-| `m0` … `m6` | Milestone (see ROADMAP.md) |
+| `m0` … `m8` | Milestone (see ROADMAP.md) |
 | `area:core` · `area:android` · `area:ios` · `area:design` · `area:docs` · `area:ci` | Which part of the project |
 
 ## Other ways to help

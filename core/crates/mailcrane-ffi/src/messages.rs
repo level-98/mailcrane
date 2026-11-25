@@ -3,7 +3,10 @@
 //! message ready to show, and `get_inline_part` the `cid:` images in it.
 
 use mailcrane_mime::{parse_message, sanitize_html, SanitizeOptions, TrackerHit, TrackerKind};
-use mailcrane_store::{BodyState, FolderId, MessageHeader, MessageId, Store};
+use mailcrane_store::{
+    BodyState, FolderId, MessageHeader, MessageId, Store, StoreError, ACCOUNT_COLOR_COUNT,
+};
+use std::collections::HashMap;
 
 use crate::sync::{SyncErrorKind, SyncFailure};
 
@@ -44,12 +47,31 @@ pub struct MessageSummary {
 }
 
 /// Colours for account markers.
-pub const ACCOUNT_COLORS: u32 = 8;
+pub const ACCOUNT_COLORS: u32 = ACCOUNT_COLOR_COUNT;
 
-/// The marker colour of an account (stable: follows the account id).
+/// The automatic marker colour of an account (stable: follows the account
+/// id). Used until the user chooses one (M4-20).
 #[uniffi::export]
 pub fn account_color(account_id: i64) -> u32 {
     u32::try_from(account_id.rem_euclid(i64::from(ACCOUNT_COLORS))).unwrap_or(0)
+}
+
+/// Every account's marker colour: the one the user chose, else the
+/// automatic one. Accounts missing from the map use [`account_color`].
+pub(crate) fn marker_colors(store: &Store) -> Result<HashMap<i64, u32>, StoreError> {
+    Ok(store
+        .list_account_colors()?
+        .into_iter()
+        .map(|(id, chosen)| (id.0, chosen.unwrap_or_else(|| account_color(id.0))))
+        .collect())
+}
+
+/// The marker colour for `account_id` from a [`marker_colors`] map.
+pub(crate) fn marker_color(colors: &HashMap<i64, u32>, account_id: i64) -> u32 {
+    colors
+        .get(&account_id)
+        .copied()
+        .unwrap_or_else(|| account_color(account_id))
 }
 
 /// Header text as one safe line: CR, LF and NUL become spaces, and the
@@ -119,12 +141,13 @@ pub fn list_unified_inbox(
     let rows = store
         .list_unified_inbox(limit.min(MAX_PAGE), offset)
         .map_err(|_| storage())?;
+    let colors = marker_colors(&store).map_err(|_| storage())?;
     Ok(rows
         .into_iter()
         .map(|(header, account)| {
             let mut summary = MessageSummary::from(header);
             summary.account_id = account.0;
-            summary.account_color = account_color(account.0);
+            summary.account_color = marker_color(&colors, account.0);
             summary
         })
         .collect())

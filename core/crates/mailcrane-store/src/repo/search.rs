@@ -9,8 +9,11 @@ use rusqlite::{params, types::Value};
 /// matches everything in scope.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SearchFilter {
-    /// The account to search.
-    pub account: AccountId,
+    /// The account to search; `None` searches every account (M4-21).
+    pub account: Option<AccountId>,
+    /// Only accounts whose address or name contains this
+    /// (case-insensitive), for `account:`.
+    pub account_name: Option<String>,
     /// Only this folder, if set.
     pub folder: Option<FolderId>,
     /// Only folders whose name contains this (case-insensitive), for `in:`.
@@ -35,13 +38,25 @@ impl Store {
     pub fn search_messages(&self, filter: &SearchFilter) -> Result<Vec<MessageHeader>, StoreError> {
         let mut sql = String::from(
             "SELECT m.*, {RANK} FROM messages m JOIN folders f ON f.id = m.folder_id \
-             WHERE f.account_id = ?1 AND m.hidden = 0",
+             WHERE m.hidden = 0",
         );
-        let mut args: Vec<Value> = vec![Value::Integer(filter.account.0)];
+        let mut args: Vec<Value> = Vec::new();
         let mut bind = |sql: &mut String, clause: &str, value: Value| {
             args.push(value);
             sql.push_str(&clause.replace('?', &format!("?{}", args.len())));
         };
+        if let Some(account) = filter.account {
+            bind(&mut sql, " AND f.account_id = ?", Value::Integer(account.0));
+        }
+        if let Some(name) = &filter.account_name {
+            bind(
+                &mut sql,
+                " AND f.account_id IN (SELECT id FROM accounts WHERE \
+                 lower(email) LIKE '%' || lower(?) || '%' OR \
+                 lower(display_name) LIKE '%' || lower(?) || '%')",
+                Value::Text(name.clone()),
+            );
+        }
         if let Some(folder) = filter.folder {
             bind(&mut sql, " AND m.folder_id = ?", Value::Integer(folder.0));
         }
