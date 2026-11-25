@@ -816,7 +816,10 @@ fn the_servers_namespace_is_used_for_top_level_folders() {
         )
         .expect("password");
     install_secret_store(platform);
-    let engine = SyncEngine::new(path.to_string_lossy().into_owned(), Arc::new(Collect::default()));
+    let engine = SyncEngine::new(
+        path.to_string_lossy().into_owned(),
+        Arc::new(Collect::default()),
+    );
     *engine.extra_root_cert.lock().expect("lock") = Some(imap.root_cert_der().to_vec());
     engine.refresh_folders(account.0).expect("refresh");
 
@@ -845,5 +848,8 @@ fn the_servers_namespace_is_used_for_top_level_folders() {
     assert_eq!(remote(shared.0), "INBOX.Shared");
     let mut names = runtime.block_on(imap.mailbox().folder_names());
     names.sort();
-    assert_eq!(names, ["INBOX", "INBOX.Projects", "INBOX.Receipts", "INBOX.Shared"]);
+    assert_eq!(
+        names,
+        ["INBOX", "INBOX.Projects", "INBOX.Receipts", "INBOX.Shared"]
+    );
 }
