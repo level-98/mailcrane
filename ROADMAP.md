@@ -77,7 +77,7 @@ Goal: add an IMAP account and read your inbox, online and offline.
 
 - [ ] **M4-01** Multiple accounts and a unified inbox 🤖
 - [ ] **M4-02** Conversation threading (JWZ algorithm plus Gmail thread IDs) 🤖
-- [ ] **M4-03** Offline full-text search (SQLite FTS5), plus server-side IMAP SEARCH 🤖
+- [x] **M4-03** Offline full-text search (SQLite FTS5), plus server-side IMAP SEARCH 🤖
 - [x] **M4-04** Configurable swipe actions 🟢🤖
 - [ ] **M4-05** Push notifications on Android: foreground IDLE service and UnifiedPush (iOS is M7-10) 🧑
 - [ ] **M4-06** Snooze (stored locally, synced via a hidden folder or IMAP keyword) 🤖
