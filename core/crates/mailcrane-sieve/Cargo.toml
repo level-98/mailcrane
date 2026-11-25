@@ -1,0 +1,24 @@
+[package]
+name = "mailcrane-sieve"
+description = "ManageSieve client (RFC 5804) and Sieve scripts for server-side rules"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+base64 = "0.23"
+rustls = "0.23.46"
+rustls-platform-verifier = "0.7.1"
+thiserror = "2.0.21"
+tokio = { version = "1.54.1", features = ["net", "time", "io-util"] }
+tokio-rustls = "0.26.6"
+
+[dev-dependencies]
+mailcrane-testkit = { path = "../mailcrane-testkit" }
+proptest = "1"
+tokio = { version = "1.54.1", features = ["macros", "rt-multi-thread", "net", "time", "io-util"] }

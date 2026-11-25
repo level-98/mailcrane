@@ -284,3 +284,87 @@ async fn stop_processing_and_run_on_existing() {
         .collect();
     assert_eq!(names, ["Move shop", "Flag shop"]);
 }
+
+/// M4-23: a rule the server runs isn't applied again on the device, while
+/// a device-only rule after it still is.
+#[tokio::test]
+async fn rules_running_on_the_server_are_not_applied_again() {
+    use mailcrane_core::rules::server;
+    use mailcrane_sieve::script::Extensions;
+    use mailcrane_store::{ServerRules, ServerRulesState};
+
+    let imap = FakeImap::builder()
+        .user(USER, PASSWORD)
+        .folder("INBOX", vec![])
+        .folder("Deals", vec![])
+        .start()
+        .await
+        .expect("imap");
+    let s = setup(&imap).await;
+    assert_eq!(sync_and_run(&imap, &s).await.checked, 0);
+    let on_server = s
+        .store
+        .insert_rule(&rule(
+            "Shop deals",
+            vec![RuleCondition::ListId("deals.shop.example".into())],
+            vec![RuleAction::MarkRead, RuleAction::Move(s.deals)],
+        ))
+        .expect("rule");
+    // "Has an attachment" needs the device.
+    let mut local = rule(
+        "Flag sales",
+        vec![
+            RuleCondition::HasAttachment,
+            RuleCondition::Subject("Sale".into()),
+        ],
+        vec![RuleAction::Flag],
+    );
+    local.match_all = false;
+    s.store.insert_rule(&local).expect("rule");
+    let names = vec!["fileinto".to_string(), "imap4flags".to_string()];
+    let plan = server::plan(&s.store, s.account, &Extensions::from_list(&names)).expect("plan");
+    assert_eq!(plan.server.len(), 1);
+    s.store
+        .save_server_rules(&ServerRules {
+            account_id: s.account,
+            state: ServerRulesState::Active,
+            host: Some("localhost".into()),
+            port: Some(4190),
+            extensions: names,
+            other_script: None,
+            script_hash: Some("h".into()),
+            checked_at: NOW,
+            switch_requested: false,
+            deployed: plan
+                .server
+                .iter()
+                .map(|(id, _, f)| (*id, f.clone()))
+                .collect(),
+        })
+        .expect("state");
+    assert!(server::on_server(&s.store, s.account)
+        .expect("ids")
+        .contains(&on_server));
+
+    imap.mailbox()
+        .deliver(
+            "INBOX",
+            raw(
+                "Shop <news@shop.example>",
+                "Sale!",
+                "n1@x",
+                Some("deals.shop.example"),
+            ),
+        )
+        .await;
+    let report = sync_and_run(&imap, &s).await;
+    assert_eq!((report.matched, report.actions), (1, 1), "only the flag");
+    assert!(
+        imap.mailbox().messages("Deals").await.is_empty(),
+        "no second move"
+    );
+    let inbox = imap.mailbox().messages("INBOX").await;
+    assert_eq!(inbox.len(), 1);
+    assert!(inbox[0].flags.contains(&"\\Flagged".to_owned()));
+    assert!(!inbox[0].flags.contains(&"\\Seen".to_owned()));
+}
