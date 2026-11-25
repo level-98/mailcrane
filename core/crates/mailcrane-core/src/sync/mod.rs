@@ -5,6 +5,7 @@ mod incremental;
 mod initial;
 mod jmap;
 mod live;
+pub mod prefetch;
 mod search;
 
 pub use incremental::{Strategy, SyncReport};

@@ -2,6 +2,7 @@
 //! page of a folder's message list, newest first; `get_message` returns one
 //! message ready to show, and `get_inline_part` the `cid:` images in it.
 
+use mailcrane_core::phishing;
 use mailcrane_mime::{parse_message, sanitize_html, SanitizeOptions, TrackerHit, TrackerKind};
 use mailcrane_store::{
     BodyState, FolderId, MessageHeader, MessageId, Store, StoreError, ACCOUNT_COLOR_COUNT,
@@ -291,6 +292,97 @@ pub struct MessageDetail {
     pub body: MessageBody,
     /// Attached files, not counting inline images shown in the body.
     pub attachments: Vec<AttachmentInfo>,
+    /// What the user's provider found when it checked the sender (M5-07);
+    /// `None` until the body is downloaded, or if it can't be parsed.
+    #[uniffi(default = None)]
+    pub sender_check: Option<SenderCheck>,
+}
+
+/// The result of one authentication method (RFC 8601).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum AuthResult {
+    /// It passed.
+    Pass,
+    /// It failed (for SPF, also a soft fail).
+    Fail,
+    /// The domain makes no claim either way.
+    Neutral,
+    /// Not checked, or not in the header.
+    None,
+    /// A temporary error while checking.
+    TempError,
+    /// A permanent error, such as a broken record.
+    PermError,
+    /// Some other result.
+    Unknown,
+}
+
+impl From<phishing::AuthResult> for AuthResult {
+    fn from(r: phishing::AuthResult) -> Self {
+        use phishing::AuthResult as R;
+        match r {
+            R::Pass => Self::Pass,
+            R::Fail => Self::Fail,
+            R::Neutral => Self::Neutral,
+            R::None => Self::None,
+            R::TempError => Self::TempError,
+            R::PermError => Self::PermError,
+            R::Unknown => Self::Unknown,
+        }
+    }
+}
+
+/// What the authentication chip next to the sender says.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum AuthVerdict {
+    /// "Verified".
+    Verified,
+    /// "Not verified".
+    NotVerified,
+    /// "Failed".
+    Failed,
+}
+
+/// The provider's SPF, DKIM and DMARC results for a message. Only the
+/// `Authentication-Results` header the user's provider added is read.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct SenderCheck {
+    /// Whether the provider's header was found. When `false`, show no chip.
+    pub trusted: bool,
+    /// The chip to show; `None` exactly when `trusted` is `false`.
+    pub verdict: Option<AuthVerdict>,
+    /// SPF.
+    pub spf: AuthResult,
+    /// The domain SPF checked.
+    pub spf_domain: Option<String>,
+    /// DKIM.
+    pub dkim: AuthResult,
+    /// The domain that signed the message.
+    pub dkim_domain: Option<String>,
+    /// DMARC.
+    pub dmarc: AuthResult,
+    /// The From domain DMARC checked.
+    pub dmarc_domain: Option<String>,
+}
+
+impl From<phishing::SenderCheck> for SenderCheck {
+    fn from(c: phishing::SenderCheck) -> Self {
+        let domain = |d: Option<String>| d.map(|d| one_line(&d)).filter(|d| !d.is_empty());
+        Self {
+            trusted: c.trusted,
+            verdict: c.verdict.map(|v| match v {
+                phishing::AuthVerdict::Verified => AuthVerdict::Verified,
+                phishing::AuthVerdict::NotVerified => AuthVerdict::NotVerified,
+                phishing::AuthVerdict::Failed => AuthVerdict::Failed,
+            }),
+            spf: c.auth.spf.into(),
+            spf_domain: domain(c.auth.spf_domain),
+            dkim: c.auth.dkim.into(),
+            dkim_domain: domain(c.auth.dkim_domain),
+            dmarc: c.auth.dmarc.into(),
+            dmarc_domain: domain(c.auth.dmarc_domain),
+        }
+    }
 }
 
 /// The bytes of an inline image.
@@ -414,6 +506,7 @@ pub fn get_message(
         is_flagged: d.flags.flagged,
         body: MessageBody::NotDownloaded,
         attachments: Vec::new(),
+        sender_check: None,
     };
     let Some(raw) = raw else {
         return Ok(detail);
@@ -434,6 +527,7 @@ pub fn get_message(
         .collect();
     detail.body = match parse_message(&raw) {
         Ok(parsed) => {
+            detail.sender_check = Some(phishing::sender_check(&parsed).into());
             detail.to = parsed.to.into_iter().map(address).collect();
             detail.cc = parsed.cc.into_iter().map(address).collect();
             match parsed.text_html {
@@ -785,6 +879,58 @@ mod tests {
         assert!(html.contains("src=\"https://example.com/a.png\""));
         assert!(html.contains("img-src mailcrane-cid: data: https:;"));
         assert!(!html.contains("<script"));
+    }
+
+    #[test]
+    fn sender_check_reads_only_the_providers_header() {
+        let (_dir, path, folder) = setup();
+        // `above`: what the provider added above its Received header;
+        // `below`: what the sender wrote.
+        let raw = |above: &str, below: &str| {
+            format!(
+                "{above}Received: from out.example.net by mx2.example.org with ESMTPS; \
+                 Wed, 25 Nov 2026 08:00:00 +0000\r\n{below}\
+                 From: Ana <ana@example.net>\r\nTo: bob@example.org\r\n\
+                 Subject: Hi\r\n\r\nHello\r\n"
+            )
+            .into_bytes()
+        };
+        let forged = "Authentication-Results: mx.example.org; dmarc=pass\r\n";
+        let id = with_body(
+            &path,
+            folder,
+            1,
+            &raw(
+                "Authentication-Results: mx1.example.org; spf=pass smtp.mailfrom=example.net; \
+                 dkim=fail header.d=example.net; dmarc=fail header.from=example.net\r\n",
+                forged,
+            ),
+        );
+        let check = get_message(path.clone(), id, false)
+            .expect("message")
+            .sender_check
+            .expect("checked");
+        assert_eq!(
+            check,
+            SenderCheck {
+                trusted: true,
+                verdict: Some(AuthVerdict::Failed),
+                spf: AuthResult::Pass,
+                spf_domain: Some("example.net".into()),
+                dkim: AuthResult::Fail,
+                dkim_domain: Some("example.net".into()),
+                dmarc: AuthResult::Fail,
+                dmarc_domain: Some("example.net".into()),
+            }
+        );
+        // The provider added nothing: the sender's header is not trusted.
+        let id = with_body(&path, folder, 2, &raw("", forged));
+        let check = get_message(path.clone(), id, false)
+            .expect("message")
+            .sender_check
+            .expect("checked");
+        assert!(!check.trusted);
+        assert_eq!(check.verdict, None);
     }
 
     #[test]

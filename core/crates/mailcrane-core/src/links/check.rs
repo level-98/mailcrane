@@ -1,7 +1,7 @@
 //! Where a link really goes (M5-07, part A). Every result is a hint: the
 //! user can always open the link. Nothing here touches the network.
 
-use mailcrane_mime::unsubscribe::org_domain;
+use mailcrane_mime::auth::org_domain;
 use url::{Host, Url};
 
 /// Longest link examined in full (bytes).

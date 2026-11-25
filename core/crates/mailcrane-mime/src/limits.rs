@@ -10,3 +10,7 @@ pub const MAX_DEPTH: usize = 20;
 
 /// Most MIME parts (multipart containers included) in one input.
 pub const MAX_PARTS: usize = 1000;
+
+/// At most this many Received and Authentication-Results headers are kept,
+/// topmost first.
+pub const MAX_TRACE_HEADERS: usize = 64;

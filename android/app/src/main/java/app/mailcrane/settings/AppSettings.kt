@@ -126,6 +126,11 @@ interface AppSettings {
 
     suspend fun setContactsPromptAnswered()
 
+    /** "Download messages in the background" (M4-25). On Wi-Fi only by default. */
+    val backgroundDownload: Flow<BackgroundDownloadSetting>
+
+    suspend fun setBackgroundDownload(setting: BackgroundDownloadSetting)
+
     /** "Mailbox density" (M4-24): Comfortable, with sender pictures, by default. */
     val mailboxDensity: Flow<MailboxDensity>
 
@@ -145,6 +150,9 @@ enum class MailboxDensity {
     /** No picture, subject and preview on one line, tighter padding: more rows on screen. */
     COMPACT,
 }
+
+/** When recent messages are downloaded in the background so they open at once (M4-25). */
+enum class BackgroundDownloadSetting { WIFI_ONLY, ALWAYS, NEVER }
 
 /** How many recent searches are kept. */
 const val MAX_RECENT_SEARCHES = 5
@@ -241,6 +249,16 @@ class DataStoreAppSettings(
 
     override suspend fun setContactsPromptAnswered() {
         dataStore.edit { it[CONTACTS_PROMPT] = true }
+    }
+
+    override val backgroundDownload: Flow<BackgroundDownloadSetting> =
+        prefs.map { p ->
+            BackgroundDownloadSetting.entries.firstOrNull { it.name == p[BACKGROUND_DOWNLOAD] }
+                ?: BackgroundDownloadSetting.WIFI_ONLY
+        }
+
+    override suspend fun setBackgroundDownload(setting: BackgroundDownloadSetting) {
+        dataStore.edit { it[BACKGROUND_DOWNLOAD] = setting.name }
     }
 
     override suspend fun setCleanLinks(enabled: Boolean) {
@@ -345,6 +363,7 @@ class DataStoreAppSettings(
         val NOTIFY_PROMPT = booleanPreferencesKey("notification_prompt_answered")
         val APP_LOCK_TIMEOUT = intPreferencesKey("app_lock_timeout_seconds")
         val APP_LOCK_SCREENSHOTS = booleanPreferencesKey("app_lock_allow_screenshots")
+        val BACKGROUND_DOWNLOAD = stringPreferencesKey("background_download")
     }
 }
 
