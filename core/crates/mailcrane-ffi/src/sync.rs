@@ -309,6 +309,21 @@ impl SyncEngine {
                     FolderSyncer::new(&store, &mut session, &listener, account, self.config);
                 job(&mut syncer).await
             };
+            // Rules on new inbox mail (M4-09), then their actions go out in
+            // this session. A failure only leaves them for the next sync.
+            if result.is_ok() {
+                let now = crate::actions::now();
+                if mailcrane_core::rules::apply_new(&store, account, now, &listener).is_ok() {
+                    let _ = mailcrane_core::actions::replay(
+                        &store,
+                        &mut session,
+                        &listener,
+                        account,
+                        now,
+                    )
+                    .await;
+                }
+            }
             session.logout().await;
             // New headers join their conversations (M4-02). A failure here
             // only leaves them unthreaded until the next sync.
