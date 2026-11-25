@@ -20,6 +20,7 @@ import androidx.compose.ui.platform.LocalResources
 import app.mailcrane.R
 import app.mailcrane.ui.compose.ComposeResult
 import app.mailcrane.ui.compose.ComposeScreen
+import app.mailcrane.ui.compose.DraftRequest
 import app.mailcrane.ui.compose.ReplyRequest
 import app.mailcrane.ui.folders.MailboxScreen
 
@@ -32,6 +33,7 @@ import app.mailcrane.ui.folders.MailboxScreen
 fun MailHome(accountId: Long) {
     var composing by rememberSaveable { mutableStateOf(false) }
     var reply by rememberSaveable { mutableStateOf<ReplyRequest?>(null) }
+    var draft by rememberSaveable { mutableStateOf<DraftRequest?>(null) }
     var notice by rememberSaveable { mutableStateOf<String?>(null) }
     val resources = LocalResources.current
     val motion = MaterialTheme.motionScheme
@@ -55,6 +57,7 @@ fun MailHome(accountId: Long) {
                 ComposeScreen(
                     accountId = accountId,
                     reply = reply,
+                    draft = draft,
                     onDone = { result ->
                         if (result is ComposeResult.Sent) {
                             notice =
@@ -67,8 +70,12 @@ fun MailHome(accountId: Long) {
                                     )
                                 }
                         }
+                        if (result is ComposeResult.SavedDraft) {
+                            notice = resources.getString(R.string.compose_draft_saved)
+                        }
                         composing = false
                         reply = null
+                        draft = null
                     },
                     modifier = shared,
                 )
@@ -77,10 +84,17 @@ fun MailHome(accountId: Long) {
                     accountId = accountId,
                     onCompose = {
                         reply = null
+                        draft = null
                         composing = true
                     },
                     onReply = {
                         reply = it
+                        draft = null
+                        composing = true
+                    },
+                    onOpenDraft = {
+                        draft = it
+                        reply = null
                         composing = true
                     },
                     composeFabModifier = shared,

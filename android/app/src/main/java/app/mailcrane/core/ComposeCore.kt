@@ -50,6 +50,24 @@ interface ComposeCore {
         new: String?,
     ): String
 
+    /** Saves [draft] locally (new when [draftId] is null); returns its id. Uploads happen later. */
+    suspend fun saveDraft(
+        draftId: Long?,
+        draft: ComposeDraft,
+    ): Long
+
+    /** The saved draft. @throws DraftFailure */
+    suspend fun getDraft(draftId: Long): ComposeDraft
+
+    /** Opens a message from the Drafts folder as a draft (downloading it if needed); returns the draft id. */
+    suspend fun openDraft(messageId: Long): Long
+
+    /** Deletes the draft here and, through the action queue, on the server. */
+    suspend fun deleteDraft(draftId: Long)
+
+    /** The account's drafts, most recently changed first. */
+    suspend fun listDrafts(accountId: Long): List<DraftSummary>
+
     /**
      * Sends [draft] now.
      *
@@ -90,6 +108,41 @@ class UniffiComposeCore(
         old: String?,
         new: String?,
     ): String = app.mailcrane.core.swapSignature(body, old, new)
+
+    override suspend fun saveDraft(
+        draftId: Long?,
+        draft: ComposeDraft,
+    ): Long = withContext(io) { app.mailcrane.core.saveDraft(dbPath, draftId, draft) }
+
+    override suspend fun getDraft(draftId: Long): ComposeDraft =
+        withContext(io) { app.mailcrane.core.getDraft(dbPath, draftId) }
+
+    override suspend fun openDraft(messageId: Long): Long =
+        withContext(io) {
+            try {
+                app.mailcrane.core.openDraft(dbPath, messageId)
+            } catch (_: DraftFailure.BodyNotDownloaded) {
+                // Download it once, then open it.
+                bodies.fetchBody(messageId)
+                app.mailcrane.core.openDraft(dbPath, messageId)
+            }
+        }
+
+    override suspend fun deleteDraft(draftId: Long) =
+        withContext(io) { app.mailcrane.core.deleteDraft(dbPath, draftId) }
+
+    override suspend fun listDrafts(accountId: Long): List<DraftSummary> =
+        withContext(io) { app.mailcrane.core.listDrafts(dbPath, accountId) }
+
+    // Only for downloading a draft's body before opening it; events aren't needed here.
+    private val bodies by lazy {
+        SyncEngine(
+            dbPath,
+            object : CoreEventListener {
+                override fun onEvent(event: CoreEvent) = Unit
+            },
+        )
+    }
 
     override suspend fun send(draft: ComposeDraft): SendResult = app.mailcrane.core.send(dbPath, draft)
 }

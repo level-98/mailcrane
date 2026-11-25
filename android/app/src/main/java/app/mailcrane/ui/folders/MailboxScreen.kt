@@ -25,7 +25,10 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.mailcrane.R
+import app.mailcrane.core.FolderRole
 import app.mailcrane.settings.SettingsScreen
+import app.mailcrane.ui.compose.DraftRequest
+import app.mailcrane.ui.compose.LocalDraftsScreen
 import app.mailcrane.ui.compose.ReplyRequest
 import app.mailcrane.ui.message.MessageScreen
 import app.mailcrane.ui.messagelist.MessageListScreen
@@ -44,6 +47,7 @@ fun MailboxScreen(
     notice: String? = null,
     onNoticeShown: () -> Unit = {},
     onReply: (ReplyRequest) -> Unit = {},
+    onOpenDraft: (DraftRequest) -> Unit = {},
     viewModel: FolderDrawerViewModel =
         hiltViewModel<FolderDrawerViewModel, FolderDrawerViewModel.Factory>(
             key = "folders-$accountId",
@@ -60,6 +64,16 @@ fun MailboxScreen(
             var openMessage by rememberSaveable { mutableStateOf<Long?>(null) }
             val saved = rememberSaveableStateHolder()
             var showSettings by rememberSaveable { mutableStateOf(false) }
+            var showDrafts by rememberSaveable { mutableStateOf(false) }
+            if (showDrafts) {
+                BackHandler { showDrafts = false }
+                LocalDraftsScreen(
+                    accountId = accountId,
+                    onOpen = { onOpenDraft(DraftRequest(draftId = it)) },
+                    onBack = { showDrafts = false },
+                )
+                return
+            }
             if (showSettings) {
                 BackHandler { showSettings = false }
                 SettingsScreen(onBack = { showSettings = false }, accountId = accountId)
@@ -93,6 +107,10 @@ fun MailboxScreen(
                             scope.launch { drawerState.close() }
                             showSettings = true
                         },
+                        onOpenLocalDrafts = {
+                            scope.launch { drawerState.close() }
+                            showDrafts = true
+                        },
                     )
                 },
             ) {
@@ -100,7 +118,14 @@ fun MailboxScreen(
                     MessageListScreen(
                         folderId = selected.id,
                         title = folderName(selected),
-                        onOpenMessage = { openMessage = it },
+                        // A message in the Drafts folder opens for editing, not reading.
+                        onOpenMessage = {
+                            if (selected.role == FolderRole.DRAFTS) {
+                                onOpenDraft(DraftRequest(messageId = it))
+                            } else {
+                                openMessage = it
+                            }
+                        },
                         onOpenFolders = { scope.launch { drawerState.open() } },
                         onCompose = onCompose,
                         composeFabModifier = composeFabModifier,
