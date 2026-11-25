@@ -1,0 +1,14 @@
+Authentication-Results: mx1.example.org;
+	spf=fail smtp.mailfrom=example.net;
+	dkim=none;
+	dmarc=fail (p=reject) header.from=example.net
+Received: from out.example.net (out.example.net [192.0.2.10])
+	by mx2.example.org (Postfix) with ESMTPS id 4F1; Wed, 25 Nov 2026 08:00:00 +0000
+From: Example Bank <alerts@example.net>
+To: Bob <bob@example.org>
+Subject: Auth: DMARC fail
+Date: Wed, 25 Nov 2026 08:02:00 +0000
+Message-ID: <auth-fail@example.net>
+
+Expected: a "Failed" chip next to the sender.
+Its sheet: SPF failed, DKIM not checked, DMARC failed (example.net).

@@ -16,7 +16,7 @@ pub use mailcrane_mime::unsubscribe::MailtoTarget;
 
 use mailcrane_mime::parse_message;
 use mailcrane_mime::unsubscribe::{
-    dkim_aligned, dkim_pass_domains, parse_list_unsubscribe, provider_results,
+    dkim_aligned, dkim_pass_domains, parse_list_unsubscribe, trusted_results,
 };
 use mailcrane_store::{MessageId, Store, StoreError};
 
@@ -94,14 +94,11 @@ pub fn options_from_raw(raw: &[u8]) -> Option<UnsubscribeOptions> {
         .map(|a| a.email.clone())
         .unwrap_or_default();
     let from_domain = sender.rsplit_once('@').map(|(_, d)| d).unwrap_or_default();
-    let authenticated = provider_results(
-        &parsed.authentication_results,
-        parsed.received_by.as_deref(),
-    )
-    .map(dkim_pass_domains)
-    .unwrap_or_default()
-    .iter()
-    .any(|d| dkim_aligned(d, from_domain));
+    let authenticated = trusted_results(&parsed.trace)
+        .map(dkim_pass_domains)
+        .unwrap_or_default()
+        .iter()
+        .any(|d| dkim_aligned(d, from_domain));
     let first_https = list.https.first().cloned();
     let options = UnsubscribeOptions {
         sender,

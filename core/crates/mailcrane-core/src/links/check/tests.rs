@@ -413,6 +413,18 @@ fn lookalike_and_text_warnings_both_show() {
 }
 
 #[test]
+fn the_fixture_lookalike_link_warns() {
+    // tests/fixtures/html/link-mismatch.html: an all-Cyrillic lookalike
+    // under the reserved .example TLD, so it can never reach a real site.
+    let c = check_link(
+        "https://\u{0430}\u{0440}\u{0440}\u{04CF}\u{0435}.example/",
+        Some("Sign in to your account"),
+    );
+    assert_eq!(c.warnings, vec![LinkWarning::LookalikeHost]);
+    assert!(c.display_host.starts_with("xn--"), "{}", c.display_host);
+}
+
+#[test]
 fn imitates_latin_edge_cases() {
     assert!(!imitates_latin(""));
     assert!(!imitates_latin("com"));

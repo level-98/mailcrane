@@ -532,7 +532,7 @@ fn sanitize_collects_link_text() -> R {
             .find(|l| l.href == href)
             .map(|l| l.text.as_str())
     };
-    assert_eq!(out.links.len(), 7);
+    assert_eq!(out.links.len(), 8);
     assert_eq!(
         find("https://example.net/login"),
         Some("https://example.com/login")

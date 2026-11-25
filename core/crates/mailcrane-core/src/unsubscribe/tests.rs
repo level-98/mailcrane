@@ -1,16 +1,20 @@
 use super::*;
 
 fn raw(auth: Option<&str>, from: &str, list: &str, post: Option<&str>) -> Vec<u8> {
-    // The provider's own Received header is on top.
-    let mut m = String::from(
-        "Received: from out.example.net by mx2.example.org with ESMTPS; \
-         Wed, 25 Nov 2026 08:00:00 +0000\r\n",
-    );
+    // The provider's results sit above its own Received header, where the
+    // message entered it (M5-07: only those can be trusted).
+    let mut m = String::new();
     if let Some(a) = auth {
         m.push_str(&format!("Authentication-Results: {a}\r\n"));
     }
-    // A result the sender forged must not count, wherever it is.
+    m.push_str(
+        "Received: from out.example.net by mx2.example.org with ESMTPS; \
+         Wed, 25 Nov 2026 08:00:00 +0000\r\n",
+    );
+    // Results the sender forged must not count, wherever they are and
+    // whatever authserv-id they name.
     m.push_str("Authentication-Results: evil.example; dkim=pass header.d=example.net\r\n");
+    m.push_str("Authentication-Results: mx.example.org; dkim=pass header.d=example.net\r\n");
     m.push_str(
         "Received: from sender.example.net by out.example.net; Wed, 25 Nov 2026 07:59:00 +0000\r\n",
     );
