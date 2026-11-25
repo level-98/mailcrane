@@ -49,6 +49,9 @@ interface MailboxCore {
     /** The account's stored folders in display order, with unread counts. */
     suspend fun listFolders(accountId: Long): List<FolderSummary>
 
+    /** Whether the drawer offers "Manage folders" (M4-22). */
+    suspend fun canManageFolders(accountId: Long): Boolean = false
+
     /**
      * A swipe action: applied at once and queued like [MessageCore.applyAction]. With [undoable], the
      * server copy waits [UNDO_WINDOW_MS] first so [undoAction] can still take it back.
@@ -203,6 +206,7 @@ class UniffiMailboxCore(
     private val dbPath: String,
     private val io: CoroutineDispatcher = Dispatchers.IO,
 ) : MailboxCore,
+    FolderAdminCore,
     MessageCore,
     LiveUpdatesEngine,
     NotificationsCore {
@@ -488,6 +492,29 @@ class UniffiMailboxCore(
 
     override suspend fun listFolders(accountId: Long): List<FolderSummary> =
         withContext(io) { listFolders(dbPath, accountId) }
+
+    override suspend fun canManageFolders(accountId: Long): Boolean =
+        withContext(io) { canManageFolders(dbPath, accountId) }
+
+    override suspend fun createFolder(
+        accountId: Long,
+        parentId: Long?,
+        name: String,
+    ): Long = withContext(io) { engine.createFolder(accountId, parentId, name) }
+
+    override suspend fun renameFolder(
+        folderId: Long,
+        name: String,
+    ) = withContext(io) { engine.renameFolder(folderId, name) }
+
+    override suspend fun moveFolder(
+        folderId: Long,
+        parentId: Long?,
+    ) = withContext(io) { engine.moveFolder(folderId, parentId) }
+
+    override suspend fun deleteFolder(folderId: Long) = withContext(io) { engine.deleteFolder(folderId) }
+
+    override suspend fun moveTargets(folderId: Long): MoveTargets = withContext(io) { moveTargets(dbPath, folderId) }
 
     // Live updates: blocking calls, made off the main thread by LiveUpdatesObserver. Failures
     // also arrive as SyncError events.

@@ -138,7 +138,9 @@ impl SyncEngine {
                 Box::pin(async move { admin::create_on_server(s, &target).await })
             })?;
         }
-        Ok(admin::save_created(&store, &plan)?.0)
+        let id = admin::save_created(&store, &plan)?;
+        self.folder_changed(id);
+        Ok(id.0)
     }
 
     /// Renames the folder, keeping its place. Its subfolders follow.
@@ -165,7 +167,9 @@ impl SyncEngine {
                 Box::pin(async move { admin::delete_on_server(s, &target).await })
             })?;
         }
-        Ok(admin::save_deleted(&store, &folder)?)
+        admin::save_deleted(&store, &folder)?;
+        self.folder_changed(folder.id);
+        Ok(())
     }
 }
 
@@ -191,7 +195,17 @@ impl SyncEngine {
                 Box::pin(async move { admin::rename_on_server(s, &target).await })
             })?;
         }
-        Ok(admin::save_renamed(&store, &p)?)
+        admin::save_renamed(&store, &p)?;
+        for (id, ..) in &p.rows {
+            self.folder_changed(*id);
+        }
+        Ok(())
+    }
+
+    /// Tells the apps the folder list changed, so they re-read it.
+    fn folder_changed(&self, folder: FolderId) {
+        self.listener
+            .on_event(events::CoreEvent::FolderChanged { folder_id: folder }.into());
     }
 
     fn admin_open(&self, account: AccountId) -> Result<(Store, Kind), FolderFailure> {

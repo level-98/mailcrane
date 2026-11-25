@@ -15,6 +15,7 @@ import androidx.compose.material3.NavigationDrawerItemDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
@@ -51,6 +52,8 @@ fun FolderDrawer(
     onOpenLocalDrafts: (() -> Unit)? = null,
     outboxCount: Int = 0,
     onOpenOutbox: (() -> Unit)? = null,
+    /** Opens "Manage folders" (M4-22); null hides the item. */
+    onManageFolders: (() -> Unit)? = null,
     accounts: List<AccountSummary> = emptyList(),
     currentAccountId: Long? = null,
     onSwitchAccount: (Long) -> Unit = {},
@@ -120,6 +123,15 @@ fun FolderDrawer(
                 selected = false,
                 onClick = onOpenOutbox,
                 modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding),
+            )
+        }
+        if (onManageFolders != null) {
+            NavigationDrawerItem(
+                label = { Text(stringResource(R.string.folders_manage)) },
+                icon = { Icon(painterResource(R.drawable.ic_mc_folder), contentDescription = null) },
+                selected = false,
+                onClick = onManageFolders,
+                modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding).testTag("manage-folders-item"),
             )
         }
         if (onOpenLocalDrafts != null) {
