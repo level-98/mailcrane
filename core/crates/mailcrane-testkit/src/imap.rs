@@ -430,7 +430,9 @@ async fn handle_connection(
                     }
                     line.pop();
                     line.extend_from_slice(b"{LITERAL}");
-                    if tls_stream.write_all(b"+ go ahead\r\n").await.is_err() {
+                    if tls_stream.write_all(b"+ go ahead\r\n").await.is_err()
+                        || tls_stream.flush().await.is_err()
+                    {
                         return Ok(());
                     }
                     let mut literal = vec![0u8; size];
@@ -493,6 +495,7 @@ async fn handle_imap_command(
             .write_all(b"\xFF\xFEgarbage\r\n")
             .await
             .map_err(|error| error.to_string())?;
+        stream.flush().await.map_err(|error| error.to_string())?;
         return Ok(());
     }
     let response = match command.as_str() {
@@ -558,6 +561,7 @@ async fn handle_imap_command(
                     .write_all(b"+ \r\n")
                     .await
                     .map_err(|error| error.to_string())?;
+                stream.flush().await.map_err(|error| error.to_string())?;
                 let mut response = [0u8; 1024];
                 let read = stream
                     .read(&mut response)
@@ -759,12 +763,14 @@ async fn handle_imap_command(
             .write_all(format!("{tag} NO temporary failure\r\n").as_bytes())
             .await
             .map_err(|error| error.to_string())?;
+        stream.flush().await.map_err(|error| error.to_string())?;
         return Ok(());
     }
     stream
         .write_all(response.as_bytes())
         .await
-        .map_err(|error| error.to_string())
+        .map_err(|error| error.to_string())?;
+    stream.flush().await.map_err(|error| error.to_string())
 }
 
 /// `IDLE` (RFC 2177): answers `+`, then reports deliveries (`EXISTS`),
@@ -783,6 +789,7 @@ async fn idle(
         .write_all(b"+ idling\r\n")
         .await
         .map_err(|error| error.to_string())?;
+    stream.flush().await.map_err(|error| error.to_string())?;
     // What the client knows: UIDs in sequence order, with mod-sequences.
     let mut known = match view.take() {
         Some(known) => known,
@@ -833,6 +840,7 @@ async fn idle(
                 .write_all(out.as_bytes())
                 .await
                 .map_err(|error| error.to_string())?;
+            stream.flush().await.map_err(|error| error.to_string())?;
         }
         let mut byte = [0u8; 1];
         tokio::select! {

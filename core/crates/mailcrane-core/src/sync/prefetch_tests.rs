@@ -230,11 +230,7 @@ async fn batches_save_whole_bodies_without_marking_anything_seen() {
 #[tokio::test]
 async fn messages_over_the_size_limit_are_not_downloaded() {
     let mut messages = raws(3);
-    let mut big = b"From: bob@example.org
-Subject: Big
-
-"
-    .to_vec();
+    let mut big = b"From: bob@example.org\r\nSubject: Big\r\n\r\n".to_vec();
     big.resize(1024 * 1024 + 10, b'x');
     messages.insert(1, big);
     let imap = FakeImap::builder()
@@ -247,12 +243,61 @@ Subject: Big
     let limits = PrefetchLimits::default();
     let todo = candidates(&store, folder, now(), &limits, &HashSet::new()).expect("candidates");
     let uids: Vec<u32> = todo.iter().map(|c| c.uid).collect();
-    // Left out by its stored size, so it is never fetched. A body that is
-    // over the limit anyway (a wrong stored size) is dropped by
-    // `uid_fetch_complete_bodies`, tested in mailcrane-imap without sending
-    // 1 MiB through the fake: that took over a minute on the Windows CI
-    // runner (#309).
+    // Left out by its stored size, so it is never fetched.
     assert_eq!(uids, [4, 3, 1], "uid 2 is over 1 MiB");
+}
+
+#[tokio::test]
+async fn a_whole_mebibyte_is_fetched_quickly_and_one_byte_more_is_dropped() {
+    // End to end through the fake, with the normal 10 s command timeout.
+    // This used to stall now and then (and on the Windows CI runner): the
+    // fake left the tail of a big answer in its TLS buffer because it never
+    // flushed after writing. It does now.
+    let mut big = b"From: bob@example.org\r\nSubject: Big\r\n\r\n".to_vec();
+    big.resize(1024 * 1024 + 1, b'x');
+    let mut exact = b"From: bob@example.org\r\nSubject: Exact\r\n\r\n".to_vec();
+    exact.resize(1024 * 1024, b'y');
+    let imap = FakeImap::builder()
+        .user(USER, PASSWORD)
+        .folder("INBOX", vec![big, exact])
+        .start()
+        .await
+        .expect("fake imap");
+    let (store, folder) = synced(&imap).await;
+    let mut session = connect(&imap).await;
+    session.select("INBOX").await.expect("select");
+    let rows = store.list_messages(folder, 10, 0).expect("list");
+    let row = |uid: u32| {
+        rows.iter()
+            .find(|m| m.details.uid == uid)
+            .map(|m| m.id)
+            .expect("row")
+    };
+    let (big_id, exact_id) = (row(1), row(2));
+    // As if the stored sizes were wrong: both are asked for. The partial
+    // fetch gets one octet over the limit, so the big one is visibly cut
+    // off and dropped; the one at the limit is saved whole.
+    let started = std::time::Instant::now();
+    let outcome = imap_batch(
+        &store,
+        &mut session,
+        &[
+            Candidate { id: big_id, uid: 1 },
+            Candidate {
+                id: exact_id,
+                uid: 2,
+            },
+        ],
+    )
+    .await
+    .expect("batch");
+    let took = started.elapsed();
+    assert_eq!(outcome.saved, 1);
+    assert!(store.get_body(big_id).expect("read").is_none());
+    let saved = store.get_body(exact_id).expect("read").expect("saved");
+    assert_eq!(saved.len(), 1024 * 1024);
+    assert!(took < Duration::from_secs(10), "{took:?}");
+    session.logout().await;
 }
 
 #[tokio::test]
