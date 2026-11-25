@@ -214,6 +214,11 @@ class UniffiMailboxCore(
 
     override val events: Flow<CoreEvent> = hub.flow()
 
+    /** Closes the reused mail connections (issue #294). Blocking: call it off the main thread. */
+    fun closeConnections(reason: CloseReason) {
+        engine.closeConnections(reason)
+    }
+
     /** Reports the device conditions for background downloads (M4-25). Cheap; any thread. */
     fun setDeviceConditions(conditions: DeviceConditions) {
         engine.setDeviceConditions(conditions)
