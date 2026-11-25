@@ -233,6 +233,14 @@ async fn messages_over_the_size_limit_are_not_downloaded() {
     let mut big = b"From: bob@example.org\r\nSubject: Big\r\n\r\n".to_vec();
     big.resize(1024 * 1024 + 10, b'x');
     messages.insert(1, big);
+    // Exactly at the limit: still complete, still downloaded.
+    let mut exact = b"From: bob@example.org
+Subject: Exact
+
+"
+    .to_vec();
+    exact.resize(1024 * 1024, b'y');
+    messages.push(exact);
     let imap = FakeImap::builder()
         .user(USER, PASSWORD)
         .folder("INBOX", messages)
@@ -243,32 +251,41 @@ async fn messages_over_the_size_limit_are_not_downloaded() {
     let limits = PrefetchLimits::default();
     let todo = candidates(&store, folder, now(), &limits, &HashSet::new()).expect("candidates");
     let uids: Vec<u32> = todo.iter().map(|c| c.uid).collect();
-    assert_eq!(uids, [4, 3, 1], "uid 2 is over 1 MiB");
+    assert_eq!(uids, [5, 4, 3, 1], "uid 2 is over 1 MiB");
 
-    // Even if the stored size was wrong, a body over the limit isn't saved.
-    // A 1 MiB answer through the fake and the debug-build parser took over
-    // 10 s on the Windows CI runner: allow a minute for this one.
+    // Even if the stored size was wrong, a body over the limit isn't saved:
+    // the partial fetch gets one octet more than the limit (the fake honours
+    // `<start.length>`), so the answer is visibly cut off. The one exactly at
+    // the limit is saved whole. Two 1 MiB answers through the debug-build
+    // parser took over 10 s on the Windows CI runner: allow a minute here.
     let mut session = connect_within(&imap, Duration::from_secs(60)).await;
     session.select("INBOX").await.expect("select");
-    let header = store
-        .list_messages(folder, 10, 0)
-        .expect("list")
-        .into_iter()
-        .find(|m| m.details.uid == 2)
-        .expect("uid 2");
+    let rows = store.list_messages(folder, 10, 0).expect("list");
+    let row = |uid: u32| {
+        rows.iter()
+            .find(|m| m.details.uid == uid)
+            .map(|m| m.id)
+            .expect("row")
+    };
+    let (big_id, exact_id) = (row(2), row(5));
     let outcome = imap_batch(
         &store,
         &mut session,
-        &[Candidate {
-            id: header.id,
-            uid: 2,
-        }],
+        &[
+            Candidate { id: big_id, uid: 2 },
+            Candidate {
+                id: exact_id,
+                uid: 5,
+            },
+        ],
     )
     .await
     .expect("batch");
-    assert_eq!(outcome.saved, 0);
-    assert_eq!(outcome.tried, [header.id]);
-    assert!(store.get_body(header.id).expect("read").is_none());
+    assert_eq!(outcome.saved, 1);
+    assert_eq!(outcome.tried, [big_id, exact_id]);
+    assert!(store.get_body(big_id).expect("read").is_none());
+    let saved = store.get_body(exact_id).expect("read").expect("saved");
+    assert_eq!(saved.len(), 1024 * 1024);
     session.logout().await;
 }
 
