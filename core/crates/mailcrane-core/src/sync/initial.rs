@@ -197,7 +197,20 @@ impl<'a> FolderSyncer<'a> {
         Ok(changed)
     }
 
+    /// Whether the folder can be opened. A `\Noselect` folder only holds
+    /// other folders: syncing it stores nothing and sends nothing.
+    pub(super) fn selectable(&self, folder: FolderId) -> Result<bool, SyncError> {
+        let row = self
+            .store
+            .get_folder(folder)?
+            .ok_or(SyncError::UnknownFolder)?;
+        Ok(row.details.selectable)
+    }
+
     async fn sync_folder_inner(&mut self, folder: FolderId) -> Result<usize, SyncError> {
+        if !self.selectable(folder)? {
+            return Ok(0);
+        }
         let (_, info, _) = self.select(folder).await?;
         self.fill_newest(folder, &info).await
     }
@@ -209,11 +222,16 @@ impl<'a> FolderSyncer<'a> {
         folder: FolderId,
         info: &SelectInfo,
     ) -> Result<usize, SyncError> {
-        let newest = self.newest_uids(info.uidnext.saturating_sub(1)).await?;
+        let newest = self
+            .newest_uids(
+                info,
+                info.uidnext.saturating_sub(1),
+                self.config.initial_count,
+            )
+            .await?;
         let stored: HashSet<u32> = self.store.list_uids(folder)?.into_iter().collect();
         let wanted: Vec<u32> = newest
             .into_iter()
-            .take(self.config.initial_count)
             .filter(|uid| !stored.contains(uid))
             .collect();
         self.fetch_batches(folder, &wanted).await
@@ -224,6 +242,9 @@ impl<'a> FolderSyncer<'a> {
         folder: FolderId,
         count: usize,
     ) -> Result<usize, SyncError> {
+        if !self.selectable(folder)? {
+            return Ok(0);
+        }
         let (_, info, reset) = self.select(folder).await?;
         if reset {
             // The cache was just cleared: start again from the newest.
@@ -233,20 +254,23 @@ impl<'a> FolderSyncer<'a> {
             Some(oldest) => oldest.saturating_sub(1),
             None => info.uidnext.saturating_sub(1),
         };
-        let wanted: Vec<u32> = self
-            .newest_uids(below)
-            .await?
-            .into_iter()
-            .take(count)
-            .collect();
+        let wanted = self.newest_uids(&info, below, count).await?;
         self.fetch_batches(folder, &wanted).await
     }
 
-    /// UIDs from `high` down to 1 that exist, newest first.
-    async fn newest_uids(&mut self, high: u32) -> Result<Vec<u32>, SyncError> {
-        let mut uids = self.session.uid_search_range(1, high).await?;
-        uids.reverse();
-        Ok(uids)
+    /// The newest `want` UIDs from `high` down to 1 that exist, newest
+    /// first. Searched in windows, so a big folder never sends one
+    /// over-long answer (issue #282).
+    async fn newest_uids(
+        &mut self,
+        info: &SelectInfo,
+        high: u32,
+        want: usize,
+    ) -> Result<Vec<u32>, SyncError> {
+        Ok(self
+            .session
+            .uid_search_newest(info.exists, 1, high, &[], want)
+            .await?)
     }
 
     /// Fetches and stores `uids` one batch at a time, in the order given.

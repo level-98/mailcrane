@@ -93,6 +93,7 @@ fn sync_load_older_and_fetch_body_through_the_ffi() {
             uidnext: None,
             highestmodseq: None,
             is_subscribed: true,
+            selectable: true,
         })
         .expect("folder");
     drop(store);
@@ -238,6 +239,7 @@ fn live_updates_start_once_deliver_and_stop_through_the_ffi() {
             uidnext: None,
             highestmodseq: None,
             is_subscribed: true,
+            selectable: true,
         })
         .expect("folder");
 

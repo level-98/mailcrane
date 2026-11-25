@@ -90,6 +90,7 @@ fn setup() -> (Store, AccountId, FolderId) {
             uidnext: None,
             highestmodseq: None,
             is_subscribed: true,
+            selectable: true,
         })
         .expect("folder");
     (store, account, folder)
@@ -355,4 +356,127 @@ async fn unknown_folder_and_message_are_errors_not_panics() {
             .count(),
         2
     );
+}
+
+#[tokio::test]
+async fn a_folder_too_big_for_one_search_line_syncs_newest_first() {
+    // Issue #282: Gmail's `* SEARCH` answer for a big inbox was one line
+    // longer than the 64 KiB limit (LineTooLong on UID SEARCH). 200 000
+    // UIDs in one answer would be about 1.3 MB.
+    const COUNT: u32 = 200_000;
+    let imap = fake(raws(usize::try_from(COUNT).expect("fits")), &[]).await;
+    let (store, account, folder) = setup();
+    let events = Events::default();
+    let mut session = connect(&imap).await;
+    let mut syncer = FolderSyncer::new(
+        &store,
+        &mut session,
+        &events,
+        account,
+        SyncConfig::default(),
+    );
+
+    // First sync: the newest 200, one window.
+    assert_eq!(syncer.sync_folder(folder).await.expect("first sync"), 200);
+    let mut uids = store.list_uids(folder).expect("uids");
+    uids.sort_unstable();
+    assert_eq!(uids, range(COUNT - 199, COUNT));
+
+    // Refresh: changes and new mail, still within the line limit.
+    syncer.sync_changes(folder).await.expect("refresh");
+    // Older mail: the next 200 below the oldest stored.
+    assert_eq!(
+        syncer.load_older(folder, 200).await.expect("load older"),
+        200
+    );
+    let mut uids = store.list_uids(folder).expect("uids");
+    uids.sort_unstable();
+    assert_eq!(uids, range(COUNT - 399, COUNT));
+    assert!(
+        !events
+            .all()
+            .iter()
+            .any(|e| matches!(e, CoreEvent::SyncError { .. })),
+        "{:?}",
+        events.all()
+    );
+    // Each search asked for at most one window.
+    let searches = imap
+        .received_commands()
+        .await
+        .iter()
+        .filter(|c| *c == "UID SEARCH")
+        .count();
+    assert!(searches <= 4, "{searches} searches");
+}
+
+#[tokio::test]
+async fn gmail_layout_syncs_every_folder_and_never_selects_the_noselect_parent() {
+    let imap = FakeImap::builder()
+        .user(USER, PASSWORD)
+        .folder("INBOX", raws(3))
+        .gmail_layout()
+        .start()
+        .await
+        .expect("fake imap starts");
+    let (store, account, _) = setup();
+    let events = Events::default();
+    let mut session = connect(&imap).await;
+    let listed = session.list_folders().await.expect("list");
+    mailcrane_imap::save_folders(&store, account, &listed).expect("save");
+
+    let folders = store.list_folders(account).expect("folders");
+    let parent = folders
+        .iter()
+        .find(|f| f.details.remote_name == "[Gmail]")
+        .expect("[Gmail] stays in the folder tree");
+    assert!(!parent.details.selectable);
+    let sent = folders
+        .iter()
+        .find(|f| f.details.remote_name == "[Gmail]/Sent Mail")
+        .expect("child with a space in its name");
+    assert!(sent.details.selectable);
+
+    let mut syncer = FolderSyncer::new(
+        &store,
+        &mut session,
+        &events,
+        account,
+        SyncConfig::default(),
+    );
+    for folder in &folders {
+        let name = &folder.details.remote_name;
+        syncer
+            .sync_folder(folder.id)
+            .await
+            .unwrap_or_else(|e| panic!("sync {name}: {e:?}"));
+        syncer
+            .sync_changes(folder.id)
+            .await
+            .unwrap_or_else(|e| panic!("refresh {name}: {e:?}"));
+        syncer
+            .load_older(folder.id, 10)
+            .await
+            .unwrap_or_else(|e| panic!("load older {name}: {e:?}"));
+    }
+    assert_eq!(
+        syncer.sync_changes(parent.id).await.expect("skip").strategy,
+        super::super::Strategy::NotSelectable
+    );
+    assert!(events
+        .all()
+        .iter()
+        .all(|e| !matches!(e, CoreEvent::SyncError { .. })));
+
+    let selected = imap.selected_folders().await;
+    assert!(!selected.iter().any(|n| n == "[Gmail]"), "{selected:?}");
+    assert!(
+        selected.iter().any(|n| n == "[Gmail]/Sent Mail"),
+        "{selected:?}"
+    );
+    let inbox = folders
+        .iter()
+        .find(|f| f.details.remote_name == "INBOX")
+        .expect("inbox");
+    assert_eq!(store.list_uids(inbox.id).expect("uids").len(), 3);
 }
