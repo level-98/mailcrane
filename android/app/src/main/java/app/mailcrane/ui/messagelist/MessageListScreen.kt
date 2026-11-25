@@ -1,7 +1,9 @@
 package app.mailcrane.ui.messagelist
 
+import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
@@ -143,6 +145,47 @@ fun MessageListScreen(
     LaunchedEffect(viewModel) {
         viewModel.actionsUndone.collect { snackbar.showSnackbar(resources.getString(R.string.action_undone)) }
     }
+    // Multi-select (M4-14).
+    LaunchedEffect(viewModel) {
+        viewModel.bulkUndoOffers.collect { offer ->
+            val count = offer.messageIds.size
+            val text = resources.getQuantityString(bulkUndoLabel(offer.kind), count, count)
+            // A permanent delete is said, with no Undo it couldn't keep.
+            if (offer.kind == BulkUndoKind.DELETED_FOR_GOOD) {
+                snackbar.showSnackbar(text)
+                return@collect
+            }
+            val result =
+                withTimeoutOrNull(UNDO_WINDOW_MS) {
+                    snackbar.showSnackbar(
+                        message = text,
+                        actionLabel = resources.getString(R.string.undo_send_undo),
+                        duration = SnackbarDuration.Indefinite,
+                    )
+                }
+            if (result == SnackbarResult.ActionPerformed) viewModel.undoBulk(offer.messageIds)
+        }
+    }
+    val moveTargets by viewModel.moveTargets.collectAsStateWithLifecycle()
+    moveTargets?.let { targets ->
+        MoveDialog(folders = targets, onPick = viewModel::bulkMove, onDismiss = viewModel::cancelMove)
+    }
+    // A Delete that would be permanent (in Trash, or an account without one) asks first.
+    if (state.confirmDeleteForGood > 0) {
+        DeleteForGoodDialog(
+            count = state.confirmDeleteForGood,
+            onConfirm = viewModel::confirmDeleteForGood,
+            onDismiss = viewModel::cancelDeleteForGood,
+        )
+    }
+    val selection =
+        SelectionHandlers(
+            onToggleMessage = viewModel::toggleMessage,
+            onToggleThread = viewModel::toggleThread,
+            onClear = viewModel::clearSelection,
+            onAction = viewModel::bulk,
+            onMove = { viewModel.startMove(folders) },
+        )
     val noticeShown by rememberUpdatedState(onNoticeShown)
     LaunchedEffect(notice) {
         if (notice != null) {
@@ -163,6 +206,7 @@ fun MessageListScreen(
         swipe = swipeHandlers,
         onOpenSearch = onOpenSearch,
         onOpenThread = onOpenThread,
+        selection = selection,
     )
 }
 
@@ -189,9 +233,16 @@ fun MessageListContent(
     fabModifier: Modifier = Modifier,
     swipe: SwipeHandlers = SwipeHandlers(),
     onOpenSearch: (() -> Unit)? = null,
+    selection: SelectionHandlers = SelectionHandlers(),
 ) {
+    // Back ends selection before it leaves the screen (M4-14).
+    BackHandler(enabled = state.selecting) { selection.onClear() }
     Scaffold(
         topBar = {
+            if (state.selecting) {
+                SelectionTopBar(state, selection)
+                return@Scaffold
+            }
             TopAppBar(
                 title = { Text(title, maxLines = 1, overflow = TextOverflow.Ellipsis) },
                 actions = {
@@ -218,7 +269,7 @@ fun MessageListContent(
         },
         snackbarHost = { SnackbarHost(snackbar) },
         floatingActionButton = {
-            if (onCompose != null) {
+            if (onCompose != null && !state.selecting) {
                 val label = stringResource(R.string.compose_fab)
                 ExtendedFloatingActionButton(
                     onClick = onCompose,
@@ -253,7 +304,17 @@ fun MessageListContent(
                         )
                     }
                 state.messages.isEmpty() -> EmptyFolderState()
-                else -> Messages(state, listState, onLoadMore, onOpenMessage, swipe, onOpenThread)
+                else ->
+                    Messages(
+                        state = state,
+                        listState = listState,
+                        onLoadMore = onLoadMore,
+                        onOpenMessage = onOpenMessage,
+                        // No swipes while selecting: a stray swipe would act on one row only.
+                        swipe = if (state.selecting) SwipeHandlers() else swipe,
+                        onOpenThread = onOpenThread,
+                        selection = selection,
+                    )
             }
         }
     }
@@ -267,6 +328,7 @@ private fun Messages(
     onOpenMessage: (Long) -> Unit,
     swipe: SwipeHandlers,
     onOpenThread: (Long, String) -> Unit = { _, _ -> },
+    selection: SelectionHandlers = SelectionHandlers(),
 ) {
     val locale = LocalConfiguration.current.locales[0]
     val now by currentMinute()
@@ -314,7 +376,17 @@ private fun Messages(
                         }
                     is ListEntry.Row ->
                         item(key = "t${entry.item.threadId}", contentType = "thread") {
-                            ThreadItem(entry.item, byId, now, locale, swipe, onOpenMessage, onOpenThread)
+                            ThreadItem(
+                                entry.item,
+                                byId,
+                                now,
+                                locale,
+                                swipe,
+                                onOpenMessage,
+                                onOpenThread,
+                                state,
+                                selection,
+                            )
                         }
                 }
             }
@@ -333,7 +405,9 @@ private fun Messages(
                                     message = message,
                                     now = now,
                                     locale = locale,
-                                    modifier = Modifier.clickable { onOpenMessage(message.id) },
+                                    modifier = Modifier.selectable(message.id, state, selection, onOpenMessage),
+                                    selecting = state.selecting,
+                                    selected = message.id in state.selectedMessages,
                                 )
                             }
                             RowDivider()
@@ -362,6 +436,8 @@ private fun ThreadItem(
     swipe: SwipeHandlers,
     onOpenMessage: (Long) -> Unit,
     onOpenThread: (Long, String) -> Unit,
+    state: MessageListState,
+    selection: SelectionHandlers,
 ) {
     val single = byId[thread.newestMessageId]?.takeIf { thread.messageCount <= 1u }
     if (single != null) {
@@ -370,20 +446,46 @@ private fun ThreadItem(
                 message = single,
                 now = now,
                 locale = locale,
-                modifier = Modifier.clickable { onOpenMessage(single.id) },
+                modifier = Modifier.selectable(single.id, state, selection, onOpenMessage),
+                selecting = state.selecting,
+                selected = single.id in state.selectedMessages,
             )
         }
     } else {
-        ThreadRow(thread, byId[thread.newestMessageId], now, locale) {
-            if (thread.messageCount <= 1u) {
-                onOpenMessage(thread.newestMessageId)
-            } else {
-                onOpenThread(thread.threadId, thread.subject)
-            }
-        }
+        ThreadRow(
+            thread = thread,
+            newest = byId[thread.newestMessageId],
+            now = now,
+            locale = locale,
+            onClick = {
+                when {
+                    state.selecting -> selection.onToggleThread(thread.threadId)
+                    thread.messageCount <= 1u -> onOpenMessage(thread.newestMessageId)
+                    else -> onOpenThread(thread.threadId, thread.subject)
+                }
+            },
+            onLongClick = { selection.onToggleThread(thread.threadId) },
+            selecting = state.selecting,
+            selected = thread.threadId in state.selectedThreads,
+        )
     }
     RowDivider()
 }
+
+/** A message row's taps: open it, or while selecting toggle it; a long-press toggles it (M4-14). */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun Modifier.selectable(
+    messageId: Long,
+    state: MessageListState,
+    selection: SelectionHandlers,
+    onOpenMessage: (Long) -> Unit,
+): Modifier =
+    combinedClickable(
+        onClick = { if (state.selecting) selection.onToggleMessage(messageId) else onOpenMessage(messageId) },
+        onLongClick = { selection.onToggleMessage(messageId) },
+        onLongClickLabel = stringResource(R.string.message_select),
+    )
 
 @Composable
 private fun RowDivider() {

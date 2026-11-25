@@ -63,6 +63,24 @@ interface MailboxCore {
     /** Undoes the newest action on the message if it hasn't reached the server; false if too late. */
     suspend fun undoAction(messageId: Long): Boolean
 
+    /**
+     * Multi-select (M4-14): applies [action] to everything in [selection], across folders and accounts, all
+     * or nothing, as one queued action per folder. With [undoable], the server copy waits [UNDO_WINDOW_MS]
+     * so [undoBulk] can still take it back.
+     * @throws ActionFailure
+     */
+    suspend fun bulkAction(
+        selection: BulkSelection,
+        action: MessageAction,
+        undoable: Boolean,
+    ): BulkApplied = BulkApplied(emptyList(), emptyList(), false)
+
+    /** Undo for [bulkAction]: puts back the messages whose action hasn't reached the server. @throws ActionFailure */
+    suspend fun undoBulk(messageIds: List<Long>): BulkUndo = BulkUndo(0u, 0u)
+
+    /** How many messages in [selection] a Delete would delete for good (asked before deleting). @throws ActionFailure */
+    suspend fun countDeletedForGood(selection: BulkSelection): Int = 0
+
     /** Searches the stored mail (works offline), newest first. */
     suspend fun searchMessages(
         accountId: Long,
@@ -261,6 +279,22 @@ class UniffiMailboxCore(
     }
 
     override suspend fun undoAction(messageId: Long): Boolean = withContext(io) { engine.undoAction(messageId) }
+
+    override suspend fun bulkAction(
+        selection: BulkSelection,
+        action: MessageAction,
+        undoable: Boolean,
+    ): BulkApplied {
+        val applied = withContext(io) { engine.applyBulkAction(selection, action) }
+        applied.accountIds.forEach { replaySoon(it, if (undoable) UNDO_WINDOW_MS + 500 else 0) }
+        return applied
+    }
+
+    override suspend fun undoBulk(messageIds: List<Long>): BulkUndo =
+        withContext(io) { engine.undoBulkAction(messageIds) }
+
+    override suspend fun countDeletedForGood(selection: BulkSelection): Int =
+        withContext(io) { engine.countDeletedForGood(selection) }.coerceAtMost(Int.MAX_VALUE.toUInt()).toInt()
 
     override suspend fun snooze(
         messageId: Long,
