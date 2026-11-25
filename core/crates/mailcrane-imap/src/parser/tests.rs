@@ -118,6 +118,17 @@ fn unknown_responses_are_framed_over_literals() {
         Response::Untagged(Untagged::Exists(2))
     );
     assert_eq!(
+        parse(b"* 3 EXPUNGE\r\n"),
+        Response::Untagged(Untagged::Expunge(3))
+    );
+    // RFC 9051 §7.5.1: zero is not a sequence number.
+    assert_eq!(
+        parse(b"* 0 EXPUNGE\r\n"),
+        Response::Untagged(Untagged::Other {
+            name: "EXPUNGE".into()
+        })
+    );
+    assert_eq!(
         parse(b"* 1 RECENT\r\n"),
         Response::Untagged(Untagged::Other {
             name: "RECENT".into()
@@ -404,6 +415,7 @@ fn encode(r: &Response) -> Vec<u8> {
                 }
                 Untagged::Other { name } => out.extend_from_slice(name.as_bytes()),
                 Untagged::Exists(n) => out.extend_from_slice(format!("{n} EXISTS").as_bytes()),
+                Untagged::Expunge(n) => out.extend_from_slice(format!("{n} EXPUNGE").as_bytes()),
                 Untagged::Search(uids) => {
                     out.extend_from_slice(b"SEARCH");
                     for uid in uids {

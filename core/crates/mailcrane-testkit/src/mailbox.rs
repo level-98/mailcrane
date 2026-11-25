@@ -213,6 +213,8 @@ impl Mailbox {
         if change(&mut message.flags) {
             message.modseq = next;
             target.highest_modseq = next;
+            drop(inner);
+            self.notify.notify_waiters();
         }
     }
 
@@ -227,6 +229,8 @@ impl Mailbox {
             target.messages.retain(|m| m.uid != uid);
             let modseq = target.bump();
             target.vanished.push((uid, modseq));
+            drop(inner);
+            self.notify.notify_waiters();
         }
     }
 

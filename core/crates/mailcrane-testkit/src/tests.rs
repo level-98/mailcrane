@@ -337,6 +337,111 @@ mod suite {
     }
 
     #[tokio::test]
+    async fn imap_idle_reports_expunges_and_flags_until_done() {
+        let server = FakeImap::builder()
+            .folder(
+                "INBOX",
+                vec![
+                    b"Subject: 1\r\n\r\n1".to_vec(),
+                    b"Subject: 2\r\n\r\n2".to_vec(),
+                ],
+            )
+            .start()
+            .await
+            .expect("server starts");
+        let mut stream = open_tls(server.addr(), server.root_cert_der()).await;
+        let _ = imap_read_line(&mut stream).await;
+        stream.write_all(b"a1 IDLE\r\n").await.expect("idle");
+        assert!(imap_read_line(&mut stream).await.starts_with("+ "));
+        let mailbox = server.mailbox();
+        mailbox.add_flag("INBOX", 2, "\\Seen").await;
+        assert_eq!(
+            imap_read_line(&mut stream).await,
+            "* 2 FETCH (UID 2 FLAGS (\\Seen))\r\n"
+        );
+        mailbox.expunge("INBOX", 1).await;
+        assert_eq!(imap_read_line(&mut stream).await, "* 1 EXPUNGE\r\n");
+        stream.write_all(b"DONE\r\n").await.expect("done");
+        assert_eq!(
+            imap_read_line(&mut stream).await,
+            "a1 OK IDLE terminated\r\n"
+        );
+        assert!(server
+            .received_commands()
+            .await
+            .ends_with(&["IDLE".to_string(), "DONE".to_string()]));
+        server.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn imap_idle_announces_mail_delivered_since_select() {
+        let server = FakeImap::builder()
+            .folder("INBOX", vec![b"Subject: 1\r\n\r\n1".to_vec()])
+            .start()
+            .await
+            .expect("server starts");
+        let mut stream = open_tls(server.addr(), server.root_cert_der()).await;
+        let _ = imap_read_line(&mut stream).await;
+        stream
+            .write_all(b"a1 SELECT INBOX\r\n")
+            .await
+            .expect("select");
+        while !imap_read_line(&mut stream).await.starts_with("a1 ") {}
+        // Delivered after SELECT, before IDLE: still news to this client.
+        server
+            .mailbox()
+            .deliver("INBOX", b"Subject: 2\r\n\r\n2".to_vec())
+            .await;
+        stream.write_all(b"a2 IDLE\r\n").await.expect("idle");
+        assert!(imap_read_line(&mut stream).await.starts_with("+ "));
+        assert_eq!(imap_read_line(&mut stream).await, "* 2 EXISTS\r\n");
+        stream.write_all(b"DONE\r\n").await.expect("done");
+        assert_eq!(
+            imap_read_line(&mut stream).await,
+            "a2 OK IDLE terminated\r\n"
+        );
+        server.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn imap_idle_is_advertised_unless_no_idle() {
+        for (quirk, advertised) in [(None, true), (Some(Quirk::NoIdle), false)] {
+            let mut builder = FakeImap::builder();
+            if let Some(quirk) = quirk {
+                builder = builder.quirk(quirk);
+            }
+            let server = builder.start().await.expect("server starts");
+            let mut stream = open_tls(server.addr(), server.root_cert_der()).await;
+            let _ = imap_read_line(&mut stream).await;
+            stream
+                .write_all(b"a1 CAPABILITY\r\n")
+                .await
+                .expect("capability");
+            let caps = imap_read_line(&mut stream).await;
+            assert_eq!(caps.contains(" IDLE"), advertised, "{caps}");
+            server.shutdown().await;
+        }
+    }
+
+    #[tokio::test]
+    async fn imap_drop_connections_closes_open_ones_and_counts_them() {
+        let server = FakeImap::builder().start().await.expect("server starts");
+        let mut stream = open_tls(server.addr(), server.root_cert_der()).await;
+        let _ = imap_read_line(&mut stream).await;
+        assert_eq!(server.connections_accepted(), 1);
+        server.drop_connections();
+        let mut buf = [0u8; 64];
+        let read = tokio::time::timeout(Duration::from_secs(2), stream.read(&mut buf))
+            .await
+            .expect("closed in time");
+        assert!(matches!(read, Ok(0) | Err(_)), "{read:?}");
+        let mut again = open_tls(server.addr(), server.root_cert_der()).await;
+        assert!(imap_read_line(&mut again).await.starts_with("* OK"));
+        assert_eq!(server.connections_accepted(), 2);
+        server.shutdown().await;
+    }
+
+    #[tokio::test]
     async fn imap_faults_and_quirks_are_observable() {
         let reject = FakeImap::builder()
             .fault(Fault::RejectLogin)

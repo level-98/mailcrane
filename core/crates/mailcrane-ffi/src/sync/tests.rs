@@ -181,3 +181,198 @@ fn sync_load_older_and_fetch_body_through_the_ffi() {
     );
     let _ = std::fs::remove_file(&path);
 }
+
+/// Waits up to `limit` for `done`.
+fn wait_for(limit: std::time::Duration, mut done: impl FnMut() -> bool) -> std::time::Duration {
+    let started = std::time::Instant::now();
+    while !done() {
+        assert!(started.elapsed() < limit, "not done within {limit:?}");
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    started.elapsed()
+}
+
+#[test]
+fn live_updates_start_once_deliver_and_stop_through_the_ffi() {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(1)
+        .enable_all()
+        .build()
+        .expect("runtime");
+    let raws: Vec<Vec<u8>> = (1..=2)
+        .map(|n| format!("Subject: Message {n}\r\n\r\nBody {n}\r\n").into_bytes())
+        .collect();
+    let imap = runtime.block_on(async {
+        FakeImap::builder()
+            .user("alice@example.org", "pw")
+            .folder("INBOX", raws)
+            .start()
+            .await
+            .expect("fake imap")
+    });
+
+    let path = std::env::temp_dir().join(format!("mailcrane-ffi-live-{}.db", std::process::id()));
+    let _ = std::fs::remove_file(&path);
+    let store = Store::open(&path).expect("store");
+    let account = store
+        .insert_account(&NewAccount {
+            display_name: "Alice".into(),
+            email: "alice@example.org".into(),
+            imap_host: "localhost".into(),
+            imap_port: imap.addr().port(),
+            imap_security: Security::Tls,
+            smtp_host: "localhost".into(),
+            smtp_port: 587,
+            smtp_security: Security::Starttls,
+            username: "alice@example.org".into(),
+        })
+        .expect("account");
+    let inbox = store
+        .upsert_folder(&NewFolder {
+            account_id: account,
+            remote_name: "INBOX".into(),
+            display_name: "INBOX".into(),
+            delimiter: Some("/".into()),
+            role: Some(mailcrane_store::FolderRole::Inbox),
+            uidvalidity: None,
+            uidnext: None,
+            highestmodseq: None,
+            is_subscribed: true,
+        })
+        .expect("folder");
+
+    let platform = Arc::new(Platform::default());
+    platform
+        .put(
+            SecretKey::account_password(account.0).as_str().to_owned(),
+            b"pw".to_vec(),
+        )
+        .expect("password");
+    install_secret_store(platform);
+
+    let collect = Arc::new(Collect::default());
+    let engine = SyncEngine::new(path.to_string_lossy().into_owned(), collect.clone());
+    *engine.extra_root_cert.lock().expect("lock") = Some(imap.root_cert_der().to_vec());
+    let uids = || store.list_uids(inbox).map(|u| u.len()).unwrap_or(0);
+    let idles = || {
+        runtime
+            .block_on(imap.received_commands())
+            .iter()
+            .filter(|c| *c == "IDLE")
+            .count()
+    };
+
+    assert_eq!(engine.account_ids(), Ok(vec![account.0]));
+
+    // Idempotent: two starts, one connection.
+    assert_eq!(engine.start_live_updates(account.0), Ok(()));
+    assert_eq!(engine.start_live_updates(account.0), Ok(()));
+    wait_for(std::time::Duration::from_secs(10), || {
+        uids() == 2 && idles() >= 1
+    });
+    assert_eq!(imap.connections_accepted(), 1);
+
+    collect.0.lock().expect("lock").clear();
+    runtime.block_on(
+        imap.mailbox()
+            .deliver("INBOX", b"Subject: Message 3\r\n\r\nBody 3\r\n".to_vec()),
+    );
+    let took = wait_for(std::time::Duration::from_secs(2), || {
+        uids() == 3
+            && collect.0.lock().expect("lock").iter().any(
+                |e| matches!(e, CoreEvent::MessagesChanged { folder_id } if *folder_id == inbox.0),
+            )
+    });
+    assert!(took < std::time::Duration::from_secs(2), "{took:?}");
+
+    // Stop ends IDLE and logs out within 2 seconds.
+    let started = std::time::Instant::now();
+    engine.stop_live_updates(account.0);
+    assert!(started.elapsed() < std::time::Duration::from_secs(2));
+    let commands = runtime.block_on(imap.received_commands());
+    assert!(
+        commands.ends_with(&["DONE".to_string(), "LOGOUT".to_string()]),
+        "{commands:?}"
+    );
+    // Stopping again, or an account that is not running, does nothing.
+    engine.stop_live_updates(account.0);
+    engine.stop_live_updates(9999);
+
+    // Start after stop opens a new connection, which idles too.
+    let idles_before = idles();
+    assert_eq!(engine.start_live_updates(account.0), Ok(()));
+    wait_for(std::time::Duration::from_secs(10), || {
+        idles() > idles_before
+    });
+    assert_eq!(imap.connections_accepted(), 2);
+    engine.stop_live_updates(account.0);
+
+    assert_eq!(
+        engine.start_live_updates(9999),
+        Err(SyncFailure::Failed {
+            kind: SyncErrorKind::NotFound
+        })
+    );
+    drop(engine);
+    drop(store);
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn a_stop_that_runs_over_its_limit_keeps_a_new_start_from_opening_a_second_connection() {
+    let path = std::env::temp_dir().join(format!(
+        "mailcrane-ffi-live-slow-stop-{}.db",
+        std::process::id()
+    ));
+    let mut engine = SyncEngine::new(
+        path.to_string_lossy().into_owned(),
+        Arc::new(Collect::default()),
+    );
+    Arc::get_mut(&mut engine)
+        .expect("only reference")
+        .live_config
+        .stop_within = Duration::from_millis(100);
+
+    // A live thread stuck closing its connection: it ignores the stop
+    // until released.
+    let (release, released) = mpsc::channel::<()>();
+    let (done_tx, done) = mpsc::channel();
+    let (stop, _signal) = live_stop();
+    let thread = std::thread::spawn(move || {
+        let _ = released.recv();
+        let _ = done_tx.send(());
+    });
+    engine.live.lock().expect("lock").insert(
+        7,
+        LiveThread {
+            stop,
+            done,
+            thread,
+            stopping: false,
+        },
+    );
+
+    // The stop gives up waiting, but the thread is remembered as stopping.
+    engine.stop_live_updates(7);
+    assert!(engine
+        .live
+        .lock()
+        .expect("lock")
+        .get(&7)
+        .is_some_and(|t| t.stopping));
+
+    // A start while it is still stuck fails instead of starting beside it.
+    assert!(engine.start_live_updates(7).is_err());
+    assert!(engine
+        .live
+        .lock()
+        .expect("lock")
+        .get(&7)
+        .is_some_and(|t| t.stopping));
+
+    // Once it finishes, a stop clears it.
+    release.send(()).expect("release");
+    engine.stop_live_updates(7);
+    assert!(engine.live.lock().expect("lock").get(&7).is_none());
+    let _ = std::fs::remove_file(&path);
+}

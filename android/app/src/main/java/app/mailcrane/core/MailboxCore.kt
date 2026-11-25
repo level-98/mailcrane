@@ -142,12 +142,16 @@ private class EventHub : CoreEventListener {
         }.buffer(Channel.UNLIMITED)
 }
 
-/** Calls the core through the generated UniFFI bindings. [dbPath] is the app's database file. */
+/**
+ * Calls the core through the generated UniFFI bindings. [dbPath] is the app's database file. Also
+ * starts and stops live updates, so their events reach the same [events] flow.
+ */
 class UniffiMailboxCore(
     private val dbPath: String,
     private val io: CoroutineDispatcher = Dispatchers.IO,
 ) : MailboxCore,
-    MessageCore {
+    MessageCore,
+    LiveUpdatesEngine {
     private val hub = EventHub()
 
     // Created on first use, so the native library loads only when mail is needed.
@@ -377,4 +381,23 @@ class UniffiMailboxCore(
 
     override suspend fun listFolders(accountId: Long): List<FolderSummary> =
         withContext(io) { listFolders(dbPath, accountId) }
+
+    // Live updates: blocking calls, made off the main thread by LiveUpdatesObserver. Failures
+    // also arrive as SyncError events.
+    override fun accountIds(): List<Long> =
+        try {
+            engine.accountIds()
+        } catch (e: SyncFailure) {
+            emptyList()
+        }
+
+    override fun start(accountId: Long): Boolean =
+        try {
+            engine.startLiveUpdates(accountId)
+            true
+        } catch (e: SyncFailure) {
+            false
+        }
+
+    override fun stop(accountId: Long) = engine.stopLiveUpdates(accountId)
 }

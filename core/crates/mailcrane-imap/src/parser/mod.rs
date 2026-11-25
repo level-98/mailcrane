@@ -126,6 +126,9 @@ pub enum Untagged {
     },
     /// `* n EXISTS` (RFC 9051 §7.4.1).
     Exists(u32),
+    /// `* n EXPUNGE` (RFC 9051 §7.5.1): the message with sequence number
+    /// `n` is gone. Never zero.
+    Expunge(u32),
     /// `* SEARCH ...` (RFC 9051 §7.3.2): UIDs or sequence numbers.
     Search(Vec<u32>),
     /// `* VANISHED [(EARLIER)] <uids>` (RFC 7162 §3.2.10): UIDs that were
@@ -380,6 +383,12 @@ impl Cursor<'_> {
             if name == "EXISTS" {
                 self.skip_to_end();
                 return Ok(Untagged::Exists(seq));
+            }
+            // RFC 9051 §7.5.1: the number is an nz-number; a zero (or one
+            // too large to read) is kept as an unknown response.
+            if name == "EXPUNGE" && seq > 0 {
+                self.skip_to_end();
+                return Ok(Untagged::Expunge(seq));
             }
             self.skip_to_end();
             return Ok(Untagged::Other { name });

@@ -172,8 +172,10 @@ impl FakeJmapBuilder {
         self
     }
     pub async fn start(self) -> Result<FakeJmap, String> {
-        let started = std::time::Instant::now();
+        // The certificate is made once per process (see tls::generate);
+        // the time limit is for starting the server itself.
         let tls = tls::generate()?;
+        let started = std::time::Instant::now();
         let listener = Loopback::bind().await?;
         let addr = listener.addr();
         let requests = Arc::new(RwLock::new(Vec::new()));
