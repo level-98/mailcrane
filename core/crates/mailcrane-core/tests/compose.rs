@@ -181,7 +181,10 @@ Noon?\r\n";
 
         let mut reply =
             prepare_reply(&s.store, id, ReplyKind::ReplyAll, "Bob wrote:").expect("reply");
-        assert_eq!(reply.to, ["Bob Example <bob@example.net>", "carol@example.com"]);
+        assert_eq!(
+            reply.to,
+            ["Bob Example <bob@example.net>", "carol@example.com"]
+        );
         reply.body_text.insert_str(0, "Noon works.");
         run(&s, &reply).await.expect("sent");
 
@@ -191,9 +194,17 @@ Noon?\r\n";
         assert_eq!(parsed.in_reply_to, ["m2@example.net"]);
         assert_eq!(parsed.references, ["m1@example.net", "m2@example.net"]);
         let text = parsed.text_plain.unwrap_or_default().replace("\r\n", "\n");
-        assert!(text.starts_with("Noon works.\n\nBob wrote:\n> Noon?"), "{text}");
+        assert!(
+            text.starts_with("Noon works.\n\nBob wrote:\n> Noon?"),
+            "{text}"
+        );
         assert_eq!(
-            prepare_reply(&s.store, mailcrane_store::MessageId(999), ReplyKind::Reply, ""),
+            prepare_reply(
+                &s.store,
+                mailcrane_store::MessageId(999),
+                ReplyKind::Reply,
+                ""
+            ),
             Err(ReplyError::NotFound)
         );
     }

@@ -162,13 +162,19 @@ fn forward_includes_the_original_headers_and_text() {
         AccountId(1),
         0,
     );
-    assert!(d.body_text.starts_with("\n\n---------- Forwarded message ----------\n"));
+    assert!(d
+        .body_text
+        .starts_with("\n\n---------- Forwarded message ----------\n"));
     assert!(d.body_text.contains("From: Ana <ana@example.net>\n"));
-    assert!(d.body_text.contains("Date: Tue, 24 Nov 2026 10:42:00 +0000\n"));
+    assert!(d
+        .body_text
+        .contains("Date: Tue, 24 Nov 2026 10:42:00 +0000\n"));
     assert!(d.body_text.contains("Subject: Lunch\n"));
     assert!(d
         .body_text
         .contains("To: Me <ME@Example.org>, bob@example.com\n"));
-    assert!(d.body_text.contains("Cc: \"Carol, C.\" <carol@example.com>"));
+    assert!(d
+        .body_text
+        .contains("Cc: \"Carol, C.\" <carol@example.com>"));
     assert!(d.body_text.ends_with("\nHi all,\n\nnoon?\n"));
 }

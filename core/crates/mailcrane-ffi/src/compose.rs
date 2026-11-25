@@ -128,6 +128,13 @@ pub struct ComposeDraft {
     pub bcc: Vec<String>,
     pub subject: String,
     pub body_text: String,
+    /// For a reply: the Message-ID replied to. Set by `prepare_reply`; keep
+    /// it when sending.
+    #[uniffi(default = None)]
+    pub in_reply_to: Option<String>,
+    /// For a reply: the thread's Message-IDs. Set by `prepare_reply`.
+    #[uniffi(default = [])]
+    pub references: Vec<String>,
 }
 
 impl From<ComposeDraft> for core::ComposeDraft {
@@ -139,8 +146,82 @@ impl From<ComposeDraft> for core::ComposeDraft {
             bcc: d.bcc,
             subject: d.subject,
             body_text: d.body_text,
+            in_reply_to: d.in_reply_to,
+            references: d.references,
         }
     }
+}
+
+impl From<core::ComposeDraft> for ComposeDraft {
+    fn from(d: core::ComposeDraft) -> Self {
+        Self {
+            account_id: d.account_id.0,
+            to: d.to,
+            cc: d.cc,
+            bcc: d.bcc,
+            subject: d.subject,
+            body_text: d.body_text,
+            in_reply_to: d.in_reply_to,
+            references: d.references,
+        }
+    }
+}
+
+/// What kind of draft `prepare_reply` makes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum ReplyKind {
+    /// To the sender (or Reply-To).
+    Reply,
+    /// To the sender and the other recipients, except this account.
+    ReplyAll,
+    /// To nobody yet, with the original included.
+    Forward,
+}
+
+/// Why `prepare_reply` failed.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error, uniffi::Error)]
+pub enum ReplyFailure {
+    /// The message or its account doesn't exist.
+    #[error("message not found")]
+    NotFound,
+    /// The body isn't downloaded yet; call `fetch_body` first.
+    #[error("body not downloaded")]
+    BodyNotDownloaded,
+    /// The local database failed.
+    #[error("storage failure")]
+    Storage,
+}
+
+/// A reply, reply-all or forward of message `message_id`, ready for the
+/// compose screen: recipients, subject with `Re:`/`Fwd:`, the quoted or
+/// forwarded text under `quote_header` (a localised line such as "On 24 Nov
+/// 2026, at 10:42, Ana wrote:"), and the thread headers. Reads only the
+/// database.
+#[uniffi::export]
+pub fn prepare_reply(
+    db_path: String,
+    message_id: i64,
+    kind: ReplyKind,
+    quote_header: String,
+) -> Result<ComposeDraft, ReplyFailure> {
+    let store = Store::open(&db_path).map_err(|_| ReplyFailure::Storage)?;
+    let kind = match kind {
+        ReplyKind::Reply => core::ReplyKind::Reply,
+        ReplyKind::ReplyAll => core::ReplyKind::ReplyAll,
+        ReplyKind::Forward => core::ReplyKind::Forward,
+    };
+    core::prepare_reply(
+        &store,
+        mailcrane_store::MessageId(message_id),
+        kind,
+        &quote_header,
+    )
+    .map(ComposeDraft::from)
+    .map_err(|e| match e {
+        core::ReplyError::NotFound => ReplyFailure::NotFound,
+        core::ReplyError::BodyNotDownloaded => ReplyFailure::BodyNotDownloaded,
+        core::ReplyError::Storage => ReplyFailure::Storage,
+    })
 }
 
 /// Which recipient field an entry is in.
@@ -441,6 +522,27 @@ mod tests {
         assert_eq!(
             SendFailure::from(core::SendError::MissingCredentials),
             SendFailure::MissingCredentials
+        );
+    }
+
+    #[test]
+    fn prepare_reply_reports_missing_messages_and_databases() {
+        let dir = tempfile::tempdir().expect("dir");
+        let path = dir.path().join("m.db").to_string_lossy().into_owned();
+        drop(Store::open(&path).expect("store"));
+        assert_eq!(
+            prepare_reply(path, 1, ReplyKind::Reply, "x".into()),
+            Err(ReplyFailure::NotFound)
+        );
+        let missing = dir.path().join("no").join("such").join("m.db");
+        assert_eq!(
+            prepare_reply(
+                missing.to_string_lossy().into_owned(),
+                1,
+                ReplyKind::Forward,
+                String::new()
+            ),
+            Err(ReplyFailure::Storage)
         );
     }
 }

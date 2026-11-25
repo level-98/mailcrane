@@ -61,6 +61,9 @@ enum class ComposeError {
     REFUSED_TEMPORARY,
     REFUSED_PERMANENT,
     UNEXPECTED,
+
+    /** The message being replied to couldn't be loaded; the screen is empty but usable. */
+    REPLY_UNAVAILABLE,
 }
 
 /** How the screen ended. */
@@ -90,6 +93,12 @@ data class ComposeUiState(
     val errorAddresses: List<String> = emptyList(),
     val confirmingDiscard: Boolean = false,
     val result: ComposeResult? = null,
+    /** For a reply: the Message-ID replied to, sent as `In-Reply-To`. */
+    val inReplyTo: String? = null,
+    /** For a reply: the thread's Message-IDs, sent as `References`. */
+    val references: List<String> = emptyList(),
+    /** The reply this screen was filled for, so rotation doesn't fill it again. */
+    val prefilledFor: ReplyRequest? = null,
 ) {
     fun field(which: RecipientField) =
         when (which) {
@@ -122,8 +131,12 @@ class ComposeViewModel
          * Opens the screen for [accountId]. Keeps what is already typed (e.g. after rotation) and only
          * picks the sender if none is picked yet.
          */
-        fun start(accountId: Long) {
+        fun start(
+            accountId: Long,
+            reply: ReplyRequest? = null,
+        ) {
             _state.update { if (it.fromAccountId == null) it.copy(fromAccountId = accountId) else it }
+            if (reply != null && _state.value.prefilledFor != reply) prefill(reply)
             viewModelScope.launch {
                 val accounts =
                     try {
@@ -140,6 +153,40 @@ class ComposeViewModel
                 }
             }
         }
+
+        /** Fills the screen with the core's reply draft: recipients as chips, subject, quoted body. */
+        private fun prefill(reply: ReplyRequest) {
+            _state.update { it.copy(prefilledFor = reply) }
+            viewModelScope.launch {
+                val draft =
+                    try {
+                        core.prepareReply(reply.messageId, reply.kind, reply.quoteHeader)
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        _state.update { it.copy(error = ComposeError.REPLY_UNAVAILABLE) }
+                        return@launch
+                    }
+                val cc = chipsOf(draft.cc)
+                _state.update {
+                    it.copy(
+                        fromAccountId = draft.accountId,
+                        to = chipsOf(draft.to),
+                        cc = cc,
+                        showCcBcc = it.showCcBcc || !cc.isEmpty,
+                        subject = draft.subject,
+                        body = draft.bodyText,
+                        inReplyTo = draft.inReplyTo,
+                        references = draft.references,
+                    )
+                }
+            }
+        }
+
+        private fun chipsOf(entries: List<String>): RecipientFieldState =
+            RecipientFieldState(
+                chips = entries.flatMap { entry -> parse(entry, whole = true)?.entries?.map { it.toChip() }.orEmpty() },
+            )
 
         fun onFromChange(accountId: Long) = _state.update { it.copy(fromAccountId = accountId, error = null) }
 
@@ -223,6 +270,8 @@ class ComposeViewModel
                     bcc = committed.bcc.chips.map { it.text },
                     subject = committed.subject,
                     bodyText = committed.body,
+                    inReplyTo = committed.inReplyTo,
+                    references = committed.references,
                 )
             viewModelScope.launch {
                 val outcome =

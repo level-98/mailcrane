@@ -187,7 +187,10 @@ fn format_entry(a: &Address) -> String {
         .filter(|n| !n.is_empty());
     match name {
         None => a.email.clone(),
-        Some(n) if n.chars().all(|c| c.is_alphanumeric() || " .-'_".contains(c)) => {
+        Some(n)
+            if n.chars()
+                .all(|c| c.is_alphanumeric() || " .-'_".contains(c)) =>
+        {
             format!("{n} <{}>", a.email)
         }
         Some(n) => {
