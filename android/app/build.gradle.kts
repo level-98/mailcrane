@@ -91,6 +91,12 @@ val cargoNdkBuild by tasks.registering(Exec::class) {
     inputs.property("rustProfile", rustProfile)
     inputs.property("rustFeatures", rustFeatures)
     outputs.dir(rustJniLibsDir)
+    // Set here, not left to the shell: Gradle's daemon is shared and keeps the
+    // environment it started with, so a worker's CARGO_* settings may not
+    // reach this task. Incremental caches and full debug info filled the
+    // disk with several builds running at once.
+    environment("CARGO_INCREMENTAL", "0")
+    environment("CARGO_PROFILE_DEV_DEBUG", "line-tables-only")
     commandLine(
         listOf(
             "cargo",
@@ -170,6 +176,12 @@ val buildRust by tasks.registering(Exec::class) {
     // Binding options (package name, Android mode) change the generated code.
     inputs.file(coreDir.file("crates/mailcrane-ffi/uniffi.toml"))
     outputs.dir(uniffiDir)
+    // Set here, not left to the shell: Gradle's daemon is shared and keeps the
+    // environment it started with, so a worker's CARGO_* settings may not
+    // reach this task. Incremental caches and full debug info filled the
+    // disk with several builds running at once.
+    environment("CARGO_INCREMENTAL", "0")
+    environment("CARGO_PROFILE_DEV_DEBUG", "line-tables-only")
     commandLine(
         "cargo",
         "run",
