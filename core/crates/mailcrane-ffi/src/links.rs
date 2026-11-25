@@ -18,6 +18,9 @@ pub enum LinkWarning {
     UnsupportedScheme,
     /// A lookalike host mixing scripts; shown in punycode.
     MixedScript,
+    /// A label wholly in another alphabet that imitates Latin letters
+    /// (all-Cyrillic `аррӏе.com`); shown in punycode.
+    LookalikeHost,
     /// The visible text names another site than the link goes to.
     TextHostMismatch {
         /// The host the text shows.
@@ -38,6 +41,7 @@ impl From<CoreWarning> for LinkWarning {
         match w {
             CoreWarning::UnsupportedScheme => Self::UnsupportedScheme,
             CoreWarning::MixedScript => Self::MixedScript,
+            CoreWarning::LookalikeHost => Self::LookalikeHost,
             CoreWarning::TextHostMismatch { text_host } => Self::TextHostMismatch {
                 text_host: crate::messages::one_line(&text_host),
             },

@@ -194,6 +194,7 @@
     <string name="link_preview_host_label">Goes to</string>
     <string name="link_warning_unsupported">This is not a web link, so it can\'t be opened from here.</string>
     <string name="link_warning_mixed_script">The address mixes alphabets, which is often used to imitate another site. It is shown in its technical form.</string>
+    <string name="link_warning_lookalike">The address is written in another alphabet with letters that look like Latin ones, which is often used to imitate another site. It is shown in its technical form.</string>
     <string name="link_warning_mismatch">The text shows %1$s, but the link goes to %2$s.</string>
     <string name="link_warning_ip">The address is a number, not a name.</string>
     <string name="link_warning_userinfo">Everything before the @ is not the site. The link goes to %1$s.</string>

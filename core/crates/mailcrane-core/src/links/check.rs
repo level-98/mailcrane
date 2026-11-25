@@ -15,6 +15,10 @@ pub enum LinkWarning {
     /// The host mixes scripts inside one label (a lookalike); it is shown
     /// in punycode.
     MixedScript,
+    /// A label is written wholly in another alphabet with letters that look
+    /// like Latin ones (all-Cyrillic `аррӏе.com`), under a Latin top-level
+    /// domain; it is shown in punycode.
+    LookalikeHost,
     /// The visible text names a different site than the link goes to.
     TextHostMismatch {
         /// The host the text shows (Unicode form, without `www.`).
@@ -70,10 +74,12 @@ pub fn check_link(href: &str, text: Option<&str>) -> LinkCheck {
     }
     if let Some(Host::Domain(d)) = &host {
         let unicode = url::quirks::domain_to_unicode(d);
-        if one_script_per_label(&unicode) {
-            out.display_host = unicode;
-        } else {
+        if !one_script_per_label(&unicode) {
             out.warnings.push(LinkWarning::MixedScript);
+        } else if imitates_latin(&unicode) {
+            out.warnings.push(LinkWarning::LookalikeHost);
+        } else {
+            out.display_host = unicode;
         }
     }
     if ip {
@@ -213,6 +219,39 @@ fn script_of(c: char) -> Script {
         | 0x20000..=0x2A6DF => Script::Cjk,
         _ => Script::Other,
     }
+}
+
+/// Cyrillic and Greek letters that look like a Latin letter, after IDNA
+/// lowercasing: Cyrillic а е о р с у х ѕ і ј ӏ ԁ һ ԛ ԝ ѵ ү, Greek α ι κ ν ο
+/// ρ υ χ ϲ ϳ. Deliberately short: letters that only resemble Latin in some
+/// fonts (п, г, м) are left out, so real words such as `пример` still show.
+const LATIN_LOOKALIKES: &[char] = &[
+    '\u{0430}', '\u{0435}', '\u{043E}', '\u{0440}', '\u{0441}', '\u{0443}', '\u{0445}', '\u{0455}',
+    '\u{0456}', '\u{0458}', '\u{04CF}', '\u{0501}', '\u{04BB}', '\u{051B}', '\u{051D}', '\u{0475}',
+    '\u{04AF}', '\u{03B1}', '\u{03B9}', '\u{03BA}', '\u{03BD}', '\u{03BF}', '\u{03C1}', '\u{03C5}',
+    '\u{03C7}', '\u{03F2}', '\u{03F3}',
+];
+
+/// Whether `host` (Unicode form) has a label that imitates a Latin word:
+/// non-ASCII, and made only of [`LATIN_LOOKALIKES`] (plus digits and `-`),
+/// under an ASCII top-level domain. A host under its own script's domain
+/// (`пример.рф`) or in a script without Latin lookalikes (`例え.jp`) is not
+/// one.
+fn imitates_latin(host: &str) -> bool {
+    let mut labels: Vec<&str> = host.split('.').filter(|l| !l.is_empty()).collect();
+    let Some(tld) = labels.pop() else {
+        return false;
+    };
+    if !tld.is_ascii() {
+        return false;
+    }
+    labels.iter().any(|label| {
+        !label.is_ascii()
+            && label
+                .chars()
+                .filter(|c| !c.is_ascii_digit() && *c != '-')
+                .all(|c| LATIN_LOOKALIKES.contains(&c))
+    })
 }
 
 /// Whether every label of `host` is written in a single script. ASCII

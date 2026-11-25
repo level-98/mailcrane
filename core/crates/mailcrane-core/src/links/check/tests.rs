@@ -338,6 +338,90 @@ fn link_text_lookup_uses_canonical_urls() {
     assert_eq!(link_text_for(&"a".repeat(5000), links), None);
 }
 
+#[test]
+fn whole_script_latin_lookalikes_show_in_punycode() {
+    // All-Cyrillic or all-Greek labels made only of letters that look Latin,
+    // under a Latin top-level domain (review of #267).
+    for href in [
+        // аррӏе.com
+        "https://\u{0430}\u{0440}\u{0440}\u{04CF}\u{0435}.com/",
+        // сосо.com
+        "https://\u{0441}\u{043E}\u{0441}\u{043E}.com/",
+        // ехаmрӏе is not all lookalikes (м); ехарӏе is.
+        "https://\u{0435}\u{0445}\u{0430}\u{0440}\u{04CF}\u{0435}.net/",
+        // In a subdomain, with digits and a hyphen.
+        "https://login.\u{0430}\u{0440}\u{0440}\u{04CF}\u{0435}-2.example.com/",
+        // Greek οκ.org
+        "https://\u{03BF}\u{03BA}.org/",
+        // Uppercase Cyrillic is lowercased by IDNA first.
+        "https://\u{0410}\u{0420}\u{0420}\u{04C0}\u{0415}.com/",
+    ] {
+        let c = check_link(href, None);
+        assert!(
+            c.warnings.contains(&LinkWarning::LookalikeHost),
+            "{href}: {:?}",
+            c.warnings
+        );
+        assert!(!c.warnings.contains(&LinkWarning::MixedScript), "{href}");
+        assert!(
+            c.display_host.contains("xn--"),
+            "{href}: {}",
+            c.display_host
+        );
+        assert!(c.display_host.is_ascii(), "{href}");
+        assert_eq!(c.display_host, c.ascii_host, "{href}");
+    }
+}
+
+#[test]
+fn real_words_in_their_own_script_stay_in_unicode() {
+    for (href, shown) in [
+        ("https://пример.рф/", "пример.рф"),
+        ("https://例え.jp/", "例え.jp"),
+        ("https://例え.中国/", "例え.中国"),
+        // A Cyrillic word with letters that don't imitate Latin, even under .com.
+        ("https://пример.com/", "пример.com"),
+        // A lookalike label under its own script's domain is left alone.
+        (
+            "https://\u{0430}\u{0440}\u{0440}\u{04CF}\u{0435}.рф/",
+            "\u{0430}\u{0440}\u{0440}\u{04CF}\u{0435}.рф",
+        ),
+        // Greek word with a non-lookalike letter (λ).
+        ("https://\u{03BB}\u{03BF}.org/", "\u{03BB}\u{03BF}.org"),
+    ] {
+        let c = check_link(href, None);
+        assert!(c.warnings.is_empty(), "{href}: {:?}", c.warnings);
+        assert_eq!(c.display_host, shown, "{href}");
+    }
+}
+
+#[test]
+fn lookalike_and_text_warnings_both_show() {
+    // The dialog names both the lookalike host and the text it imitates.
+    let w = warns(
+        "https://\u{0430}\u{0440}\u{0440}\u{04CF}\u{0435}.com/",
+        Some("apple.com"),
+    );
+    assert!(w.contains(&LinkWarning::LookalikeHost));
+    assert!(has_mismatch(&w));
+    // With text that isn't a host, the lookalike warning stands alone.
+    let w = warns(
+        "https://\u{0430}\u{0440}\u{0440}\u{04CF}\u{0435}.com/",
+        Some("Sign in"),
+    );
+    assert_eq!(w, vec![LinkWarning::LookalikeHost]);
+}
+
+#[test]
+fn imitates_latin_edge_cases() {
+    assert!(!imitates_latin(""));
+    assert!(!imitates_latin("com"));
+    assert!(!imitates_latin("example.com"));
+    assert!(!imitates_latin("..."));
+    assert!(imitates_latin("\u{0430}.com."));
+    assert!(!imitates_latin("\u{0430}"));
+}
+
 proptest! {
     #[test]
     fn never_panics(href in "\\PC{0,300}", text in proptest::option::of("\\PC{0,300}")) {

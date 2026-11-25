@@ -77,6 +77,7 @@ private fun warningText(
     when (warning) {
         LinkWarning.UnsupportedScheme -> stringResource(R.string.link_warning_unsupported)
         LinkWarning.MixedScript -> stringResource(R.string.link_warning_mixed_script)
+        LinkWarning.LookalikeHost -> stringResource(R.string.link_warning_lookalike)
         is LinkWarning.TextHostMismatch -> stringResource(R.string.link_warning_mismatch, warning.textHost, host)
         LinkWarning.IpAddress -> stringResource(R.string.link_warning_ip)
         LinkWarning.UserInfo -> stringResource(R.string.link_warning_userinfo, host)

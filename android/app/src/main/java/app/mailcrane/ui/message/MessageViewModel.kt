@@ -428,4 +428,7 @@ class MessageViewModel
     }
 
 private fun LinkWarning.hidesHost(): Boolean =
-    this == LinkWarning.IpAddress || this == LinkWarning.UserInfo || this == LinkWarning.MixedScript
+    this == LinkWarning.IpAddress ||
+        this == LinkWarning.UserInfo ||
+        this == LinkWarning.MixedScript ||
+        this == LinkWarning.LookalikeHost
