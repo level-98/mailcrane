@@ -10,6 +10,7 @@ import app.mailcrane.core.MessageAction
 import app.mailcrane.core.MessageSummary
 import app.mailcrane.core.SyncErrorKind
 import app.mailcrane.core.SyncFailure
+import app.mailcrane.core.ThreadSummary
 import app.mailcrane.core.UNDO_WINDOW_MS
 import app.mailcrane.settings.AppSettings
 import app.mailcrane.settings.DEFAULT_SWIPE_LEFT
@@ -26,6 +27,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.stateIn
@@ -47,6 +49,10 @@ data class MessageListState(
     val endReached: Boolean = false,
     /** Reading the database failed and nothing could be shown. */
     val loadError: SyncErrorKind? = null,
+    /** Show conversations instead of single messages (M4-02). */
+    val grouped: Boolean = false,
+    /** The conversations covering the loaded messages, newest first, when [grouped]. */
+    val threads: List<ThreadSummary> = emptyList(),
 )
 
 /**
@@ -87,6 +93,30 @@ class MessageListViewModel
         val undoOffers: Flow<UndoOffer> = _undoOffers.receiveAsFlow()
 
         private val _notices = Channel<Int>(Channel.BUFFERED)
+
+        init {
+            // Follows the "Group by conversation" setting.
+            viewModelScope.launch {
+                settings.groupByConversation.distinctUntilChanged().collect { grouped ->
+                    _state.update { it.copy(grouped = grouped) }
+                    refreshThreads()
+                }
+            }
+        }
+
+        /** Re-reads the conversations for the loaded range, when grouping is on. */
+        private suspend fun refreshThreads() {
+            if (!_state.value.grouped) {
+                _state.update { it.copy(threads = emptyList()) }
+                return
+            }
+            try {
+                val threads = core.listThreads(folderId, 0, window.coerceAtMost(READ_CHUNK * 2))
+                _state.update { it.copy(threads = threads) }
+            } catch (e: SyncFailure.Failed) {
+                _errors.send(e.kind)
+            }
+        }
 
         /** One-off messages from swipes, as string resources. */
         val notices: Flow<Int> = _notices.receiveAsFlow()
@@ -221,6 +251,7 @@ class MessageListViewModel
                 try {
                     val messages = readWindow()
                     _state.update { it.copy(messages = messages, isLoading = false, loadError = null) }
+                    refreshThreads()
                 } catch (e: SyncFailure.Failed) {
                     if (_state.value.messages.isEmpty()) {
                         _state.update { it.copy(isLoading = false, loadError = e.kind) }
@@ -242,6 +273,7 @@ class MessageListViewModel
                 // A reload may have run meanwhile; drop rows already in the list.
                 val known = loaded.mapTo(HashSet(loaded.size)) { it.id }
                 _state.update { it.copy(messages = loaded + next.filter { m -> m.id !in known }) }
+                refreshThreads()
             }
         }
 

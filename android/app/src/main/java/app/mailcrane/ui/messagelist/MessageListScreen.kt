@@ -85,6 +85,7 @@ fun MessageListScreen(
     onOpenFolders: (() -> Unit)? = null,
     folders: List<FolderSummary> = emptyList(),
     onOpenSearch: (() -> Unit)? = null,
+    onOpenThread: (Long, String) -> Unit = { _, _ -> },
     viewModel: MessageListViewModel =
         hiltViewModel<MessageListViewModel, MessageListViewModel.Factory>(
             key = "folder-$folderId",
@@ -156,6 +157,7 @@ fun MessageListScreen(
         onOpenFolders = onOpenFolders,
         swipe = swipeHandlers,
         onOpenSearch = onOpenSearch,
+        onOpenThread = onOpenThread,
     )
 }
 
@@ -176,6 +178,7 @@ fun MessageListContent(
     onLoadMore: () -> Unit,
     onOpenMessage: (Long) -> Unit = {},
     onOpenFolders: (() -> Unit)? = null,
+    onOpenThread: (Long, String) -> Unit = { _, _ -> },
     listState: LazyListState = rememberLazyListState(),
     onCompose: (() -> Unit)? = null,
     fabModifier: Modifier = Modifier,
@@ -245,7 +248,7 @@ fun MessageListContent(
                         )
                     }
                 state.messages.isEmpty() -> EmptyFolderState()
-                else -> Messages(state, listState, onLoadMore, onOpenMessage, swipe)
+                else -> Messages(state, listState, onLoadMore, onOpenMessage, swipe, onOpenThread)
             }
         }
     }
@@ -258,6 +261,7 @@ private fun Messages(
     onLoadMore: () -> Unit,
     onOpenMessage: (Long) -> Unit,
     swipe: SwipeHandlers,
+    onOpenThread: (Long, String) -> Unit = { _, _ -> },
 ) {
     val locale = LocalConfiguration.current.locales[0]
     val now by currentMinute()
@@ -273,7 +277,45 @@ private fun Messages(
     LaunchedEffect(nearEnd, state.messages.size) {
         if (nearEnd) loadMore()
     }
+    val byId = remember(state.messages) { state.messages.associateBy { it.id } }
     LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
+        if (state.grouped && state.threads.isNotEmpty()) {
+            items(items = state.threads, key = { "t${it.threadId}" }, contentType = { "thread" }) { thread ->
+                val single = byId[thread.newestMessageId]?.takeIf { thread.messageCount <= 1u }
+                if (single != null) {
+                    SwipeableRow(single, swipe) {
+                        MessageRow(
+                            message = single,
+                            now = now,
+                            locale = locale,
+                            modifier = Modifier.clickable { onOpenMessage(single.id) },
+                        )
+                    }
+                } else {
+                    ThreadRow(thread, byId[thread.newestMessageId], now, locale) {
+                        if (thread.messageCount <=
+                            1u
+                        ) {
+                            onOpenMessage(thread.newestMessageId)
+                        } else {
+                            onOpenThread(thread.threadId, thread.subject)
+                        }
+                    }
+                }
+                HorizontalDivider(
+                    modifier = Modifier.padding(start = 24.dp),
+                    color = MaterialTheme.colorScheme.outlineVariant,
+                )
+            }
+            if (state.isLoadingOlder) {
+                item(key = "loading-older", contentType = "progress") {
+                    Box(Modifier.fillMaxWidth().padding(16.dp), contentAlignment = Alignment.Center) {
+                        CircularProgressIndicator()
+                    }
+                }
+            }
+            return@LazyColumn
+        }
         items(items = state.messages, key = { it.id }, contentType = { "message" }) { message ->
             SwipeableRow(message, swipe) {
                 MessageRow(
@@ -300,7 +342,7 @@ private fun Messages(
 
 /** The current time, updated each minute so "today" and times stay right while the screen is open. */
 @Composable
-private fun currentMinute() =
+internal fun currentMinute() =
     produceState(ZonedDateTime.now()) {
         while (true) {
             val seconds = value.second

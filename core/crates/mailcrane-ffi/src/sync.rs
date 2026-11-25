@@ -310,6 +310,11 @@ impl SyncEngine {
                 job(&mut syncer).await
             };
             session.logout().await;
+            // New headers join their conversations (M4-02). A failure here
+            // only leaves them unthreaded until the next sync.
+            if result.is_ok() {
+                let _ = mailcrane_core::threading::assign_new(&store, Some(account));
+            }
             result.map_err(SyncFailure::from)
         })
     }

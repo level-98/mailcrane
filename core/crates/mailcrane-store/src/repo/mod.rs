@@ -12,6 +12,7 @@ mod rules;
 mod search;
 mod settings;
 mod snooze;
+mod threads;
 
 pub use contacts::Correspondent;
 pub use drafts::{Draft, DraftFields, DraftId, ServerCopy};
@@ -23,6 +24,7 @@ pub use rules::{NewRule, Rule, RuleAction, RuleCondition, RuleId};
 pub use search::SearchFilter;
 pub use settings::{SignatureSetting, MAX_SIGNATURE_BYTES};
 pub use snooze::{KeywordedMessage, NewSnooze, Snooze, SnoozeId, SnoozeState};
+pub use threads::{ThreadSummary, UnthreadedMessage};
 
 use crate::error::StoreError;
 

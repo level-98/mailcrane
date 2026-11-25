@@ -21,6 +21,7 @@ pub mod secrets;
 pub mod settings;
 pub mod snooze;
 pub mod sync;
+pub mod threads;
 pub mod unsubscribe;
 
 /// The name of this crate.

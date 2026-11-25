@@ -13,7 +13,7 @@ pub use repo::{
     Correspondent, Draft, DraftFields, DraftId, NewOutboxMessage, NewRule, OpId, OpKind, OpMessage,
     OutboxId, OutboxMessage, OutboxState, PendingOp, Rule, RuleAction, RuleCondition, RuleId,
     SaveSentCopy, ScheduleMode, SearchFilter, SentCopy, ServerCopy, SignatureSetting,
-    MAX_SIGNATURE_BYTES,
+    ThreadSummary, UnthreadedMessage, MAX_SIGNATURE_BYTES,
 };
 pub use repo::{KeywordedMessage, NewSnooze, Snooze, SnoozeId, SnoozeState};
 
