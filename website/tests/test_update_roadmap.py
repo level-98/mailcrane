@@ -75,6 +75,45 @@ class BuildSnapshotTests(unittest.TestCase):
         self.assertEqual(snapshot["groups"], [])
         self.assertEqual((snapshot["completed"], snapshot["total"], snapshot["percent"]), (0, 0, 0))
 
+    def test_bugs_never_appear_even_with_a_task_id(self):
+        issues = [
+            {
+                "number": 50,
+                "title": "[M4-24] A feature",
+                "state": "open",
+                "labels": [{"name": "m4"}],
+                "html_url": "https://github.com/level-98/mailcrane/issues/50",
+            },
+            {
+                "number": 51,
+                "title": "[M4-26] Something found along the way",
+                "state": "open",
+                "labels": [{"name": "bug"}, {"name": "m4"}],
+                "html_url": "https://github.com/level-98/mailcrane/issues/51",
+            },
+        ]
+
+        snapshot = build_snapshot(issues)
+
+        tasks = snapshot["groups"][0]["tasks"]
+        self.assertEqual([task["issue_number"] for task in tasks], [50])
+        self.assertEqual(snapshot["total"], 1)
+
+    def test_after_1_0_milestone_is_listed(self):
+        issues = [
+            {
+                "number": 61,
+                "title": "[M8-01] Attachments browser",
+                "state": "open",
+                "html_url": "https://github.com/level-98/mailcrane/issues/61",
+            },
+        ]
+
+        snapshot = build_snapshot(issues)
+
+        self.assertEqual([group["id"] for group in snapshot["groups"]], ["M8"])
+        self.assertEqual(snapshot["groups"][0]["title"], "After 1.0")
+
     def test_percentage_rounds_half_up(self):
         issues = [
             {

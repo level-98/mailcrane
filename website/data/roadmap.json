@@ -1,17 +1,17 @@
 {
   "repository": "level-98/mailcrane",
-  "generated_at": "2026-11-24T21:15:46Z",
-  "total": 95,
-  "completed": 28,
-  "percent": 29,
+  "generated_at": "2026-11-25T17:15:13Z",
+  "total": 112,
+  "completed": 65,
+  "percent": 58,
   "groups": [
     {
       "id": "M0",
       "title": "Foundations",
       "description": "Set up the shared core, app shells, and contributor workflow.",
       "total": 16,
-      "completed": 15,
-      "percent": 94,
+      "completed": 16,
+      "percent": 100,
       "tasks": [
         {
           "id": "M0-01",
@@ -154,7 +154,7 @@
           "number": 17,
           "issue_number": 99,
           "title": "Cross-platform CI on every PR: Android on Linux and the core on Windows (iOS on macOS comes back in M7-02)",
-          "state": "open",
+          "state": "closed",
           "url": "https://github.com/level-98/mailcrane/issues/99"
         }
       ]
@@ -164,8 +164,8 @@
       "title": "Read mail",
       "description": "Connect an account and read your inbox, online or offline.",
       "total": 15,
-      "completed": 8,
-      "percent": 53,
+      "completed": 15,
+      "percent": 100,
       "tasks": [
         {
           "id": "M1-01",
@@ -227,7 +227,7 @@
           "number": 7,
           "issue_number": 23,
           "title": "IMAP IDLE for near-real-time updates while the app is open",
-          "state": "open",
+          "state": "closed",
           "url": "https://github.com/level-98/mailcrane/issues/23"
         },
         {
@@ -254,7 +254,7 @@
           "number": 10,
           "issue_number": 26,
           "title": "Message list screen, Android",
-          "state": "open",
+          "state": "closed",
           "url": "https://github.com/level-98/mailcrane/issues/26"
         },
         {
@@ -263,7 +263,7 @@
           "number": 12,
           "issue_number": 28,
           "title": "Message view screen with \"load remote images\" button, Android",
-          "state": "open",
+          "state": "closed",
           "url": "https://github.com/level-98/mailcrane/issues/28"
         },
         {
@@ -272,7 +272,7 @@
           "number": 13,
           "issue_number": 29,
           "title": "Folder drawer, Android",
-          "state": "open",
+          "state": "closed",
           "url": "https://github.com/level-98/mailcrane/issues/29"
         },
         {
@@ -281,7 +281,7 @@
           "number": 14,
           "issue_number": 30,
           "title": "Read, unread, flag, archive, delete and move, synced back to the server",
-          "state": "open",
+          "state": "closed",
           "url": "https://github.com/level-98/mailcrane/issues/30"
         },
         {
@@ -290,7 +290,7 @@
           "number": 15,
           "issue_number": 31,
           "title": "Automatic account setup: Mozilla ISPDB (Thunderbird autoconfig), `/.well-known/autoconfig`, SRV records",
-          "state": "open",
+          "state": "closed",
           "url": "https://github.com/level-98/mailcrane/issues/31"
         },
         {
@@ -299,7 +299,7 @@
           "number": 16,
           "issue_number": 32,
           "title": "Empty states using the illustrations in `design/`",
-          "state": "open",
+          "state": "closed",
           "url": "https://github.com/level-98/mailcrane/issues/32"
         }
       ]
@@ -309,8 +309,8 @@
       "title": "Send mail",
       "description": "Compose, reply, and reliably deliver your messages.",
       "total": 10,
-      "completed": 1,
-      "percent": 10,
+      "completed": 10,
+      "percent": 100,
       "tasks": [
         {
           "id": "M2-01",
@@ -327,7 +327,7 @@
           "number": 2,
           "issue_number": 34,
           "title": "Compose screen: to/cc/bcc, subject, plain-text body",
-          "state": "open",
+          "state": "closed",
           "url": "https://github.com/level-98/mailcrane/issues/34"
         },
         {
@@ -336,7 +336,7 @@
           "number": 3,
           "issue_number": 35,
           "title": "Reply, reply-all and forward, with correct `In-Reply-To` and `References` headers",
-          "state": "open",
+          "state": "closed",
           "url": "https://github.com/level-98/mailcrane/issues/35"
         },
         {
@@ -345,7 +345,7 @@
           "number": 4,
           "issue_number": 36,
           "title": "Attachments: add, send, preview and save",
-          "state": "open",
+          "state": "closed",
           "url": "https://github.com/level-98/mailcrane/issues/36"
         },
         {
@@ -354,7 +354,7 @@
           "number": 5,
           "issue_number": 37,
           "title": "Drafts: autosave locally and to the server's Drafts folder",
-          "state": "open",
+          "state": "closed",
           "url": "https://github.com/level-98/mailcrane/issues/37"
         },
         {
@@ -363,7 +363,7 @@
           "number": 6,
           "issue_number": 38,
           "title": "Offline outbox with retry",
-          "state": "open",
+          "state": "closed",
           "url": "https://github.com/level-98/mailcrane/issues/38"
         },
         {
@@ -372,7 +372,7 @@
           "number": 7,
           "issue_number": 39,
           "title": "Save sent messages to Sent (skip for providers that do it themselves, such as Gmail)",
-          "state": "open",
+          "state": "closed",
           "url": "https://github.com/level-98/mailcrane/issues/39"
         },
         {
@@ -381,7 +381,7 @@
           "number": 8,
           "issue_number": 40,
           "title": "Contact autocomplete from the device's contacts and past correspondents",
-          "state": "open",
+          "state": "closed",
           "url": "https://github.com/level-98/mailcrane/issues/40"
         },
         {
@@ -390,7 +390,7 @@
           "number": 9,
           "issue_number": 41,
           "title": "Rich-text compose (bold, italic, lists, links)",
-          "state": "open",
+          "state": "closed",
           "url": "https://github.com/level-98/mailcrane/issues/41"
         },
         {
@@ -399,7 +399,7 @@
           "number": 10,
           "issue_number": 42,
           "title": "Signatures, per account",
-          "state": "open",
+          "state": "closed",
           "url": "https://github.com/level-98/mailcrane/issues/42"
         }
       ]
@@ -409,8 +409,8 @@
       "title": "Providers & sign-in",
       "description": "Make setup straightforward across popular providers.",
       "total": 6,
-      "completed": 0,
-      "percent": 0,
+      "completed": 2,
+      "percent": 33,
       "tasks": [
         {
           "id": "M3-01",
@@ -418,7 +418,7 @@
           "number": 1,
           "issue_number": 43,
           "title": "OAuth 2.0 framework with PKCE, using the system browser (AppAuth on Android; iOS sign-in is M7-09)",
-          "state": "open",
+          "state": "closed",
           "url": "https://github.com/level-98/mailcrane/issues/43"
         },
         {
@@ -445,7 +445,7 @@
           "number": 4,
           "issue_number": 46,
           "title": "JMAP client (Fastmail, Stalwart and others)",
-          "state": "open",
+          "state": "closed",
           "url": "https://github.com/level-98/mailcrane/issues/46"
         },
         {
@@ -472,9 +472,9 @@
       "id": "M4",
       "title": "Everyday features",
       "description": "Bring together the thoughtful tools that make email better.",
-      "total": 13,
-      "completed": 0,
-      "percent": 0,
+      "total": 25,
+      "completed": 15,
+      "percent": 60,
       "tasks": [
         {
           "id": "M4-01",
@@ -482,7 +482,7 @@
           "number": 1,
           "issue_number": 49,
           "title": "Multiple accounts and a unified inbox",
-          "state": "open",
+          "state": "closed",
           "url": "https://github.com/level-98/mailcrane/issues/49"
         },
         {
@@ -491,7 +491,7 @@
           "number": 2,
           "issue_number": 50,
           "title": "Conversation threading (JWZ algorithm plus Gmail thread IDs)",
-          "state": "open",
+          "state": "closed",
           "url": "https://github.com/level-98/mailcrane/issues/50"
         },
         {
@@ -500,7 +500,7 @@
           "number": 3,
           "issue_number": 51,
           "title": "Offline full-text search (SQLite FTS5), plus server-side IMAP SEARCH",
-          "state": "open",
+          "state": "closed",
           "url": "https://github.com/level-98/mailcrane/issues/51"
         },
         {
@@ -509,7 +509,7 @@
           "number": 4,
           "issue_number": 52,
           "title": "Configurable swipe actions",
-          "state": "open",
+          "state": "closed",
           "url": "https://github.com/level-98/mailcrane/issues/52"
         },
         {
@@ -527,7 +527,7 @@
           "number": 6,
           "issue_number": 54,
           "title": "Snooze (stored locally, synced via a hidden folder or IMAP keyword)",
-          "state": "open",
+          "state": "closed",
           "url": "https://github.com/level-98/mailcrane/issues/54"
         },
         {
@@ -536,7 +536,7 @@
           "number": 7,
           "issue_number": 55,
           "title": "Scheduled send",
-          "state": "open",
+          "state": "closed",
           "url": "https://github.com/level-98/mailcrane/issues/55"
         },
         {
@@ -545,7 +545,7 @@
           "number": 8,
           "issue_number": 56,
           "title": "Undo send (short delay before sending)",
-          "state": "open",
+          "state": "closed",
           "url": "https://github.com/level-98/mailcrane/issues/56"
         },
         {
@@ -554,7 +554,7 @@
           "number": 9,
           "issue_number": 57,
           "title": "Local rules and filters",
-          "state": "open",
+          "state": "closed",
           "url": "https://github.com/level-98/mailcrane/issues/57"
         },
         {
@@ -563,7 +563,7 @@
           "number": 10,
           "issue_number": 58,
           "title": "One-tap unsubscribe (`List-Unsubscribe`, RFC 8058)",
-          "state": "open",
+          "state": "closed",
           "url": "https://github.com/level-98/mailcrane/issues/58"
         },
         {
@@ -572,7 +572,7 @@
           "number": 11,
           "issue_number": 59,
           "title": "Home-screen widgets (Android Glance)",
-          "state": "open",
+          "state": "closed",
           "url": "https://github.com/level-98/mailcrane/issues/59"
         },
         {
@@ -581,7 +581,7 @@
           "number": 12,
           "issue_number": 60,
           "title": "Dark mode and dynamic colour (Material You)",
-          "state": "open",
+          "state": "closed",
           "url": "https://github.com/level-98/mailcrane/issues/60"
         },
         {
@@ -590,8 +590,116 @@
           "number": 13,
           "issue_number": 61,
           "title": "Tablet layouts (list and detail side by side)",
-          "state": "open",
+          "state": "closed",
           "url": "https://github.com/level-98/mailcrane/issues/61"
+        },
+        {
+          "id": "M4-14",
+          "position": 14.0,
+          "number": 14,
+          "issue_number": 250,
+          "title": "Multi-select and bulk actions in the message list: long-press to start, then read, unread, flag, archive, delete and move on all selected",
+          "state": "open",
+          "url": "https://github.com/level-98/mailcrane/issues/250"
+        },
+        {
+          "id": "M4-15",
+          "position": 15.0,
+          "number": 15,
+          "issue_number": 251,
+          "title": "Mark-as-read setting (on open, after a few seconds, or only by hand) and an \"after delete or move\" setting (next message, previous message, or back to the list)",
+          "state": "open",
+          "url": "https://github.com/level-98/mailcrane/issues/251"
+        },
+        {
+          "id": "M4-16",
+          "position": 16.0,
+          "number": 16,
+          "issue_number": 252,
+          "title": "Choose which view the app opens on: unified inbox, a chosen account's inbox, or the last one used",
+          "state": "open",
+          "url": "https://github.com/level-98/mailcrane/issues/252"
+        },
+        {
+          "id": "M4-17",
+          "position": 17.0,
+          "number": 17,
+          "issue_number": 253,
+          "title": "Templates and canned replies: save, insert while composing, edit and delete",
+          "state": "open",
+          "url": "https://github.com/level-98/mailcrane/issues/253"
+        },
+        {
+          "id": "M4-18",
+          "position": 18.0,
+          "number": 18,
+          "issue_number": 254,
+          "title": "Settings backup and restore to an encrypted, password-protected file: accounts (server settings only, never passwords or tokens), signatures, rules, templates and app settings",
+          "state": "open",
+          "url": "https://github.com/level-98/mailcrane/issues/254"
+        },
+        {
+          "id": "M4-19",
+          "position": 19.0,
+          "number": 19,
+          "issue_number": 255,
+          "title": "Date headers in the message list: Today, Yesterday, This week, then by month",
+          "state": "closed",
+          "url": "https://github.com/level-98/mailcrane/issues/255"
+        },
+        {
+          "id": "M4-20",
+          "position": 20.0,
+          "number": 20,
+          "issue_number": 256,
+          "title": "Let users choose each account's colour (the automatic colours from M4-01 stay the default)",
+          "state": "closed",
+          "url": "https://github.com/level-98/mailcrane/issues/256"
+        },
+        {
+          "id": "M4-21",
+          "position": 21.0,
+          "number": 21,
+          "issue_number": 257,
+          "title": "Search filter chips (from, has attachment, unread, flagged, date range, account) built on the existing search syntax, adding `account:` to it",
+          "state": "closed",
+          "url": "https://github.com/level-98/mailcrane/issues/257"
+        },
+        {
+          "id": "M4-22",
+          "position": 22.0,
+          "number": 22,
+          "issue_number": 258,
+          "title": "Create, rename, move and delete folders from the phone",
+          "state": "open",
+          "url": "https://github.com/level-98/mailcrane/issues/258"
+        },
+        {
+          "id": "M4-23",
+          "position": 23.0,
+          "number": 23,
+          "issue_number": 259,
+          "title": "Server-side rules through ManageSieve (RFC 5804), so rules run when the phone is off; local rules (M4-09) stay for servers without it",
+          "state": "open",
+          "url": "https://github.com/level-98/mailcrane/issues/259"
+        },
+        {
+          "id": "M4-24",
+          "position": 24.0,
+          "number": 24,
+          "issue_number": 292,
+          "title": "Sender pictures in the message list, and a Compact density without them",
+          "state": "open",
+          "url": "https://github.com/level-98/mailcrane/issues/292"
+        },
+        {
+          "id": "M4-25",
+          "position": 25.0,
+          "number": 25,
+          "issue_number": 293,
+          "title": "Download recent messages in the background so they open instantly",
+          "state": "open",
+          "url": "https://github.com/level-98/mailcrane/issues/293"
         }
       ]
     },
@@ -599,9 +707,9 @@
       "id": "M5",
       "title": "Privacy & security",
       "description": "Keep personal mail protected and in your control.",
-      "total": 6,
-      "completed": 0,
-      "percent": 0,
+      "total": 7,
+      "completed": 3,
+      "percent": 43,
       "tasks": [
         {
           "id": "M5-01",
@@ -609,7 +717,7 @@
           "number": 1,
           "issue_number": 62,
           "title": "Tracking-pixel detection and a \"trackers blocked\" indicator",
-          "state": "open",
+          "state": "closed",
           "url": "https://github.com/level-98/mailcrane/issues/62"
         },
         {
@@ -618,7 +726,7 @@
           "number": 2,
           "issue_number": 63,
           "title": "Strip tracking parameters from links (utm_ and similar) before opening",
-          "state": "open",
+          "state": "closed",
           "url": "https://github.com/level-98/mailcrane/issues/63"
         },
         {
@@ -627,7 +735,7 @@
           "number": 3,
           "issue_number": 64,
           "title": "App lock with biometrics or PIN, Android",
-          "state": "open",
+          "state": "closed",
           "url": "https://github.com/level-98/mailcrane/issues/64"
         },
         {
@@ -656,6 +764,15 @@
           "title": "Independent security review before 1.0",
           "state": "open",
           "url": "https://github.com/level-98/mailcrane/issues/67"
+        },
+        {
+          "id": "M5-07",
+          "position": 7.0,
+          "number": 7,
+          "issue_number": 260,
+          "title": "Phishing help: show a link's real destination before opening it, show SPF/DKIM/DMARC results from `Authentication-Results`, and warn when the display name pretends to be a different address",
+          "state": "open",
+          "url": "https://github.com/level-98/mailcrane/issues/260"
         }
       ]
     },
@@ -901,6 +1018,52 @@
           "title": "TestFlight beta and App Store release",
           "state": "open",
           "url": "https://github.com/level-98/mailcrane/issues/73"
+        }
+      ]
+    },
+    {
+      "id": "M8",
+      "title": "After 1.0",
+      "description": "Good ideas that wait until the Android 1.0 release is out.",
+      "total": 4,
+      "completed": 0,
+      "percent": 0,
+      "tasks": [
+        {
+          "id": "M8-01",
+          "position": 1.0,
+          "number": 1,
+          "issue_number": 261,
+          "title": "Attachments browser: every file across all mail, filterable by type, sender and account",
+          "state": "open",
+          "url": "https://github.com/level-98/mailcrane/issues/261"
+        },
+        {
+          "id": "M8-02",
+          "position": 2.0,
+          "number": 2,
+          "issue_number": 262,
+          "title": "Multi-colour flags, synced through IMAP keywords (Thunderbird-compatible where possible)",
+          "state": "open",
+          "url": "https://github.com/level-98/mailcrane/issues/262"
+        },
+        {
+          "id": "M8-03",
+          "position": 3.0,
+          "number": 3,
+          "issue_number": 263,
+          "title": "Calendar invites: show an `.ics` invite (`METHOD:REQUEST`) and reply accept, tentative or decline, without building a calendar app",
+          "state": "open",
+          "url": "https://github.com/level-98/mailcrane/issues/263"
+        },
+        {
+          "id": "M8-04",
+          "position": 4.0,
+          "number": 4,
+          "issue_number": 264,
+          "title": "Read receipts (MDN, RFC 8098): ask before sending one, optionally request one; show and set the priority header",
+          "state": "open",
+          "url": "https://github.com/level-98/mailcrane/issues/264"
         }
       ]
     },
