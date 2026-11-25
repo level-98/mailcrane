@@ -470,7 +470,9 @@ pub async fn send(
 
 /// Sends over JMAP (RFC 8621 §7): imports the message, submits it with the
 /// identity for the sender, and has the server move it from Drafts to Sent
-/// on success, so no separate Sent copy is needed.
+/// on success, so no separate Sent copy is needed. RFC 8621 §2 doesn't
+/// require a Sent mailbox; without one the imported copy is destroyed once
+/// the submission succeeds (#276).
 async fn send_jmap(
     session_url: &str,
     auth: &mailcrane_jmap::Auth,
@@ -505,10 +507,15 @@ async fn send_jmap(
             .find(|m| m.role == Some(role))
             .map(|m| m.id.clone())
     };
-    let sent = with_role(mailcrane_jmap::MailboxRole::Sent)
+    let sent = with_role(mailcrane_jmap::MailboxRole::Sent);
+    // `Email/import` needs a mailbox (RFC 8621 §4.8). Drafts if there is
+    // one; else straight into Sent; else, as the copy is destroyed on
+    // success, the Inbox or any mailbox. No mailbox at all can't hold it.
+    let drafts = with_role(mailcrane_jmap::MailboxRole::Drafts)
+        .or_else(|| sent.clone())
+        .or_else(|| with_role(mailcrane_jmap::MailboxRole::Inbox))
+        .or_else(|| mailboxes.first().map(|m| m.id.clone()))
         .ok_or(SendError::Refused { temporary: false })?;
-    // Without a Drafts mailbox the message is created straight in Sent.
-    let drafts = with_role(mailcrane_jmap::MailboxRole::Drafts).unwrap_or_else(|| sent.clone());
     let out = mailcrane_jmap::Outgoing {
         raw,
         identity_id: identity.id.clone(),

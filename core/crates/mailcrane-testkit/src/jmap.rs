@@ -364,7 +364,19 @@ impl FakeJmap {
     pub fn email_raw(&self, id: &str) -> Option<Vec<u8>> {
         lock(&self.state).email(id).map(|e| e.raw.clone())
     }
-    /// The submissions accepted so far.
+    /// The ids of the emails in a mailbox now.
+    pub fn emails_in(&self, mailbox_id: &str) -> Vec<String> {
+        lock(&self.state)
+            .emails
+            .iter()
+            .filter(|e| e.mailboxes.contains(mailbox_id))
+            .map(|e| e.id.clone())
+            .collect()
+    }
+    /// The number of emails on the server, in any mailbox.
+    pub fn email_count(&self) -> usize {
+        lock(&self.state).emails.len()
+    }
     /// Adds an email to the running server, as if it had just arrived.
     pub fn deliver(&self, e: FakeEmail) {
         let mut state = lock(&self.state);
@@ -391,6 +403,7 @@ impl FakeJmap {
         lock(&self.state).refused.insert(id.to_owned());
     }
 
+    /// The submissions accepted so far.
     pub fn submissions(&self) -> Vec<FakeSubmission> {
         lock(&self.state).submissions.clone()
     }
@@ -659,7 +672,7 @@ fn email_import(
 }
 
 /// `EmailSubmission/set` (RFC 8621 §7.5), followed by the implicit
-/// `Email/set` for `onSuccessUpdateEmail`.
+/// `Email/set` for `onSuccessUpdateEmail` and `onSuccessDestroyEmail`.
 fn submission_set(
     state: &mut State,
     args: &Value,
@@ -716,19 +729,39 @@ fn submission_set(
         "accountId": "A1", "oldState": "s1", "newState": "s2",
         "created": created, "notCreated": not_created
     }, id])];
+    // The email a submission (by id or `#creation-id`) was for.
+    let email_of = |state: &State, sub_ref: &str| {
+        let sub_id = resolve(sub_ref, created_ids)?;
+        state
+            .submissions
+            .iter()
+            .find(|s| s.id == sub_id)
+            .map(|s| s.email_id.clone())
+    };
+    let mut update = Map::new();
     if let Some(updates) = args.get("onSuccessUpdateEmail").and_then(Value::as_object) {
-        let mut update = Map::new();
         for (sub_ref, patch) in updates {
-            let Some(sub_id) = resolve(sub_ref, created_ids) else {
-                continue;
-            };
-            if let Some(s) = state.submissions.iter().find(|s| s.id == sub_id) {
-                update.insert(s.email_id.clone(), patch.clone());
+            if let Some(email_id) = email_of(state, sub_ref) {
+                update.insert(email_id, patch.clone());
             }
         }
-        if !update.is_empty() {
-            out.push(email_set(state, &json!({"update": update}), id));
-        }
+    }
+    let destroy: Vec<String> = args
+        .get("onSuccessDestroyEmail")
+        .and_then(Value::as_array)
+        .map(|refs| {
+            refs.iter()
+                .filter_map(Value::as_str)
+                .filter_map(|r| email_of(state, r))
+                .collect()
+        })
+        .unwrap_or_default();
+    if !update.is_empty() || !destroy.is_empty() {
+        out.push(email_set(
+            state,
+            &json!({"update": update, "destroy": destroy}),
+            id,
+        ));
     }
     out
 }
