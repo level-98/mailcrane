@@ -380,9 +380,8 @@ class MessageViewModel
                 return
             }
             val body = (_state.value as? MessageState.Ready)?.message?.body
-            val text = (body as? MessageBody.Html)?.links?.firstOrNull { it.href == url }?.text
             val target = linkToOpen(url)
-            val check = linkChecker.check(target, text)
+            val check = linkChecker.check(url, target, (body as? MessageBody.Html)?.links.orEmpty())
             val stop =
                 when (body) {
                     is MessageBody.Html -> confirmLinks.value || check.warnings.isNotEmpty()

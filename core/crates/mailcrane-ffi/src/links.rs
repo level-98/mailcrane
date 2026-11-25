@@ -75,6 +75,19 @@ pub fn check_link(url: String, text: Option<String>) -> LinkCheck {
     }
 }
 
+/// The visible text of the link the reader tapped, from
+/// `MessageBody::Html.links`. `url` is what the web view reported; it is
+/// compared in canonical form, so a punycode or lowercased host still
+/// matches the href as the sender wrote it. `None` when no link matches.
+#[uniffi::export]
+pub fn link_text_for(url: String, links: Vec<crate::messages::LinkText>) -> Option<String> {
+    mailcrane_core::links::link_text_for(
+        &url,
+        links.iter().map(|l| (l.href.as_str(), l.text.as_str())),
+    )
+    .map(str::to_owned)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -107,5 +120,20 @@ mod tests {
         assert!(check_link("https://example.com/".into(), None)
             .warnings
             .is_empty());
+    }
+
+    #[test]
+    fn link_text_matches_the_canonical_url() {
+        let links = vec![crate::messages::LinkText {
+            href: "https://пример.рф/Path?q=a b".into(),
+            text: "пример.рф".into(),
+        }];
+        // What a web view reports for that href.
+        let tapped = "https://xn--e1afmkfd.xn--p1ai/Path?q=a%20b";
+        assert_eq!(
+            link_text_for(tapped.into(), links.clone()).as_deref(),
+            Some("пример.рф")
+        );
+        assert_eq!(link_text_for("https://example.org/".into(), links), None);
     }
 }

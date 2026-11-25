@@ -108,12 +108,45 @@ const FILE_EXTENSIONS: &[&str] = &[
     "html", "htm", "csv", "rtf",
 ];
 
+/// The text of the link the reader tapped, found by its href. The web view
+/// reports a canonical URL (lowercase host, punycode, percent-escapes), so
+/// both sides are compared in that form: the WHATWG URL serialisation, which
+/// is what Chromium produces for `http` and `https`.
+pub fn link_text_for<'a, I>(url: &str, links: I) -> Option<&'a str>
+where
+    I: IntoIterator<Item = (&'a str, &'a str)>,
+{
+    if url.len() > MAX_LINK_BYTES {
+        return None;
+    }
+    let wanted = canonical_href(url);
+    links
+        .into_iter()
+        .find(|(href, _)| href.len() <= MAX_LINK_BYTES && canonical_href(href) == wanted)
+        .map(|(_, text)| text)
+}
+
+/// `href` in canonical form when it parses, otherwise as it is.
+fn canonical_href(href: &str) -> String {
+    match Url::parse(href.trim()) {
+        Ok(u) => u.into(),
+        Err(_) => href.to_owned(),
+    }
+}
+
+/// The dots other than `.` that IDNA treats as label separators (UTS #46):
+/// ideographic, fullwidth and halfwidth full stops.
+const IDNA_DOTS: [char; 3] = ['\u{3002}', '\u{FF0E}', '\u{FF61}'];
+
 /// The site link text names, if it looks like a URL or a bare domain.
 fn text_site(text: &str) -> Option<TextSite> {
     let t = text.trim();
     if t.is_empty() || t.len() > MAX_LINK_BYTES || t.contains(char::is_whitespace) {
         return None;
     }
+    // `example\u{FF0E}com` reads as `example.com`, so treat it that way.
+    let t = t.replace(IDNA_DOTS, ".");
+    let t = t.as_str();
     let lower = t.to_lowercase();
     let candidate = if lower.starts_with("http://") || lower.starts_with("https://") {
         t.to_owned()

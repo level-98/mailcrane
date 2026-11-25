@@ -5,6 +5,7 @@ import app.mailcrane.core.InlinePart
 import app.mailcrane.core.LinkCheck
 import app.mailcrane.core.LinkChecker
 import app.mailcrane.core.LinkCleaner
+import app.mailcrane.core.LinkText
 import app.mailcrane.core.LinkWarning
 import app.mailcrane.core.MessageAction
 import app.mailcrane.core.MessageAddress
@@ -50,10 +51,10 @@ private fun messageViewModel(
 ) = MessageViewModel(core, settings, cleaner, checker, ID)
 
 private val NoWarnings =
-    LinkChecker { url, _ -> LinkCheck(url.substringAfter("://").substringBefore('/'), "", false, emptyList()) }
+    LinkChecker { _, url, _ -> LinkCheck(url.substringAfter("://").substringBefore('/'), "", false, emptyList()) }
 
 private fun warning(vararg warnings: LinkWarning) =
-    LinkChecker { _, _ -> LinkCheck("example.net", "example.net", false, warnings.toList()) }
+    LinkChecker { _, _, _ -> LinkCheck("example.net", "example.net", false, warnings.toList()) }
 
 private fun detail(
     body: MessageBody,
@@ -81,8 +82,10 @@ private fun html(
     remoteBlocked = remoteBlocked,
     trackersRemoved = 0u,
     trackers = emptyList(),
-    links = emptyList(),
+    links = HTML_LINKS,
 )
+
+private val HTML_LINKS = listOf(LinkText("https://example.net/login", "https://example.com/login"))
 
 private class FakeMessageCore(
     var downloaded: Boolean = true,
@@ -351,6 +354,24 @@ class MessageViewModelTest {
             val risky = messageViewModel(FakeMessageCore(plain = true), checker = warning(LinkWarning.UserInfo))
             risky.onLinkTapped("https://example.com@example.net/")
             assertEquals("https://example.com@example.net/", risky.linkPreview.value?.url)
+        }
+
+    @Test
+    fun theCoreGetsTheTappedUrlTheCleanedUrlAndTheBodyLinks() =
+        runTest {
+            val seen = mutableListOf<Triple<String, String, List<LinkText>>>()
+            val recording =
+                LinkChecker { tapped, target, links ->
+                    seen += Triple(tapped, target, links)
+                    LinkCheck("example.net", "example.net", false, emptyList())
+                }
+            val vm = messageViewModel(cleaner = MarkingCleaner, checker = recording)
+            ready(vm)
+            vm.onLinkTapped("https://example.net/login")
+            assertEquals(
+                listOf(Triple("https://example.net/login", "cleaned:https://example.net/login", HTML_LINKS)),
+                seen,
+            )
         }
 
     @Test

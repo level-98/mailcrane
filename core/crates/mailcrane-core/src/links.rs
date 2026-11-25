@@ -4,7 +4,7 @@
 mod check;
 mod params;
 
-pub use check::{check_link, LinkCheck, LinkWarning};
+pub use check::{check_link, link_text_for, LinkCheck, LinkWarning};
 
 /// Removes known tracking parameters (`utm_*`, `fbclid`, `gclid` and others,
 /// listed in `links/params.rs`) from an `http` or `https` link.
