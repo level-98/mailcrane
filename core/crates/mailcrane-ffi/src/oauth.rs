@@ -182,7 +182,7 @@ pub(crate) async fn complete_with(
             .ok_or(OAuthFailure::NoSuchSignIn)?;
         let tokens = core::complete(&pending, &redirect_url, &extra_roots, TIMEOUT).await?;
         let mut s = sessions();
-        s.next += 1;
+        s.next = s.next.wrapping_add(1);
         let id = format!("signin-{}", s.next);
         s.finished.insert(id.clone(), (tokens, Instant::now()));
         Ok(id)
