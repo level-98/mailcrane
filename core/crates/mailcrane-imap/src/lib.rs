@@ -47,7 +47,7 @@ pub use fetch::{
 };
 pub use idle::IdleOutcome;
 pub use parser::{parse_response, Envelope, EnvelopeAddress, FetchData, Limits};
-pub use quirks::{detect as detect_quirks, ServerQuirk};
+pub use quirks::{detect as detect_quirks, FolderCommandError, ServerQuirk};
 pub use session::{save_folders, ImapConfig, ImapFolder, ImapSecurity, Session};
 pub use store_cmds::{ChangeError, SystemFlag};
 

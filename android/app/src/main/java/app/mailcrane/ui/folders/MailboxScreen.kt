@@ -101,9 +101,15 @@ fun MailboxScreen(
             var ruleFrom by rememberSaveable { mutableStateOf<String?>(null) }
             var showDrafts by rememberSaveable { mutableStateOf(false) }
             var showOutbox by rememberSaveable { mutableStateOf(false) }
+            var showManageFolders by rememberSaveable { mutableStateOf(false) }
             var showSearch by rememberSaveable { mutableStateOf(false) }
             // An open conversation (M4-02): its thread id and title.
             var openThread by rememberSaveable { mutableStateOf<Pair<Long, String>?>(null) }
+            if (showManageFolders) {
+                BackHandler { showManageFolders = false }
+                ManageFoldersScreen(accountId = accountId, onBack = { showManageFolders = false })
+                return
+            }
             if (showOutbox) {
                 BackHandler { showOutbox = false }
                 OutboxScreen(
@@ -253,6 +259,15 @@ fun MailboxScreen(
                         closeDrawer()
                         showOutbox = true
                     },
+                    onManageFolders =
+                        if (state.canManageFolders) {
+                            {
+                                closeDrawer()
+                                showManageFolders = true
+                            }
+                        } else {
+                            null
+                        },
                     permanent = permanentDrawer,
                 )
             }

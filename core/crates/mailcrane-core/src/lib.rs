@@ -13,6 +13,7 @@ pub mod drafts;
 pub mod events;
 #[cfg(feature = "fixtures")]
 pub mod fixtures;
+pub mod folder_admin;
 pub mod links;
 pub mod notify;
 pub mod oauth;
