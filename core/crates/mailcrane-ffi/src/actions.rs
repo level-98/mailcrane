@@ -132,25 +132,43 @@ impl SyncEngine {
     }
 
     /// Carries the account's queued actions out on the server, oldest
-    /// first. Ones that fail for now are retried later with back-off (5 s up
-    /// to 10 minutes, on the next call or sync after that); ones the server
-    /// refuses for good are undone, with an `ActionFailed` event. Returns how
-    /// many actions are still queued. Blocking; waits for a running sync.
+    /// first, then uploads its changed drafts. Ones that fail for now are
+    /// retried later with back-off (5 s up to 10 minutes, on the next call or
+    /// sync after that); actions the server refuses for good are undone, with
+    /// an `ActionFailed` event. Returns how many actions and drafts are still
+    /// waiting (drafts of an account without a Drafts folder don't count:
+    /// waiting won't help them). Blocking; waits for a running sync.
     pub fn replay_actions(&self, account_id: i64) -> Result<u32, SyncFailure> {
         let account = AccountId(account_id);
-        let pending = {
+        let storage = |_| crate::sync::failed(events::SyncErrorKind::Storage);
+        let (ops, drafts) = {
             let store = self.open_store()?;
-            store
-                .count_pending_ops(account)
-                .map_err(|_| crate::sync::failed(events::SyncErrorKind::Storage))?
+            let ops = store.count_pending_ops(account).map_err(storage)?;
+            let drafts = store
+                .list_drafts(account)
+                .map_err(storage)?
+                .iter()
+                .filter(|d| d.dirty)
+                .count();
+            (ops, drafts)
         };
-        if pending == 0 {
+        if ops == 0 && drafts == 0 {
             return Ok(0);
         }
-        let report = self.with_session(account, |store, session, listener| {
-            Box::pin(async move { actions::replay(store, session, listener, account, now()).await })
+        let remaining = self.with_session(account, |store, session, listener| {
+            Box::pin(async move {
+                let replayed = actions::replay(store, session, listener, account, now()).await?;
+                let uploaded =
+                    mailcrane_core::drafts::upload_drafts(store, session, account, now()).await?;
+                let drafts_left = if uploaded.no_drafts_folder {
+                    0
+                } else {
+                    uploaded.remaining
+                };
+                Ok(replayed.remaining.saturating_add(drafts_left))
+            })
         })?;
-        Ok(u32::try_from(report.remaining).unwrap_or(u32::MAX))
+        Ok(u32::try_from(remaining).unwrap_or(u32::MAX))
     }
 }
 

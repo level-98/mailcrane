@@ -277,6 +277,14 @@ impl SyncEngine {
                     crate::actions::now(),
                 )
                 .await;
+                // Drafts too (M2-05); a failed upload is deferred, not lost.
+                let _ = mailcrane_core::drafts::upload_drafts(
+                    &store,
+                    &mut session,
+                    account,
+                    crate::actions::now(),
+                )
+                .await;
             }
             // The syncer borrows the session; end that borrow before logout.
             let result = {

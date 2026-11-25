@@ -124,7 +124,8 @@ async fn a_saved_draft_survives_closing_the_app() {
     let store = Store::open(&path).expect("store");
     let account = setup(&imap, &store).await;
     let id = save_draft(&store, account, None, &fields("Hello"), NOW).expect("saved");
-    let id2 = save_draft(&store, account, Some(id), &fields("Hello again"), NOW + 1).expect("saved");
+    let id2 =
+        save_draft(&store, account, Some(id), &fields("Hello again"), NOW + 1).expect("saved");
     assert_eq!(id, id2);
     drop(store);
 
@@ -150,7 +151,10 @@ async fn edits_leave_exactly_one_server_copy_with_the_latest_content() {
         let live = live_drafts(&imap).await;
         assert_eq!(live.len(), 1, "{quirks:?}");
         assert!(live[0].1.contains("Version three"));
-        assert!(!live[0].1.contains("half-typ"), "only valid addresses go out");
+        assert!(
+            !live[0].1.contains("half-typ"),
+            "only valid addresses go out"
+        );
         assert!(!live[0].1.to_ascii_lowercase().contains("bcc"));
         let message = imap
             .mailbox()
@@ -234,7 +238,12 @@ async fn a_version_changed_elsewhere_is_kept_as_a_second_draft() {
         .await
         .expect("appended");
     imap.mailbox()
-        .store_flag("Drafts", |uid| Some(uid) == draft.server_uid, "\\Deleted", true)
+        .store_flag(
+            "Drafts",
+            |uid| Some(uid) == draft.server_uid,
+            "\\Deleted",
+            true,
+        )
         .await;
     imap.mailbox()
         .expunge_deleted("Drafts", |uid| Some(uid) == draft.server_uid)
@@ -250,7 +259,10 @@ async fn a_version_changed_elsewhere_is_kept_as_a_second_draft() {
     assert!(live.iter().any(|(_, t)| t.contains("Mine, edited")));
     let drafts = store.list_drafts(account).expect("list");
     assert_eq!(drafts.len(), 2);
-    let conflict = drafts.iter().find(|d| d.is_conflict).expect("conflict draft");
+    let conflict = drafts
+        .iter()
+        .find(|d| d.is_conflict)
+        .expect("conflict draft");
     assert_eq!(conflict.fields.body.replace("\r\n", "\n").trim(), "Theirs");
     assert_eq!(conflict.fields.to, ["dan@example.org"]);
 
@@ -281,8 +293,13 @@ async fn a_draft_opened_from_the_drafts_folder_replaces_its_own_copy() {
     let mut session = connect(&imap).await;
     {
         let listener = Events::default();
-        let mut syncer =
-            FolderSyncer::new(&store, &mut session, &listener, account, SyncConfig::default());
+        let mut syncer = FolderSyncer::new(
+            &store,
+            &mut session,
+            &listener,
+            account,
+            SyncConfig::default(),
+        );
         syncer.sync_folder(drafts_id).await.expect("sync");
         let message = store.list_messages(drafts_id, 10, 0).expect("list")[0].id;
         assert!(matches!(
@@ -294,7 +311,11 @@ async fn a_draft_opened_from_the_drafts_folder_replaces_its_own_copy() {
     session.logout().await;
     let message = store.list_messages(drafts_id, 10, 0).expect("list")[0].id;
     let id = open_draft(&store, message, NOW).expect("opened");
-    assert_eq!(open_draft(&store, message, NOW).expect("again"), id, "same draft");
+    assert_eq!(
+        open_draft(&store, message, NOW).expect("again"),
+        id,
+        "same draft"
+    );
     let draft = store.get_draft(id).expect("read").expect("kept");
     assert_eq!(draft.message_id_header, "old1@example.org");
     assert!(draft.fields.body.contains("From another device"));
@@ -319,11 +340,7 @@ async fn without_a_drafts_folder_drafts_stay_on_the_device() {
     let report = upload(&imap, &store, account, NOW).await;
     assert!(report.no_drafts_folder);
     assert_eq!((report.uploaded, report.remaining), (0, 1));
-    assert!(imap
-        .received_commands()
-        .await
-        .iter()
-        .all(|c| c != "APPEND"));
+    assert!(imap.received_commands().await.iter().all(|c| c != "APPEND"));
 }
 
 #[tokio::test]

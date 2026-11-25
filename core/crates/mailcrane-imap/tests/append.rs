@@ -1,5 +1,8 @@
 //! `APPEND` and `UID SEARCH HEADER` against the fake server.
 
+// Lets clippy's test allowances (clippy.toml) cover the helpers too.
+#![cfg(test)]
+
 use mailcrane_imap::{AppendFlags, ImapConfig, ImapSecurity, Secret, Session};
 use mailcrane_testkit::{FakeImap, Quirk};
 use std::time::Duration;
@@ -76,10 +79,8 @@ async fn append_to_a_missing_folder_is_refused_for_good() {
         .await
         .expect("starts");
     let mut s = session(&imap).await;
-    let error = s
+    let result = s
         .append("Drafts", AppendFlags::Draft, &draft("d@example.org", "x"))
-        .await
-        .err()
-        .expect("refused");
-    assert!(!error.is_transient());
+        .await;
+    assert!(matches!(result, Err(e) if !e.is_transient()));
 }
