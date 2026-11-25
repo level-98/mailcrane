@@ -76,7 +76,7 @@ Goal: add an IMAP account and read your inbox, online and offline.
 
 ## M3 — Providers and sign-in
 
-- [ ] **M3-01** OAuth 2.0 framework with PKCE, using the system browser (AppAuth on Android; iOS sign-in is M7-09) 🔒
+- [x] **M3-01** OAuth 2.0 framework with PKCE, using the system browser (AppAuth on Android; iOS sign-in is M7-09) 🔒
 - [ ] **M3-02** Gmail: OAuth, XOAUTH2, and labels mapped to folders 🔒🧑 (needs Google app verification)
   - Start verification early and budget for the yearly CASA security assessment: other open-source clients have been shown "App blocked" while waiting. Keep the app-password IMAP route working as a fallback.
 - [ ] **M3-03** Microsoft 365 and Outlook.com: OAuth and XOAUTH2 🔒🧑
