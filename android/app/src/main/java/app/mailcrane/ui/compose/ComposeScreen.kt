@@ -114,6 +114,13 @@ fun ComposeScreen(
                 onAllowContacts = { askPermission.launch(Manifest.permission.READ_CONTACTS) },
                 onDeclineContacts = viewModel::contactsAnswered,
                 onAttach = { pickFiles.launch(arrayOf("*/*")) },
+                rich =
+                    RichTextActions(
+                        onFormat = viewModel::format,
+                        onLink = viewModel::link,
+                        onList = viewModel::list,
+                        onPlainTextOnly = viewModel::setPlainTextOnly,
+                    ),
                 onRemoveAttachment = viewModel::removeAttachment,
             ),
         modifier = modifier,
@@ -139,6 +146,7 @@ data class ComposeActions(
     val onDismissError: () -> Unit = {},
     val onPickSuggestion: (RecipientField, RecipientSuggestion) -> Unit = { _, _ -> },
     val onAttach: () -> Unit = {},
+    val rich: RichTextActions = RichTextActions(),
     val onRemoveAttachment: (Int) -> Unit = {},
     val onAllowContacts: () -> Unit = {},
     val onDeclineContacts: () -> Unit = {},
@@ -224,15 +232,12 @@ fun ComposeContent(
             )
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
             ComposeAttachments(state, actions.onRemoveAttachment)
-            TextField(
-                value = state.body,
-                onValueChange = actions.onBodyChange,
+            RichBodyField(
+                state = state,
+                onBodyChange = actions.onBodyChange,
+                actions = actions.rich,
                 enabled = editable,
-                minLines = 8,
-                placeholder = { Text(stringResource(R.string.compose_body)) },
-                keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
                 colors = plainFieldColors(),
-                modifier = Modifier.fillMaxWidth(),
             )
         }
     }
