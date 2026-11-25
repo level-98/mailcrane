@@ -190,13 +190,15 @@ struct LiveThread {
 pub struct SyncEngine {
     db_path: String,
     pub(crate) listener: Arc<dyn CoreEventListener>,
-    config: SyncConfig,
+    pub(crate) config: SyncConfig,
     live_config: LiveConfig,
     /// One lock per account, serialising that account's calls. Shared
     /// with live-update threads, which start background downloads.
     busy: Arc<Mutex<HashMap<i64, Arc<AccountGate>>>>,
     /// Background body downloads (M4-25).
     pub(crate) prefetch: Arc<Prefetcher>,
+    /// One reused connection per account for opens and actions (#294).
+    pub(crate) pool: Arc<ConnectionPool>,
     /// Live updates, by account id.
     live: Mutex<HashMap<i64, LiveThread>>,
     /// The platform's resolver, for the `_sieve._tcp` SRV record (M4-23).
@@ -217,6 +219,7 @@ impl SyncEngine {
             live_config: LiveConfig::default(),
             busy: Arc::new(Mutex::new(HashMap::new())),
             prefetch: Prefetcher::new(),
+            pool: ConnectionPool::new(),
             live: Mutex::new(HashMap::new()),
             dns: Mutex::new(None),
             #[cfg(test)]
@@ -300,8 +303,17 @@ impl SyncEngine {
         }) {
             return r;
         }
-        self.run(folder, |syncer| {
-            Box::pin(async move { syncer.fetch_body(MessageId(message_id)).await })
+        // On the account's reused connection, without the sync's writer
+        // lock (issue #294): opening never waits for a sync. Its only write
+        // is the body's own short transaction, which IMMEDIATE transactions
+        // with busy retries (#301) serialise with the sync's batches.
+        let config = self.config;
+        self.pooled(account, Retry::Idempotent, |store, session, listener| {
+            Box::pin(async move {
+                FolderSyncer::new(store, session, listener, account, config)
+                    .fetch_body(MessageId(message_id))
+                    .await
+            })
         })
     }
 
@@ -410,6 +422,7 @@ impl SyncEngine {
             inner: ListenerAdapter(self.listener.clone()),
             prefetcher: self.prefetch.clone(),
             locks: self.busy.clone(),
+            pool: self.pool.clone(),
             db_path: self.db_path.clone(),
             extra_root_cert: self.extra_root_cert(),
             account,
@@ -579,6 +592,8 @@ impl Drop for SyncEngine {
         self.live.lock().unwrap_or_else(|p| p.into_inner()).clear();
         // Background downloads stop after their current batch.
         self.prefetch.stop();
+        // Reused connections are dropped with the engine.
+        self.pool.shut_down();
     }
 }
 
@@ -640,6 +655,7 @@ impl SyncEngine {
             listener: self.listener.clone(),
             extra_root_cert: self.extra_root_cert(),
             gate: self.account_lock(account),
+            pool: self.pool.clone(),
             account,
             folder,
             sync_config: self.config,
@@ -778,28 +794,54 @@ impl SyncEngine {
         })
     }
 
-    /// Connects for `account` and runs `job` with the store, session and
-    /// listener. Serialised with the other calls.
+    /// Runs `job` with the store, the account's reused connection and the
+    /// listener, holding the account's writer lock: for work that changes
+    /// many rows (action replay, drafts, sent copies, snoozes, outbox
+    /// recovery), so it never writes beside a sync. Never retried on a new
+    /// connection: the jobs change things on the server and defer or undo
+    /// what failed themselves.
     pub(crate) fn with_session<T>(
         &self,
         account: AccountId,
-        job: impl for<'a> FnOnce(&'a Store, &'a mut Session, &'a ListenerAdapter) -> SyncFuture<'a, T>,
+        job: impl for<'a> FnOnce(&'a Store, &'a mut Session, &'a dyn EventListener) -> SyncFuture<'a, T>,
     ) -> Result<T, SyncFailure> {
         let lock = self.account_lock(account);
         let _guard = lock.lock();
-        let store = self.open_store()?;
-        let listener = ListenerAdapter(self.listener.clone());
-        let report = |kind| self.report(account, kind);
-        let runtime = runtime().map_err(report)?;
-        runtime.block_on(async {
-            let mut session = self.connect(&store, account).await.map_err(report)?;
-            let result = job(&store, &mut session, &listener).await;
-            if let Err(e) = &result {
-                log_failure("session job", e, session.last_command());
+        let mut job = Some(job);
+        self.pooled(account, Retry::Never, move |store, session, listener| {
+            match job.take() {
+                Some(job) => job(store, session, listener),
+                // Unreachable with `Retry::Never`; fail rather than panic.
+                None => Box::pin(async { Err(CoreSyncError::Imap(ImapError::ConnectionClosed)) }),
             }
-            session.logout().await;
-            result.map_err(SyncFailure::from)
         })
+    }
+
+    /// Runs `job` on the account's reused connection (issue #294) with the
+    /// store and a listener. `SyncError` events from inside the job are held
+    /// back, since a failed attempt may be retried; the final failure is
+    /// reported once. Takes no writer lock itself.
+    pub(crate) fn pooled<T>(
+        &self,
+        account: AccountId,
+        retry: Retry,
+        mut job: impl for<'a> FnMut(
+            &'a Store,
+            &'a mut Session,
+            &'a dyn EventListener,
+        ) -> SyncFuture<'a, T>,
+    ) -> Result<T, SyncFailure> {
+        let ctx = (
+            self.open_store()?,
+            HoldErrors(ListenerAdapter(self.listener.clone())),
+        );
+        let extra_root_cert = self.extra_root_cert();
+        let login = || imap_login(&ctx.0, account, extra_root_cert.as_deref());
+        self.pool
+            .run(account, login, retry, &ctx, |session, (store, listener)| {
+                job(store, session, listener)
+            })
+            .map_err(|e| self.report(account, e.kind()))
     }
 
     /// Sends a `SyncError` event and returns the matching failure.
@@ -944,11 +986,29 @@ fn sieve_login(
 }
 
 mod jmap;
+mod pool;
 mod prefetch;
+
+pub use pool::CloseReason;
+pub(crate) use pool::{ConnectionPool, Retry};
+
+/// Passes events on, except `SyncError`: inside a pooled job a failure may
+/// still be retried, and the final one is reported by the caller.
+pub(crate) struct HoldErrors(pub(crate) ListenerAdapter);
+
+impl EventListener for HoldErrors {
+    fn on_event(&self, event: events::CoreEvent) {
+        if !matches!(event, events::CoreEvent::SyncError { .. }) {
+            self.0.on_event(event);
+        }
+    }
+}
 
 pub(crate) use prefetch::{gate_for, AccountGate, PrefetchJob, PrefetchOnChange, Prefetcher};
 pub use prefetch::{BackgroundDownload, DeviceConditions};
 
+#[cfg(test)]
+mod pool_tests;
 #[cfg(test)]
 mod prefetch_tests;
 #[cfg(test)]

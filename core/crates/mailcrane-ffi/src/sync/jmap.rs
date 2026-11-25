@@ -66,7 +66,7 @@ impl SyncEngine {
     }
 
     /// The account a folder belongs to.
-    pub(super) fn folder_account(&self, folder: FolderId) -> Result<AccountId, SyncFailure> {
+    pub(crate) fn folder_account(&self, folder: FolderId) -> Result<AccountId, SyncFailure> {
         Ok(self
             .open_store()?
             .get_folder(folder)

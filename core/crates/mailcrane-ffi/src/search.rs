@@ -48,9 +48,26 @@ impl SyncEngine {
     /// many were stored; then call `search_messages` again. Blocking.
     pub fn search_server(&self, folder_id: i64, query: String) -> Result<u32, SyncFailure> {
         let parsed = parse_query(&query);
-        let stored = self.run(FolderId(folder_id), move |syncer| {
-            Box::pin(async move { syncer.search_server(FolderId(folder_id), &parsed).await })
-        })?;
+        let account = self.folder_account(FolderId(folder_id))?;
+        // On the reused connection (#294). It stores up to 200 headers, so
+        // it holds the writer lock like a sync does.
+        let lock = self.account_lock(account);
+        let _guard = lock.lock();
+        let config = self.config;
+        let stored = self.pooled(
+            account,
+            crate::sync::Retry::Idempotent,
+            |store, session, listener| {
+                let parsed = parsed.clone();
+                Box::pin(async move {
+                    mailcrane_core::sync::FolderSyncer::new(
+                        store, session, listener, account, config,
+                    )
+                    .search_server(FolderId(folder_id), &parsed)
+                    .await
+                })
+            },
+        )?;
         Ok(u32::try_from(stored).unwrap_or(u32::MAX))
     }
 }
