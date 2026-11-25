@@ -82,3 +82,22 @@ fn editing_or_enabling_the_rule_clears_the_note() -> R {
     assert_eq!(store.get_rule(id)?.ok_or("rule")?.missing_folder, None);
     Ok(())
 }
+
+#[test]
+fn a_rule_left_without_actions_cant_be_turned_on() -> R {
+    let store = Store::open_in_memory()?;
+    let (_, folder, id) = setup(&store)?;
+    store.delete_folder(folder)?;
+    // Its only action went with the folder: turning it on is refused.
+    assert!(matches!(
+        store.set_rule_enabled(id, true),
+        Err(StoreError::Invalid { field: "actions" })
+    ));
+    let r = store.get_rule(id)?.ok_or("rule")?;
+    assert!(!r.rule.enabled);
+    assert_eq!(r.missing_folder.as_deref(), Some("Receipts"));
+    // Turning it off, or anything for a rule that doesn't exist, is fine.
+    store.set_rule_enabled(id, false)?;
+    store.set_rule_enabled(RuleId(999), true)?;
+    Ok(())
+}

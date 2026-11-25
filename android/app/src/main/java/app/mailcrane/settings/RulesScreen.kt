@@ -284,10 +284,16 @@ class RulesViewModel
             }
         }
 
-        private fun act(block: suspend () -> Unit) {
+        /** Runs [block], then re-reads the rules. [refused] is what to say when the core says `Invalid`. */
+        private fun act(
+            refused: Int = R.string.rules_failed,
+            block: suspend () -> Unit,
+        ) {
             viewModelScope.launch {
                 try {
                     block()
+                } catch (_: RulesFailure.Invalid) {
+                    _results.send(refused to -1)
                 } catch (_: RulesFailure) {
                     _results.send(R.string.rules_failed to -1)
                 }
@@ -307,7 +313,7 @@ class RulesViewModel
         fun setEnabled(
             id: Long,
             enabled: Boolean,
-        ) = act { core.setRuleEnabled(id, enabled) }
+        ) = act(refused = R.string.rules_enable_no_actions) { core.setRuleEnabled(id, enabled) }
 
         /** Moves a rule one place up (-1) or down (+1). */
         fun move(
@@ -507,7 +513,13 @@ internal fun RulesList(
                             TextButton(onClick = { onMove(rule.id, 1) }, enabled = index < state.rules.lastIndex) {
                                 Text("↓")
                             }
-                            Switch(checked = rule.rule.enabled, onCheckedChange = { onEnabled(rule.id, it) })
+                            Switch(
+                                checked = rule.rule.enabled,
+                                onCheckedChange = { onEnabled(rule.id, it) },
+                                // A rule with nothing left to do stays off until it's edited (#323).
+                                enabled = rule.rule.enabled || rule.rule.actions.isNotEmpty(),
+                                modifier = Modifier.testTag("rule-switch-${rule.id}"),
+                            )
                         }
                     },
                     modifier = Modifier.clickable { onOpen(rule) }.testTag("rule-${rule.id}"),

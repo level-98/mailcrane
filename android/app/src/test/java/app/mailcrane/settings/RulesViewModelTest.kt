@@ -27,6 +27,10 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
+import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.flow.first
+import app.mailcrane.core.RulesFailure
+import app.mailcrane.R
 
 private fun info(id: Long) =
     RuleInfo(
@@ -57,10 +61,15 @@ private class FakeRules : RulesCore {
 
     override suspend fun deleteRule(id: Long) = Unit
 
+    /** Thrown by [setRuleEnabled], as the core refuses a rule with no actions (#323). */
+    var enableFailure: RulesFailure? = null
+
     override suspend fun setRuleEnabled(
         id: Long,
         enabled: Boolean,
-    ) = Unit
+    ) {
+        enableFailure?.let { throw it }
+    }
 
     override suspend fun moveRule(
         id: Long,
@@ -136,6 +145,15 @@ class RulesViewModelTest {
 
     @After
     fun tearDown() = Dispatchers.resetMain()
+
+    @Test
+    fun turningOnARuleWithNothingToDoIsExplained() =
+        runTest {
+            val core = FakeRules().apply { enableFailure = RulesFailure.Invalid() }
+            val vm = RulesViewModel(core, FakeMailbox(), 7)
+            vm.setEnabled(1, true)
+            assertEquals(R.string.rules_enable_no_actions, vm.results.first().first)
+        }
 
     @Test
     fun withoutServerRulesNothingIsMarked() {

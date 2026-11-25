@@ -191,7 +191,24 @@ impl Store {
         Ok(())
     }
 
+    /// Turns a rule on or off. A rule with no actions left (its only move
+    /// went with a removed folder, #323) can't be turned on: that's refused
+    /// with `Invalid` and the rule stays off, keeping its note.
     pub fn set_rule_enabled(&self, id: RuleId, enabled: bool) -> Result<(), StoreError> {
+        if enabled {
+            let actions: Option<i64> = self
+                .conn
+                .query_row(
+                    "SELECT (SELECT COUNT(*) FROM rule_actions WHERE rule_id = r.id) \
+                     FROM rules r WHERE r.id = ?1",
+                    params![id.0],
+                    |r| r.get(0),
+                )
+                .optional()?;
+            if actions == Some(0) {
+                return Err(StoreError::Invalid { field: "actions" });
+            }
+        }
         self.conn.execute(
             "UPDATE rules SET enabled = ?2, \
              missing_folder = CASE WHEN ?2 THEN NULL ELSE missing_folder END WHERE id = ?1",

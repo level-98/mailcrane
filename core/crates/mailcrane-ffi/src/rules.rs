@@ -231,7 +231,11 @@ pub fn delete_rule(db_path: String, id: i64) -> Result<(), RulesFailure> {
 pub fn set_rule_enabled(db_path: String, id: i64, enabled: bool) -> Result<(), RulesFailure> {
     open(&db_path)?
         .set_rule_enabled(RuleId(id), enabled)
-        .map_err(|_| RulesFailure::Storage)
+        .map_err(|e| match e {
+            // A rule with no actions can't be turned on (#323).
+            mailcrane_store::StoreError::Invalid { .. } => RulesFailure::Invalid,
+            _ => RulesFailure::Storage,
+        })
 }
 
 /// Moves a rule to `index` in the list (0 = runs first).
