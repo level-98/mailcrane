@@ -135,6 +135,31 @@ pub struct ComposeDraft {
     /// For a reply: the thread's Message-IDs. Set by `prepare_reply`.
     #[uniffi(default = [])]
     pub references: Vec<String>,
+    /// Files to attach (M2-04).
+    #[uniffi(default = [])]
+    pub attachments: Vec<ComposeAttachment>,
+    /// For a forward: the original message, whose attachments go along.
+    /// Set by `prepare_reply`; keep it when sending.
+    #[uniffi(default = None)]
+    pub forward_attachments_of: Option<i64>,
+}
+
+/// A file attached in compose.
+#[derive(Clone, PartialEq, Eq, uniffi::Record)]
+pub struct ComposeAttachment {
+    pub filename: String,
+    /// `type/subtype`; anything malformed is sent as
+    /// `application/octet-stream`.
+    pub mime_type: String,
+    pub bytes: Vec<u8>,
+}
+
+impl std::fmt::Debug for ComposeAttachment {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ComposeAttachment")
+            .field("bytes", &self.bytes.len())
+            .finish_non_exhaustive()
+    }
 }
 
 impl From<ComposeDraft> for core::ComposeDraft {
@@ -148,6 +173,16 @@ impl From<ComposeDraft> for core::ComposeDraft {
             body_text: d.body_text,
             in_reply_to: d.in_reply_to,
             references: d.references,
+            attachments: d
+                .attachments
+                .into_iter()
+                .map(|a| mailcrane_mime::OutgoingAttachment {
+                    filename: a.filename,
+                    mime_type: a.mime_type,
+                    bytes: a.bytes,
+                })
+                .collect(),
+            forward_attachments_of: d.forward_attachments_of.map(mailcrane_store::MessageId),
         }
     }
 }
@@ -163,6 +198,16 @@ impl From<core::ComposeDraft> for ComposeDraft {
             body_text: d.body_text,
             in_reply_to: d.in_reply_to,
             references: d.references,
+            attachments: d
+                .attachments
+                .into_iter()
+                .map(|a| ComposeAttachment {
+                    filename: a.filename,
+                    mime_type: a.mime_type,
+                    bytes: a.bytes,
+                })
+                .collect(),
+            forward_attachments_of: d.forward_attachments_of.map(|m| m.0),
         }
     }
 }
@@ -409,6 +454,8 @@ mod tests {
             body_text: "Hello".into(),
             in_reply_to: None,
             references: vec![],
+            attachments: Vec::new(),
+            forward_attachments_of: None,
         }
     }
 

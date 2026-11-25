@@ -82,14 +82,24 @@ pub fn prepare_reply(
         message_id: header.details.message_id_header.clone(),
         ..ParsedMessage::default()
     });
-    Ok(draft_for(
+    let mut draft = draft_for(
         &parsed,
         kind,
         quote_header,
         &account.details.email,
         folder.details.account_id,
         header.details.date,
-    ))
+    );
+    // A forward takes the original's attachments along (M2-04); they are
+    // read from its stored body when sending.
+    let has_attachments = parsed
+        .attachments
+        .iter()
+        .any(|a| a.disposition == mailcrane_mime::Disposition::Attachment);
+    if kind == ReplyKind::Forward && has_attachments {
+        draft.forward_attachments_of = Some(message);
+    }
+    Ok(draft)
 }
 
 /// The draft for `original`, sent from `own_email`. Pure, for tests.
@@ -119,7 +129,6 @@ fn draft_for(
             forwarded(original, text, quote_header, stored_date),
         ),
     };
-    // Forwarded attachments come with M2-04 (#36).
     ComposeDraft {
         account_id,
         to,
@@ -129,6 +138,8 @@ fn draft_for(
         body_text,
         in_reply_to,
         references,
+        attachments: Vec::new(),
+        forward_attachments_of: None,
     }
 }
 
