@@ -1034,6 +1034,7 @@ dependencies = [
  "mailcrane-mime",
  "mailcrane-store",
  "mailcrane-testkit",
+ "rusqlite",
  "rustls-platform-verifier",
  "tempfile",
  "thiserror",
