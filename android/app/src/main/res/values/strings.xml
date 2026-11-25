@@ -228,4 +228,15 @@
     <string name="settings_save_sent_on">On</string>
     <string name="settings_save_sent_off">Off</string>
     <string name="outbox_not_saved">Sent, but not saved to your Sent folder</string>
+
+    <!-- Undo send (M4-08) -->
+    <string name="settings_undo_send_header">Undo send</string>
+    <string name="settings_undo_send_off">Off</string>
+    <plurals name="settings_undo_send_seconds">
+        <item quantity="one">%1$d second</item>
+        <item quantity="other">%1$d seconds</item>
+    </plurals>
+    <string name="undo_send_sending">Sending…</string>
+    <string name="undo_send_undo">Undo</string>
+    <string name="undo_send_too_late">Already sent</string>
 </resources>

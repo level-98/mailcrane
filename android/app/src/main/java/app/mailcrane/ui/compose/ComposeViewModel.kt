@@ -11,6 +11,7 @@ import app.mailcrane.core.RecipientField
 import app.mailcrane.core.RecipientProblem
 import app.mailcrane.core.ReplyKind
 import app.mailcrane.core.SendFailure
+import app.mailcrane.settings.AppSettings
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
@@ -18,6 +19,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import javax.inject.Inject
@@ -88,6 +90,12 @@ sealed interface ComposeResult {
 
     /** Not sent yet: in the outbox, sent when the network or server is back. */
     data object Queued : ComposeResult
+
+    /** Waiting [seconds] before it goes out, so it can still be taken back (undo send). */
+    data class Undoable(
+        val outboxId: Long,
+        val seconds: Int,
+    ) : ComposeResult
 }
 
 /** Everything the compose screen shows. Holds all typed content, so nothing is lost on errors. */
@@ -144,6 +152,7 @@ class ComposeViewModel
     @Inject
     constructor(
         private val core: ComposeCore,
+        private val settings: AppSettings,
     ) : ViewModel() {
         private val _state = MutableStateFlow(ComposeUiState())
         val state: StateFlow<ComposeUiState> = _state.asStateFlow()
@@ -417,6 +426,11 @@ class ComposeViewModel
                     references = committed.references,
                 )
             viewModelScope.launch {
+                val delay = settings.undoSendSeconds.first()
+                if (delay > 0) {
+                    sendLater(draft, delay, committed.draftId)
+                    return@launch
+                }
                 val outcome =
                     try {
                         Result.success(core.send(draft))
@@ -437,6 +451,23 @@ class ComposeViewModel
                         onFailure = { e -> s.withFailure(e) },
                     )
                 }
+            }
+        }
+
+        /** Undo send: queues the message for [delay] seconds and closes; the screen offers Undo meanwhile. */
+        private suspend fun sendLater(
+            draft: ComposeDraft,
+            delay: Int,
+            draftId: Long?,
+        ) {
+            try {
+                val id = core.enqueueWithDelay(draft, delay)
+                draftId?.let { deleteQuietly(it) }
+                _state.update { it.copy(sending = false, result = ComposeResult.Undoable(id, delay)) }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                _state.update { it.withFailure(e) }
             }
         }
 

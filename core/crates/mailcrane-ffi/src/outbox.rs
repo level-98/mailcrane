@@ -160,6 +160,45 @@ pub(crate) async fn send_via_outbox_with(
     }
 }
 
+/// Undo send (M4-08): validates and queues the draft to go out after
+/// `delay_secs` seconds (0: at once, for the background sender). Returns the
+/// outbox id for `cancel_pending`. Invalid drafts fail here, as with Send.
+#[uniffi::export]
+pub fn enqueue_with_delay(
+    db_path: String,
+    draft: ComposeDraft,
+    delay_secs: u32,
+) -> Result<i64, SendFailure> {
+    let store = Store::open(&db_path).map_err(|_| SendFailure::Storage)?;
+    let draft: core::ComposeDraft = draft.into();
+    let now = now();
+    let not_before = now.saturating_add(i64::from(delay_secs));
+    Ok(outbox::enqueue(&store, &draft, not_before, now)?.0)
+}
+
+/// Undo send: the draft back, if the message hasn't started sending; then
+/// it is no longer in the outbox. `None` means it's too late ("Already
+/// sent").
+#[uniffi::export]
+pub fn cancel_pending(
+    db_path: String,
+    outbox_id: i64,
+) -> Result<Option<ComposeDraft>, OutboxFailure> {
+    let store = open(&db_path)?;
+    let draft =
+        outbox::cancel_pending(&store, OutboxId(outbox_id)).map_err(|_| OutboxFailure::Storage)?;
+    Ok(draft.map(|d| ComposeDraft {
+        account_id: d.account_id.0,
+        to: d.to,
+        cc: d.cc,
+        bcc: d.bcc,
+        subject: d.subject,
+        body_text: d.body_text,
+        in_reply_to: d.in_reply_to,
+        references: d.references,
+    }))
+}
+
 /// What the background sender should do next.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct OutboxStatus {

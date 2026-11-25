@@ -6,6 +6,7 @@ import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.emptyPreferences
+import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import dagger.Module
 import dagger.Provides
@@ -27,7 +28,18 @@ interface AppSettings {
     val cleanLinks: Flow<Boolean>
 
     suspend fun setCleanLinks(enabled: Boolean)
+
+    /** "Undo send": seconds a sent message waits before going out (0: off). One of [UNDO_SEND_CHOICES]. */
+    val undoSendSeconds: Flow<Int>
+
+    suspend fun setUndoSendSeconds(seconds: Int)
 }
+
+/** The "Undo send" delays offered, in seconds; 0 is off. */
+val UNDO_SEND_CHOICES = listOf(0, 5, 10, 20, 30)
+
+/** The default "Undo send" delay. */
+const val DEFAULT_UNDO_SEND_SECONDS = 10
 
 private val Context.settingsDataStore: DataStore<Preferences> by preferencesDataStore(name = "settings")
 
@@ -45,8 +57,18 @@ class DataStoreAppSettings(
         dataStore.edit { it[CLEAN_LINKS] = enabled }
     }
 
+    // A stored value that isn't one of the choices (an old or edited file) means the default.
+    override val undoSendSeconds: Flow<Int> =
+        prefs.map { p -> p[UNDO_SEND]?.takeIf { it in UNDO_SEND_CHOICES } ?: DEFAULT_UNDO_SEND_SECONDS }
+
+    override suspend fun setUndoSendSeconds(seconds: Int) {
+        if (seconds !in UNDO_SEND_CHOICES) return
+        dataStore.edit { it[UNDO_SEND] = seconds }
+    }
+
     private companion object {
         val CLEAN_LINKS = booleanPreferencesKey("clean_links")
+        val UNDO_SEND = intPreferencesKey("undo_send_seconds")
     }
 }
 
