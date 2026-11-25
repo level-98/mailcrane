@@ -23,6 +23,7 @@ pub(crate) const MIGRATIONS: &[&str] = &[
     include_str!("../migrations/0016_folder_selectable.sql"),
     include_str!("../migrations/0017_local_accounts.sql"),
     include_str!("../migrations/0018_server_rules.sql"),
+    include_str!("../migrations/0020_rules_missing_folder.sql"),
 ];
 
 fn user_version(conn: &Connection) -> Result<i64, StoreError> {
@@ -140,7 +141,7 @@ mod tests {
         }
 
         let store = crate::Store::open(&path)?;
-        assert_eq!(store.schema_version()?, 18);
+        assert_eq!(store.schema_version()?, i64::try_from(MIGRATIONS.len())?);
         let accounts = store.list_accounts()?;
         assert_eq!(accounts.len(), 2);
         let remote = accounts.first().ok_or("account")?.id;

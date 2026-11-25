@@ -80,6 +80,11 @@ pub struct RuleInput {
 pub struct RuleInfo {
     pub id: i64,
     pub rule: RuleInput,
+    /// The app turned this rule off because a folder it moved mail to was
+    /// removed (#323): that folder's name, to explain why. Cleared when the
+    /// rule is saved or turned back on.
+    #[uniffi(default = None)]
+    pub missing_folder: Option<String>,
 }
 
 impl From<&RuleConditionInfo> for RuleCondition {
@@ -192,6 +197,7 @@ pub fn list_rules(db_path: String) -> Result<Vec<RuleInfo>, RulesFailure> {
                     .map(RuleActionInfo::from)
                     .collect(),
             },
+            missing_folder: r.missing_folder.map(|n| crate::messages::one_line(&n)),
         })
         .collect())
 }

@@ -384,6 +384,7 @@
     <string name="rules_explain_server">Rules marked “On the server” run on your mail server, even while this phone is off. The others run on this device. All run in this order on new mail in your inbox.</string>
     <string name="rules_on_server">On the server</string>
     <string name="rules_on_device">On this device</string>
+    <string name="rules_missing_folder">Turned off: the folder “%1$s” it moved mail to was removed. Edit the rule to choose another.</string>
     <string name="rules_other_script">Your server already runs another filter, “%1$s”, so these rules run on this device.</string>
     <string name="rules_switch">Use on server</string>
     <string name="rules_switch_pending">Switching to these rules on the server at the next sync.</string>

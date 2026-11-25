@@ -59,6 +59,10 @@ pub struct Rule {
     pub id: RuleId,
     pub position: u32,
     pub rule: NewRule,
+    /// Set when the app turned the rule off because a folder it moved mail
+    /// to was removed (#323): that folder's name. Cleared when the rule is
+    /// edited or turned back on.
+    pub missing_folder: Option<String>,
 }
 
 fn condition_parts(c: &RuleCondition) -> (&'static str, String) {
@@ -163,7 +167,7 @@ impl Store {
         let tx = self.write_tx()?;
         let n = tx.execute(
             "UPDATE rules SET account_id = ?2, name = ?3, enabled = ?4, match_all = ?5, \
-             stop_processing = ?6 WHERE id = ?1",
+             stop_processing = ?6, missing_folder = NULL WHERE id = ?1",
             params![
                 id.0,
                 rule.account_id.map(|a| a.0),
@@ -189,7 +193,8 @@ impl Store {
 
     pub fn set_rule_enabled(&self, id: RuleId, enabled: bool) -> Result<(), StoreError> {
         self.conn.execute(
-            "UPDATE rules SET enabled = ?2 WHERE id = ?1",
+            "UPDATE rules SET enabled = ?2, \
+             missing_folder = CASE WHEN ?2 THEN NULL ELSE missing_folder END WHERE id = ?1",
             params![id.0, enabled],
         )?;
         Ok(())
@@ -237,7 +242,8 @@ impl Store {
         filter_account: bool,
     ) -> Result<Vec<Rule>, StoreError> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, account_id, name, position, enabled, match_all, stop_processing FROM rules \
+            "SELECT id, account_id, name, position, enabled, match_all, stop_processing, \
+             missing_folder FROM rules \
              WHERE (?1 IS NULL OR id = ?1) AND (?3 = 0 OR account_id IS NULL OR account_id = ?2) \
              ORDER BY position, id",
         )?;
@@ -253,6 +259,7 @@ impl Store {
                         r.get::<_, bool>(4)?,
                         r.get::<_, bool>(5)?,
                         r.get::<_, bool>(6)?,
+                        r.get::<_, Option<String>>(7)?,
                     ))
                 },
             )?
@@ -264,7 +271,7 @@ impl Store {
             "SELECT kind, folder_id FROM rule_actions WHERE rule_id = ?1 ORDER BY position",
         )?;
         let mut out = Vec::with_capacity(heads.len());
-        for (rid, acc, name, position, enabled, match_all, stop) in heads {
+        for (rid, acc, name, position, enabled, match_all, stop, missing) in heads {
             let conditions = conds
                 .query_map(params![rid], |r| {
                     Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
@@ -293,6 +300,7 @@ impl Store {
                     conditions,
                     actions,
                 },
+                missing_folder: missing,
             });
         }
         Ok(out)

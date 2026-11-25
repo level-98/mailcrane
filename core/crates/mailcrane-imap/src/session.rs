@@ -364,20 +364,82 @@ impl Session {
     }
 }
 
+/// What [`save_folder_list`] did.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SavedFolders {
+    /// The ids of the listed folders, in the order they were listed.
+    pub ids: Vec<FolderId>,
+    /// Folders the server no longer has, now removed with their messages.
+    pub removed: Vec<FolderId>,
+}
+
 /// Saves listed folders to the store in one transaction, keyed by their
 /// raw names. Sync state already stored (UIDVALIDITY, UIDNEXT,
 /// HIGHESTMODSEQ, subscription) is kept. Returns the folder ids in the same
-/// order as `folders`. On error nothing is saved.
+/// order as `folders`. On error nothing is saved. Folders the server no
+/// longer lists are removed (see [`save_folder_list`]).
 pub fn save_folders(
     store: &Store,
     account: AccountId,
     folders: &[ImapFolder],
 ) -> Result<Vec<FolderId>, ImapError> {
-    let existing: HashMap<String, NewFolder> = store
-        .list_folders(account)?
-        .into_iter()
-        .map(|f| (f.details.remote_name.clone(), f.details))
+    Ok(save_folder_list(store, account, folders)?.ids)
+}
+
+/// [`save_folders`], also saying which folders were removed (#323).
+///
+/// `folders` must be a complete, successful `LIST`. Stored folders it
+/// doesn't contain are gone from the server (deleted or renamed by another
+/// client) and are removed with their messages and queued changes; rules
+/// that moved mail to them are turned off with a note. Two exceptions: a
+/// standard folder (a role from SPECIAL-USE or its name) that is gone under
+/// its old name but whose role now belongs to a newly listed folder is
+/// renamed to it instead, keeping its row; and the Inbox is never removed.
+/// An empty list removes nothing: a server always has an Inbox, so an empty
+/// answer can't be trusted.
+pub fn save_folder_list(
+    store: &Store,
+    account: AccountId,
+    folders: &[ImapFolder],
+) -> Result<SavedFolders, ImapError> {
+    let stored = store.list_folders(account)?;
+    let listed: std::collections::HashSet<&str> =
+        folders.iter().map(|f| f.raw_name.as_str()).collect();
+    let mut existing: HashMap<String, NewFolder> = stored
+        .iter()
+        .map(|f| (f.details.remote_name.clone(), f.details.clone()))
         .collect();
+    let gone: Vec<&mailcrane_store::Folder> = if folders.is_empty() {
+        Vec::new()
+    } else {
+        stored
+            .iter()
+            .filter(|f| !listed.contains(f.details.remote_name.as_str()))
+            .filter(|f| !f.details.remote_name.eq_ignore_ascii_case("INBOX"))
+            .collect()
+    };
+    // A standard folder gone under its old name, whose role a newly listed
+    // folder now has: the same folder, renamed elsewhere.
+    let mut renames = Vec::new();
+    let mut removed = Vec::new();
+    for f in gone {
+        let found = f.details.role.and_then(|role| {
+            folders.iter().find(|l| {
+                l.role == Some(role)
+                    && !existing.contains_key(&l.raw_name)
+                    && !renames.iter().any(|(_, r, _): &(FolderId, String, String)| *r == l.raw_name)
+            })
+        });
+        match found {
+            Some(l) => {
+                if let Some(old) = existing.remove(&f.details.remote_name) {
+                    existing.insert(l.raw_name.clone(), old);
+                }
+                renames.push((f.id, l.raw_name.clone(), l.name.clone()));
+            }
+            None => removed.push(f.id),
+        }
+    }
     let rows: Vec<NewFolder> = folders
         .iter()
         .map(|f| {
@@ -399,7 +461,8 @@ pub fn save_folders(
             }
         })
         .collect();
-    Ok(store.upsert_folders(&rows)?)
+    let ids = store.apply_folder_list(&renames, &rows, &removed)?;
+    Ok(SavedFolders { ids, removed })
 }
 
 /// A fixed label for a command, safe to log: the command name, and for `UID`

@@ -486,6 +486,14 @@ internal fun RulesList(
                         val n = rule.rule.conditions.size
                         Column {
                             Text(pluralStringResource(R.plurals.rules_summary, n, n))
+                            // Turned off because its folder was removed (#323).
+                            rule.missingFolder?.let { folder ->
+                                Text(
+                                    text = stringResource(R.string.rules_missing_folder, folder),
+                                    color = MaterialTheme.colorScheme.error,
+                                    modifier = Modifier.testTag("rule-missing-folder-${rule.id}"),
+                                )
+                            }
                             when (state.locations[rule.id]) {
                                 RuleRunsOn.SERVER -> Text(stringResource(R.string.rules_on_server))
                                 RuleRunsOn.DEVICE -> Text(stringResource(R.string.rules_on_device))
