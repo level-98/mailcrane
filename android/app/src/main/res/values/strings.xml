@@ -188,6 +188,9 @@
     <string name="settings_hide_outside">Hide message content outside the app</string>
     <string name="settings_hide_outside_summary">Widgets show only how many messages are unread, not who sent them or their subjects</string>
 
+    <!-- Tablet layouts (M4-13) -->
+    <string name="no_message_selected">Choose a message to read it here</string>
+
     <!-- Rich-text compose (M2-09) -->
     <string name="rich_bold">Bold</string>
     <string name="rich_italic">Italic</string>

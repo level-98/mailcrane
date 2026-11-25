@@ -3,6 +3,7 @@ package app.mailcrane.ui.folders
 import androidx.annotation.DrawableRes
 import androidx.annotation.StringRes
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.HorizontalDivider
@@ -55,8 +56,18 @@ fun FolderDrawer(
     currentAccountId: Long? = null,
     onSwitchAccount: (Long) -> Unit = {},
     unifiedUnread: Int = 0,
+    /** Always visible beside the list (wide windows, M4-13) rather than sliding in. */
+    permanent: Boolean = false,
 ) {
-    ModalDrawerSheet(modifier = modifier) {
+    val sheet: @Composable (@Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit) -> Unit =
+        if (permanent) {
+            { content ->
+                androidx.compose.material3.PermanentDrawerSheet(modifier = modifier.width(300.dp), content = content)
+            }
+        } else {
+            { content -> ModalDrawerSheet(modifier = modifier, content = content) }
+        }
+    sheet {
         // With several accounts (M4-01): switch between them, or see every inbox together.
         if (accounts.size > 1) {
             Text(

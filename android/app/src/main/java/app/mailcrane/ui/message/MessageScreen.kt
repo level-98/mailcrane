@@ -52,6 +52,14 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.isCtrlPressed
+import androidx.compose.ui.input.key.isMetaPressed
+import androidx.compose.ui.input.key.isShiftPressed
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalResources
@@ -254,6 +262,12 @@ fun MessageContent(
     onSaveAttachment: (AttachmentInfo) -> Unit = {},
 ) {
     Scaffold(
+        modifier =
+            Modifier.messageShortcuts(
+                enabled = state is MessageState.Ready,
+                actions = actions,
+                onReply = onReply,
+            ),
         snackbarHost = { SnackbarHost(snackbar) },
         bottomBar = { if (state is MessageState.Ready) ReplyBar(onReply) },
         topBar = {
@@ -699,4 +713,27 @@ internal fun linkify(
                 end,
             )
         }
+    }
+
+/**
+ * Message shortcuts with a hardware keyboard (M4-13): Ctrl/⌘+R reply, Ctrl/⌘+Shift+R reply all,
+ * Ctrl/⌘+Shift+F forward, E archive, Delete or Backspace delete.
+ */
+private fun Modifier.messageShortcuts(
+    enabled: Boolean,
+    actions: MessageActions,
+    onReply: (ReplyKind) -> Unit,
+): Modifier =
+    onKeyEvent { e ->
+        if (!enabled || e.type != KeyEventType.KeyDown) return@onKeyEvent false
+        val command = e.isCtrlPressed || e.isMetaPressed
+        when {
+            command && e.isShiftPressed && e.key == Key.R -> onReply(ReplyKind.REPLY_ALL)
+            command && e.isShiftPressed && e.key == Key.F -> onReply(ReplyKind.FORWARD)
+            command && e.key == Key.R -> onReply(ReplyKind.REPLY)
+            !command && e.key == Key.E -> actions.onArchive()
+            !command && (e.key == Key.Delete || e.key == Key.Backspace) -> actions.onDelete()
+            else -> return@onKeyEvent false
+        }
+        true
     }
