@@ -33,7 +33,7 @@ LABELS = {
     "area:design": ("BFD0FF", "Brand, icons and UI design"),
     "area:docs": ("BFD0FF", "Documentation"),
     "area:ci": ("BFD0FF", "CI, tooling and repo setup"),
-    **{f"m{i}": ("E3EAFF", f"Milestone M{i}") for i in range(8)},
+    **{f"m{i}": ("E3EAFF", f"Milestone M{i}") for i in range(9)},
     "pre-launch": ("E3EAFF", "Checks before going public"),
 }
 
@@ -128,10 +128,12 @@ def parse_roadmap(text: str):
         agent_candidate = "agent-ready" in labels
         labels.discard("agent-ready")
         labels.add(milestone)
+        if milestone == "m8":
+            labels.add("post-1.0")
         if milestone != "pre-launch":
             labels |= platform_areas(guess_areas(title), milestone)
         tasks.append({
-            "id": m["id"], "title": title, "section": section,
+            "id": m["id"], "title": title, "section": section, "milestone": milestone,
             "labels": sorted(labels), "agent_candidate": agent_candidate,
         })
     return tasks
@@ -178,7 +180,10 @@ def main():
 
     existing_titles = set()
     existing_labels = set()
+    milestones = set()
     if apply:
+        milestones = set(gh("api", "repos/{owner}/{repo}/milestones?state=all&per_page=100",
+                            "--jq", ".[].title", capture=True).split())
         existing_labels = {l["name"] for l in json.loads(
             gh("label", "list", "--limit", "200", "--json", "name", capture=True))}
         existing_titles = {i["title"] for i in json.loads(
@@ -202,6 +207,9 @@ def main():
             args = ["issue", "create", "--title", title, "--body", body_for(task)]
             for lab in task["labels"]:
                 args += ["--label", lab]
+            # Milestones are named like the labels: m0, m1, …
+            if task["milestone"] in milestones:
+                args += ["--milestone", task["milestone"]]
             gh(*args)
 
     print(f"\n{len(tasks)} open tasks found." + ("" if apply else " Dry run: add --apply to create them."))
