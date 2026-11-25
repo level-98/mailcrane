@@ -6,6 +6,7 @@ mod contacts;
 mod drafts;
 mod folders;
 mod messages;
+mod notify;
 mod outbox;
 mod pending_ops;
 mod rules;
@@ -16,6 +17,7 @@ mod threads;
 
 pub use contacts::Correspondent;
 pub use drafts::{Draft, DraftFields, DraftId, ServerCopy};
+pub use notify::NewMail;
 pub use outbox::{
     NewOutboxMessage, OutboxId, OutboxMessage, OutboxState, SaveSentCopy, ScheduleMode, SentCopy,
 };

@@ -22,6 +22,27 @@ class FakeAppSettings(
         undo.value = seconds
     }
 
+    private val notify = MutableStateFlow(true)
+    override val notificationsEnabled: StateFlow<Boolean> = notify
+
+    override suspend fun setNotificationsEnabled(enabled: Boolean) {
+        notify.value = enabled
+    }
+
+    private val alwaysOn = MutableStateFlow(false)
+    override val alwaysOnSync: StateFlow<Boolean> = alwaysOn
+
+    override suspend fun setAlwaysOnSync(enabled: Boolean) {
+        alwaysOn.value = enabled
+    }
+
+    private val notifyPrompt = MutableStateFlow(false)
+    override val notificationPromptAnswered: StateFlow<Boolean> = notifyPrompt
+
+    override suspend fun setNotificationPromptAnswered() {
+        notifyPrompt.value = true
+    }
+
     private val lock = MutableStateFlow(false)
     override val appLockEnabled: StateFlow<Boolean> = lock
 

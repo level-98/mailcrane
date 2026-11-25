@@ -32,6 +32,8 @@ class LiveUpdatesObserver(
     private val engine: LiveUpdatesEngine,
     private val scope: CoroutineScope,
     dispatcher: CoroutineDispatcher,
+    /** True while something else (always-on sync, M4-05) needs them kept on in the background. */
+    private val keepInBackground: () -> Boolean = { false },
 ) : DefaultLifecycleObserver {
     // One call at a time, in order, so a quick background-foreground switch never stops updates
     // after they were started again.
@@ -56,6 +58,7 @@ class LiveUpdatesObserver(
     /** The app went to the background: stop every live update that was started. */
     fun onBackground() {
         scope.launch(serial) {
+            if (keepInBackground()) return@launch
             for (id in running) engine.stop(id)
             running.clear()
         }

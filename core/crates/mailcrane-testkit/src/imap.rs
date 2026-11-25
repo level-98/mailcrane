@@ -1082,7 +1082,9 @@ async fn handle_uid_command(
                     line.push_str(&format!(" MODSEQ ({})", message.modseq));
                 }
                 if items.contains("INTERNALDATE") {
-                    line.push_str(" INTERNALDATE \"24-Nov-2026 10:46:51 +0000\"");
+                    // Now, like a message that just arrived, so code that
+                    // cares how recent mail is (notifications) can be tested.
+                    line.push_str(&format!(" INTERNALDATE \"{}\"", internal_date_now()));
                 }
                 if items.contains("RFC822.SIZE") {
                     line.push_str(&format!(" RFC822.SIZE {}", message.raw.len()));
@@ -1209,4 +1211,39 @@ async fn handle_uid_command(
         }
         _ => format!("{tag} BAD unknown UID command\r\n"),
     }
+}
+
+/// The current time as an IMAP `date-time` (RFC 9051 §9), always in UTC:
+/// `25-Nov-2026 10:46:51 +0000`.
+fn internal_date_now() -> String {
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let days = i64::try_from(secs / 86_400).unwrap_or(0);
+    let rem = secs % 86_400;
+    // Civil date from days since 1970-01-01 (Howard Hinnant's algorithm).
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = yoe + era * 400 + i64::from(month <= 2);
+    const MONTHS: [&str; 12] = [
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+    ];
+    let name = usize::try_from(month - 1)
+        .ok()
+        .and_then(|i| MONTHS.get(i))
+        .copied()
+        .unwrap_or("Jan");
+    format!(
+        "{day:02}-{name}-{year} {:02}:{:02}:{:02} +0000",
+        rem / 3600,
+        (rem % 3600) / 60,
+        rem % 60
+    )
 }

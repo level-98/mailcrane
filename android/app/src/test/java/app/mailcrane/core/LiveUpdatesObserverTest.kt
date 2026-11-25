@@ -81,4 +81,25 @@ class LiveUpdatesObserverTest {
 
             assertEquals(emptyList<String>(), engine.calls)
         }
+
+    @Test
+    fun alwaysOnSyncKeepsThemRunningInTheBackground() =
+        runTest {
+            val engine = FakeEngine(listOf(3))
+            var alwaysOn = true
+            val observer =
+                LiveUpdatesObserver(engine, this, StandardTestDispatcher(testScheduler)) { alwaysOn }
+
+            observer.onForeground()
+            observer.onBackground()
+            advanceUntilIdle()
+            assertEquals(listOf("start 3"), engine.calls)
+
+            // Turned off again: the next trip to the background stops them as usual.
+            alwaysOn = false
+            observer.onForeground()
+            observer.onBackground()
+            advanceUntilIdle()
+            assertEquals(listOf("start 3", "start 3", "stop 3"), engine.calls)
+        }
 }

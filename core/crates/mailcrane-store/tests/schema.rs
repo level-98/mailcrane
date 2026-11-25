@@ -36,6 +36,9 @@ fn every_table_and_index_exists() -> R {
             "messages_fts_data",
             "messages_fts_docsize",
             "messages_fts_idx",
+            // New-mail notifications (M4-05).
+            "notified",
+            "notify_accounts",
             "outbox",
             "pending_op_messages",
             "pending_ops",
@@ -55,6 +58,7 @@ fn every_table_and_index_exists() -> R {
         "idx_messages_thread_id",
         "idx_pending_ops_account",
         "idx_pending_op_messages_message",
+        "idx_notified_at",
     ] {
         assert!(indexes.iter().any(|i| i == want), "missing index {want}");
     }
@@ -86,7 +90,7 @@ fn reopen_runs_no_migrations_and_keeps_data() -> R {
     let dir = tempfile::tempdir()?;
     let path = dir.path().join("m.db");
     let store = Store::open(&path)?;
-    assert_eq!(store.schema_version()?, 12);
+    assert_eq!(store.schema_version()?, 13);
     drop(store);
     let conn = Connection::open(&path)?;
     conn.execute(
@@ -97,7 +101,7 @@ fn reopen_runs_no_migrations_and_keeps_data() -> R {
     )?;
     drop(conn);
     let store = Store::open(&path)?;
-    assert_eq!(store.schema_version()?, 12);
+    assert_eq!(store.schema_version()?, 13);
     assert_eq!(store.list_accounts()?.len(), 1);
     Ok(())
 }

@@ -376,3 +376,74 @@ fn a_stop_that_runs_over_its_limit_keeps_a_new_start_from_opening_a_second_conne
     assert!(engine.live.lock().expect("lock").get(&7).is_none());
     let _ = std::fs::remove_file(&path);
 }
+
+#[test]
+fn new_mail_is_notified_once_through_background_sync() {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(1)
+        .enable_all()
+        .build()
+        .expect("runtime");
+    let raws = vec![b"Subject: Already here\r\nFrom: Bob <bob@example.net>\r\nMessage-ID: <old@example.net>\r\n\r\nHi\r\n".to_vec()];
+    let imap = runtime.block_on(async {
+        FakeImap::builder()
+            .user("alice@example.org", "pw")
+            .folder("INBOX", raws)
+            .start()
+            .await
+            .expect("fake imap")
+    });
+    let path = std::env::temp_dir().join(format!("mailcrane-ffi-notify-{}.db", std::process::id()));
+    let _ = std::fs::remove_file(&path);
+    let store = Store::open(&path).expect("store");
+    let account = store
+        .insert_account(&NewAccount {
+            display_name: "Me".into(),
+            // Not alice@: the fake server reports every message as from Alice,
+            // and mail from the account's own address is never notified.
+            email: "me@example.org".into(),
+            imap_host: "localhost".into(),
+            imap_port: imap.addr().port(),
+            imap_security: Security::Tls,
+            smtp_host: "localhost".into(),
+            smtp_port: 587,
+            smtp_security: Security::Starttls,
+            username: "alice@example.org".into(),
+        })
+        .expect("account");
+    drop(store);
+    let platform = Arc::new(Platform::default());
+    platform
+        .put(
+            SecretKey::account_password(account.0).as_str().to_owned(),
+            b"pw".to_vec(),
+        )
+        .expect("password");
+    install_secret_store(platform);
+    let engine = SyncEngine::new(
+        path.to_string_lossy().into_owned(),
+        Arc::new(Collect::default()),
+    );
+    *engine.extra_root_cert.lock().expect("lock") = Some(imap.root_cert_der().to_vec());
+
+    // Before any sync there is nothing to look at.
+    assert_eq!(engine.take_new_mail(), Ok(vec![]));
+    // The first background sync finds the folders, syncs the inbox and only
+    // records what is already there.
+    assert_eq!(engine.background_sync(60), Ok(vec![]));
+
+    // A message arrives: notified once, with what a notification shows.
+    let arrived = "Subject: Lunch?\r\nFrom: Carol <carol@example.net>\r\nMessage-ID: <new@example.net>\r\n\r\nNoon?\r\n";
+    runtime.block_on(imap.mailbox().deliver("INBOX", arrived.as_bytes().to_vec()));
+    let got = engine.background_sync(60).expect("sync");
+    assert_eq!(got.len(), 1, "{got:?}");
+    assert_eq!(got[0].sender, "Alice");
+    assert_eq!(got[0].subject, "Lunch?");
+    assert_eq!(got[0].account_id, account.0);
+    assert_eq!(got[0].account_email, "me@example.org");
+
+    // Never again, even after another sync.
+    assert_eq!(engine.background_sync(60), Ok(vec![]));
+    assert_eq!(engine.take_new_mail(), Ok(vec![]));
+    let _ = std::fs::remove_file(&path);
+}

@@ -12,6 +12,7 @@ pub mod contacts;
 pub mod drafts;
 pub mod events;
 pub mod links;
+pub mod notify;
 pub mod outbox;
 pub mod rules;
 pub mod search;
