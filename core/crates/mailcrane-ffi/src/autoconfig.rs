@@ -3,8 +3,8 @@
 //!
 //! DNS lookups are made by the platform's own resolver through
 //! [`PlatformDns`], so they go to the user's configured DNS server and
-//! nowhere else; the core parses the raw answers. ISPDB isn't used (issue
-//! #31 waits for that decision).
+//! nowhere else; the core parses the raw answers. The ISPDB is a bundled
+//! snapshot (ADR 0003), so it needs no network at all.
 
 use std::future::Future;
 use std::sync::Arc;
@@ -35,6 +35,8 @@ pub enum SettingsSource {
     Srv,
     /// The autoconfig file of the provider that receives the domain's mail.
     MxAutoconfig,
+    /// Mozilla's ISPDB, bundled in the app (ADR 0003).
+    Ispdb,
 }
 
 /// One set of settings for the user to confirm.
@@ -88,6 +90,7 @@ impl From<DiscoveredConfig> for DiscoveredSettings {
                 core::Source::Autoconfig => SettingsSource::Autoconfig,
                 core::Source::Srv => SettingsSource::Srv,
                 core::Source::MxAutoconfig => SettingsSource::MxAutoconfig,
+                core::Source::Ispdb => SettingsSource::Ispdb,
             },
             source_domain: c.source_domain,
             provider_name: c.provider_name,

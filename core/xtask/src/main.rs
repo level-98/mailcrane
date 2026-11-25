@@ -4,6 +4,8 @@
 //! failed step, never an unwind.
 #![forbid(unsafe_code)]
 
+mod ispdb;
+
 use std::env;
 use std::ffi::OsStr;
 use std::fmt::Display;
@@ -78,6 +80,9 @@ Commands:
   fuzz <target> [--seconds N]
             run a fuzz target (default 60 s); needs nightly and cargo-fuzz.
             Not part of ci. Targets: mime_parse, imap_response, html_sanitize, address_list
+  ispdb <checkout>
+            import the ISPDB snapshot from a thunderbird/autoconfig checkout into
+            mailcrane-core/data/ispdb/ and regenerate its index (ADR 0003). Not part of ci.
 
 Flags (for ci):
   --strict       a skipped step counts as a failure
@@ -126,6 +131,10 @@ fn real_main() -> Result<ExitCode, Error> {
     }
     if command == "fuzz" {
         return fuzz(&context()?, args);
+    }
+    if command == "ispdb" {
+        ispdb::import(&context()?, args)?;
+        return Ok(ExitCode::SUCCESS);
     }
     let options = parse_options(args)?;
     let ctx = context()?;

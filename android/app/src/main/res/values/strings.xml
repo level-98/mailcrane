@@ -13,6 +13,7 @@
     <string name="setup_auto_source_autoconfig">From %1$s’s own settings file.</string>
     <string name="setup_auto_source_srv">From the DNS records of %1$s.</string>
     <string name="setup_auto_source_mx">From the settings file of %1$s, which receives mail for your domain.</string>
+    <string name="setup_auto_source_ispdb">From the provider list built into Mailcrane (Mozilla’s ISPDB), for %1$s.</string>
     <string name="setup_auto_use">Use these settings</string>
     <string name="setup_auto_edit">Edit settings</string>
     <string name="setup_auto_not_found">No settings were found for this address. Enter your provider’s server details below.</string>

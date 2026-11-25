@@ -218,4 +218,5 @@ private fun SettingsSource.label(): Int =
         SettingsSource.AUTOCONFIG -> R.string.setup_auto_source_autoconfig
         SettingsSource.SRV -> R.string.setup_auto_source_srv
         SettingsSource.MX_AUTOCONFIG -> R.string.setup_auto_source_mx
+        SettingsSource.ISPDB -> R.string.setup_auto_source_ispdb
     }
