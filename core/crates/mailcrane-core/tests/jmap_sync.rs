@@ -455,3 +455,82 @@ async fn a_partly_refused_flag_change_is_undone_for_the_refused_message() {
         );
     }
 }
+
+/// Sends one message from Alice over a fake server with only `mailboxes`
+/// (id, role), and returns the server.
+async fn send_with_mailboxes(mailboxes: &[(&str, &str)]) -> FakeJmap {
+    use mailcrane_core::compose::{send, ComposeDraft, SendOptions};
+    use mailcrane_core::secrets::{Secret, SecretKey, SecretStore};
+    use mailcrane_testkit::MemorySecretStore;
+    let mut builder = FakeJmap::builder();
+    for (id, role) in mailboxes {
+        builder = builder.mailbox(id, id, Some(role), None);
+    }
+    let server = builder.start().await.expect("server");
+    let store = Store::open_in_memory().expect("store");
+    let account = store
+        .insert_jmap_account(
+            &NewAccount {
+                display_name: "Alice".into(),
+                email: "alice@example.org".into(),
+                imap_host: String::new(),
+                imap_port: 0,
+                imap_security: Security::Tls,
+                smtp_host: String::new(),
+                smtp_port: 0,
+                smtp_security: Security::Tls,
+                username: "alice@example.org".into(),
+            },
+            &server.base_url(),
+        )
+        .expect("account");
+    let secrets = MemorySecretStore::new();
+    secrets
+        .put(
+            &SecretKey::account_password(account.0),
+            &Secret::from_string("pw".into()),
+        )
+        .expect("password");
+    let draft = ComposeDraft {
+        account_id: account,
+        to: vec!["bob@example.net".into()],
+        cc: vec![],
+        bcc: vec![],
+        subject: "No Sent mailbox".into(),
+        body_text: "Hello Bob\n".into(),
+        in_reply_to: None,
+        references: vec![],
+        attachments: Vec::new(),
+        forward_attachments_of: None,
+        rich: None,
+    };
+    let options = SendOptions {
+        timeout: Duration::from_secs(10),
+        extra_root_certs: vec![server.root_cert_der().to_vec()],
+    };
+    send(&store, &secrets, &draft, &options)
+        .await
+        .expect("sent without a Sent mailbox");
+    server
+}
+
+#[tokio::test]
+async fn sending_works_without_a_sent_mailbox() {
+    // RFC 8621 doesn't require a `sent` role (#276).
+    let server = send_with_mailboxes(&[("mb-inbox", "inbox"), ("mb-drafts", "drafts")]).await;
+    let submissions = server.submissions();
+    assert_eq!(submissions.len(), 1, "submitted exactly once");
+    assert_eq!(submissions[0].rcpt_to, vec!["bob@example.net".to_string()]);
+    // The imported copy was destroyed on success: nothing is left in Drafts
+    // looking like an unsent draft.
+    assert_eq!(server.email_mailboxes(&submissions[0].email_id), None);
+    assert!(server.emails_in("mb-drafts").is_empty());
+    assert_eq!(server.email_count(), 0);
+}
+
+#[tokio::test]
+async fn sending_works_with_neither_drafts_nor_sent() {
+    let server = send_with_mailboxes(&[("mb-inbox", "inbox")]).await;
+    assert_eq!(server.submissions().len(), 1, "submitted exactly once");
+    assert_eq!(server.email_count(), 0, "the temporary copy is gone");
+}
