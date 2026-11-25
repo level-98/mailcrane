@@ -74,7 +74,7 @@ Commands:
   lint      cargo clippy --workspace --all-targets -- -D warnings
   test      cargo test --workspace
   deny      cargo deny check
-  android   ktlintCheck, lintDebug and testDebugUnitTest through Gradle
+  android   ktlintCheck, lintDebug, testDebugUnitTest and assembleDebug through Gradle
   ios       XCFramework, xcodegen, swiftlint and xcodebuild test (macOS only)
   bindings  generate Kotlin and Swift bindings into core/target/bindings/
   fuzz <target> [--seconds N]
@@ -86,8 +86,8 @@ Commands:
 
 Flags (for ci):
   --strict       a skipped step counts as a failure
-  --only <step>  run only this step (repeatable)
-  --skip <step>  leave this step out (repeatable)
+  --only <step>  run only this step (repeatable, or a comma-separated list)
+  --skip <step>  leave this step out (repeatable, or a comma-separated list)
 ";
 
 struct Ctx {
@@ -182,10 +182,16 @@ fn parse_options(args: impl Iterator<Item = String>) -> Result<Options, Error> {
                 let value = args
                     .next()
                     .ok_or_else(|| format!("{arg} needs a step name"))?;
+                // `--only fmt,lint,test` is the same as three `--only`s.
+                let names = value
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|n| !n.is_empty())
+                    .map(String::from);
                 if arg == "--only" {
-                    options.only.push(value);
+                    options.only.extend(names);
                 } else {
-                    options.skip.push(value);
+                    options.skip.extend(names);
                 }
             }
             other => {
@@ -354,11 +360,18 @@ fn android(ctx: &Ctx) -> Result<Outcome, Error> {
     } else {
         gradlew
     };
-    let args = ["ktlintCheck", "lintDebug", "testDebugUnitTest"];
+    // assembleDebug cross-compiles the core for both ABIs (the buildRust task)
+    // and proves the app really builds, not only that it lints and tests.
+    let args = [
+        "ktlintCheck",
+        "lintDebug",
+        "testDebugUnitTest",
+        "assembleDebug",
+    ];
     let ok = run(&dir, &wrapper.display().to_string(), &args)?;
     Ok(outcome(
         ok,
-        "./gradlew ktlintCheck lintDebug testDebugUnitTest",
+        "./gradlew ktlintCheck lintDebug testDebugUnitTest assembleDebug",
     ))
 }
 
@@ -630,4 +643,33 @@ fn bindings(ctx: &Ctx) -> Result<Outcome, Error> {
         }
     }
     Ok(Outcome::Passed)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse(args: &[&str]) -> Result<Options, Error> {
+        parse_options(args.iter().map(|a| a.to_string()))
+    }
+
+    #[test]
+    fn only_takes_a_comma_separated_list() {
+        let o = parse(&["--strict", "--only", "fmt,lint, test"]).unwrap();
+        assert!(o.strict);
+        assert_eq!(o.only, ["fmt", "lint", "test"]);
+    }
+
+    #[test]
+    fn lists_and_repeats_combine() {
+        let o = parse(&["--skip", "ios", "--skip", "deny,android,"]).unwrap();
+        assert_eq!(o.skip, ["ios", "deny", "android"]);
+        assert!(o.only.is_empty());
+    }
+
+    #[test]
+    fn a_flag_without_a_value_is_an_error() {
+        assert!(parse(&["--only"]).is_err());
+        assert!(parse(&["--bogus"]).is_err());
+    }
 }

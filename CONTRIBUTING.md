@@ -44,6 +44,18 @@ Open a **feature request** first and wait for a maintainer to label it `accepted
 - Leave **"Allow edits by maintainers"** ticked, so small fixes don't need a round trip.
 - We squash-merge, so the PR title becomes the commit message: `feat(imap): support IDLE (#42)`.
 
+## CI
+
+Every pull request and every push to `main` runs [`ci.yml`](.github/workflows/ci.yml), with no path filters, so docs-only PRs get the same checks. Each job only installs tools and runs `cargo xtask ci`:
+
+| Job | Runs on | Checks |
+|---|---|---|
+| `linux` | Ubuntu | Every step except iOS (`--strict --skip ios`): fmt, clippy, tests, `cargo deny`, the design check, and the Android lint, unit tests and debug build (the core cross-compiled for arm64-v8a and x86_64). The debug APK is uploaded as the `android-debug-apk` artifact for 7 days, so you can install it with `adb install` without building. |
+| `windows` | Windows | fmt, clippy and tests of the core (`--strict --only fmt,lint,test`), so it stays portable. |
+| `ci-ok` | Ubuntu | Passes only if every job above passed. Look here first. |
+
+The iOS job comes back in M7-02 (#144). Until then, iOS checks run only when a maintainer starts `ios.yml` by hand.
+
 ## Review
 
 Mailcrane may have only one maintainer, so review is set up not to block:
