@@ -78,6 +78,13 @@ fun MessageRow(
         }
         Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
+                // In the Unified Inbox, which account it came to (M4-01).
+                if (message.accountId != 0L) {
+                    Box(Modifier.padding(end = 6.dp)) {
+                        app.mailcrane.ui.components
+                            .AccountDot(message.accountColor.toInt(), size = dotSize)
+                    }
+                }
                 Text(
                     text = sender,
                     modifier = Modifier.weight(1f),

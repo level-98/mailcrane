@@ -5,8 +5,11 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.channels.awaitClose
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.buffer
@@ -80,6 +83,18 @@ interface MailboxCore {
      */
     suspend fun wakeDueSnoozes(): List<WokenMessage> = emptyList()
 
+    /** The Unified Inbox: every account's inbox, newest first (M4-01). */
+    suspend fun listUnifiedInbox(
+        offset: Int,
+        limit: Int,
+    ): List<MessageSummary> = emptyList()
+
+    /** Syncs every account's inbox; one account failing doesn't stop the others. @throws SyncFailure if all fail */
+    suspend fun syncUnifiedInbox() {}
+
+    /** Unread messages across every account's inbox. */
+    suspend fun unifiedUnreadCount(): Int = 0
+
     /**
      * Runs a rule on the messages now in [folderId] of [accountId] and sends the changes to the server;
      * returns how many messages it changed (M4-09). @throws RulesFailure
@@ -103,6 +118,9 @@ interface MailboxCore {
     /** The next time a snoozed message wakes (Unix seconds), or null. @throws SnoozeFailure */
     suspend fun nextSnoozeWake(): Long? = null
 }
+
+/** The folder id the apps use for the Unified Inbox, every account's inbox together (M4-01). */
+const val UNIFIED_FOLDER_ID = -1L
 
 /** How long Undo is offered after archiving or deleting with a swipe. */
 const val UNDO_WINDOW_MS = 5_000L
@@ -218,6 +236,49 @@ class UniffiMailboxCore(
     }
 
     override suspend fun nextSnoozeWake(): Long? = withContext(io) { engine.nextSnoozeWake() }
+
+    override suspend fun listUnifiedInbox(
+        offset: Int,
+        limit: Int,
+    ): List<MessageSummary> =
+        withContext(io) {
+            listUnifiedInbox(dbPath, offset.coerceAtLeast(0).toUInt(), limit.coerceAtLeast(0).toUInt())
+        }
+
+    override suspend fun syncUnifiedInbox() {
+        val inboxes =
+            withContext(io) {
+                listAccounts(dbPath).mapNotNull { account ->
+                    listFolders(dbPath, account.id).firstOrNull { it.role == FolderRole.INBOX }?.id
+                }
+            }
+        // Accounts sync side by side; each has its own lock in the core.
+        val failures =
+            coroutineScope {
+                inboxes
+                    .map { inbox ->
+                        async(io) {
+                            try {
+                                engine.syncFolder(inbox)
+                                null
+                            } catch (e: SyncFailure) {
+                                e
+                            }
+                        }
+                    }.awaitAll()
+                    .filterNotNull()
+            }
+        if (inboxes.isNotEmpty() && failures.size == inboxes.size) throw failures.first()
+    }
+
+    override suspend fun unifiedUnreadCount(): Int =
+        withContext(io) {
+            try {
+                unifiedUnreadCount(dbPath).coerceAtMost(Int.MAX_VALUE.toULong()).toInt()
+            } catch (_: SyncFailure) {
+                0
+            }
+        }
 
     override suspend fun runRuleOnExisting(
         ruleId: Long,

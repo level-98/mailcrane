@@ -7,6 +7,7 @@ import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.core.intPreferencesKey
+import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import dagger.Module
@@ -73,6 +74,11 @@ interface AppSettings {
 
     suspend fun setGroupByConversation(enabled: Boolean)
 
+    /** The account shown last, to open it again at start-up (M4-01); 0 for none. */
+    val lastAccountId: Flow<Long>
+
+    suspend fun setLastAccountId(id: Long)
+
     /** Whether the user was asked about suggestions from their contacts (M2-08); asked once. */
     val contactsPromptAnswered: Flow<Boolean>
 
@@ -114,6 +120,12 @@ class DataStoreAppSettings(
 
     override suspend fun setGroupByConversation(enabled: Boolean) {
         dataStore.edit { it[GROUP_THREADS] = enabled }
+    }
+
+    override val lastAccountId: Flow<Long> = prefs.map { it[LAST_ACCOUNT] ?: 0L }
+
+    override suspend fun setLastAccountId(id: Long) {
+        dataStore.edit { it[LAST_ACCOUNT] = id }
     }
 
     override val contactsPromptAnswered: Flow<Boolean> = prefs.map { it[CONTACTS_PROMPT] ?: false }
@@ -195,6 +207,7 @@ class DataStoreAppSettings(
         val THEME = stringPreferencesKey("theme_mode")
         val DYNAMIC_COLOR = booleanPreferencesKey("dynamic_color")
         val DARK_BODIES = booleanPreferencesKey("dark_message_bodies")
+        val LAST_ACCOUNT = longPreferencesKey("last_account_id")
         val GROUP_THREADS = booleanPreferencesKey("group_by_conversation")
     }
 }

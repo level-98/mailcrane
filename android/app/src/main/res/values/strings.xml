@@ -181,6 +181,15 @@
     <string name="message_move_title">Move to folder</string>
     <string name="message_move_cancel">Cancel</string>
 
+    <!-- Accounts (M4-01) -->
+    <string name="accounts_title">Accounts</string>
+    <string name="all_inboxes">All inboxes</string>
+    <string name="accounts_add">Add account</string>
+    <string name="accounts_remove">Remove</string>
+    <string name="accounts_cancel">Cancel</string>
+    <string name="accounts_remove_title">Remove %1$s?</string>
+    <string name="accounts_remove_text">Its mail, drafts and password are deleted from this device. Nothing is deleted on the mail server.</string>
+
     <!-- Local rules (M4-09) -->
     <string name="rules_title">Rules</string>
     <string name="rules_settings_row">Rules</string>
