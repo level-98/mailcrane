@@ -2,6 +2,7 @@ package app.mailcrane
 
 import android.app.Application
 import androidx.lifecycle.ProcessLifecycleOwner
+import app.mailcrane.core.CoreLog
 import app.mailcrane.core.LiveUpdatesEngine
 import app.mailcrane.core.LiveUpdatesObserver
 import app.mailcrane.core.TlsSetup
@@ -36,6 +37,8 @@ class MailcraneApplication : Application() {
         super.onCreate()
         // Before anything connects: the core checks certificates through Android's trust store.
         TlsSetup.init(this)
+        // The core's warnings (a failed sync and which step failed) go to logcat as "mailcrane".
+        CoreLog.install()
         // Before any screen shows: with the app lock on, the app starts locked (M5-03).
         appLock.start()
         // The core reads and writes credentials only through this store.

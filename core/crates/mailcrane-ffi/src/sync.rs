@@ -11,8 +11,8 @@ use std::time::Duration;
 use mailcrane_core::events::{self, EventListener};
 use mailcrane_core::secrets::SecretKey;
 use mailcrane_core::sync::{
-    live_stop, run_live_updates, FolderSyncer, ImapLogin, LiveConfig, LiveStop, SyncConfig,
-    SyncError as CoreSyncError,
+    live_stop, log_failure, run_live_updates, FolderSyncer, ImapLogin, LiveConfig, LiveStop,
+    SyncConfig, SyncError as CoreSyncError,
 };
 use mailcrane_imap::{save_folders, ImapConfig, ImapError, ImapSecurity, Secret, Session};
 use mailcrane_store::{AccountId, FolderId, FolderRole, MessageId, Security, Store};
@@ -310,10 +310,18 @@ impl SyncEngine {
         runtime.block_on(async {
             let mut session = self.connect(&store, account).await.map_err(report)?;
             let listed = session.list_folders().await;
+            let command = session.last_command();
             session.logout().await;
-            let folders = listed.map_err(|e| report(CoreSyncError::from(e).kind()))?;
-            save_folders(&store, account, &folders)
-                .map_err(|e| report(CoreSyncError::from(e).kind()))?;
+            let folders = listed.map_err(|e| {
+                let e = CoreSyncError::from(e);
+                log_failure("list folders", &e, command);
+                report(e.kind())
+            })?;
+            save_folders(&store, account, &folders).map_err(|e| {
+                let e = CoreSyncError::from(e);
+                log_failure("save folders", &e, None);
+                report(e.kind())
+            })?;
             Ok::<(), SyncFailure>(())
         })?;
         Ok(inbox_of(&store, account)?.map(|f| f.0))
@@ -639,6 +647,9 @@ impl SyncEngine {
         runtime.block_on(async {
             let mut session = self.connect(&store, account).await.map_err(report)?;
             let result = job(&store, &mut session, &listener).await;
+            if let Err(e) = &result {
+                log_failure("session job", e, session.last_command());
+            }
             session.logout().await;
             result.map_err(SyncFailure::from)
         })
@@ -679,7 +690,11 @@ impl SyncEngine {
         let login = imap_login(store, account, self.extra_root_cert().as_deref())?;
         Session::connect(&login.config, &login.username, &login.password)
             .await
-            .map_err(|e: ImapError| CoreSyncError::from(e).kind())
+            .map_err(|e: ImapError| {
+                let e = CoreSyncError::from(e);
+                log_failure("connect", &e, None);
+                e.kind()
+            })
     }
 }
 

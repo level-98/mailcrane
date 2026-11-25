@@ -54,3 +54,26 @@ pub enum ImapError {
     #[error("store error: {0}")]
     Store(#[from] StoreError),
 }
+
+impl ImapError {
+    /// The variant's name, e.g. `"CommandFailed"`. Safe to log: a fixed
+    /// string that never carries server text or store details.
+    pub fn name(&self) -> &'static str {
+        match self {
+            ImapError::InvalidInput => "InvalidInput",
+            ImapError::CannotConnect => "CannotConnect",
+            ImapError::TlsFailure => "TlsFailure",
+            ImapError::StartTlsNotOffered => "StartTlsNotOffered",
+            ImapError::LoginDisabled => "LoginDisabled",
+            ImapError::AuthFailed => "AuthFailed",
+            ImapError::CommandFailed => "CommandFailed",
+            ImapError::ServerBye => "ServerBye",
+            ImapError::ConnectionClosed => "ConnectionClosed",
+            ImapError::Protocol => "Protocol",
+            ImapError::LineTooLong => "LineTooLong",
+            ImapError::ResponseTooLarge => "ResponseTooLarge",
+            ImapError::Timeout => "Timeout",
+            ImapError::Store(_) => "Store",
+        }
+    }
+}

@@ -20,6 +20,7 @@ pub mod contacts;
 pub mod drafts;
 pub mod folders;
 pub mod links;
+pub mod logging;
 pub mod messages;
 pub mod oauth;
 pub mod outbox;

@@ -59,6 +59,21 @@ pub enum SyncError {
 }
 
 impl SyncError {
+    /// The variant behind the kind, e.g. `"CommandFailed"` or
+    /// `"UnknownFolder"`. Safe to log: a fixed string, never server text,
+    /// message content or store details.
+    pub fn detail(&self) -> &'static str {
+        match self {
+            SyncError::Imap(e) => e.name(),
+            SyncError::Jmap(_) => "Jmap",
+            SyncError::Store(_) => "Store",
+            SyncError::UnknownFolder => "UnknownFolder",
+            SyncError::UnknownMessage => "UnknownMessage",
+            SyncError::MessageGone => "MessageGone",
+            SyncError::FolderReset => "FolderReset",
+        }
+    }
+
     /// The kind reported in [`CoreEvent::SyncError`].
     pub fn kind(&self) -> SyncErrorKind {
         match self {
@@ -89,6 +104,47 @@ impl SyncError {
             SyncError::FolderReset => SyncErrorKind::FolderReset,
         }
     }
+}
+
+/// What [`log_failure`] logs. Every field is a `&'static str` or a fieldless
+/// enum, so no server text, message content or credential can get in
+/// (AGENTS.md §4.4).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FailureLog {
+    /// Where it failed, e.g. `"sync"` or `"connect"`.
+    pub stage: &'static str,
+    /// The kind the app is told.
+    pub kind: SyncErrorKind,
+    /// The variant behind the kind, see [`SyncError::detail`].
+    pub error: &'static str,
+    /// The last IMAP command sent, e.g. `"SELECT"` or `"UID FETCH"`, or
+    /// `"none"`.
+    pub command: &'static str,
+}
+
+impl FailureLog {
+    /// The fields for a failed step.
+    pub fn new(stage: &'static str, error: &SyncError, command: Option<&'static str>) -> Self {
+        Self {
+            stage,
+            kind: error.kind(),
+            error: error.detail(),
+            command: command.unwrap_or("none"),
+        }
+    }
+}
+
+/// Logs a failed sync step: where it failed (`stage`), the kind, the
+/// variant behind it and the last IMAP command sent. See [`FailureLog`].
+pub fn log_failure(stage: &'static str, error: &SyncError, command: Option<&'static str>) {
+    let log = FailureLog::new(stage, error, command);
+    tracing::warn!(
+        stage = log.stage,
+        kind = ?log.kind,
+        error = log.error,
+        command = log.command,
+        "sync failed"
+    );
 }
 
 /// Syncs the folders of one account over one connection. Holding the
@@ -147,7 +203,7 @@ impl<'a> FolderSyncer<'a> {
 
     pub(super) fn report<T>(&self, result: Result<T, SyncError>) -> Result<T, SyncError> {
         if let Err(error) = &result {
-            tracing::warn!(kind = ?error.kind(), "sync failed");
+            log_failure("sync", error, self.session.last_command());
             self.listener.on_event(CoreEvent::SyncError {
                 account_id: self.account,
                 kind: error.kind(),

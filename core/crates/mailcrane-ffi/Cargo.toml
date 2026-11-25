@@ -29,6 +29,7 @@ mailcrane-jmap = { path = "../mailcrane-jmap" }
 mailcrane-mime = { path = "../mailcrane-mime" }
 mailcrane-store = { path = "../mailcrane-store" }
 thiserror = "2.0.21"
+tracing = "0.1"
 tokio = { version = "1.54.1", features = ["rt", "sync", "time"] }
 uniffi = { version = "0.32.2", features = ["tokio"] }
 url = "2.5.9"
