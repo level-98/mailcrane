@@ -112,7 +112,7 @@ impl SyncEngine {
                 account_id: w.account_id.0,
                 message_id: w.message_id.map(|m| m.0),
                 subject: crate::messages::one_line(&w.subject),
-                from: crate::messages::one_line(&w.from),
+                from: crate::messages::name_line(&w.from),
             })
             .collect())
     }
