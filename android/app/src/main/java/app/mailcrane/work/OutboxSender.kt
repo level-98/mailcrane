@@ -110,6 +110,9 @@ class OutboxSender
             OutboxWorker.schedule(context)
         }
 
+        /** Makes sure the outbox is sent at [sendAt] (Unix seconds), even if the app isn't running then. */
+        fun sendAt(sendAt: Long) = OutboxWorker.scheduleAt(context, sendAt)
+
         private fun accounts(): List<Long> =
             try {
                 outboxAccounts(dbPath)

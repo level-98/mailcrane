@@ -51,6 +51,24 @@ class OutboxWorker(
         private const val NAME = "outbox"
         private const val READY_TIMEOUT_MS = 60_000L
 
+        /**
+         * Runs the job at [sendAt] (Unix seconds) once there is a network, for a scheduled message. Not an
+         * exact alarm (that needs a special permission): Android may run it a little late.
+         */
+        fun scheduleAt(
+            context: Context,
+            sendAt: Long,
+        ) {
+            val delayMs = (sendAt * 1_000 - System.currentTimeMillis()).coerceAtLeast(0)
+            val request =
+                OneTimeWorkRequestBuilder<OutboxWorker>()
+                    .setInitialDelay(delayMs, TimeUnit.MILLISECONDS)
+                    .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
+                    .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS)
+                    .build()
+            WorkManager.getInstance(context).enqueueUniqueWork("$NAME-at-$sendAt", ExistingWorkPolicy.KEEP, request)
+        }
+
         /** Runs the job once there is a network; does nothing if it's already waiting. */
         fun schedule(context: Context) {
             val request =

@@ -91,6 +91,11 @@ sealed interface ComposeResult {
     /** Not sent yet: in the outbox, sent when the network or server is back. */
     data object Queued : ComposeResult
 
+    /** Scheduled to go out at [sendAt] (Unix seconds). */
+    data class Scheduled(
+        val sendAt: Long,
+    ) : ComposeResult
+
     /** Waiting [seconds] before it goes out, so it can still be taken back (undo send). */
     data class Undoable(
         val outboxId: Long,
@@ -450,6 +455,43 @@ class ComposeViewModel
                         },
                         onFailure = { e -> s.withFailure(e) },
                     )
+                }
+            }
+        }
+
+        /** Scheduled send: queues the message for [sendAt] (Unix seconds) and closes. */
+        fun schedule(sendAt: Long) {
+            val current = _state.value
+            if (!current.canSend) return
+            val committed =
+                current.copy(to = current.to.committed(), cc = current.cc.committed(), bcc = current.bcc.committed())
+            val accountId = committed.fromAccountId ?: return
+            if ((committed.to.chips + committed.cc.chips + committed.bcc.chips).any { !it.isValid }) {
+                _state.value = committed.copy(error = ComposeError.INVALID_RECIPIENTS)
+                return
+            }
+            saveJob?.cancel()
+            _state.value = committed.copy(sending = true, error = null)
+            val draft =
+                ComposeDraft(
+                    accountId = accountId,
+                    to = committed.to.chips.map { it.text },
+                    cc = committed.cc.chips.map { it.text },
+                    bcc = committed.bcc.chips.map { it.text },
+                    subject = committed.subject,
+                    bodyText = committed.body,
+                    inReplyTo = committed.inReplyTo,
+                    references = committed.references,
+                )
+            viewModelScope.launch {
+                try {
+                    core.scheduleMessage(draft, sendAt)
+                    committed.draftId?.let { deleteQuietly(it) }
+                    _state.update { it.copy(sending = false, result = ComposeResult.Scheduled(sendAt)) }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    _state.update { it.withFailure(e) }
                 }
             }
         }

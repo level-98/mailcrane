@@ -249,4 +249,18 @@
     <string name="settings_dynamic_color_summary">Take the app’s colours from your wallpaper</string>
     <string name="settings_dark_bodies">Dark message bodies</string>
     <string name="settings_dark_bodies_summary">In dark mode, darken HTML mail instead of showing it on a light page (Android 13 and later)</string>
+
+    <!-- Scheduled send (M4-07) -->
+    <string name="schedule_send">Schedule send</string>
+    <string name="schedule_tomorrow_morning">Tomorrow morning</string>
+    <string name="schedule_tomorrow_afternoon">Tomorrow afternoon</string>
+    <string name="schedule_monday_morning">Monday morning</string>
+    <string name="schedule_pick">Pick a date and time</string>
+    <string name="schedule_next">Next</string>
+    <string name="schedule_confirm">Schedule</string>
+    <string name="schedule_done">Scheduled for %1$s</string>
+    <string name="outbox_scheduled_for">Scheduled for %1$s</string>
+    <string name="outbox_scheduled_device">This phone will send it then, so it may be late if the phone is off or offline.</string>
+    <string name="outbox_scheduled_undecided">Checking whether your mail server can send it for you…</string>
+    <string name="outbox_held_by_server">Your mail server will send it on time, even with the phone off. It can no longer be cancelled.</string>
 </resources>

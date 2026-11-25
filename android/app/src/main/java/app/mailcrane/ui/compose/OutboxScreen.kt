@@ -33,6 +33,7 @@ import app.mailcrane.R
 import app.mailcrane.core.ComposeCore
 import app.mailcrane.core.OutboxEntry
 import app.mailcrane.core.OutboxEntryState
+import app.mailcrane.core.ScheduledBy
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedFactory
 import dagger.assisted.AssistedInject
@@ -176,6 +177,12 @@ private fun OutboxRow(
             overflow = TextOverflow.Ellipsis,
         )
         Text(entry.to, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        entry.sendAt?.let { at ->
+            Text(
+                text = stringResource(R.string.outbox_scheduled_for, formatSendAt(at)),
+                style = MaterialTheme.typography.bodySmall,
+            )
+        }
         Text(
             text = stringResource(outboxStatus(entry)),
             color =
@@ -186,7 +193,7 @@ private fun OutboxRow(
                 },
             style = MaterialTheme.typography.bodySmall,
         )
-        if (entry.state != OutboxEntryState.SENDING) {
+        if (entry.state != OutboxEntryState.SENDING && entry.state != OutboxEntryState.HELD_BY_SERVER) {
             Row {
                 if (entry.state == OutboxEntryState.FAILED || entry.state == OutboxEntryState.NOT_SAVED) {
                     TextButton(onClick = { onRetry(entry.id) }) { Text(stringResource(R.string.outbox_retry)) }
@@ -206,8 +213,14 @@ internal fun outboxStatus(entry: OutboxEntry): Int =
     when (entry.state) {
         OutboxEntryState.SENDING -> R.string.outbox_sending
         OutboxEntryState.NOT_SAVED -> R.string.outbox_not_saved
+        OutboxEntryState.HELD_BY_SERVER -> R.string.outbox_held_by_server
         OutboxEntryState.QUEUED ->
-            if (entry.attempts == 0u) R.string.outbox_waiting else R.string.outbox_will_retry
+            when {
+                entry.scheduledBy == ScheduledBy.DEVICE -> R.string.outbox_scheduled_device
+                entry.scheduledBy == ScheduledBy.UNDECIDED -> R.string.outbox_scheduled_undecided
+                entry.attempts == 0u -> R.string.outbox_waiting
+                else -> R.string.outbox_will_retry
+            }
         OutboxEntryState.FAILED ->
             when (entry.lastError) {
                 "auth", "missing_credentials" -> R.string.outbox_failed_auth

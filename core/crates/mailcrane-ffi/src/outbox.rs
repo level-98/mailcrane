@@ -11,7 +11,7 @@ use mailcrane_core::compose::{self as core, PreparedSend};
 use mailcrane_core::events;
 use mailcrane_core::outbox::{self, OutboxError, SendOutcome};
 use mailcrane_core::secrets::SecretStore;
-use mailcrane_store::{AccountId, OutboxId, OutboxState, SentCopy, Store};
+use mailcrane_store::{AccountId, OutboxId, OutboxState, ScheduleMode, SentCopy, Store};
 
 /// Where a message in the outbox is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
@@ -25,6 +25,20 @@ pub enum OutboxEntryState {
     /// Sent, but its copy couldn't be saved to the Sent folder. Retry saves
     /// the copy again (it never resends the message); Delete forgets it.
     NotSaved,
+    /// Scheduled and handed to the mail server, which sends it at
+    /// `send_at` even with the phone off. It can't be cancelled from here.
+    HeldByServer,
+}
+
+/// Who sends a scheduled message.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum ScheduledBy {
+    /// Not decided yet (the server hasn't been asked).
+    Undecided,
+    /// The mail server holds it (RFC 4865).
+    Server,
+    /// This device sends it at the time.
+    Device,
 }
 
 /// A message in the outbox, for the outbox screen.
@@ -41,6 +55,10 @@ pub struct OutboxEntry {
     pub attempts: u32,
     /// When it's tried next (Unix seconds), for a queued message.
     pub next_attempt_at: i64,
+    /// For a scheduled message: when it goes out (Unix seconds).
+    pub send_at: Option<i64>,
+    /// For a scheduled message: who sends it.
+    pub scheduled_by: Option<ScheduledBy>,
 }
 
 /// Why an outbox call failed.
@@ -199,6 +217,35 @@ pub fn cancel_pending(
     }))
 }
 
+/// Scheduled send (M4-07): validates and queues the draft to go out at
+/// `send_at` (Unix seconds). If the mail server can hold it, the background
+/// sender hands it over right away; otherwise this device sends it then.
+/// Returns the outbox id.
+#[uniffi::export]
+pub fn schedule_message(
+    db_path: String,
+    draft: ComposeDraft,
+    send_at: i64,
+) -> Result<i64, SendFailure> {
+    let store = Store::open(&db_path).map_err(|_| SendFailure::Storage)?;
+    let draft: core::ComposeDraft = draft.into();
+    Ok(outbox::schedule(&store, &draft, send_at, now())?.0)
+}
+
+/// Moves a scheduled message that hasn't gone out (or to the server).
+#[uniffi::export]
+pub fn reschedule_outbox(
+    db_path: String,
+    outbox_id: i64,
+    send_at: i64,
+) -> Result<(), OutboxFailure> {
+    Ok(outbox::reschedule(
+        &open(&db_path)?,
+        OutboxId(outbox_id),
+        send_at,
+    )?)
+}
+
 /// What the background sender should do next.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct OutboxStatus {
@@ -283,6 +330,9 @@ pub fn list_outbox(db_path: String, account_id: i64) -> Result<Vec<OutboxEntry>,
                 OutboxState::Sending => OutboxEntryState::Sending,
                 OutboxState::Failed => OutboxEntryState::Failed,
                 OutboxState::Sent if m.sent_copy == SentCopy::Failed => OutboxEntryState::NotSaved,
+                OutboxState::Sent if m.schedule_mode == ScheduleMode::Server => {
+                    OutboxEntryState::HeldByServer
+                }
                 OutboxState::Sent => return None,
             };
             Some(OutboxEntry {
@@ -302,6 +352,13 @@ pub fn list_outbox(db_path: String, account_id: i64) -> Result<Vec<OutboxEntry>,
                 last_error: m.last_error,
                 attempts: m.attempts,
                 next_attempt_at: m.next_attempt_at.max(m.not_before),
+                send_at: (m.schedule_mode != ScheduleMode::None).then_some(m.not_before),
+                scheduled_by: match m.schedule_mode {
+                    ScheduleMode::None => None,
+                    ScheduleMode::Pending => Some(ScheduledBy::Undecided),
+                    ScheduleMode::Server => Some(ScheduledBy::Server),
+                    ScheduleMode::Device => Some(ScheduledBy::Device),
+                },
             })
         })
         .collect())
