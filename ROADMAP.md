@@ -29,7 +29,7 @@ Goal: anyone can clone, build an empty Android app and run CI. (The iOS shell fr
 - [x] **M0-13** Dependabot or Renovate for Cargo, Gradle and Swift packages 🟢🤖
 - [x] **M0-14** Fuzz targets (`cargo fuzz`) for the MIME and IMAP parsers, run nightly in CI 🤖
 - [x] **M0-15** Release script that gathers `docs/changelog.d/` fragments into release notes 🟢🤖
-- [ ] **M0-17** Cross-platform CI on every PR: Android on Linux and the core on Windows (iOS on macOS comes back in M7-02) 🤖
+- [x] **M0-17** Cross-platform CI on every PR: Android on Linux and the core on Windows (iOS on macOS comes back in M7-02) 🤖
 
 ## M1 — Read mail
 
