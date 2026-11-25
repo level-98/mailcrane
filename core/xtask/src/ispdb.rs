@@ -52,7 +52,8 @@ fn valid_file_stem(s: &str) -> bool {
             .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'.' || b == b'-')
 }
 
-fn git(checkout: &Path, args: &[&str]) -> Result<String, Error> {
+/// A git command's raw output.
+fn git_bytes(checkout: &Path, args: &[&str]) -> Result<Vec<u8>, Error> {
     let out = Command::new("git")
         .arg("-C")
         .arg(checkout)
@@ -66,7 +67,13 @@ fn git(checkout: &Path, args: &[&str]) -> Result<String, Error> {
             checkout.display()
         ));
     }
-    Ok(String::from_utf8_lossy(&out.stdout).trim().to_owned())
+    Ok(out.stdout)
+}
+
+fn git(checkout: &Path, args: &[&str]) -> Result<String, Error> {
+    Ok(String::from_utf8_lossy(&git_bytes(checkout, args)?)
+        .trim()
+        .to_owned())
 }
 
 pub(crate) fn import(ctx: &Ctx, mut args: impl Iterator<Item = String>) -> Result<(), Error> {
@@ -74,7 +81,6 @@ pub(crate) fn import(ctx: &Ctx, mut args: impl Iterator<Item = String>) -> Resul
         .next()
         .ok_or("usage: cargo xtask ispdb <path to a thunderbird/autoconfig checkout>")?;
     let checkout = Path::new(&checkout);
-    let source = checkout.join("ispdb");
     let commit = git(checkout, &["rev-parse", "HEAD"])?;
     let date = git(checkout, &["log", "-1", "--format=%cs"])?;
 
@@ -89,11 +95,14 @@ pub(crate) fn import(ctx: &Ctx, mut args: impl Iterator<Item = String>) -> Resul
         }
     }
 
-    let mut names: Vec<String> = fs::read_dir(&source)
-        .map_err(|e| format!("cannot read {}: {e}", source.display()))?
-        .filter_map(|e| e.ok())
-        .filter_map(|e| e.file_name().into_string().ok())
+    // From the committed objects, not the working tree, so the copies are
+    // byte-for-byte upstream's whatever line-ending settings the checkout has.
+    let listing = git(checkout, &["ls-tree", "--name-only", "HEAD", "ispdb/"])?;
+    let mut names: Vec<String> = listing
+        .lines()
+        .filter_map(|l| l.strip_prefix("ispdb/"))
         .filter(|n| n.ends_with(".xml"))
+        .map(str::to_owned)
         .collect();
     names.sort();
 
@@ -104,15 +113,15 @@ pub(crate) fn import(ctx: &Ctx, mut args: impl Iterator<Item = String>) -> Resul
         if !valid_file_stem(stem) {
             return Err(format!("unexpected file name `{name}`"));
         }
-        let path = source.join(name);
-        let size = fs::metadata(&path).map_err(|e| e.to_string())?.len();
+        let bytes = git_bytes(checkout, &["show", &format!("HEAD:ispdb/{name}")])?;
+        let size = bytes.len() as u64;
         if size > MAX_FILE {
             return Err(format!(
                 "`{name}` is {size} bytes, over the {MAX_FILE}-byte limit"
             ));
         }
         let text =
-            fs::read_to_string(&path).map_err(|e| format!("`{name}` isn't UTF-8 text: {e}"))?;
+            String::from_utf8(bytes).map_err(|e| format!("`{name}` isn't UTF-8 text: {e}"))?;
         if !text.contains("<clientConfig") || text.contains("<!DOCTYPE") {
             return Err(format!("`{name}` isn't a plain clientConfig document"));
         }
@@ -136,8 +145,8 @@ pub(crate) fn import(ctx: &Ctx, mut args: impl Iterator<Item = String>) -> Resul
         files.push(name.clone());
     }
 
-    fs::copy(checkout.join("LICENSE"), dest.join("LICENSE"))
-        .map_err(|e| format!("cannot copy LICENSE: {e}"))?;
+    let licence = git_bytes(checkout, &["show", "HEAD:LICENSE"])?;
+    fs::write(dest.join("LICENSE"), licence).map_err(|e| format!("cannot write LICENSE: {e}"))?;
     let source_note = format!(
         "# ISPDB snapshot\n\n\
          Mozilla Thunderbird's database of mail server settings, bundled for automatic account \
