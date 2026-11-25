@@ -69,7 +69,7 @@ Goal: add an IMAP account and read your inbox, online and offline.
 - [ ] **M3-01** OAuth 2.0 framework with PKCE, using the system browser (AppAuth on Android; iOS sign-in is M7-09) 🔒
 - [ ] **M3-02** Gmail: OAuth, XOAUTH2, and labels mapped to folders 🔒🧑 (needs Google app verification)
 - [ ] **M3-03** Microsoft 365 and Outlook.com: OAuth and XOAUTH2 🔒🧑
-- [ ] **M3-04** JMAP client (Fastmail, Stalwart and others) 🤖
+- [x] **M3-04** JMAP client (Fastmail, Stalwart and others) 🤖
 - [ ] **M3-05** iCloud, Yahoo and AOL guided app-password setup 🧑
 - [ ] **M3-06** Provider test matrix: a doc recording which providers have been tested, by whom, and when 🧑
 
