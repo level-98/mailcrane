@@ -303,6 +303,22 @@ pub async fn recover_interrupted(
     Ok(found)
 }
 
+/// Undo send (M4-08): takes message `id` back out of the outbox if it
+/// hasn't started sending, and returns the draft exactly as it was
+/// (recipients, subject, body, thread headers). `None` if it's too late.
+pub fn cancel_pending(store: &Store, id: OutboxId) -> Result<Option<ComposeDraft>, StoreError> {
+    Ok(store.take_queued_outbox(id)?.map(|m| ComposeDraft {
+        account_id: m.account_id,
+        to: m.fields.to,
+        cc: m.fields.cc,
+        bcc: m.fields.bcc,
+        subject: m.fields.subject,
+        body_text: m.fields.body,
+        in_reply_to: m.fields.in_reply_to,
+        references: m.fields.references,
+    }))
+}
+
 /// Why an outbox call on one message failed.
 #[derive(Debug, thiserror::Error)]
 pub enum OutboxError {

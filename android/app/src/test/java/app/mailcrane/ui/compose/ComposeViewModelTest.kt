@@ -16,6 +16,7 @@ import app.mailcrane.core.ReplyFailure
 import app.mailcrane.core.ReplyKind
 import app.mailcrane.core.SendFailure
 import app.mailcrane.core.SendResult
+import app.mailcrane.settings.FakeAppSettings
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -97,6 +98,18 @@ class ComposeViewModelTest {
 
         override suspend fun listDrafts(accountId: Long): List<DraftSummary> = emptyList()
 
+        val delayed = mutableListOf<Pair<ComposeDraft, Int>>()
+
+        override suspend fun enqueueWithDelay(
+            draft: ComposeDraft,
+            delaySeconds: Int,
+        ): Long {
+            delayed += draft to delaySeconds
+            return 77
+        }
+
+        override suspend fun cancelPending(outboxId: Long): ComposeDraft? = null
+
         override suspend fun listOutbox(accountId: Long): List<OutboxEntry> = emptyList()
 
         override suspend fun retryOutbox(outboxId: Long) = Unit
@@ -159,7 +172,7 @@ class ComposeViewModelTest {
     @After
     fun tearDown() = Dispatchers.resetMain()
 
-    private fun started(core: FakeCore = FakeCore()) = ComposeViewModel(core).apply { start(1) }
+    private fun started(core: FakeCore = FakeCore()) = ComposeViewModel(core, FakeAppSettings()).apply { start(1) }
 
     @Test
     fun sendStaysDisabledUntilThereIsAValidRecipient() {
@@ -329,7 +342,7 @@ class ComposeViewModelTest {
                     draft: ComposeDraft,
                 ): Long = throw DraftFailure.Storage()
             }
-        val vm = ComposeViewModel(core).apply { start(1) }
+        val vm = ComposeViewModel(core, FakeAppSettings()).apply { start(1) }
         vm.onBodyChange("Precious")
         vm.requestClose()
         assertNull(vm.state.value.result)
@@ -345,7 +358,7 @@ class ComposeViewModelTest {
         vm.requestClose()
         val id = core.drafts.keys.single()
 
-        val reopened = ComposeViewModel(core).apply { start(1, draft = DraftRequest(draftId = id)) }
+        val reopened = ComposeViewModel(core, FakeAppSettings()).apply { start(1, draft = DraftRequest(draftId = id)) }
         reopened.requestDiscard()
         assertTrue(reopened.state.value.confirmingDiscard)
         reopened.keepEditing()
@@ -392,7 +405,7 @@ class ComposeViewModelTest {
         vm.onRecipientInput(RecipientField.TO, "bob@example.net")
         vm.requestClose()
         val id = core.drafts.keys.single()
-        val again = ComposeViewModel(core).apply { start(1, draft = DraftRequest(draftId = id)) }
+        val again = ComposeViewModel(core, FakeAppSettings()).apply { start(1, draft = DraftRequest(draftId = id)) }
         again.send()
         assertEquals(ComposeResult.Sent(emptyList()), again.state.value.result)
         assertEquals(listOf(id), core.deleted)
@@ -401,7 +414,7 @@ class ComposeViewModelTest {
     @Test
     fun aDraftsFolderMessageOpensAsADraft() {
         val core = FakeCore()
-        val vm = ComposeViewModel(core)
+        val vm = ComposeViewModel(core, FakeAppSettings())
         vm.start(1, draft = DraftRequest(messageId = 55))
         val state = vm.state.value
         assertEquals(7L, state.draftId)
@@ -424,14 +437,14 @@ class ComposeViewModelTest {
         assertEquals(1L, vm.state.value.fromAccountId)
 
         core.accounts = listOf(AccountSummary(1, "ann@example.org", "Ann"), AccountSummary(2, "ann@example.net", ""))
-        val vm2 = ComposeViewModel(core).apply { start(2) }
+        val vm2 = ComposeViewModel(core, FakeAppSettings()).apply { start(2) }
         assertTrue(vm2.state.value.showFromPicker)
         assertEquals(2L, vm2.state.value.fromAccountId)
         vm2.onFromChange(1)
         vm2.start(2)
         assertEquals("starting again (rotation) keeps the choice", 1L, vm2.state.value.fromAccountId)
 
-        val vm3 = ComposeViewModel(core).apply { start(99) }
+        val vm3 = ComposeViewModel(core, FakeAppSettings()).apply { start(99) }
         assertEquals("an unknown account falls back to the first", 1L, vm3.state.value.fromAccountId)
     }
 
@@ -439,7 +452,7 @@ class ComposeViewModelTest {
     fun replyIsPrefilledOnceAndSendsTheThreadHeaders() {
         val accounts = listOf(AccountSummary(1, "a@example.org", "A"), AccountSummary(2, "b@example.org", "B"))
         val core = FakeCore(accounts = accounts)
-        val vm = ComposeViewModel(core)
+        val vm = ComposeViewModel(core, FakeAppSettings())
         val request = ReplyRequest(42, ReplyKind.REPLY_ALL, "Ana wrote:")
         vm.start(1, request)
         val state = vm.state.value
@@ -485,7 +498,7 @@ class ComposeViewModelTest {
     @Test
     fun aReplyThatCantBeLoadedLeavesAnEmptyUsableScreen() {
         val core = FakeCore().apply { replyFailure = ReplyFailure.BodyNotDownloaded() }
-        val vm = ComposeViewModel(core)
+        val vm = ComposeViewModel(core, FakeAppSettings())
         vm.start(1, ReplyRequest(42, ReplyKind.REPLY, "x"))
         assertEquals(ComposeError.REPLY_UNAVAILABLE, vm.state.value.error)
         assertFalse(vm.state.value.hasContent)
@@ -505,7 +518,7 @@ class ComposeViewModelTest {
     @Test
     fun aReplyGetsTheSignatureAboveTheQuote() {
         val core = FakeCore().apply { signatures = mapOf(2L to "Bea") }
-        val vm = ComposeViewModel(core)
+        val vm = ComposeViewModel(core, FakeAppSettings())
         vm.start(1, ReplyRequest(42, ReplyKind.REPLY, "Ana wrote:"))
         assertEquals("\n\n-- \nBea\n\n\nAna wrote:\n> Noon?\n", vm.state.value.body)
     }
@@ -539,5 +552,16 @@ class ComposeViewModelTest {
         vm.onRecipientInput(RecipientField.TO, "bob@example.net")
         vm.send()
         assertEquals(ComposeResult.Queued, vm.state.value.result)
+    }
+
+    @Test
+    fun withUndoSendTheMessageWaitsAndCanBeTakenBack() {
+        val core = FakeCore()
+        val vm = ComposeViewModel(core, FakeAppSettings(undoSendSeconds = 10)).apply { start(1) }
+        vm.onRecipientInput(RecipientField.TO, "bob@example.net")
+        vm.send()
+        assertEquals(ComposeResult.Undoable(77, 10), vm.state.value.result)
+        assertEquals(10, core.delayed.single().second)
+        assertNull("not sent directly", core.sent)
     }
 }

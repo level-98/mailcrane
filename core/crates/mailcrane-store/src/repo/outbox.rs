@@ -461,6 +461,20 @@ impl Store {
         Ok(n > 0)
     }
 
+    /// Removes a message only if it is still queued (sending hasn't
+    /// started). Returns it, or `None` if it's being sent, was sent, failed
+    /// or doesn't exist. For undo send (M4-08).
+    pub fn take_queued_outbox(&self, id: OutboxId) -> Result<Option<OutboxMessage>, StoreError> {
+        let Some(message) = self.get_outbox(id)? else {
+            return Ok(None);
+        };
+        let n = self.conn.execute(
+            "DELETE FROM outbox WHERE id = ?1 AND state = 'queued'",
+            params![id.0],
+        )?;
+        Ok((n > 0).then_some(message))
+    }
+
     /// Removes a message that isn't being sent. Returns it, or `None` if it
     /// doesn't exist or is being sent right now.
     pub fn take_outbox(&self, id: OutboxId) -> Result<Option<OutboxMessage>, StoreError> {

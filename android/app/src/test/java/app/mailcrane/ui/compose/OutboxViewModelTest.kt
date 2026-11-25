@@ -90,6 +90,13 @@ private class FakeOutboxCore : ComposeCore {
     override suspend fun listDrafts(accountId: Long) = emptyList<DraftSummary>()
 
     override suspend fun send(draft: ComposeDraft) = SendResult(emptyList())
+
+    override suspend fun enqueueWithDelay(
+        draft: ComposeDraft,
+        delaySeconds: Int,
+    ): Long = 0
+
+    override suspend fun cancelPending(outboxId: Long): ComposeDraft? = null
 }
 
 @OptIn(ExperimentalCoroutinesApi::class)

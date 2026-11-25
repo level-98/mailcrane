@@ -339,3 +339,49 @@ async fn a_failed_message_can_be_edited_as_a_draft_or_deleted() {
     );
     assert!(s.store.list_outbox(s.account).expect("list").is_empty());
 }
+
+#[tokio::test]
+async fn undo_within_the_delay_returns_the_whole_draft_and_sends_nothing() {
+    let s = setup(&[]).await;
+    let mut d = draft(&s, "Oops");
+    d.in_reply_to = Some("p@example.net".into());
+    d.references = vec!["p@example.net".into()];
+    let id = enqueue(&s.store, &d, NOW + 10, NOW).expect("queued");
+    // Nothing reaches the server before the delay is over.
+    for t in [NOW, NOW + 5, NOW + 9] {
+        assert_eq!(send_due_at(&s, t).await.sent, 0);
+    }
+    assert!(s.smtp.sent().await.is_empty());
+    let back = cancel_pending(&s.store, id)
+        .expect("read")
+        .expect("still undoable");
+    assert_eq!(back, d, "exactly as it was");
+    assert!(s.store.get_outbox(id).expect("read").is_none());
+    send_due_at(&s, NOW + 60).await;
+    assert!(s.smtp.sent().await.is_empty());
+}
+
+#[tokio::test]
+async fn undo_after_sending_started_is_too_late() {
+    let s = setup(&[]).await;
+    let id = enqueue(&s.store, &draft(&s, "Gone"), NOW + 10, NOW).expect("queued");
+    assert_eq!(send_due_at(&s, NOW + 10).await.sent, 1);
+    assert_eq!(cancel_pending(&s.store, id).expect("read"), None);
+    assert_eq!(
+        state(&s, id).state,
+        OutboxState::Sent,
+        "a sent record is kept"
+    );
+
+    let busy = enqueue(&s.store, &draft(&s, "Busy"), 0, NOW).expect("queued");
+    assert!(s.store.claim_outbox(busy).expect("claim"));
+    assert_eq!(cancel_pending(&s.store, busy).expect("read"), None);
+    assert_eq!(cancel_pending(&s.store, OutboxId(999)).expect("read"), None);
+}
+
+#[tokio::test]
+async fn no_delay_sends_at_once() {
+    let s = setup(&[]).await;
+    enqueue(&s.store, &draft(&s, "Now"), 0, NOW).expect("queued");
+    assert_eq!(send_due_at(&s, NOW).await.sent, 1);
+}

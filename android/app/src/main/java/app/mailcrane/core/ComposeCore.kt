@@ -81,6 +81,15 @@ interface ComposeCore {
     /** Makes an outbox message a draft again; returns the draft id. @throws OutboxFailure */
     suspend fun editOutbox(outboxId: Long): Long
 
+    /** Undo send: queues [draft] to go out after [delaySeconds]; returns its outbox id. @throws SendFailure */
+    suspend fun enqueueWithDelay(
+        draft: ComposeDraft,
+        delaySeconds: Int,
+    ): Long
+
+    /** Undo send: the draft back if it hasn't started sending, else null ("Already sent"). */
+    suspend fun cancelPending(outboxId: Long): ComposeDraft?
+
     /**
      * Sends [draft] now.
      *
@@ -165,6 +174,20 @@ class UniffiComposeCore(
         outbox?.kick(draft.accountId)
         return result
     }
+
+    override suspend fun enqueueWithDelay(
+        draft: ComposeDraft,
+        delaySeconds: Int,
+    ): Long {
+        val delay = delaySeconds.coerceAtLeast(0).toUInt()
+        val id = withContext(io) { app.mailcrane.core.enqueueWithDelay(dbPath, draft, delay) }
+        // The sender waits until the delay is over, then sends (and keeps going if the app closes).
+        outbox?.kick(draft.accountId)
+        return id
+    }
+
+    override suspend fun cancelPending(outboxId: Long): ComposeDraft? =
+        withContext(io) { app.mailcrane.core.cancelPending(dbPath, outboxId) }
 
     override suspend fun listOutbox(accountId: Long): List<OutboxEntry> =
         withContext(io) { app.mailcrane.core.listOutbox(dbPath, accountId) }
