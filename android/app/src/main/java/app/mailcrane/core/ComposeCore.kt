@@ -1,5 +1,6 @@
 package app.mailcrane.core
 
+import app.mailcrane.work.OutboxSender
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -68,6 +69,18 @@ interface ComposeCore {
     /** The account's drafts, most recently changed first. */
     suspend fun listDrafts(accountId: Long): List<DraftSummary>
 
+    /** The account's unsent messages. */
+    suspend fun listOutbox(accountId: Long): List<OutboxEntry>
+
+    /** Queues a failed message again. @throws OutboxFailure */
+    suspend fun retryOutbox(outboxId: Long)
+
+    /** Removes a message from the outbox. @throws OutboxFailure */
+    suspend fun deleteOutbox(outboxId: Long)
+
+    /** Makes an outbox message a draft again; returns the draft id. @throws OutboxFailure */
+    suspend fun editOutbox(outboxId: Long): Long
+
     /**
      * Sends [draft] now.
      *
@@ -79,6 +92,7 @@ interface ComposeCore {
 /** Calls the core through the generated UniFFI bindings. [dbPath] is the app's database file. */
 class UniffiComposeCore(
     private val dbPath: String,
+    private val outbox: OutboxSender? = null,
     private val io: CoroutineDispatcher = Dispatchers.IO,
 ) : ComposeCore {
     override suspend fun listAccounts(): List<AccountSummary> = withContext(io) { listAccounts(dbPath) }
@@ -144,5 +158,24 @@ class UniffiComposeCore(
         )
     }
 
-    override suspend fun send(draft: ComposeDraft): SendResult = app.mailcrane.core.send(dbPath, draft)
+    /** Through the outbox: sent at once if possible, otherwise queued and retried in the background. */
+    override suspend fun send(draft: ComposeDraft): SendResult {
+        val result = sendViaOutbox(dbPath, draft)
+        if (result.queued) outbox?.kick(draft.accountId)
+        return result
+    }
+
+    override suspend fun listOutbox(accountId: Long): List<OutboxEntry> =
+        withContext(io) { app.mailcrane.core.listOutbox(dbPath, accountId) }
+
+    override suspend fun retryOutbox(outboxId: Long) {
+        withContext(io) { app.mailcrane.core.retryOutbox(dbPath, outboxId) }
+        outbox?.kickAll()
+    }
+
+    override suspend fun deleteOutbox(outboxId: Long) =
+        withContext(io) { app.mailcrane.core.deleteOutbox(dbPath, outboxId) }
+
+    override suspend fun editOutbox(outboxId: Long): Long =
+        withContext(io) { app.mailcrane.core.editOutbox(dbPath, outboxId) }
 }

@@ -3,6 +3,8 @@
 
     <!-- Connecting to the user's mail servers, and remote images when the user asks for them. -->
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- To send the outbox when the network comes back (M2-06). -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
     <application
         android:name=".MailcraneApplication"

@@ -85,6 +85,9 @@ sealed interface ComposeResult {
 
     /** Closed with the message kept as a draft. */
     data object SavedDraft : ComposeResult
+
+    /** Not sent yet: in the outbox, sent when the network or server is back. */
+    data object Queued : ComposeResult
 }
 
 /** Everything the compose screen shows. Holds all typed content, so nothing is lost on errors. */
@@ -425,7 +428,12 @@ class ComposeViewModel
                 if (outcome.isSuccess) committed.draftId?.let { deleteQuietly(it) }
                 _state.update { s ->
                     outcome.fold(
-                        onSuccess = { s.copy(sending = false, result = ComposeResult.Sent(it.rejected)) },
+                        onSuccess = {
+                            s.copy(
+                                sending = false,
+                                result = if (it.queued) ComposeResult.Queued else ComposeResult.Sent(it.rejected),
+                            )
+                        },
                         onFailure = { e -> s.withFailure(e) },
                     )
                 }

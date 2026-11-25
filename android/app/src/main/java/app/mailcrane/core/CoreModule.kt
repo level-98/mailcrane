@@ -1,6 +1,7 @@
 package app.mailcrane.core
 
 import android.content.Context
+import app.mailcrane.work.OutboxSender
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -36,7 +37,8 @@ object CoreModule {
     @Singleton
     fun provideComposeCore(
         @ApplicationContext context: Context,
-    ): ComposeCore = UniffiComposeCore(dbPath = dbPath(context))
+        outbox: OutboxSender,
+    ): ComposeCore = UniffiComposeCore(dbPath = dbPath(context), outbox = outbox)
 
     @Provides
     fun provideLinkCleaner(): LinkCleaner = CoreLinkCleaner
@@ -47,6 +49,8 @@ object CoreModule {
         @ApplicationContext context: Context,
     ): AccountSettingsCore = UniffiAccountSettingsCore(dbPath = dbPath(context))
 
-    // The database lives in app-private storage that is never backed up.
-    private fun dbPath(context: Context): String = File(context.noBackupFilesDir, "mailcrane.sqlite").path
+    private fun dbPath(context: Context): String = databasePath(context)
 }
+
+/** The app's database: in app-private storage that is never backed up. */
+fun databasePath(context: Context): String = File(context.noBackupFilesDir, "mailcrane.sqlite").path

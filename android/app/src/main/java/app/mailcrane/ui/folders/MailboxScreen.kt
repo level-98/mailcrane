@@ -12,6 +12,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.rememberCoroutineScope
@@ -29,6 +30,8 @@ import app.mailcrane.core.FolderRole
 import app.mailcrane.settings.SettingsScreen
 import app.mailcrane.ui.compose.DraftRequest
 import app.mailcrane.ui.compose.LocalDraftsScreen
+import app.mailcrane.ui.compose.OutboxScreen
+import app.mailcrane.ui.compose.OutboxViewModel
 import app.mailcrane.ui.compose.ReplyRequest
 import app.mailcrane.ui.message.MessageScreen
 import app.mailcrane.ui.messagelist.MessageListScreen
@@ -65,6 +68,16 @@ fun MailboxScreen(
             val saved = rememberSaveableStateHolder()
             var showSettings by rememberSaveable { mutableStateOf(false) }
             var showDrafts by rememberSaveable { mutableStateOf(false) }
+            var showOutbox by rememberSaveable { mutableStateOf(false) }
+            if (showOutbox) {
+                BackHandler { showOutbox = false }
+                OutboxScreen(
+                    accountId = accountId,
+                    onEdit = { onOpenDraft(DraftRequest(draftId = it)) },
+                    onBack = { showOutbox = false },
+                )
+                return
+            }
             if (showDrafts) {
                 BackHandler { showDrafts = false }
                 LocalDraftsScreen(
@@ -91,6 +104,14 @@ fun MailboxScreen(
                 return
             }
             val drawerState = rememberDrawerState(DrawerValue.Closed)
+            val outbox =
+                hiltViewModel<OutboxViewModel, OutboxViewModel.Factory>(
+                    key = "outbox-$accountId",
+                    creationCallback = { factory -> factory.create(accountId) },
+                )
+            val outboxEntries by outbox.entries.collectAsStateWithLifecycle()
+            // Counted again whenever the drawer opens, so the Outbox entry is current.
+            LaunchedEffect(drawerState.isOpen) { outbox.refresh() }
             val scope = rememberCoroutineScope()
             BackHandler(enabled = drawerState.isOpen) { scope.launch { drawerState.close() } }
             ModalNavigationDrawer(
@@ -110,6 +131,11 @@ fun MailboxScreen(
                         onOpenLocalDrafts = {
                             scope.launch { drawerState.close() }
                             showDrafts = true
+                        },
+                        outboxCount = outboxEntries.size,
+                        onOpenOutbox = {
+                            scope.launch { drawerState.close() }
+                            showOutbox = true
                         },
                     )
                 },

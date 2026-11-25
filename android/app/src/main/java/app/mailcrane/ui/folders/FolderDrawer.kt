@@ -45,6 +45,8 @@ fun FolderDrawer(
     modifier: Modifier = Modifier,
     onOpenSettings: (() -> Unit)? = null,
     onOpenLocalDrafts: (() -> Unit)? = null,
+    outboxCount: Int = 0,
+    onOpenOutbox: (() -> Unit)? = null,
 ) {
     ModalDrawerSheet(modifier = modifier) {
         Text(
@@ -64,6 +66,16 @@ fun FolderDrawer(
         }
         if (onOpenSettings != null || onOpenLocalDrafts != null) {
             HorizontalDivider(Modifier.padding(horizontal = 28.dp))
+        }
+        if (onOpenOutbox != null && outboxCount > 0) {
+            NavigationDrawerItem(
+                label = { Text(stringResource(R.string.outbox_title)) },
+                icon = { Icon(painterResource(R.drawable.ic_mc_sent), contentDescription = null) },
+                badge = { Text(outboxCount.toString()) },
+                selected = false,
+                onClick = onOpenOutbox,
+                modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding),
+            )
         }
         if (onOpenLocalDrafts != null) {
             NavigationDrawerItem(

@@ -70,6 +70,9 @@ fun MailHome(accountId: Long) {
                                     )
                                 }
                         }
+                        if (result is ComposeResult.Queued) {
+                            notice = resources.getString(R.string.compose_queued)
+                        }
                         if (result is ComposeResult.SavedDraft) {
                             notice = resources.getString(R.string.compose_draft_saved)
                         }

@@ -205,4 +205,19 @@
     <string name="local_drafts_conflict">Changed on another device: kept as a copy</string>
     <string name="local_drafts_no_subject">(no subject)</string>
     <string name="local_drafts_no_recipients">No recipients yet</string>
+
+    <!-- Outbox (M2-06) -->
+    <string name="compose_queued">Saved to your Outbox. It will be sent when you’re back online.</string>
+    <string name="outbox_title">Outbox</string>
+    <string name="outbox_empty">Nothing waiting to be sent.</string>
+    <string name="outbox_sending">Sending…</string>
+    <string name="outbox_waiting">Waiting to send</string>
+    <string name="outbox_will_retry">Couldn’t send yet. Trying again automatically.</string>
+    <string name="outbox_failed">Not sent: the server refused it.</string>
+    <string name="outbox_failed_auth">Not sent: the server didn’t accept your login details.</string>
+    <string name="outbox_failed_recipients">Not sent: the server refused every recipient.</string>
+    <string name="outbox_failed_too_large">Not sent: the message is too large.</string>
+    <string name="outbox_retry">Retry</string>
+    <string name="outbox_edit">Edit</string>
+    <string name="outbox_delete">Delete</string>
 </resources>

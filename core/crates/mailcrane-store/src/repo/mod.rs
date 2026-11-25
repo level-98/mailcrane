@@ -5,10 +5,12 @@ mod attachments;
 mod drafts;
 mod folders;
 mod messages;
+mod outbox;
 mod pending_ops;
 mod settings;
 
 pub use drafts::{Draft, DraftFields, DraftId, ServerCopy};
+pub use outbox::{NewOutboxMessage, OutboxId, OutboxMessage, OutboxState};
 pub use pending_ops::{OpId, OpKind, OpMessage, PendingOp};
 pub use settings::{SignatureSetting, MAX_SIGNATURE_BYTES};
 
