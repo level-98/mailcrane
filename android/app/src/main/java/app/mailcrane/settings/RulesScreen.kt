@@ -52,6 +52,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import app.mailcrane.R
+import app.mailcrane.core.CoreEvent
 import app.mailcrane.core.FolderRole
 import app.mailcrane.core.FolderSummary
 import app.mailcrane.core.MailboxCore
@@ -74,13 +75,12 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.conflate
+import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.io.Serializable
-import kotlinx.coroutines.flow.filter
-import kotlinx.coroutines.flow.conflate
-import app.mailcrane.core.CoreEvent
 
 /** The kinds of condition the editor offers, in menu order. */
 enum class ConditionKind(
@@ -243,7 +243,10 @@ class RulesViewModel
             viewModelScope.launch {
                 // A folder was removed or renamed (#323): rules may have been turned off, and the
                 // folder list for the editor changed. This screen outlives a trip to Manage folders.
-                mailbox.events.filter { it is CoreEvent.FolderChanged }.conflate().collect { reloadAll() }
+                mailbox.events
+                    .filter { it is CoreEvent.FolderChanged }
+                    .conflate()
+                    .collect { reloadAll() }
             }
         }
 
