@@ -26,7 +26,9 @@ pub struct HttpsFetcher {
     pub extra_roots: Vec<Vec<u8>>,
 }
 
-fn tls_config(extra_roots: &[Vec<u8>]) -> Result<Arc<rustls::ClientConfig>, FetchError> {
+/// The HTTPS client configuration the core uses: platform certificate
+/// checks, which can't be turned off. Also used for OAuth token requests.
+pub(crate) fn tls_config(extra_roots: &[Vec<u8>]) -> Result<Arc<rustls::ClientConfig>, FetchError> {
     let provider = Arc::new(rustls::crypto::aws_lc_rs::default_provider());
     let roots = extra_roots
         .iter()
