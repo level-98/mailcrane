@@ -68,6 +68,11 @@ kotlin {
 // shell in between, so this works the same on Windows, macOS and Linux.
 val rustProfile = if (rustRelease) "release" else "debug"
 
+// "Load test mail" (#289) exists only in debug builds: the core gets the
+// fixture-loader feature for debug, never for release. `cargo xtask ci`
+// checks that this stays the only line that turns it on.
+val rustFeatures = if (rustRelease) emptyList() else listOf("--features", "debug-fixtures")
+
 // Where Cargo puts its output: CARGO_TARGET_DIR if set (relative to core/, as
 // Cargo treats it), otherwise core/target.
 val cargoTargetDir: File =
@@ -81,6 +86,10 @@ val cargoNdkBuild by tasks.registering(Exec::class) {
     workingDir = coreDir.asFile
     inputs.dir(coreDir.dir("crates"))
     inputs.files(coreDir.file("Cargo.toml"), coreDir.file("Cargo.lock"))
+    // Debug and release builds share the output folder; a change of profile or
+    // features must rebuild the library.
+    inputs.property("rustProfile", rustProfile)
+    inputs.property("rustFeatures", rustFeatures)
     outputs.dir(rustJniLibsDir)
     commandLine(
         listOf(
@@ -95,8 +104,61 @@ val cargoNdkBuild by tasks.registering(Exec::class) {
             "build",
             "-p",
             "mailcrane-ffi",
-        ) + if (rustRelease) listOf("--release") else emptyList(),
+        ) + rustFeatures + if (rustRelease) listOf("--release") else emptyList(),
     )
+}
+
+// The core is built once per Gradle run, for debug or release according to
+// the task names asked for (`rustRelease`). A run that would package a release
+// variant without naming it (`assemble`, `build`) would put the debug core,
+// with the fixture loader (#289), into the release APK: refuse it.
+val checkNoDebugCoreInRelease by tasks.registering {
+    group = "verification"
+    description = "Fails when a release variant would be packaged with a core built for debug."
+    val release = rustRelease
+    doLast {
+        if (!release) {
+            throw GradleException(
+                "A release variant needs a release core: name the release task (assembleRelease, bundleRelease).",
+            )
+        }
+    }
+}
+
+tasks.matching { it.name == "mergeReleaseNativeLibs" || it.name == "mergeReleaseJniLibFolders" }.configureEach {
+    dependsOn(checkNoDebugCoreInRelease)
+}
+
+// Debug builds carry tests/fixtures (`.eml` and `.html`) as assets under
+// `fixtures/`, for "Load test mail" (#289). Release builds don't.
+abstract class CopyFixtures : DefaultTask() {
+    @get:InputDirectory
+    @get:PathSensitive(PathSensitivity.RELATIVE)
+    abstract val fixtures: DirectoryProperty
+
+    @get:OutputDirectory
+    abstract val outputDir: DirectoryProperty
+
+    @TaskAction
+    fun copy() {
+        val source = fixtures.get().asFile
+        val target = outputDir.get().asFile.resolve("fixtures")
+        target.deleteRecursively()
+        source
+            .walkTopDown()
+            .filter { it.isFile && it.extension.lowercase() in setOf("eml", "html") }
+            .forEach { it.copyTo(target.resolve(it.relativeTo(source)), overwrite = true) }
+    }
+}
+
+val copyFixtureAssets by tasks.registering(CopyFixtures::class) {
+    fixtures.set(rootProject.layout.projectDirectory.dir("../tests/fixtures"))
+}
+
+androidComponents {
+    onVariants(selector().withBuildType("debug")) { variant ->
+        variant.sources.assets?.addGeneratedSourceDirectory(copyFixtureAssets, CopyFixtures::outputDir)
+    }
 }
 
 val buildRust by tasks.registering(Exec::class) {

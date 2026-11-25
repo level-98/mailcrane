@@ -18,6 +18,8 @@ pub mod autoconfig;
 pub mod compose;
 pub mod contacts;
 pub mod drafts;
+#[cfg(feature = "debug-fixtures")]
+pub mod fixtures;
 pub mod folders;
 pub mod links;
 pub mod logging;

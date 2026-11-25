@@ -16,6 +16,10 @@ crate-type = ["lib", "cdylib", "staticlib"]
 [features]
 # Needed only to build the `uniffi-bindgen` binary.
 bindgen = ["uniffi/cli"]
+# "Load test mail" (#289): DEBUG BUILDS ONLY. The Android build turns it on
+# for the debug variant alone. Never add it to `default`; `cargo xtask ci`
+# fails if a release path could get it.
+debug-fixtures = ["mailcrane-core/fixtures"]
 
 [[bin]]
 name = "uniffi-bindgen"

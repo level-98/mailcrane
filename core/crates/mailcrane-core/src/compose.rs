@@ -333,6 +333,11 @@ pub(crate) fn smtp_settings(
         .map_err(|_| SendError::Storage)?
         .ok_or(SendError::AccountNotFound)?
         .details;
+    // A local-only account (#289) has no server and never connects; sending
+    // from it fails before the network, as if it had no credentials.
+    if store.is_local_account(account_id).unwrap_or(true) {
+        return Err(SendError::MissingCredentials);
+    }
     let password = secrets
         .get(&SecretKey::account_password(account_id.0))
         .map_err(|_| SendError::MissingCredentials)?
@@ -613,6 +618,56 @@ mod tests {
                 },
             ]))
         );
+    }
+
+    /// Holds one password for every account.
+    struct OnePassword;
+
+    impl SecretStore for OnePassword {
+        fn put(
+            &self,
+            _: &SecretKey,
+            _: &crate::secrets::Secret,
+        ) -> Result<(), crate::secrets::SecretError> {
+            Ok(())
+        }
+        fn get(
+            &self,
+            _: &SecretKey,
+        ) -> Result<Option<crate::secrets::Secret>, crate::secrets::SecretError> {
+            Ok(Some(crate::secrets::Secret::new(b"pw".to_vec())))
+        }
+        fn delete(&self, _: &SecretKey) -> Result<(), crate::secrets::SecretError> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn a_local_only_account_never_gets_smtp_settings() {
+        let store = Store::open_in_memory().expect("store");
+        let account = |email: &str| mailcrane_store::NewAccount {
+            display_name: "A".into(),
+            email: email.into(),
+            imap_host: "imap.example.org".into(),
+            imap_port: 993,
+            imap_security: Security::Tls,
+            smtp_host: "smtp.example.org".into(),
+            smtp_port: 465,
+            smtp_security: Security::Tls,
+            username: "a".into(),
+        };
+        let remote = store.insert_account(&account("a@example.org")).expect("a");
+        let local = store
+            .insert_local_account(&account("fixtures@example.org"))
+            .expect("local");
+        let options = SendOptions::default();
+        assert!(smtp_settings(&store, &OnePassword, remote, &options).is_ok());
+        // Even with a server and a password, a local-only account is refused
+        // before anything connects.
+        assert!(matches!(
+            smtp_settings(&store, &OnePassword, local, &options),
+            Err(SendError::MissingCredentials)
+        ));
     }
 
     #[test]
