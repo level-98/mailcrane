@@ -18,7 +18,7 @@ fn on_wifi() -> DeviceConditions {
     }
 }
 
-fn runtime_for_fakes() -> tokio::runtime::Runtime {
+pub(super) fn runtime_for_fakes() -> tokio::runtime::Runtime {
     tokio::runtime::Builder::new_multi_thread()
         .worker_threads(1)
         .enable_all()
@@ -26,19 +26,22 @@ fn runtime_for_fakes() -> tokio::runtime::Runtime {
         .expect("runtime")
 }
 
-fn raws(count: usize) -> Vec<Vec<u8>> {
+pub(super) fn raws(count: usize) -> Vec<Vec<u8>> {
     (1..=count)
         .map(|n| format!("Subject: Message {n}\r\n\r\nBody {n}\r\n").into_bytes())
         .collect()
 }
 
 /// An engine with one IMAP account whose INBOX is on `imap`.
-fn imap_engine(dir: &tempfile::TempDir, imap: &FakeImap) -> (Arc<SyncEngine>, String, FolderId) {
+pub(super) fn imap_engine(
+    dir: &tempfile::TempDir,
+    imap: &FakeImap,
+) -> (Arc<SyncEngine>, String, FolderId) {
     imap_engine_with(dir, imap, Arc::new(Collect::default()))
 }
 
 /// [`imap_engine`] sending events to `listener`.
-fn imap_engine_with(
+pub(super) fn imap_engine_with(
     dir: &tempfile::TempDir,
     imap: &FakeImap,
     listener: Arc<Collect>,

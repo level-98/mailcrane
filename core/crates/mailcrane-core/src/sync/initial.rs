@@ -427,7 +427,12 @@ impl<'a> FolderSyncer<'a> {
             .store
             .get_folder(folder)?
             .ok_or(SyncError::UnknownFolder)?;
-        let info = self.session.select(&row.details.remote_name).await?;
+        // A reused connection (#294) that has this folder selected already
+        // doesn't select it again.
+        let info = self
+            .session
+            .select_reusing(&row.details.remote_name)
+            .await?;
         if row.details.uidvalidity != Some(i64::from(info.uidvalidity)) {
             // The UID may now mean another message: store nothing.
             return Err(SyncError::FolderReset);
