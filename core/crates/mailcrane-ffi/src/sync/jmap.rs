@@ -34,7 +34,7 @@ impl SyncEngine {
         job: impl for<'a> FnOnce(&'a mut JmapSyncer<'_>) -> SyncFuture<'a, T>,
     ) -> Result<T, SyncFailure> {
         let lock = self.account_lock(account);
-        let _guard = lock.blocking_lock();
+        let _guard = lock.lock();
         let report = |kind| self.report(account, kind);
         let auth = jmap_auth(store, account).map_err(report)?;
         let mut config = ClientConfig::default();
@@ -87,7 +87,7 @@ impl SyncEngine {
 
 /// HTTP Basic with the account's username and its password (an app
 /// password at most providers) from secure storage.
-fn jmap_auth(store: &Store, account: AccountId) -> Result<Auth, events::SyncErrorKind> {
+pub(super) fn jmap_auth(store: &Store, account: AccountId) -> Result<Auth, events::SyncErrorKind> {
     let row = store
         .get_account(account)
         .map_err(|_| events::SyncErrorKind::Storage)?

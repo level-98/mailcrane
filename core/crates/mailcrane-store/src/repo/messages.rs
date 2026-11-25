@@ -393,6 +393,29 @@ impl Store {
         Ok(true)
     }
 
+    /// Messages whose body should be downloaded ahead of time (M4-25): of
+    /// the folder's `newest` messages that arrived at or after `since`
+    /// (unix seconds, `internal_date`), the ones without a stored body and
+    /// at most `max_size` bytes, newest first. Hidden rows (a queued move or
+    /// delete) are left out. Returns each row id with its UID.
+    pub fn prefetch_candidates(
+        &self,
+        folder: FolderId,
+        since: i64,
+        newest: u32,
+        max_size: i64,
+    ) -> Result<Vec<(MessageId, u32)>, StoreError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, uid FROM (                SELECT id, uid, size, body_state, internal_date FROM messages                WHERE folder_id = ?1 AND hidden = 0 AND internal_date >= ?2                ORDER BY internal_date DESC, id DESC LIMIT ?3              ) WHERE body_state = 'none' AND size <= ?4              ORDER BY internal_date DESC, id DESC",
+        )?;
+        let mut rows = stmt.query(params![folder.0, since, newest, max_size])?;
+        let mut out = Vec::new();
+        while let Some(r) = rows.next()? {
+            out.push((MessageId(r.get(0)?), narrow(r.get(1)?, "uid")?));
+        }
+        Ok(out)
+    }
+
     /// Returns the cached raw message, if any.
     pub fn get_body(&self, id: MessageId) -> Result<Option<Vec<u8>>, StoreError> {
         Ok(self

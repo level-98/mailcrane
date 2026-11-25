@@ -1224,10 +1224,25 @@ async fn handle_uid_command(
                     out.extend_from_slice(&fields);
                 }
                 if items.contains("BODY[]") || items.contains("BODY.PEEK[]") {
-                    out.extend_from_slice(
-                        format!(" BODY[] {{{}}}\r\n", message.raw.len()).as_bytes(),
-                    );
-                    out.extend_from_slice(&message.raw);
+                    // A partial fetch, `BODY.PEEK[]<start.length>` (RFC 9051
+                    // §6.4.5), answers with that range as `BODY[]<start>`.
+                    match partial_range(&items) {
+                        Some((start, length)) => {
+                            let from = start.min(message.raw.len());
+                            let to = from.saturating_add(length).min(message.raw.len());
+                            let part = message.raw.get(from..to).unwrap_or_default();
+                            out.extend_from_slice(
+                                format!(" BODY[]<{start}> {{{}}}\r\n", part.len()).as_bytes(),
+                            );
+                            out.extend_from_slice(part);
+                        }
+                        None => {
+                            out.extend_from_slice(
+                                format!(" BODY[] {{{}}}\r\n", message.raw.len()).as_bytes(),
+                            );
+                            out.extend_from_slice(&message.raw);
+                        }
+                    }
                 }
                 out.extend_from_slice(b")\r\n");
             }
@@ -1342,6 +1357,15 @@ async fn handle_uid_command(
 
 /// The current time as an IMAP `date-time` (RFC 9051 §9), always in UTC:
 /// `25-Nov-2026 10:46:51 +0000`.
+/// The `<start.length>` of a `BODY[]` or `BODY.PEEK[]` partial fetch in
+/// the (upper-cased) items, if there is one.
+fn partial_range(items: &str) -> Option<(usize, usize)> {
+    let (_, rest) = items.split_once("[]<")?;
+    let (range, _) = rest.split_once('>')?;
+    let (start, length) = range.split_once('.')?;
+    Some((start.parse().ok()?, length.parse().ok()?))
+}
+
 fn internal_date_now() -> String {
     let secs = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

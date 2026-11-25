@@ -7,7 +7,7 @@ use mailcrane_testkit::FakeImap;
 use std::collections::HashMap;
 
 #[derive(Default)]
-struct Platform(Mutex<HashMap<String, Vec<u8>>>);
+pub(super) struct Platform(Mutex<HashMap<String, Vec<u8>>>);
 
 impl PlatformSecretStore for Platform {
     fn put(&self, key: String, value: Vec<u8>) -> Result<(), SecretStoreError> {
@@ -35,7 +35,7 @@ impl PlatformSecretStore for Platform {
 }
 
 #[derive(Default)]
-struct Collect(Mutex<Vec<CoreEvent>>);
+pub(super) struct Collect(pub(super) Mutex<Vec<CoreEvent>>);
 
 impl CoreEventListener for Collect {
     fn on_event(&self, event: CoreEvent) {
@@ -291,7 +291,7 @@ fn live_updates_start_once_deliver_and_stop_through_the_ffi() {
     // account's lock, new mail seen by IDLE waits instead of writing
     // alongside it, and is stored once the lock is free.
     let writing = engine.account_lock(account);
-    let guard = writing.blocking_lock();
+    let guard = writing.lock();
     runtime.block_on(
         imap.mailbox()
             .deliver("INBOX", b"Subject: Message 4\r\n\r\nBody 4\r\n".to_vec()),

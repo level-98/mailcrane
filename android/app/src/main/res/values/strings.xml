@@ -595,6 +595,12 @@
         <item quantity="one">Loaded %d test message into the Fixtures account.</item>
         <item quantity="other">Loaded %d test messages into the Fixtures account.</item>
     </plurals>
+    <string name="settings_advanced_header">Advanced</string>
+    <string name="settings_background_download">Download messages in the background</string>
+    <string name="settings_background_download_summary">Recent messages in your inbox are downloaded after each check, so they open at once, even offline. Never on Battery Saver or when storage is low. Pictures from the web are not downloaded.</string>
+    <string name="settings_background_download_wifi">On Wi-Fi only</string>
+    <string name="settings_background_download_always">Always (also on mobile data)</string>
+    <string name="settings_background_download_never">Never</string>
     <string name="settings_notifications_header">Notifications</string>
     <string name="settings_notifications">New mail notifications</string>
     <string name="settings_notifications_summary">Tell me about new messages in my inboxes</string>

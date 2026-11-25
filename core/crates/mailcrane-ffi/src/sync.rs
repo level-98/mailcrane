@@ -12,7 +12,7 @@ use mailcrane_core::events::{self, EventListener};
 use mailcrane_core::secrets::SecretKey;
 use mailcrane_core::sync::{
     live_stop, log_failure, run_live_updates, FolderSyncer, ImapLogin, LiveAccount, LiveConfig,
-    LiveStop, SyncConfig, SyncError as CoreSyncError, WriteLock,
+    LiveStop, SyncConfig, SyncError as CoreSyncError,
 };
 use mailcrane_imap::{save_folders, ImapConfig, ImapError, ImapSecurity, Secret, Session};
 use mailcrane_store::{AccountId, FolderId, FolderRole, MessageId, Security, Store};
@@ -192,9 +192,11 @@ pub struct SyncEngine {
     pub(crate) listener: Arc<dyn CoreEventListener>,
     config: SyncConfig,
     live_config: LiveConfig,
-    /// One lock per account, serialising that account's calls and its
-    /// live updates' syncs (one writer per account, issue #282).
-    busy: Mutex<HashMap<i64, WriteLock>>,
+    /// One lock per account, serialising that account's calls. Shared
+    /// with live-update threads, which start background downloads.
+    busy: Arc<Mutex<HashMap<i64, Arc<AccountGate>>>>,
+    /// Background body downloads (M4-25).
+    pub(crate) prefetch: Arc<Prefetcher>,
     /// Live updates, by account id.
     live: Mutex<HashMap<i64, LiveThread>>,
     /// The platform's resolver, for the `_sieve._tcp` SRV record (M4-23).
@@ -213,7 +215,8 @@ impl SyncEngine {
             listener,
             config: SyncConfig::default(),
             live_config: LiveConfig::default(),
-            busy: Mutex::new(HashMap::new()),
+            busy: Arc::new(Mutex::new(HashMap::new())),
+            prefetch: Prefetcher::new(),
             live: Mutex::new(HashMap::new()),
             dns: Mutex::new(None),
             #[cfg(test)]
@@ -232,26 +235,15 @@ impl SyncEngine {
     /// Fetches headers for the newest messages of the folder (200 at first,
     /// in batches of 50, newest first). Returns how many were stored. Queued
     /// message actions of the account due by now are replayed first, so the
-    /// server's flags already include them.
+    /// server's flags already include them. After a successful sync of an
+    /// inbox, its recent bodies are downloaded in the background when the
+    /// device conditions allow it (M4-25, see `set_device_conditions`).
     pub fn sync_folder(&self, folder_id: i64) -> Result<u32, SyncFailure> {
-        let account = self.folder_account(FolderId(folder_id))?;
-        // A local-only account (#289) has no server: nothing to fetch.
-        if self.is_local(account)? {
-            return Ok(0);
+        let result = self.sync_folder_now(folder_id);
+        if result.is_ok() {
+            self.prefetch_after_sync(FolderId(folder_id));
         }
-        if let Some(r) = self.run_jmap(account, |s| {
-            Box::pin(async move {
-                // Queued actions first, so the server's flags already include them.
-                let _ = s.replay_actions(crate::actions::now()).await;
-                s.sync_folder(FolderId(folder_id)).await
-            })
-        }) {
-            return r.map(|n| u32::try_from(n).unwrap_or(u32::MAX));
-        }
-        let stored = self.run_replaying(FolderId(folder_id), true, |syncer| {
-            Box::pin(async move { syncer.sync_folder(FolderId(folder_id)).await })
-        })?;
-        Ok(u32::try_from(stored).unwrap_or(u32::MAX))
+        result
     }
 
     /// Fetches the next `count` messages older than the oldest stored one.
@@ -284,18 +276,25 @@ impl SyncEngine {
     /// Does not mark the message as read on the server.
     pub fn fetch_body(&self, message_id: i64) -> Result<(), SyncFailure> {
         let store = self.open_store()?;
-        let folder = store
+        let header = store
             .get_message_header(MessageId(message_id))
             .map_err(|_| failed(events::SyncErrorKind::Storage))?
-            .ok_or_else(|| failed(events::SyncErrorKind::NotFound))?
-            .details
-            .folder_id;
+            .ok_or_else(|| failed(events::SyncErrorKind::NotFound))?;
         drop(store);
+        // Already downloaded (opened before, or in the background, M4-25):
+        // no connection at all.
+        if header.body_state == mailcrane_store::BodyState::Fetched {
+            return Ok(());
+        }
+        let folder = header.details.folder_id;
         let account = self.folder_account(folder)?;
         // Local-only messages are stored whole when they are imported.
         if self.is_local(account)? {
             return Ok(());
         }
+        // From here on a background download gives way (M4-25).
+        let gate = self.account_lock(account);
+        let _waiting = gate.announce();
         if let Some(r) = self.run_jmap(account, |s| {
             Box::pin(async move { s.fetch_body(MessageId(message_id)).await })
         }) {
@@ -335,7 +334,7 @@ impl SyncEngine {
             return r.map(|inbox| inbox.map(|f| f.0));
         }
         let lock = self.account_lock(account);
-        let _guard = lock.blocking_lock();
+        let _guard = lock.lock();
         let store = self.open_store()?;
         let report = |kind| self.report(account, kind);
         let runtime = runtime().map_err(report)?;
@@ -406,10 +405,19 @@ impl SyncEngine {
         let (stop, signal) = live_stop();
         let (done_tx, done) = mpsc::channel();
         let db_path = self.db_path.clone();
-        let listener = ListenerAdapter(self.listener.clone());
+        // Inbox changes found by live updates start background downloads.
+        let listener = PrefetchOnChange {
+            inner: ListenerAdapter(self.listener.clone()),
+            prefetcher: self.prefetch.clone(),
+            locks: self.busy.clone(),
+            db_path: self.db_path.clone(),
+            extra_root_cert: self.extra_root_cert(),
+            account,
+            sync_config: self.config,
+        };
         let (sync_config, live_config) = (self.config, self.live_config);
         let extra_root_cert = self.extra_root_cert();
-        let write_lock = self.account_lock(account);
+        let write_lock = self.account_lock(account).write_lock();
         let thread = std::thread::Builder::new()
             .name(format!("mailcrane-live-{account_id}"))
             .spawn(move || {
@@ -552,6 +560,10 @@ impl SyncEngine {
             }
         }
         drop(store);
+        // Give the background downloads the syncs started a little time, so
+        // a message opened from a notification is already there (M4-25).
+        let left = deadline.saturating_sub(started.elapsed());
+        self.prefetch.wait(left.min(BACKGROUND_PREFETCH_WAIT));
         self.take_new_mail()
     }
 
@@ -565,6 +577,8 @@ impl Drop for SyncEngine {
     fn drop(&mut self) {
         // Dropping each `LiveStop` tells its thread to stop.
         self.live.lock().unwrap_or_else(|p| p.into_inner()).clear();
+        // Background downloads stop after their current batch.
+        self.prefetch.stop();
     }
 }
 
@@ -581,11 +595,60 @@ impl SyncEngine {
             .map_err(|_| failed(events::SyncErrorKind::Storage))
     }
 
-    /// The lock serialising `account`'s calls. Take it with
-    /// `blocking_lock` outside the runtime, or `lock().await` inside it.
-    pub(crate) fn account_lock(&self, account: AccountId) -> WriteLock {
-        let mut locks = self.busy.lock().unwrap_or_else(|p| p.into_inner());
-        locks.entry(account.0).or_default().clone()
+    /// [`SyncEngine::sync_folder`] without the background downloads.
+    fn sync_folder_now(&self, folder_id: i64) -> Result<u32, SyncFailure> {
+        let account = self.folder_account(FolderId(folder_id))?;
+        // A local-only account (#289) has no server: nothing to fetch.
+        if self.is_local(account)? {
+            return Ok(0);
+        }
+        if let Some(r) = self.run_jmap(account, |s| {
+            Box::pin(async move {
+                // Queued actions first, so the server's flags already include them.
+                let _ = s.replay_actions(crate::actions::now()).await;
+                s.sync_folder(FolderId(folder_id)).await
+            })
+        }) {
+            return r.map(|n| u32::try_from(n).unwrap_or(u32::MAX));
+        }
+        let stored = self.run_replaying(FolderId(folder_id), true, |syncer| {
+            Box::pin(async move { syncer.sync_folder(FolderId(folder_id)).await })
+        })?;
+        Ok(u32::try_from(stored).unwrap_or(u32::MAX))
+    }
+
+    /// Starts background downloads (M4-25) if `folder` is its account's
+    /// inbox. Never fails: anything that goes wrong only means no download.
+    fn prefetch_after_sync(&self, folder: FolderId) {
+        let Ok(store) = self.open_store() else {
+            return;
+        };
+        let Ok(Some(row)) = store.get_folder(folder) else {
+            return;
+        };
+        let account = row.details.account_id;
+        // A local-only account (#289) has nothing to download.
+        if !matches!(store.is_local_account(account), Ok(false)) {
+            return;
+        }
+        if inbox_of(&store, account).ok().flatten() != Some(folder) {
+            return;
+        }
+        drop(store);
+        self.prefetch.start(PrefetchJob {
+            db_path: self.db_path.clone(),
+            listener: self.listener.clone(),
+            extra_root_cert: self.extra_root_cert(),
+            gate: self.account_lock(account),
+            account,
+            folder,
+            sync_config: self.config,
+        });
+    }
+
+    /// The lock serialising `account`'s calls.
+    pub(crate) fn account_lock(&self, account: AccountId) -> Arc<AccountGate> {
+        gate_for(&self.busy, account)
     }
 
     pub(crate) fn open_store(&self) -> Result<Store, SyncFailure> {
@@ -620,7 +683,7 @@ impl SyncEngine {
         // A poisoned lock only means an earlier call panicked; nothing in it
         // is left half-done.
         let lock = self.account_lock(account);
-        let _guard = lock.blocking_lock();
+        let _guard = lock.lock();
         let listener = ListenerAdapter(self.listener.clone());
         let report = |kind| self.report(account, kind);
         let runtime = runtime().map_err(report)?;
@@ -723,7 +786,7 @@ impl SyncEngine {
         job: impl for<'a> FnOnce(&'a Store, &'a mut Session, &'a ListenerAdapter) -> SyncFuture<'a, T>,
     ) -> Result<T, SyncFailure> {
         let lock = self.account_lock(account);
-        let _guard = lock.blocking_lock();
+        let _guard = lock.lock();
         let store = self.open_store()?;
         let listener = ListenerAdapter(self.listener.clone());
         let report = |kind| self.report(account, kind);
@@ -847,6 +910,10 @@ fn imap_login(
     })
 }
 
+/// How long the background check waits for background downloads before
+/// returning its notifications.
+const BACKGROUND_PREFETCH_WAIT: Duration = Duration::from_secs(30);
+
 /// How to log in to the account's ManageSieve server: the IMAP username
 /// and password (RFC 5804 servers normally share them). `None` for an
 /// account without a stored password (OAuth), which keeps rules local.
@@ -877,6 +944,12 @@ fn sieve_login(
 }
 
 mod jmap;
+mod prefetch;
 
+pub(crate) use prefetch::{gate_for, AccountGate, PrefetchJob, PrefetchOnChange, Prefetcher};
+pub use prefetch::{BackgroundDownload, DeviceConditions};
+
+#[cfg(test)]
+mod prefetch_tests;
 #[cfg(test)]
 mod tests;

@@ -194,6 +194,7 @@ fun SettingsScreen(
                 modifier = Modifier.clickable(onClick = open),
             )
         }
+        AdvancedSection()
     }
 }
 
