@@ -7,6 +7,7 @@ mod folders;
 mod messages;
 mod outbox;
 mod pending_ops;
+mod search;
 mod settings;
 
 pub use drafts::{Draft, DraftFields, DraftId, ServerCopy};
@@ -14,6 +15,7 @@ pub use outbox::{
     NewOutboxMessage, OutboxId, OutboxMessage, OutboxState, SaveSentCopy, ScheduleMode, SentCopy,
 };
 pub use pending_ops::{OpId, OpKind, OpMessage, PendingOp};
+pub use search::SearchFilter;
 pub use settings::{SignatureSetting, MAX_SIGNATURE_BYTES};
 
 use crate::error::StoreError;

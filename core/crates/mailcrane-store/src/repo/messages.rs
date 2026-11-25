@@ -5,7 +5,8 @@ use crate::{
 };
 use rusqlite::{params, OptionalExtension, Row};
 
-const COLS: &str = "id, folder_id, uid, message_id_header, in_reply_to, references_json, \
+pub(super) const COLS: &str =
+    "id, folder_id, uid, message_id_header, in_reply_to, references_json, \
     thread_id, subject, from_name, from_addr, to_json, cc_json, date, internal_date, size, \
     seen, flagged, answered, draft, deleted, keywords_json, has_attachments, snippet, body_state";
 
@@ -13,7 +14,7 @@ fn flag(r: &Row<'_>, i: usize, column: &'static str) -> Result<bool, StoreError>
     Ok(narrow::<u8>(r.get(i)?, column)? != 0)
 }
 
-fn from_row(r: &Row<'_>) -> Result<MessageHeader, StoreError> {
+pub(super) fn from_row(r: &Row<'_>) -> Result<MessageHeader, StoreError> {
     let body_state = match r.get::<_, String>(23)?.as_str() {
         "none" => BodyState::None,
         "fetched" => BodyState::Fetched,

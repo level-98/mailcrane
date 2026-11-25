@@ -37,7 +37,7 @@ mod session;
 mod store_cmds;
 mod tls;
 
-pub use append::AppendFlags;
+pub use append::{AppendFlags, SearchKey};
 pub use condstore::{FetchedFlags, FlagUpdate, QresyncParams, QresyncSelect};
 pub use error::ImapError;
 pub use fetch::{parse_internal_date, FetchedHeaders, SelectInfo};

@@ -2,6 +2,7 @@
 //! and sent copies.
 
 use crate::command::Arg;
+use crate::error::ImapError;
 use crate::parser::{Code, StatusKind, Untagged};
 use crate::session::Session;
 use crate::store_cmds::ChangeError;
@@ -39,7 +40,59 @@ fn appenduid(code: Option<&Code>) -> Option<u32> {
     }
 }
 
+/// One search key (RFC 9051 §6.4.4). Values are user text, always sent as
+/// strings, never as protocol.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SearchKey {
+    /// `TEXT`: anywhere in the header or body.
+    Text(String),
+    /// `FROM`.
+    From(String),
+    /// `TO`.
+    To(String),
+    /// `SUBJECT`.
+    Subject(String),
+    /// `UNSEEN`.
+    Unseen,
+    /// `FLAGGED`.
+    Flagged,
+}
+
 impl Session {
+    /// `UID SEARCH CHARSET UTF-8 <keys>` in the selected folder: the UIDs
+    /// matching every key, ascending. An empty list matches nothing (no
+    /// command is sent).
+    pub async fn uid_search(&mut self, keys: &[SearchKey]) -> Result<Vec<u32>, ImapError> {
+        if keys.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut args = vec![Arg::Raw("SEARCH"), Arg::Raw("CHARSET"), Arg::Raw("UTF-8")];
+        for key in keys {
+            match key {
+                SearchKey::Text(v) => args.extend([Arg::Raw("TEXT"), Arg::Str(v.as_bytes())]),
+                SearchKey::From(v) => args.extend([Arg::Raw("FROM"), Arg::Str(v.as_bytes())]),
+                SearchKey::To(v) => args.extend([Arg::Raw("TO"), Arg::Str(v.as_bytes())]),
+                SearchKey::Subject(v) => args.extend([Arg::Raw("SUBJECT"), Arg::Str(v.as_bytes())]),
+                SearchKey::Unseen => args.push(Arg::Raw("UNSEEN")),
+                SearchKey::Flagged => args.push(Arg::Raw("FLAGGED")),
+            }
+        }
+        let done = self.run_command("UID", &args).await?;
+        crate::session::expect_ok(&done)?;
+        let mut uids: Vec<u32> = done
+            .untagged
+            .iter()
+            .filter_map(|u| match u {
+                Untagged::Search(list) => Some(list.iter().copied()),
+                _ => None,
+            })
+            .flatten()
+            .collect();
+        uids.sort_unstable();
+        uids.dedup();
+        Ok(uids)
+    }
+
     /// Appends `message` (the raw bytes, CRLF line endings) to the folder
     /// named `raw_name`. Returns the new UID when the server reports it
     /// (UIDPLUS), otherwise `None`. Doesn't need a selected folder.

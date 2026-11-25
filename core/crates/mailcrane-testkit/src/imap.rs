@@ -763,6 +763,49 @@ fn in_uid_set(set: &str, uid: u32, max: u32) -> bool {
     })
 }
 
+/// Whether message `m` matches every search key in `keys` (TEXT, FROM, TO,
+/// SUBJECT with one-word values; UNSEEN; FLAGGED). Case-insensitive
+/// substring matches, like most servers.
+fn search_keys_match(m: &crate::mailbox::Message, keys: &[&str]) -> bool {
+    let text = String::from_utf8_lossy(&m.raw).to_lowercase();
+    let mut i = 0;
+    while let Some(key) = keys.get(i) {
+        let value = keys.get(i + 1).map(|v| v.trim_matches('"').to_lowercase());
+        let ok = match key.to_ascii_uppercase().as_str() {
+            "TEXT" => value.as_ref().is_some_and(|v| text.contains(v.as_str())),
+            "FROM" => value
+                .as_ref()
+                .is_some_and(|v| header_contains(&m.raw, "From", v)),
+            "TO" => value
+                .as_ref()
+                .is_some_and(|v| header_contains(&m.raw, "To", v)),
+            "SUBJECT" => value
+                .as_ref()
+                .is_some_and(|v| header_contains(&m.raw, "Subject", v)),
+            "UNSEEN" => {
+                i += 1;
+                if m.flags.iter().any(|f| f == "\\Seen") {
+                    return false;
+                }
+                continue;
+            }
+            "FLAGGED" => {
+                i += 1;
+                if !m.flags.iter().any(|f| f == "\\Flagged") {
+                    return false;
+                }
+                continue;
+            }
+            _ => false,
+        };
+        if !ok {
+            return false;
+        }
+        i += 2;
+    }
+    true
+}
+
 /// The size of a synchronizing literal `{n}` that ends a command line.
 fn literal_size(line: &[u8]) -> Option<usize> {
     let text = std::str::from_utf8(line).ok()?.strip_suffix("\r\n")?;
@@ -946,6 +989,8 @@ async fn handle_uid_command(
                             parts.get(4).copied().unwrap_or(""),
                             parts.get(5).copied().unwrap_or("").trim_matches('"'),
                         ),
+                        // `CHARSET UTF-8 <keys>`: every key must match.
+                        Some("CHARSET") => search_keys_match(m, parts.get(5..).unwrap_or_default()),
                         _ => true,
                     },
                 )

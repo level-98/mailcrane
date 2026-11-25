@@ -28,6 +28,13 @@ fn every_table_and_index_exists() -> R {
             "folders",
             "message_bodies",
             "messages",
+            // FTS5 search (M4-03) and its shadow tables.
+            "messages_fts",
+            "messages_fts_config",
+            "messages_fts_content",
+            "messages_fts_data",
+            "messages_fts_docsize",
+            "messages_fts_idx",
             "outbox",
             "pending_op_messages",
             "pending_ops",
@@ -72,7 +79,7 @@ fn reopen_runs_no_migrations_and_keeps_data() -> R {
     let dir = tempfile::tempdir()?;
     let path = dir.path().join("m.db");
     let store = Store::open(&path)?;
-    assert_eq!(store.schema_version()?, 7);
+    assert_eq!(store.schema_version()?, 8);
     drop(store);
     let conn = Connection::open(&path)?;
     conn.execute(
@@ -83,7 +90,7 @@ fn reopen_runs_no_migrations_and_keeps_data() -> R {
     )?;
     drop(conn);
     let store = Store::open(&path)?;
-    assert_eq!(store.schema_version()?, 7);
+    assert_eq!(store.schema_version()?, 8);
     assert_eq!(store.list_accounts()?.len(), 1);
     Ok(())
 }

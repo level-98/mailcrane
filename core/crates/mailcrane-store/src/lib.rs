@@ -11,8 +11,8 @@ pub use error::StoreError;
 pub use model::*;
 pub use repo::{
     Draft, DraftFields, DraftId, NewOutboxMessage, OpId, OpKind, OpMessage, OutboxId,
-    OutboxMessage, OutboxState, PendingOp, SaveSentCopy, ScheduleMode, SentCopy, ServerCopy,
-    SignatureSetting, MAX_SIGNATURE_BYTES,
+    OutboxMessage, OutboxState, PendingOp, SaveSentCopy, ScheduleMode, SearchFilter, SentCopy,
+    ServerCopy, SignatureSetting, MAX_SIGNATURE_BYTES,
 };
 
 use rusqlite::Connection;

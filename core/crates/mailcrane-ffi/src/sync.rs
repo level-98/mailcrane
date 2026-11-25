@@ -224,7 +224,7 @@ impl SyncEngine {
     }
 }
 
-type SyncFuture<'a, T> =
+pub(crate) type SyncFuture<'a, T> =
     std::pin::Pin<Box<dyn std::future::Future<Output = Result<T, CoreSyncError>> + 'a>>;
 
 impl SyncEngine {
@@ -233,7 +233,7 @@ impl SyncEngine {
     }
 
     /// Connects for the folder's account and runs `job` with a syncer.
-    fn run<T>(
+    pub(crate) fn run<T>(
         &self,
         folder: FolderId,
         job: impl for<'a> FnOnce(&'a mut FolderSyncer<'_>) -> SyncFuture<'a, T>,
