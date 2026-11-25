@@ -1,4 +1,4 @@
--- Schema v16: local-only accounts (#289).
+-- Schema v17: local-only accounts (#289).
 --
 -- A local-only account lives only on this device. It never syncs and never
 -- connects anywhere: the core refuses every IMAP login and SMTP send for it.
