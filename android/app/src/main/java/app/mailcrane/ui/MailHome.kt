@@ -46,7 +46,13 @@ import kotlinx.coroutines.withTimeoutOrNull
  */
 @OptIn(ExperimentalSharedTransitionApi::class, ExperimentalMaterial3ExpressiveApi::class)
 @Composable
-fun MailHome(accountId: Long) {
+fun MailHome(
+    accountId: Long,
+    accounts: List<app.mailcrane.core.AccountSummary> = emptyList(),
+    onSwitchAccount: (Long) -> Unit = {},
+    onAddAccount: () -> Unit = {},
+    onRemoveAccount: (Long) -> Unit = {},
+) {
     var composing by rememberSaveable { mutableStateOf(false) }
     var reply by rememberSaveable { mutableStateOf<ReplyRequest?>(null) }
     var draft by rememberSaveable { mutableStateOf<DraftRequest?>(null) }
@@ -139,6 +145,10 @@ fun MailHome(accountId: Long) {
                 } else {
                     MailboxScreen(
                         accountId = accountId,
+                        accounts = accounts,
+                        onSwitchAccount = onSwitchAccount,
+                        onAddAccount = onAddAccount,
+                        onRemoveAccount = onRemoveAccount,
                         onCompose = {
                             reply = null
                             draft = null

@@ -117,15 +117,16 @@ impl From<CoreSyncError> for SyncFailure {
 }
 
 /// Syncs folders of the accounts in one database. Calls are blocking: call
-/// them from a background thread or dispatcher. Only one runs at a time, so
-/// only one folder syncs at a time.
+/// them from a background thread or dispatcher. Calls for one account run
+/// one at a time; different accounts run side by side, so a slow or hung
+/// account doesn't hold up the others (M4-01).
 #[derive(uniffi::Object)]
 pub struct SyncEngine {
     db_path: String,
     pub(crate) listener: Arc<dyn CoreEventListener>,
     config: SyncConfig,
-    /// Serialises sync calls.
-    busy: Mutex<()>,
+    /// One lock per account, serialising that account's calls.
+    busy: Mutex<std::collections::HashMap<i64, Arc<Mutex<()>>>>,
     #[cfg(test)]
     extra_root_cert: Mutex<Option<Vec<u8>>>,
 }
@@ -139,7 +140,7 @@ impl SyncEngine {
             db_path,
             listener,
             config: SyncConfig::default(),
-            busy: Mutex::new(()),
+            busy: Mutex::new(std::collections::HashMap::new()),
             #[cfg(test)]
             extra_root_cert: Mutex::new(None),
         })
@@ -206,8 +207,9 @@ impl SyncEngine {
     /// each folder's sync state. Returns the inbox's folder id, or `None` if
     /// the server has no inbox. On failure the saved folders are unchanged.
     pub fn refresh_folders(&self, account_id: i64) -> Result<Option<i64>, SyncFailure> {
-        let _guard = self.busy.lock().unwrap_or_else(|p| p.into_inner());
         let account = AccountId(account_id);
+        let lock = self.account_lock(account);
+        let _guard = lock.lock().unwrap_or_else(|p| p.into_inner());
         let store = self.open_store()?;
         let report = |kind| self.report(account, kind);
         let runtime = runtime().map_err(report)?;
@@ -228,6 +230,12 @@ pub(crate) type SyncFuture<'a, T> =
     std::pin::Pin<Box<dyn std::future::Future<Output = Result<T, CoreSyncError>> + 'a>>;
 
 impl SyncEngine {
+    /// The lock serialising `account`'s calls.
+    pub(crate) fn account_lock(&self, account: AccountId) -> Arc<Mutex<()>> {
+        let mut locks = self.busy.lock().unwrap_or_else(|p| p.into_inner());
+        locks.entry(account.0).or_default().clone()
+    }
+
     pub(crate) fn open_store(&self) -> Result<Store, SyncFailure> {
         Store::open(&self.db_path).map_err(|_| failed(events::SyncErrorKind::Storage))
     }
@@ -250,9 +258,6 @@ impl SyncEngine {
         replay: bool,
         job: impl for<'a> FnOnce(&'a mut FolderSyncer<'_>) -> SyncFuture<'a, T>,
     ) -> Result<T, SyncFailure> {
-        // A poisoned lock only means an earlier call panicked; nothing in it
-        // is left half-done.
-        let _guard = self.busy.lock().unwrap_or_else(|p| p.into_inner());
         let store = self.open_store()?;
         let account = store
             .get_folder(folder)
@@ -260,6 +265,10 @@ impl SyncEngine {
             .ok_or_else(|| failed(events::SyncErrorKind::NotFound))?
             .details
             .account_id;
+        // A poisoned lock only means an earlier call panicked; nothing in it
+        // is left half-done.
+        let lock = self.account_lock(account);
+        let _guard = lock.lock().unwrap_or_else(|p| p.into_inner());
         let listener = ListenerAdapter(self.listener.clone());
         let report = |kind| self.report(account, kind);
         let runtime = runtime().map_err(report)?;
@@ -341,7 +350,8 @@ impl SyncEngine {
         account: AccountId,
         job: impl for<'a> FnOnce(&'a Store, &'a mut Session, &'a ListenerAdapter) -> SyncFuture<'a, T>,
     ) -> Result<T, SyncFailure> {
-        let _guard = self.busy.lock().unwrap_or_else(|p| p.into_inner());
+        let lock = self.account_lock(account);
+        let _guard = lock.lock().unwrap_or_else(|p| p.into_inner());
         let store = self.open_store()?;
         let listener = ListenerAdapter(self.listener.clone());
         let report = |kind| self.report(account, kind);

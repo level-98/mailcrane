@@ -113,6 +113,9 @@ fun SettingsScreen(
     onBack: () -> Unit,
     accountId: Long? = null,
     onOpenRules: (() -> Unit)? = null,
+    accounts: List<app.mailcrane.core.AccountSummary> = emptyList(),
+    onAddAccount: (() -> Unit)? = null,
+    onRemoveAccount: (Long) -> Unit = {},
     viewModel: SettingsViewModel = hiltViewModel(),
 ) {
     val cleanLinks by viewModel.cleanLinks.collectAsStateWithLifecycle()
@@ -151,6 +154,9 @@ fun SettingsScreen(
         if (accountId != null) {
             SignatureSection(accountId)
             SaveSentSection(accountId)
+        }
+        if (onAddAccount != null) {
+            AccountsSection(accounts, onAddAccount, onRemoveAccount)
         }
         onOpenRules?.let { open ->
             androidx.compose.material3.ListItem(

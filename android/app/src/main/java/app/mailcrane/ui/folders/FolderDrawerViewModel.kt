@@ -8,6 +8,7 @@ import app.mailcrane.core.FolderSummary
 import app.mailcrane.core.MailboxCore
 import app.mailcrane.core.SyncErrorKind
 import app.mailcrane.core.SyncFailure
+import app.mailcrane.core.UNIFIED_FOLDER_ID
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedFactory
 import dagger.assisted.AssistedInject
@@ -31,9 +32,17 @@ data class FolderDrawerState(
     val isLoading: Boolean = true,
     /** Refreshing the folders failed and none are stored, so there is nothing to show. */
     val loadError: SyncErrorKind? = null,
+    /** Unread messages in every account's inbox, for "All inboxes" (M4-01). */
+    val unifiedUnread: Int = 0,
 ) {
     val selected: FolderSummary?
-        get() = folders.firstOrNull { it.id == selectedFolderId }
+        get() =
+            if (selectedFolderId == UNIFIED_FOLDER_ID) {
+                // The Unified Inbox isn't a folder; it reads as one in the list header.
+                FolderSummary(UNIFIED_FOLDER_ID, "", FolderRole.INBOX, 0u, unifiedUnread.toUInt())
+            } else {
+                folders.firstOrNull { it.id == selectedFolderId }
+            }
 }
 
 /**
@@ -74,7 +83,7 @@ class FolderDrawerViewModel
 
         /** Opens folder [folderId], if the account has it. */
         fun select(folderId: Long) {
-            if (_state.value.folders.any { it.id == folderId }) {
+            if (folderId == UNIFIED_FOLDER_ID || _state.value.folders.any { it.id == folderId }) {
                 _state.update { it.copy(selectedFolderId = folderId) }
             }
         }
@@ -113,13 +122,18 @@ class FolderDrawerViewModel
                         failed(e.kind)
                         return
                     }
+                val unified = core.unifiedUnreadCount()
                 _state.update { current ->
-                    val open = current.selectedFolderId?.takeIf { id -> folders.any { it.id == id } }
+                    val open =
+                        current.selectedFolderId?.takeIf { id ->
+                            id == UNIFIED_FOLDER_ID || folders.any { it.id == id }
+                        }
                     current.copy(
                         folders = folders,
                         selectedFolderId = open ?: defaultFolder(folders, preferred),
                         isLoading = current.isLoading && folders.isEmpty(),
                         loadError = if (folders.isEmpty()) current.loadError else null,
+                        unifiedUnread = unified,
                     )
                 }
             }

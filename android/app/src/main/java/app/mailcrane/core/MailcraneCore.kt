@@ -20,6 +20,12 @@ interface MailcraneCore {
         config: ManualAccountConfig,
         password: String,
     ): Long
+
+    /** The saved accounts, oldest first (M4-01). */
+    suspend fun listAccounts(): List<AccountSummary> = emptyList()
+
+    /** Removes an account, its password and all its mail from this device. @throws RemoveAccountFailure */
+    suspend fun removeAccount(accountId: Long) {}
 }
 
 /**
@@ -43,4 +49,18 @@ class UniffiMailcraneCore(
         config: ManualAccountConfig,
         password: String,
     ): Long = app.mailcrane.core.addAccountManual(dbPath, config, password)
+
+    override suspend fun listAccounts(): List<AccountSummary> =
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            try {
+                app.mailcrane.core.listAccounts(dbPath)
+            } catch (_: SyncFailure) {
+                emptyList()
+            }
+        }
+
+    override suspend fun removeAccount(accountId: Long) =
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            app.mailcrane.core.removeAccount(dbPath, accountId)
+        }
 }
