@@ -52,6 +52,7 @@ fun MailHome(
     onSwitchAccount: (Long) -> Unit = {},
     onAddAccount: () -> Unit = {},
     onRemoveAccount: (Long) -> Unit = {},
+    onAccountsChanged: () -> Unit = {},
     openMessageId: Long? = null,
     onMessageOpened: () -> Unit = {},
 ) {
@@ -151,6 +152,7 @@ fun MailHome(
                         onSwitchAccount = onSwitchAccount,
                         onAddAccount = onAddAccount,
                         onRemoveAccount = onRemoveAccount,
+                        onAccountsChanged = onAccountsChanged,
                         openMessageId = openMessageId,
                         onMessageOpened = onMessageOpened,
                         onCompose = {

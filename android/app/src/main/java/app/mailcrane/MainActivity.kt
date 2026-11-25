@@ -158,6 +158,7 @@ class MainActivity : FragmentActivity() {
                         onSwitchAccount = accountsModel::select,
                         onAddAccount = { addingAccount = true },
                         onRemoveAccount = accountsModel::remove,
+                        onAccountsChanged = accountsModel::refresh,
                         openMessageId = openRequest?.takeIf { it.first == id }?.second,
                         onMessageOpened = { openRequest = null },
                     )

@@ -42,6 +42,21 @@ private class FakeSettings : AccountSettingsCore {
         saveSentFailure?.let { throw it }
         saveSent = setting
     }
+
+    var color: Int? = null
+    var colorFailure: SettingsFailure? = null
+
+    override suspend fun getAccountColor(accountId: Long) = color
+
+    override suspend fun setAccountColor(
+        accountId: Long,
+        color: Int?,
+    ) {
+        colorFailure?.let { throw it }
+        this.color = color
+    }
+
+    override fun automaticAccountColor(accountId: Long) = 3
 }
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -91,5 +106,35 @@ class AccountSettingsViewModelTest {
         core.saveSentFailure = SettingsFailure.Storage()
         vm.onSaveSentChange(SaveSentSetting.ON)
         assertEquals(SaveSentSetting.OFF, vm.state.value.saveSent)
+    }
+
+    @Test
+    fun choosesAndResetsTheAccountColourAndTellsTheLists() {
+        val core = FakeSettings()
+        val vm = AccountSettingsViewModel(core, 1)
+        assertEquals(AccountColorState(chosen = null, automatic = 3), vm.state.value.color)
+        assertEquals(3, vm.state.value.color?.shown)
+        var refreshed = 0
+        vm.onColorChange(5) { refreshed++ }
+        assertEquals(5, core.color)
+        assertEquals(5, vm.state.value.color?.shown)
+        assertEquals(1, refreshed)
+        vm.onColorChange(5) { refreshed++ }
+        assertEquals("choosing the same colour again saves nothing", 1, refreshed)
+        vm.onColorChange(null) { refreshed++ }
+        assertEquals(null, core.color)
+        assertEquals(3, vm.state.value.color?.shown)
+        assertEquals(2, refreshed)
+    }
+
+    @Test
+    fun aFailedColourSaveGoesBackAndTellsNoOne() {
+        val core = FakeSettings().apply { color = 1 }
+        val vm = AccountSettingsViewModel(core, 1)
+        core.colorFailure = SettingsFailure.Storage()
+        var refreshed = false
+        vm.onColorChange(6) { refreshed = true }
+        assertEquals(1, vm.state.value.color?.chosen)
+        assertFalse(refreshed)
     }
 }

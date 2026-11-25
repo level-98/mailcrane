@@ -23,6 +23,18 @@ interface AccountSettingsCore {
         accountId: Long,
         setting: SaveSentSetting,
     )
+
+    /** The marker colour the user chose (0–7), or null when automatic (M4-20). @throws SettingsFailure */
+    suspend fun getAccountColor(accountId: Long): Int?
+
+    /** Chooses the marker colour (0–7), or null for automatic. @throws SettingsFailure */
+    suspend fun setAccountColor(
+        accountId: Long,
+        color: Int?,
+    )
+
+    /** The colour the account gets when none is chosen. */
+    fun automaticAccountColor(accountId: Long): Int
 }
 
 /** Calls the core through the generated UniFFI bindings. [dbPath] is the app's database file. */
@@ -45,4 +57,17 @@ class UniffiAccountSettingsCore(
         accountId: Long,
         setting: SaveSentSetting,
     ) = withContext(io) { setSaveSent(dbPath, accountId, setting) }
+
+    override suspend fun getAccountColor(accountId: Long): Int? =
+        withContext(io) { getAccountColor(dbPath, accountId)?.toInt() }
+
+    override suspend fun setAccountColor(
+        accountId: Long,
+        color: Int?,
+    ) = withContext(io) {
+        // A negative index would wrap to a huge unsigned one, which the core refuses.
+        setAccountColor(dbPath, accountId, color?.toUInt())
+    }
+
+    override fun automaticAccountColor(accountId: Long): Int = accountColor(accountId).toInt()
 }
