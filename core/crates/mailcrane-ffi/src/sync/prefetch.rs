@@ -13,6 +13,7 @@
 //! downloaded. Failures are logged with the safe fields of `log_failure`
 //! and never reported to the user: the next sync carries on.
 
+use super::pool::PoolError;
 use super::*;
 use mailcrane_core::sync::prefetch::{
     self, Candidate, PrefetchConditions, PrefetchLimits, PrefetchMode,
@@ -97,6 +98,7 @@ impl AccountGate {
     /// Takes the lock for a call the user waits for. Outside any runtime
     /// only (`blocking_lock`).
     pub(crate) fn lock(&self) -> tokio::sync::MutexGuard<'_, ()> {
+        super::pool::check_lock_order();
         let _waiting = self.announce();
         self.write_lock.blocking_lock()
     }
@@ -112,6 +114,7 @@ impl AccountGate {
     /// Takes the lock for background work, without counting as waiting.
     /// Outside any runtime only.
     fn lock_background(&self) -> tokio::sync::MutexGuard<'_, ()> {
+        super::pool::check_lock_order();
         self.write_lock.blocking_lock()
     }
 
@@ -178,6 +181,9 @@ pub(crate) struct PrefetchJob {
     pub(crate) listener: Arc<dyn CoreEventListener>,
     pub(crate) extra_root_cert: Option<Vec<u8>>,
     pub(crate) gate: Arc<AccountGate>,
+    /// The engine's reused connections: IMAP downloads run on the
+    /// account's one (#294).
+    pub(crate) pool: Arc<ConnectionPool>,
     pub(crate) account: AccountId,
     pub(crate) folder: FolderId,
     pub(crate) sync_config: SyncConfig,
@@ -284,42 +290,68 @@ impl Prefetcher {
     }
 }
 
-/// The connection a download thread uses.
+/// The connection a download thread uses: the account's reused IMAP
+/// connection (#294), or a JMAP session of its own.
 enum Link<'a> {
-    Imap(Session),
+    Imap {
+        /// The folder's name on the server.
+        remote_name: String,
+        /// Its UIDVALIDITY as stored: a UID means the stored message only
+        /// while the server still reports this.
+        uidvalidity: Option<i64>,
+    },
     Jmap(Box<JmapSyncer<'a>>),
 }
 
 impl Link<'_> {
-    async fn batch(
+    /// Downloads one batch. Blocking: IMAP runs on the pool's connection and
+    /// runtime, JMAP on `runtime`.
+    fn batch(
         &mut self,
+        runtime: &tokio::runtime::Runtime,
+        job: &PrefetchJob,
         store: &Store,
         batch: &[Candidate],
         max_size: u32,
     ) -> Result<prefetch::BatchOutcome, CoreSyncError> {
         match self {
-            Link::Imap(session) => prefetch::imap_batch(store, session, batch).await,
-            Link::Jmap(syncer) => syncer.prefetch_batch(batch, max_size).await,
-        }
-    }
-
-    fn last_command(&self) -> Option<&'static str> {
-        match self {
-            Link::Imap(session) => session.last_command(),
-            Link::Jmap(_) => None,
-        }
-    }
-
-    async fn close(self) {
-        if let Link::Imap(session) = self {
-            session.logout().await;
+            Link::Imap {
+                remote_name,
+                uidvalidity,
+            } => {
+                let login = || imap_login(store, job.account, job.extra_root_cert.as_deref());
+                let ctx = (store, remote_name.as_str(), *uidvalidity, batch);
+                job.pool
+                    .run(
+                        job.account,
+                        login,
+                        Retry::Idempotent,
+                        &ctx,
+                        |session, &(store, remote_name, uidvalidity, batch)| {
+                            Box::pin(async move {
+                                let info = session.select_reusing(remote_name).await?;
+                                if uidvalidity != Some(i64::from(info.uidvalidity)) {
+                                    // The next sync starts the folder over.
+                                    return Err(CoreSyncError::FolderReset);
+                                }
+                                prefetch::imap_batch(store, session, batch).await
+                            })
+                        },
+                    )
+                    .map_err(|e| match e {
+                        PoolError::Job(e) => e,
+                        // Already logged when the connection failed.
+                        PoolError::Connect(_) => CoreSyncError::Imap(ImapError::CannotConnect),
+                    })
+            }
+            Link::Jmap(syncer) => runtime.block_on(syncer.prefetch_batch(batch, max_size)),
         }
     }
 }
 
-/// Connects for the job's account and, for IMAP, selects the folder. None
-/// if that fails (logged) or the folder was renumbered since its last sync
-/// (the next sync starts it over; a UID may now mean another message).
+/// What the download thread connects with: for IMAP the folder to select
+/// on the reused connection, for JMAP a session. None if that fails
+/// (logged).
 async fn connect<'a>(
     job: &PrefetchJob,
     store: &'a Store,
@@ -357,40 +389,11 @@ async fn connect<'a>(
             }
         }
         Ok(_) => {
-            let login = match imap_login(store, job.account, job.extra_root_cert.as_deref()) {
-                Ok(login) => login,
-                Err(kind) => {
-                    tracing::warn!(stage = "prefetch login", ?kind, "prefetch stopped");
-                    return None;
-                }
-            };
-            let mut session =
-                match Session::connect(&login.config, &login.username, &login.password).await {
-                    Ok(session) => session,
-                    Err(e) => {
-                        log_failure("prefetch connect", &CoreSyncError::from(e), None);
-                        return None;
-                    }
-                };
             let folder = store.get_folder(job.folder).ok().flatten()?;
-            match session.select(&folder.details.remote_name).await {
-                Ok(info) if folder.details.uidvalidity == Some(i64::from(info.uidvalidity)) => {
-                    Some(Link::Imap(session))
-                }
-                Ok(_) => {
-                    session.logout().await;
-                    None
-                }
-                Err(e) => {
-                    log_failure(
-                        "prefetch select",
-                        &CoreSyncError::from(e),
-                        session.last_command(),
-                    );
-                    session.logout().await;
-                    None
-                }
-            }
+            Some(Link::Imap {
+                remote_name: folder.details.remote_name,
+                uidvalidity: folder.details.uidvalidity,
+            })
         }
         Err(_) => None,
     }
@@ -416,11 +419,13 @@ fn download(prefetcher: &Prefetcher, job: &PrefetchJob) {
         if !prefetcher.allows() {
             break;
         }
-        // Give way: let every waiting call take the lock first.
+        // Give way: let every waiting call take the locks first.
         if job.gate.foreground_waiting() {
             std::thread::sleep(GIVE_WAY_POLL);
             continue;
         }
+        // Lock order: WriteLock here, then the pooled connection in
+        // `Link::batch`.
         let guard = job.gate.lock_background();
         if job.gate.foreground_waiting() {
             drop(guard);
@@ -443,7 +448,7 @@ fn download(prefetcher: &Prefetcher, job: &PrefetchJob) {
         let Some(open) = link.as_mut() else {
             break;
         };
-        let result = runtime.block_on(open.batch(&store, batch, limits.max_size));
+        let result = open.batch(&runtime, job, &store, batch, limits.max_size);
         drop(guard);
         // Some bodies may be saved even when a later one failed.
         let changed = !matches!(&result, Ok(o) if o.saved == 0);
@@ -455,13 +460,10 @@ fn download(prefetcher: &Prefetcher, job: &PrefetchJob) {
         match result {
             Ok(outcome) => tried.extend(outcome.tried),
             Err(e) => {
-                log_failure("prefetch", &e, open.last_command());
+                log_failure("prefetch", &e, None);
                 break;
             }
         }
-    }
-    if let Some(open) = link {
-        runtime.block_on(open.close());
     }
 }
 
@@ -471,6 +473,7 @@ pub(crate) struct PrefetchOnChange {
     pub(crate) inner: ListenerAdapter,
     pub(crate) prefetcher: Arc<Prefetcher>,
     pub(crate) locks: Arc<Mutex<HashMap<i64, Arc<AccountGate>>>>,
+    pub(crate) pool: Arc<ConnectionPool>,
     pub(crate) db_path: String,
     pub(crate) extra_root_cert: Option<Vec<u8>>,
     pub(crate) account: AccountId,
@@ -497,6 +500,7 @@ impl events::EventListener for PrefetchOnChange {
                 listener: self.inner.0.clone(),
                 extra_root_cert: self.extra_root_cert.clone(),
                 gate: gate_for(&self.locks, self.account),
+                pool: self.pool.clone(),
                 account: self.account,
                 folder,
                 sync_config: self.sync_config,

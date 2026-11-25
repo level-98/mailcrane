@@ -86,6 +86,11 @@ pub struct Session {
     pub(crate) qresync_enabled: bool,
     /// The last command sent, as a fixed label (see [`command_label`]).
     pub(crate) last_command: Option<&'static str>,
+    /// The folder selected by the last successful [`Session::select`], with
+    /// what it reported. Cleared by any command that may change or end the
+    /// selection (SELECT, EXAMINE, CLOSE, UNSELECT, LOGOUT), so it is never
+    /// stale about which folder is selected (RFC 9051 §6.3.2).
+    pub(crate) selected: Option<(String, crate::fetch::SelectInfo)>,
 }
 
 impl std::fmt::Debug for Session {
@@ -162,6 +167,7 @@ impl Session {
             host: config.host.clone(),
             qresync_enabled: false,
             last_command: None,
+            selected: None,
         };
         let (condition, greeting_text) = greeting;
         // RFC 9051 §6.2.1: after STARTTLS, forget anything learned before;
@@ -190,6 +196,7 @@ impl Session {
             host: "test.example.org".into(),
             qresync_enabled: false,
             last_command: None,
+            selected: None,
         }
     }
 
@@ -207,6 +214,12 @@ impl Session {
     /// timeout.
     async fn run(&mut self, name: &str, args: &[Arg<'_>]) -> Result<Done, ImapError> {
         self.last_command = Some(command_label(name, args));
+        if ["SELECT", "EXAMINE", "CLOSE", "UNSELECT", "LOGOUT"]
+            .iter()
+            .any(|c| name.eq_ignore_ascii_case(c))
+        {
+            self.selected = None;
+        }
         let cmd = command::build(self.tags.next(), name, args)?;
         let limit = self.command_timeout;
         within(limit, exchange(&mut self.conn, cmd.tag, cmd.segments)).await?
