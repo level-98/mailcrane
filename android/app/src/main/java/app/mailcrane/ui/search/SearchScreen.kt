@@ -35,6 +35,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.rememberDateRangePickerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -48,7 +49,9 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
@@ -256,6 +259,15 @@ fun SearchScreen(
     )
 }
 
+/**
+ * The value to show in the search field: [current] while it still holds [query] (keeping the user's cursor),
+ * otherwise [query] with the cursor at the end, because something other than typing changed it.
+ */
+internal fun fieldValueFor(
+    current: TextFieldValue,
+    query: String,
+): TextFieldValue = if (current.text == query) current else TextFieldValue(query, TextRange(query.length))
+
 /** What the search chips (M4-21) can do. [accounts] fills the Account chip, shown with two or more. */
 data class SearchChipActions(
     val accounts: List<AccountSummary> = emptyList(),
@@ -280,6 +292,12 @@ fun SearchContent(
 ) {
     val focus = remember { FocusRequester() }
     LaunchedEffect(Unit) { focus.requestFocus() }
+    // The field's own text and cursor. When the query changes from outside the field (a chip, a recent search),
+    // the cursor goes to the end, so typing continues after the new term rather than at the old position.
+    var typed by remember { mutableStateOf(TextFieldValue(state.query, TextRange(state.query.length))) }
+    val field = fieldValueFor(typed, state.query)
+    // Remember the moved cursor too, so a later chip that restores an earlier query doesn't bring back an old cursor.
+    SideEffect { if (typed != field) typed = field }
     Scaffold(
         topBar = {
             TopAppBar(
@@ -293,8 +311,11 @@ fun SearchContent(
                 },
                 title = {
                     TextField(
-                        value = state.query,
-                        onValueChange = onQueryChange,
+                        value = field,
+                        onValueChange = {
+                            typed = it
+                            if (it.text != state.query) onQueryChange(it.text)
+                        },
                         placeholder = { Text(stringResource(R.string.search_hint)) },
                         singleLine = true,
                         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
