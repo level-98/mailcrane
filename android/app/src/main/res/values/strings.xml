@@ -161,6 +161,42 @@
 
     <!-- Folder drawer (M1-13) -->
     <string name="folders_title">Folders</string>
+    <!-- Manage folders screen (M4-22). -->
+    <string name="folders_manage">Manage folders</string>
+    <string name="folders_manage_title">Manage folders</string>
+    <string name="folders_back">Back</string>
+    <string name="folders_cancel">Cancel</string>
+    <string name="folders_new">New folder</string>
+    <string name="folders_new_in">New folder in %1$s</string>
+    <string name="folders_new_subfolder">New subfolder</string>
+    <string name="folders_create">Create</string>
+    <string name="folders_name">Folder name</string>
+    <string name="folders_actions_for">Actions for %1$s</string>
+    <string name="folders_rename">Rename</string>
+    <string name="folders_rename_title">Rename %1$s</string>
+    <string name="folders_move">Move</string>
+    <string name="folders_move_title">Move %1$s to</string>
+    <string name="folders_top_level">Top level</string>
+    <string name="folders_move_nowhere">There’s nowhere else this folder can go.</string>
+    <string name="folders_loading">Loading…</string>
+    <string name="folders_delete">Delete</string>
+    <string name="folders_delete_title">Delete %1$s?</string>
+    <string name="folders_delete_explain">The folder and every message in it are deleted from the server too. This can’t be undone. Rules that move mail into it stop doing so.</string>
+    <string name="folders_error_empty">Enter a name.</string>
+    <string name="folders_error_too_long">The name is too long (at most 100 characters).</string>
+    <string name="folders_error_bad_character" formatted="false">The name can’t contain %, * or control characters.</string>
+    <string name="folders_error_separator">The name can’t contain “%1$s”: this server uses it to separate folder levels.</string>
+    <string name="folders_error_reserved">That name is reserved. Choose another.</string>
+    <string name="folders_error_system">Standard folders, and folders that contain them, can’t be changed.</string>
+    <string name="folders_error_has_subfolders">Delete or move its subfolders first.</string>
+    <string name="folders_error_exists">A folder with that name is already there.</string>
+    <string name="folders_error_into_itself">A folder can’t go inside itself or one of its subfolders.</string>
+    <string name="folders_error_no_subfolders">This server doesn’t support subfolders.</string>
+    <string name="folders_error_not_found">The folder no longer exists.</string>
+    <string name="folders_error_refused">The server refused the change.</string>
+    <string name="folders_error_unsupported">Folders can’t be managed for this account yet.</string>
+    <string name="folders_error_offline">Couldn’t reach the server. Check your connection and try again.</string>
+    <string name="folders_error_storage">Something went wrong on this device. Try again.</string>
     <string name="folders_open">Open folders</string>
     <string name="folders_none">This account has no folders on the server.</string>
     <!-- Standard folders show these names instead of the server's -->

@@ -990,6 +990,7 @@ fn sieve_login(
     })
 }
 
+mod folder_admin;
 mod jmap;
 mod pool;
 mod prefetch;

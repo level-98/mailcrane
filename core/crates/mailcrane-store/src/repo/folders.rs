@@ -63,6 +63,34 @@ impl Store {
         Ok(ids)
     }
 
+    /// Gives folders new names, all in one transaction (M4-22): each
+    /// `(folder, remote_name, display_name)`. A folder's messages and sync
+    /// state stay with it. On error nothing changes, for example when a new
+    /// name is taken in the account.
+    pub fn rename_folders(&self, renames: &[(FolderId, String, String)]) -> Result<(), StoreError> {
+        let tx = self.write_tx()?;
+        for (id, remote, display) in renames {
+            let n = self.conn.execute(
+                "UPDATE folders SET remote_name = ?2, display_name = ?3 WHERE id = ?1",
+                params![id.0, remote, display],
+            )?;
+            if n == 0 {
+                return Err(StoreError::Invalid { field: "folder" });
+            }
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Deletes a folder and, with it, its messages and everything else
+    /// stored for it (M4-22). Returns whether it existed.
+    pub fn delete_folder(&self, id: FolderId) -> Result<bool, StoreError> {
+        let n = self
+            .conn
+            .execute("DELETE FROM folders WHERE id = ?1", params![id.0])?;
+        Ok(n > 0)
+    }
+
     /// Returns the folder, or `None` if it doesn't exist.
     pub fn get_folder(&self, id: FolderId) -> Result<Option<Folder>, StoreError> {
         let mut stmt = self.conn.prepare(

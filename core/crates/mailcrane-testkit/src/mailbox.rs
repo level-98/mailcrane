@@ -427,6 +427,29 @@ impl Mailbox {
             .or_insert_with(|| Folder::new(Vec::new()));
     }
 
+    /// Renames a folder and every folder under it (`old/…`), keeping their
+    /// messages (RFC 9051 §6.3.6). Returns whether `old` existed.
+    pub async fn rename_folder(&self, old: &str, new: &str) -> bool {
+        let mut inner = self.inner.lock().await;
+        if !inner.folders.contains_key(old) {
+            return false;
+        }
+        let prefix = format!("{old}/");
+        let names: Vec<String> = inner
+            .folders
+            .keys()
+            .filter(|n| *n == old || n.starts_with(&prefix))
+            .cloned()
+            .collect();
+        for name in names {
+            if let Some(folder) = inner.folders.remove(&name) {
+                let renamed = format!("{new}{}", &name[old.len()..]);
+                inner.folders.insert(renamed, folder);
+            }
+        }
+        true
+    }
+
     /// Deletes a folder and its messages, as another client would.
     pub async fn delete_folder(&self, folder: &str) {
         let mut inner = self.inner.lock().await;

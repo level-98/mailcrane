@@ -701,6 +701,35 @@ async fn handle_imap_command(
                 )
             }
         }
+        "RENAME" => {
+            // RFC 9051 §6.3.6: children move with it; INBOX and an existing
+            // target are refused.
+            let old = parts.get(2).copied().unwrap_or("").trim_matches('"');
+            let new = parts.get(3).copied().unwrap_or("").trim_matches('"');
+            let names = mailbox.folder_names().await;
+            if old.is_empty() || new.is_empty() {
+                format!("{tag} BAD RENAME needs two names\r\n")
+            } else if old.eq_ignore_ascii_case("INBOX") || !names.iter().any(|n| n == old) {
+                format!("{tag} NO [NONEXISTENT] no such folder\r\n")
+            } else if new.eq_ignore_ascii_case("INBOX") || names.iter().any(|n| n == new) {
+                format!("{tag} NO [ALREADYEXISTS] folder exists\r\n")
+            } else {
+                mailbox.rename_folder(old, new).await;
+                format!("{tag} OK RENAME completed\r\n")
+            }
+        }
+        "DELETE" => {
+            // RFC 9051 §6.3.5.
+            let name = parts.get(2).copied().unwrap_or("").trim_matches('"');
+            if name.eq_ignore_ascii_case("INBOX") {
+                format!("{tag} NO [CANNOT] the inbox can't be deleted\r\n")
+            } else if !mailbox.folder_names().await.iter().any(|n| n == name) {
+                format!("{tag} NO [NONEXISTENT] no such folder\r\n")
+            } else {
+                mailbox.delete_folder(name).await;
+                format!("{tag} OK DELETE completed\r\n")
+            }
+        }
         "NOOP" => "* 0 RECENT\r\n".to_string() + &format!("{tag} OK NOOP completed\r\n"),
         "LOGOUT" => format!("{tag} OK LOGOUT completed\r\n"),
         "APPEND" => {
