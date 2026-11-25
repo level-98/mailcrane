@@ -609,6 +609,7 @@ class MessageListViewModelTest {
         vm.refresh()
         assertEquals(setOf(2L), vm.state.value.selectedMessages)
     }
+
     @Test
     fun aDeleteThatWouldBePermanentAsksFirstAndOffersNoUndo() =
         runTest {

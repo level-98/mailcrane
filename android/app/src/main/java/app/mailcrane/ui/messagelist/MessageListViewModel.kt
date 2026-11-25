@@ -204,7 +204,13 @@ class MessageListViewModel
 
         /** Back or the top bar's Clear: ends selection. */
         fun clearSelection() =
-            _state.update { it.copy(selectedMessages = emptySet(), selectedThreads = emptySet(), confirmDeleteForGood = 0) }
+            _state.update {
+                it.copy(
+                    selectedMessages = emptySet(),
+                    selectedThreads = emptySet(),
+                    confirmDeleteForGood = 0,
+                )
+            }
 
         /** Runs [action] on every selected row through the core, then ends selection. */
         fun bulk(action: BulkAction) {
