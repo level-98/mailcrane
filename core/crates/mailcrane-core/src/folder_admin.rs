@@ -153,7 +153,10 @@ pub fn clean_folder_name(name: &str, delimiter: Option<char>) -> Result<String, 
 }
 
 fn delimiter_of(f: &Folder) -> Option<char> {
-    f.details.delimiter.as_deref().and_then(|d| d.chars().next())
+    f.details
+        .delimiter
+        .as_deref()
+        .and_then(|d| d.chars().next())
 }
 
 /// The account's hierarchy delimiter: the first one a folder has.
@@ -195,9 +198,9 @@ pub fn is_system_folder(f: &Folder) -> bool {
 pub fn can_change(folders: &[Folder], f: &Folder) -> bool {
     let d = delimiter_of(f);
     !is_system_folder(f)
-        && !folders
-            .iter()
-            .any(|o| is_under(&o.details.remote_name, &f.details.remote_name, d) && is_system_folder(o))
+        && !folders.iter().any(|o| {
+            is_under(&o.details.remote_name, &f.details.remote_name, d) && is_system_folder(o)
+        })
 }
 
 fn find(folders: &[Folder], id: FolderId) -> Result<&Folder, FolderAdminError> {
@@ -216,7 +219,11 @@ fn taken(folders: &[Folder], remote: &str, except: Option<FolderId>) -> bool {
     })
 }
 
-fn join(parent: Option<&str>, leaf: &str, delimiter: Option<char>) -> Result<String, FolderAdminError> {
+fn join(
+    parent: Option<&str>,
+    leaf: &str,
+    delimiter: Option<char>,
+) -> Result<String, FolderAdminError> {
     let leaf = mutf7::encode(leaf);
     match (parent, delimiter) {
         (None, _) => Ok(leaf),
@@ -240,7 +247,11 @@ pub fn plan_create(
         .and_then(delimiter_of)
         .or_else(|| account_delimiter(folders, local_default));
     let name = clean_folder_name(name, delimiter).map_err(FolderAdminError::InvalidName)?;
-    let remote = join(parent.map(|p| p.details.remote_name.as_str()), &name, delimiter)?;
+    let remote = join(
+        parent.map(|p| p.details.remote_name.as_str()),
+        &name,
+        delimiter,
+    )?;
     if taken(folders, &remote, None) {
         return Err(FolderAdminError::AlreadyExists);
     }
@@ -274,7 +285,11 @@ fn rename_rows(folders: &[Folder], folder: &Folder, new_remote: &str) -> RenameP
     }
 }
 
-fn check_rename_target(folders: &[Folder], plan: &RenamePlan, folder: FolderId) -> Result<(), FolderAdminError> {
+fn check_rename_target(
+    folders: &[Folder],
+    plan: &RenamePlan,
+    folder: FolderId,
+) -> Result<(), FolderAdminError> {
     if !plan.is_noop() && taken(folders, &plan.new_remote, Some(folder)) {
         return Err(FolderAdminError::AlreadyExists);
     }
@@ -282,7 +297,11 @@ fn check_rename_target(folders: &[Folder], plan: &RenamePlan, folder: FolderId) 
 }
 
 /// Plans renaming `folder` to `name`, keeping its place.
-pub fn plan_rename(folders: &[Folder], folder: FolderId, name: &str) -> Result<RenamePlan, FolderAdminError> {
+pub fn plan_rename(
+    folders: &[Folder],
+    folder: FolderId,
+    name: &str,
+) -> Result<RenamePlan, FolderAdminError> {
     let f = find(folders, folder)?;
     if !can_change(folders, f) {
         return Err(FolderAdminError::SystemFolder);
@@ -360,20 +379,31 @@ pub fn plan_delete(folders: &[Folder], folder: FolderId) -> Result<Folder, Folde
 }
 
 /// `CREATE` on the server.
-pub async fn create_on_server(session: &mut Session, plan: &CreatePlan) -> Result<(), FolderAdminError> {
+pub async fn create_on_server(
+    session: &mut Session,
+    plan: &CreatePlan,
+) -> Result<(), FolderAdminError> {
     Ok(session.create_folder(&plan.remote_name).await?)
 }
 
 /// `RENAME` on the server; nothing for a no-op.
-pub async fn rename_on_server(session: &mut Session, plan: &RenamePlan) -> Result<(), FolderAdminError> {
+pub async fn rename_on_server(
+    session: &mut Session,
+    plan: &RenamePlan,
+) -> Result<(), FolderAdminError> {
     if plan.is_noop() {
         return Ok(());
     }
-    Ok(session.rename_folder(&plan.old_remote, &plan.new_remote).await?)
+    Ok(session
+        .rename_folder(&plan.old_remote, &plan.new_remote)
+        .await?)
 }
 
 /// `DELETE` on the server.
-pub async fn delete_on_server(session: &mut Session, folder: &Folder) -> Result<(), FolderAdminError> {
+pub async fn delete_on_server(
+    session: &mut Session,
+    folder: &Folder,
+) -> Result<(), FolderAdminError> {
     Ok(session.delete_folder(&folder.details.remote_name).await?)
 }
 

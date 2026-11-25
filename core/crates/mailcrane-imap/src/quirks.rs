@@ -105,7 +105,10 @@ impl Session {
     /// folders under `old` too.
     pub async fn rename_folder(&mut self, old: &str, new: &str) -> Result<(), FolderCommandError> {
         let done = self
-            .run_command("RENAME", &[Arg::Str(old.as_bytes()), Arg::Str(new.as_bytes())])
+            .run_command(
+                "RENAME",
+                &[Arg::Str(old.as_bytes()), Arg::Str(new.as_bytes())],
+            )
             .await?;
         folder_result(&done)
     }

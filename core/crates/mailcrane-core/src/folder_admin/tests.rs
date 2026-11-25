@@ -40,8 +40,14 @@ fn folders() -> Vec<Folder> {
 
 #[test]
 fn names_are_checked() {
-    assert_eq!(clean_folder_name("  Receipts ", Some('/')), Ok("Receipts".into()));
-    assert_eq!(clean_folder_name("Café ☕", Some('/')), Ok("Café ☕".into()));
+    assert_eq!(
+        clean_folder_name("  Receipts ", Some('/')),
+        Ok("Receipts".into())
+    );
+    assert_eq!(
+        clean_folder_name("Café ☕", Some('/')),
+        Ok("Café ☕".into())
+    );
     for (name, want) in [
         ("", FolderNameError::Empty),
         ("   ", FolderNameError::Empty),
@@ -58,7 +64,10 @@ fn names_are_checked() {
         clean_folder_name(&"x".repeat(MAX_FOLDER_NAME_CHARS + 1), Some('/')),
         Err(FolderNameError::TooLong)
     );
-    assert_eq!(clean_folder_name("a.b", Some('.')), Err(FolderNameError::Delimiter('.')));
+    assert_eq!(
+        clean_folder_name("a.b", Some('.')),
+        Err(FolderNameError::Delimiter('.'))
+    );
     assert_eq!(clean_folder_name("a/b", None), Ok("a/b".into()));
 }
 
@@ -66,7 +75,10 @@ fn names_are_checked() {
 fn create_at_the_top_and_under_a_folder() {
     let all = folders();
     let p = plan_create(&all, ACCOUNT, None, " Receipts ", None).expect("plan");
-    assert_eq!((p.remote_name.as_str(), p.delimiter), ("Receipts", Some('/')));
+    assert_eq!(
+        (p.remote_name.as_str(), p.delimiter),
+        ("Receipts", Some('/'))
+    );
     let p = plan_create(&all, ACCOUNT, Some(FolderId(5)), "Q2", None).expect("plan");
     assert_eq!(p.remote_name, "Projects/2026/Q2");
     // Non-ASCII names are sent in modified UTF-7 and stored decoded.
@@ -92,18 +104,25 @@ fn create_refuses_taken_names_and_unknown_parents() {
     ));
     assert!(matches!(
         plan_create(&all, ACCOUNT, None, "a/b", None),
-        Err(FolderAdminError::InvalidName(FolderNameError::Delimiter('/')))
+        Err(FolderAdminError::InvalidName(FolderNameError::Delimiter(
+            '/'
+        )))
     ));
 }
 
 #[test]
 fn a_server_without_hierarchy_only_allows_top_level_folders() {
-    let mut flat = vec![folder(1, "INBOX", Some(FolderRole::Inbox)), folder(2, "Notes", None)];
+    let mut flat = vec![
+        folder(1, "INBOX", Some(FolderRole::Inbox)),
+        folder(2, "Notes", None),
+    ];
     for f in &mut flat {
         f.details.delimiter = None;
     }
     assert_eq!(
-        plan_create(&flat, ACCOUNT, None, "a/b", None).expect("plan").remote_name,
+        plan_create(&flat, ACCOUNT, None, "a/b", None)
+            .expect("plan")
+            .remote_name,
         "a/b"
     );
     assert!(matches!(
@@ -127,9 +146,24 @@ fn standard_folders_and_folders_holding_them_are_protected() {
     let all = folders();
     for id in [1, 2, 3, 8, 9, 10] {
         let id = FolderId(id);
-        assert!(matches!(plan_rename(&all, id, "X"), Err(FolderAdminError::SystemFolder)), "{id:?}");
-        assert!(matches!(plan_move(&all, id, None), Err(FolderAdminError::SystemFolder)), "{id:?}");
-        assert!(matches!(plan_delete(&all, id), Err(FolderAdminError::SystemFolder)), "{id:?}");
+        assert!(
+            matches!(
+                plan_rename(&all, id, "X"),
+                Err(FolderAdminError::SystemFolder)
+            ),
+            "{id:?}"
+        );
+        assert!(
+            matches!(
+                plan_move(&all, id, None),
+                Err(FolderAdminError::SystemFolder)
+            ),
+            "{id:?}"
+        );
+        assert!(
+            matches!(plan_delete(&all, id), Err(FolderAdminError::SystemFolder)),
+            "{id:?}"
+        );
     }
     assert!(can_change(&all, &all[3]));
     assert!(!can_change(&all, &all[8]));
@@ -139,7 +173,10 @@ fn standard_folders_and_folders_holding_them_are_protected() {
 fn rename_takes_the_subfolders_along() {
     let all = folders();
     let p = plan_rename(&all, FolderId(4), "Work").expect("plan");
-    assert_eq!((p.old_remote.as_str(), p.new_remote.as_str()), ("Projects", "Work"));
+    assert_eq!(
+        (p.old_remote.as_str(), p.new_remote.as_str()),
+        ("Projects", "Work")
+    );
     assert_eq!(
         p.rows,
         vec![
@@ -152,9 +189,17 @@ fn rename_takes_the_subfolders_along() {
     assert_eq!(p.new_remote, "Projects/2026/First quarter");
     assert_eq!(p.rows.len(), 1);
     // The same name is a no-op, a sibling's name is refused.
-    assert!(plan_rename(&all, FolderId(7), " Notes ").expect("plan").is_noop());
-    assert!(matches!(plan_rename(&all, FolderId(7), "Projects"), Err(FolderAdminError::AlreadyExists)));
-    assert!(matches!(plan_rename(&all, FolderId(7), "inbox"), Err(FolderAdminError::InvalidName(_))));
+    assert!(plan_rename(&all, FolderId(7), " Notes ")
+        .expect("plan")
+        .is_noop());
+    assert!(matches!(
+        plan_rename(&all, FolderId(7), "Projects"),
+        Err(FolderAdminError::AlreadyExists)
+    ));
+    assert!(matches!(
+        plan_rename(&all, FolderId(7), "inbox"),
+        Err(FolderAdminError::InvalidName(_))
+    ));
 }
 
 #[test]
@@ -170,7 +215,9 @@ fn move_keeps_the_name_and_refuses_cycles() {
             (FolderId(6), "2026/Q1".into(), "2026/Q1".into()),
         ]
     );
-    assert!(plan_move(&all, FolderId(5), Some(FolderId(4))).expect("plan").is_noop());
+    assert!(plan_move(&all, FolderId(5), Some(FolderId(4)))
+        .expect("plan")
+        .is_noop());
     for target in [4, 5, 6] {
         assert!(matches!(
             plan_move(&all, FolderId(4), Some(FolderId(target))),
@@ -186,7 +233,9 @@ fn move_keeps_the_name_and_refuses_cycles() {
     ));
     // A folder can go under a standard folder (if the server allows it).
     assert_eq!(
-        plan_move(&all, FolderId(7), Some(FolderId(1))).expect("plan").new_remote,
+        plan_move(&all, FolderId(7), Some(FolderId(1)))
+            .expect("plan")
+            .new_remote,
         "INBOX/Notes"
     );
 }
@@ -194,10 +243,22 @@ fn move_keeps_the_name_and_refuses_cycles() {
 #[test]
 fn delete_needs_an_empty_folder() {
     let all = folders();
-    assert!(matches!(plan_delete(&all, FolderId(4)), Err(FolderAdminError::HasSubfolders)));
-    assert!(matches!(plan_delete(&all, FolderId(5)), Err(FolderAdminError::HasSubfolders)));
-    assert_eq!(plan_delete(&all, FolderId(6)).expect("plan").id, FolderId(6));
-    assert!(matches!(plan_delete(&all, FolderId(99)), Err(FolderAdminError::NotFound)));
+    assert!(matches!(
+        plan_delete(&all, FolderId(4)),
+        Err(FolderAdminError::HasSubfolders)
+    ));
+    assert!(matches!(
+        plan_delete(&all, FolderId(5)),
+        Err(FolderAdminError::HasSubfolders)
+    ));
+    assert_eq!(
+        plan_delete(&all, FolderId(6)).expect("plan").id,
+        FolderId(6)
+    );
+    assert!(matches!(
+        plan_delete(&all, FolderId(99)),
+        Err(FolderAdminError::NotFound)
+    ));
 }
 
 #[test]
@@ -235,9 +296,7 @@ fn saving_keeps_messages_and_sync_state() {
         &plan_create(&listed, account, Some(parent), "2026", Some('/')).expect("plan"),
     )
     .expect("save");
-    store
-        .reset_folder(child, 7, 42)
-        .expect("state");
+    store.reset_folder(child, 7, 42).expect("state");
 
     let listed = store.list_folders(account).expect("list");
     save_renamed(&store, &plan_rename(&listed, parent, "Work").expect("plan")).expect("rename");
@@ -261,8 +320,9 @@ mod imap {
     const PASSWORD: &str = "app-password";
 
     async fn connect(imap: &FakeImap) -> Session {
-        let mut config = ImapConfig::new("localhost", imap.addr().port(), ImapSecurity::ImplicitTls)
-            .with_extra_root_cert(imap.root_cert_der().to_vec());
+        let mut config =
+            ImapConfig::new("localhost", imap.addr().port(), ImapSecurity::ImplicitTls)
+                .with_extra_root_cert(imap.root_cert_der().to_vec());
         config.command_timeout = Duration::from_millis(500);
         Session::connect(&config, USER, &Secret::new(PASSWORD))
             .await
@@ -299,8 +359,12 @@ mod imap {
         let store = Store::open_in_memory().expect("store");
         let account = account(&store);
         let mut session = connect(&imap).await;
-        save_folders(&store, account, &session.list_folders().await.expect("list"))
-            .expect("save");
+        save_folders(
+            &store,
+            account,
+            &session.list_folders().await.expect("list"),
+        )
+        .expect("save");
         let id = |store: &Store, remote: &str| {
             store
                 .list_folders(account)
@@ -312,8 +376,8 @@ mod imap {
 
         // Create.
         let listed = store.list_folders(account).expect("list");
-        let plan = plan_create(&listed, account, id(&store, "Projects"), "Receipts", None)
-            .expect("plan");
+        let plan =
+            plan_create(&listed, account, id(&store, "Projects"), "Receipts", None).expect("plan");
         create_on_server(&mut session, &plan).await.expect("create");
         save_created(&store, &plan).expect("save");
 
@@ -334,7 +398,9 @@ mod imap {
         // Delete.
         let listed = store.list_folders(account).expect("list");
         let notes = plan_delete(&listed, id(&store, "Notes").expect("notes")).expect("plan");
-        delete_on_server(&mut session, &notes).await.expect("delete");
+        delete_on_server(&mut session, &notes)
+            .await
+            .expect("delete");
         save_deleted(&store, &notes).expect("save");
 
         let mut server = imap.mailbox().folder_names().await;
@@ -369,10 +435,7 @@ fn move_targets_leave_out_the_folder_its_subfolders_and_where_it_is() {
     let (top, under) = move_targets(&all, FolderId(5));
     assert!(top);
     // Not 4 (already there), 5 or 6 (itself, its subfolder).
-    assert_eq!(
-        under,
-        [1, 2, 3, 7, 8, 9, 10].map(FolderId).to_vec()
-    );
+    assert_eq!(under, [1, 2, 3, 7, 8, 9, 10].map(FolderId).to_vec());
     let (top, under) = move_targets(&all, FolderId(7));
     assert!(!top);
     assert!(under.contains(&FolderId(4)) && !under.contains(&FolderId(7)));

@@ -102,7 +102,13 @@ class ManageFoldersViewModel
                     val targets = core.moveTargets(folder.id)
                     _state.update { s ->
                         val d = s.dialog
-                        if (d is FolderDialog.Move && d.folder.id == folder.id) s.copy(dialog = d.copy(targets = targets)) else s
+                        if (d is FolderDialog.Move &&
+                            d.folder.id == folder.id
+                        ) {
+                            s.copy(dialog = d.copy(targets = targets))
+                        } else {
+                            s
+                        }
                     }
                 } catch (_: SyncFailure) {
                     _state.update { it.copy(error = FolderMessage(R.string.folders_error_storage)) }

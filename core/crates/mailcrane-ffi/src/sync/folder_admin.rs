@@ -145,7 +145,9 @@ impl SyncEngine {
 
     /// Renames the folder, keeping its place. Its subfolders follow.
     pub fn rename_folder(&self, folder_id: i64, name: String) -> Result<(), FolderFailure> {
-        self.change(folder_id, |folders, id| admin::plan_rename(folders, id, &name))
+        self.change(folder_id, |folders, id| {
+            admin::plan_rename(folders, id, &name)
+        })
     }
 
     /// Moves the folder under `parent_id`, or to the top with `None`.
@@ -181,7 +183,10 @@ impl SyncEngine {
     fn change(
         &self,
         folder_id: i64,
-        plan: impl Fn(&[mailcrane_store::Folder], FolderId) -> Result<admin::RenamePlan, FolderAdminError>,
+        plan: impl Fn(
+            &[mailcrane_store::Folder],
+            FolderId,
+        ) -> Result<admin::RenamePlan, FolderAdminError>,
     ) -> Result<(), FolderFailure> {
         let (store, account, kind) = self.admin_folder(folder_id)?;
         let folders = list(&store, account)?;
@@ -256,10 +261,7 @@ impl SyncEngine {
         let sync = |kind: events::SyncErrorKind| FolderFailure::Sync { kind: kind.into() };
         let runtime = runtime().map_err(sync)?;
         runtime.block_on(async {
-            let mut session = self
-                .connect(store, account)
-                .await
-                .map_err(sync)?;
+            let mut session = self.connect(store, account).await.map_err(sync)?;
             let result = job(&mut session).await;
             session.logout().await;
             Ok(result?)
@@ -268,7 +270,9 @@ impl SyncEngine {
 }
 
 fn list(store: &Store, account: AccountId) -> Result<Vec<mailcrane_store::Folder>, FolderFailure> {
-    store.list_folders(account).map_err(|_| FolderFailure::Storage)
+    store
+        .list_folders(account)
+        .map_err(|_| FolderFailure::Storage)
 }
 
 #[cfg(test)]

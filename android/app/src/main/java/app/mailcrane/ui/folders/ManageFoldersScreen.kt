@@ -100,7 +100,10 @@ fun ManageFoldersContent(
                 title = { Text(stringResource(R.string.folders_manage_title)) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(painterResource(R.drawable.ic_mc_back), contentDescription = stringResource(R.string.folders_back))
+                        Icon(
+                            painterResource(R.drawable.ic_mc_back),
+                            contentDescription = stringResource(R.string.folders_back),
+                        )
                     }
                 },
                 actions = {
@@ -252,7 +255,9 @@ private fun NameDialog(
         confirmButton = {
             TextButton(onClick = { onConfirm(name) }, enabled = !state.busy && name.isNotBlank()) { Text(confirm) }
         },
-        dismissButton = { TextButton(onClick = onDismiss, enabled = !state.busy) { Text(stringResource(R.string.folders_cancel)) } },
+        dismissButton = {
+            TextButton(onClick = onDismiss, enabled = !state.busy) { Text(stringResource(R.string.folders_cancel)) }
+        },
     )
 }
 
@@ -291,7 +296,9 @@ private fun MoveDialog(
                 Text(stringResource(R.string.folders_move))
             }
         },
-        dismissButton = { TextButton(onClick = onDismiss, enabled = !state.busy) { Text(stringResource(R.string.folders_cancel)) } },
+        dismissButton = {
+            TextButton(onClick = onDismiss, enabled = !state.busy) { Text(stringResource(R.string.folders_cancel)) }
+        },
     )
 }
 
@@ -333,6 +340,8 @@ private fun DeleteDialog(
                 Text(stringResource(R.string.folders_delete), color = MaterialTheme.colorScheme.error)
             }
         },
-        dismissButton = { TextButton(onClick = onDismiss, enabled = !state.busy) { Text(stringResource(R.string.folders_cancel)) } },
+        dismissButton = {
+            TextButton(onClick = onDismiss, enabled = !state.busy) { Text(stringResource(R.string.folders_cancel)) }
+        },
     )
 }

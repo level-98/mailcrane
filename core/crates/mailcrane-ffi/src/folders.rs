@@ -8,8 +8,8 @@ use std::collections::HashSet;
 use mailcrane_store::{AccountId, Folder, FolderRole as StoreRole, Store};
 
 use crate::messages::one_line;
-use mailcrane_core::folder_admin;
 use crate::sync::{SyncErrorKind, SyncFailure};
+use mailcrane_core::folder_admin;
 
 /// Folders nested deeper than this are shown at this depth, so a hostile
 /// server can't push names off the screen.
@@ -118,7 +118,10 @@ pub fn list_folders(db_path: String, account_id: i64) -> Result<Vec<FolderSummar
 
 /// Whether folders can be created, renamed, moved and deleted in this
 /// account (M4-22): IMAP and local-only accounts, not JMAP ones yet.
-fn folders_manageable(store: &Store, account: AccountId) -> Result<bool, mailcrane_store::StoreError> {
+fn folders_manageable(
+    store: &Store,
+    account: AccountId,
+) -> Result<bool, mailcrane_store::StoreError> {
     if store.get_account(account)?.is_none() {
         return Ok(false);
     }

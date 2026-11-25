@@ -67,7 +67,9 @@ fn a_local_account_creates_renames_moves_and_deletes_folders() {
     let year = engine
         .create_folder(account, Some(projects), "2026".into())
         .expect("create");
-    let notes = engine.create_folder(account, None, "Notes".into()).expect("create");
+    let notes = engine
+        .create_folder(account, None, "Notes".into())
+        .expect("create");
     assert_eq!(
         names(&path, account),
         [
@@ -78,7 +80,9 @@ fn a_local_account_creates_renames_moves_and_deletes_folders() {
         ]
     );
 
-    engine.rename_folder(projects, "Work".into()).expect("rename");
+    engine
+        .rename_folder(projects, "Work".into())
+        .expect("rename");
     let targets = move_targets(path.clone(), notes).expect("targets");
     assert!(!targets.to_top);
     let ids: Vec<i64> = targets.folders.iter().map(|f| f.id).collect();
@@ -95,7 +99,10 @@ fn a_local_account_creates_renames_moves_and_deletes_folders() {
     );
 
     // Refusals change nothing.
-    assert_eq!(engine.delete_folder(projects), Err(FolderFailure::HasSubfolders));
+    assert_eq!(
+        engine.delete_folder(projects),
+        Err(FolderFailure::HasSubfolders)
+    );
     assert_eq!(
         engine.move_folder(projects, Some(notes)),
         Err(FolderFailure::IntoItself)
@@ -113,8 +120,14 @@ fn a_local_account_creates_renames_moves_and_deletes_folders() {
         })
     );
     let inbox = list_folders(path.clone(), account).expect("list")[0].id;
-    assert_eq!(engine.delete_folder(inbox), Err(FolderFailure::SystemFolder));
-    assert_eq!(engine.rename_folder(999, "X".into()), Err(FolderFailure::NotFound));
+    assert_eq!(
+        engine.delete_folder(inbox),
+        Err(FolderFailure::SystemFolder)
+    );
+    assert_eq!(
+        engine.rename_folder(999, "X".into()),
+        Err(FolderFailure::NotFound)
+    );
 
     engine.delete_folder(notes).expect("delete");
     engine.delete_folder(year).expect("delete");
