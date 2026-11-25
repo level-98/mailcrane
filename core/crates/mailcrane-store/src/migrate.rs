@@ -111,6 +111,77 @@ mod tests {
     }
 
     #[test]
+    fn v17_with_rows_upgrades_to_v18_with_no_server_rules() -> R {
+        // A database as main had it before M4-23: schema v17, with a
+        // local-only account, a remote one, a folder, a message and a rule.
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("m.db");
+        let v17 = MIGRATIONS.get(..17).ok_or("fewer than 17 migrations")?;
+        {
+            let mut conn = Connection::open(&path)?;
+            run(&mut conn, v17)?;
+            assert_eq!(user_version(&conn)?, 17);
+            conn.execute_batch(
+                "INSERT INTO accounts (display_name, email, imap_host, imap_port, imap_security, \
+                 smtp_host, smtp_port, smtp_security, username, local_only) VALUES \
+                 ('A','a@example.org','imap.example.org',993,'tls','smtp.example.org',465,'tls','a',0), \
+                 ('F','fixtures@example.org','localhost',993,'tls','localhost',465,'tls','f',1); \
+                 INSERT INTO folders (account_id, remote_name, display_name, is_subscribed) \
+                 VALUES (1, 'INBOX', 'Inbox', 1); \
+                 INSERT INTO messages (folder_id, uid, subject, date, internal_date, size) \
+                 VALUES (1, 7, 'Hello', 1790000000, 1790000000, 10); \
+                 INSERT INTO rules (account_id, name, position, enabled, match_all, stop_processing) \
+                 VALUES (NULL, 'Invoices', 0, 1, 1, 0); \
+                 INSERT INTO rule_conditions (rule_id, position, kind, value) \
+                 VALUES (1, 0, 'subject', 'Invoice'); \
+                 INSERT INTO rule_actions (rule_id, position, kind, folder_id) \
+                 VALUES (1, 0, 'flag', NULL);",
+            )?;
+        }
+
+        let store = crate::Store::open(&path)?;
+        assert_eq!(store.schema_version()?, 18);
+        let accounts = store.list_accounts()?;
+        assert_eq!(accounts.len(), 2);
+        let remote = accounts.first().ok_or("account")?.id;
+        let local = accounts.get(1).ok_or("account")?.id;
+        assert!(!store.is_local_account(remote)? && store.is_local_account(local)?);
+        let folder = store.list_folders(remote)?.first().ok_or("folder")?.id;
+        assert_eq!(store.list_messages(folder, 10, 0)?.len(), 1);
+        let rules = store.list_rules(None)?;
+        assert_eq!(rules.len(), 1);
+        let rule = rules.first().ok_or("rule")?;
+        assert_eq!(rule.rule.name, "Invoices");
+        // No account has been checked yet, so every rule runs on the device.
+        assert!(store.list_server_rules()?.is_empty());
+        assert_eq!(store.server_rules(remote)?, None);
+        // The new tables work on the upgraded file.
+        store.save_server_rules(&crate::ServerRules {
+            account_id: remote,
+            state: crate::ServerRulesState::Active,
+            host: Some("imap.example.org".into()),
+            port: Some(4190),
+            extensions: vec!["fileinto".into()],
+            other_script: None,
+            script_hash: Some("h".into()),
+            checked_at: 1,
+            switch_requested: false,
+            deployed: vec![(rule.id, "f".into())],
+        })?;
+        assert_eq!(
+            store.server_rules(remote)?.map(|s| s.deployed),
+            Some(vec![(rule.id, "f".to_string())])
+        );
+        // The state column only takes the three known states.
+        drop(store);
+        let conn = Connection::open(&path)?;
+        assert!(conn
+            .execute("UPDATE server_rules SET state = 'other'", [])
+            .is_err());
+        Ok(())
+    }
+
+    #[test]
     fn broken_second_migration_leaves_v1_and_data() -> R {
         let mut conn = Connection::open_in_memory()?;
         run(&mut conn, &["CREATE TABLE t (x INTEGER);"])?;
