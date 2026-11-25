@@ -220,4 +220,12 @@
     <string name="outbox_retry">Retry</string>
     <string name="outbox_edit">Edit</string>
     <string name="outbox_delete">Delete</string>
+
+    <!-- Save sent messages (M2-07) -->
+    <string name="settings_save_sent_header">Save sent messages to the Sent folder</string>
+    <string name="settings_save_sent_auto">Automatic</string>
+    <string name="settings_save_sent_auto_summary">Yes, unless your provider does it itself (such as Gmail and Outlook)</string>
+    <string name="settings_save_sent_on">On</string>
+    <string name="settings_save_sent_off">Off</string>
+    <string name="outbox_not_saved">Sent, but not saved to your Sent folder</string>
 </resources>

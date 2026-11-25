@@ -161,7 +161,8 @@ class UniffiComposeCore(
     /** Through the outbox: sent at once if possible, otherwise queued and retried in the background. */
     override suspend fun send(draft: ComposeDraft): SendResult {
         val result = sendViaOutbox(dbPath, draft)
-        if (result.queued) outbox?.kick(draft.accountId)
+        // Queued: keep trying. Sent: the sender also saves the copy to the Sent folder.
+        outbox?.kick(draft.accountId)
         return result
     }
 

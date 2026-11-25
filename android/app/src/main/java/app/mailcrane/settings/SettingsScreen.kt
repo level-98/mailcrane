@@ -55,7 +55,10 @@ fun SettingsScreen(
 ) {
     val cleanLinks by viewModel.cleanLinks.collectAsStateWithLifecycle()
     SettingsContent(cleanLinks = cleanLinks, onCleanLinksChange = viewModel::setCleanLinks, onBack = onBack) {
-        if (accountId != null) SignatureSection(accountId)
+        if (accountId != null) {
+            SignatureSection(accountId)
+            SaveSentSection(accountId)
+        }
     }
 }
 

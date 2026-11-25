@@ -2,6 +2,7 @@ package app.mailcrane.settings
 
 import app.mailcrane.core.AccountSettingsCore
 import app.mailcrane.core.AccountSignature
+import app.mailcrane.core.SaveSentSetting
 import app.mailcrane.core.SettingsFailure
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -27,6 +28,19 @@ private class FakeSettings : AccountSettingsCore {
     ) {
         failure?.let { throw it }
         stored = signature
+    }
+
+    var saveSent = SaveSentSetting.AUTOMATIC
+    var saveSentFailure: SettingsFailure? = null
+
+    override suspend fun getSaveSent(accountId: Long) = saveSent
+
+    override suspend fun setSaveSent(
+        accountId: Long,
+        setting: SaveSentSetting,
+    ) {
+        saveSentFailure?.let { throw it }
+        saveSent = setting
     }
 }
 
@@ -63,5 +77,19 @@ class AccountSettingsViewModelTest {
         assertEquals(SaveStatus.TOO_LONG, vm.state.value.status)
         assertTrue(vm.state.value.dirty)
         assertEquals(AccountSignature("Ann", true), core.stored)
+    }
+
+    @Test
+    fun theSaveSentChoiceSavesAtOnceAndRevertsOnFailure() {
+        val core = FakeSettings()
+        val vm = AccountSettingsViewModel(core, 1)
+        assertEquals(SaveSentSetting.AUTOMATIC, vm.state.value.saveSent)
+        vm.onSaveSentChange(SaveSentSetting.OFF)
+        assertEquals(SaveSentSetting.OFF, core.saveSent)
+        assertEquals(SaveSentSetting.OFF, vm.state.value.saveSent)
+
+        core.saveSentFailure = SettingsFailure.Storage()
+        vm.onSaveSentChange(SaveSentSetting.ON)
+        assertEquals(SaveSentSetting.OFF, vm.state.value.saveSent)
     }
 }

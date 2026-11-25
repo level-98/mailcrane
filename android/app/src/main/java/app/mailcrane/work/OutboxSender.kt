@@ -39,6 +39,7 @@ class OutboxSender
         private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
         private val loops = ConcurrentHashMap<Long, Job>()
         private val wakeups = ConcurrentHashMap<Long, Channel<Unit>>()
+        private val copies by lazy { SyncEngine(dbPath, NoEvents) }
 
         /** Call once from the Application: recovers interrupted sends, then starts sending. */
         fun start() {
@@ -90,7 +91,15 @@ class OutboxSender
                             } catch (_: SyncFailure) {
                                 null
                             }
-                        if (status != null && status.remaining == 0u) break
+                        if (status != null && status.remaining == 0u) {
+                            // Sent: save copies to the Sent folder (M2-07). Failures wait for the next sync.
+                            try {
+                                copies.replayActions(accountId)
+                            } catch (_: SyncFailure) {
+                                // Retried by the next sync or send.
+                            }
+                            break
+                        }
                         val now = System.currentTimeMillis()
                         val wait =
                             status?.nextAttemptAt?.let { (it * 1_000 - now).coerceIn(MIN_WAIT_MS, MAX_WAIT_MS) }

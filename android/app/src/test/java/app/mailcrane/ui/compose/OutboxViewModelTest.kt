@@ -133,5 +133,6 @@ class OutboxViewModelTest {
             outboxStatus(entry(1, OutboxEntryState.FAILED, "auth")),
         )
         assertEquals(app.mailcrane.R.string.outbox_failed, outboxStatus(entry(1, OutboxEntryState.FAILED, "refused")))
+        assertEquals(app.mailcrane.R.string.outbox_not_saved, outboxStatus(entry(1, OutboxEntryState.NOT_SAVED)))
     }
 }
