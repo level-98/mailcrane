@@ -17,11 +17,10 @@ use super::*;
 use mailcrane_core::sync::prefetch::{
     self, Candidate, PrefetchConditions, PrefetchLimits, PrefetchMode,
 };
-use mailcrane_core::sync::JmapSyncer;
+use mailcrane_core::sync::{JmapSyncer, WriteLock};
 use mailcrane_store::Protocol;
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::MutexGuard;
 
 /// The "Download messages in the background" setting.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
@@ -75,22 +74,31 @@ impl SyncEngine {
     }
 }
 
-/// One account's lock. Calls the user waits for take it with
-/// [`AccountGate::lock`]; background downloads check
-/// [`AccountGate::foreground_waiting`] between batches and give way.
+/// One account's writer lock (issue #282) and who is waiting for it. The
+/// lock is the account's single [`WriteLock`], also held by its live
+/// updates for each sync, so only one writer touches the account's rows at
+/// a time. Calls the user waits for take it with [`AccountGate::lock`];
+/// background downloads take it per batch and check
+/// [`AccountGate::foreground_waiting`] before each batch, and give way.
 #[derive(Default)]
 pub(crate) struct AccountGate {
-    lock: Mutex<()>,
-    /// How many [`AccountGate::lock`] calls are waiting for the lock.
+    write_lock: WriteLock,
+    /// How many calls the user waits for want the lock.
     waiting: AtomicUsize,
 }
 
 impl AccountGate {
-    /// Takes the lock for a call the user waits for. A poisoned lock only
-    /// means an earlier call panicked; nothing in it is left half-done.
-    pub(crate) fn lock(&self) -> MutexGuard<'_, ()> {
+    /// The shared writer lock, for live updates (which take it with
+    /// `lock().await` inside their runtime).
+    pub(crate) fn write_lock(&self) -> WriteLock {
+        self.write_lock.clone()
+    }
+
+    /// Takes the lock for a call the user waits for. Outside any runtime
+    /// only (`blocking_lock`).
+    pub(crate) fn lock(&self) -> tokio::sync::MutexGuard<'_, ()> {
         let _waiting = self.announce();
-        self.lock.lock().unwrap_or_else(|p| p.into_inner())
+        self.write_lock.blocking_lock()
     }
 
     /// Marks a call the user waits for as waiting, until the returned guard
@@ -102,8 +110,9 @@ impl AccountGate {
     }
 
     /// Takes the lock for background work, without counting as waiting.
-    fn lock_background(&self) -> MutexGuard<'_, ()> {
-        self.lock.lock().unwrap_or_else(|p| p.into_inner())
+    /// Outside any runtime only.
+    fn lock_background(&self) -> tokio::sync::MutexGuard<'_, ()> {
+        self.write_lock.blocking_lock()
     }
 
     /// Whether a call the user waits for wants the lock.
@@ -114,7 +123,7 @@ impl AccountGate {
     /// Whether the lock is free right now (tests).
     #[cfg(test)]
     pub(crate) fn is_free(&self) -> bool {
-        self.lock.try_lock().is_ok()
+        self.write_lock.try_lock().is_ok()
     }
 }
 

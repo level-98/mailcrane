@@ -137,6 +137,7 @@ fun MessageScreen(
                         ),
                     )
                 is MessageEffect.ComposeUnsubscribe -> onComposeTo(effect.prefill)
+                is MessageEffect.OpenLink -> openLink(context, Uri.parse(effect.url))
                 is MessageEffect.OpenUnsubscribePage -> openLink(context, Uri.parse(effect.url))
                 is MessageEffect.Unsubscribed ->
                     snackbar.showSnackbar(
@@ -189,6 +190,14 @@ fun MessageScreen(
             },
         )
     }
+    val linkPreview by viewModel.linkPreview.collectAsStateWithLifecycle()
+    linkPreview?.let { preview ->
+        LinkPreviewDialog(
+            preview = preview,
+            onOpen = viewModel::openPreviewedLink,
+            onDismiss = viewModel::dismissLinkPreview,
+        )
+    }
     var snoozing by rememberSaveable { mutableStateOf(false) }
     val askNotifications = rememberNotificationPermissionRequest()
     if (snoozing) {
@@ -239,7 +248,7 @@ fun MessageScreen(
         onRetry = viewModel::load,
         onLoadRemoteImages = viewModel::loadRemoteImages,
         inlinePart = viewModel::inlinePart,
-        onOpenLink = { openLink(context, Uri.parse(viewModel.linkToOpen(it.toString()))) },
+        onOpenLink = { viewModel.onLinkTapped(it.toString()) },
     )
 }
 

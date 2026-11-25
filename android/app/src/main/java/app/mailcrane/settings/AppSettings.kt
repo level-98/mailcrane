@@ -33,6 +33,11 @@ interface AppSettings {
 
     suspend fun setCleanLinks(enabled: Boolean)
 
+    /** "Confirm links before opening": show a preview of a link's destination first. On by default (M5-07). */
+    val confirmLinks: Flow<Boolean>
+
+    suspend fun setConfirmLinks(enabled: Boolean)
+
     /** "Undo send": seconds a sent message waits before going out (0: off). One of [UNDO_SEND_CHOICES]. */
     val undoSendSeconds: Flow<Int>
 
@@ -161,6 +166,8 @@ class DataStoreAppSettings(
 
     override val cleanLinks: Flow<Boolean> = prefs.map { it[CLEAN_LINKS] ?: true }
 
+    override val confirmLinks: Flow<Boolean> = prefs.map { it[CONFIRM_LINKS] ?: true }
+
     override val groupByConversation: Flow<Boolean> = prefs.map { it[GROUP_THREADS] ?: true }
 
     override suspend fun setGroupByConversation(enabled: Boolean) {
@@ -239,6 +246,10 @@ class DataStoreAppSettings(
         dataStore.edit { it[CLEAN_LINKS] = enabled }
     }
 
+    override suspend fun setConfirmLinks(enabled: Boolean) {
+        dataStore.edit { it[CONFIRM_LINKS] = enabled }
+    }
+
     // A stored value that isn't one of the choices (an old or edited file) means the default.
     override val undoSendSeconds: Flow<Int> =
         prefs.map { p -> p[UNDO_SEND]?.takeIf { it in UNDO_SEND_CHOICES } ?: DEFAULT_UNDO_SEND_SECONDS }
@@ -303,6 +314,7 @@ class DataStoreAppSettings(
         val SWIPE_RIGHT = stringPreferencesKey("swipe_right")
         val SWIPE_LEFT = stringPreferencesKey("swipe_left")
         val CLEAN_LINKS = booleanPreferencesKey("clean_links")
+        val CONFIRM_LINKS = booleanPreferencesKey("confirm_links")
         val CONTACTS_PROMPT = booleanPreferencesKey("contacts_prompt_answered")
         val UNDO_SEND = intPreferencesKey("undo_send_seconds")
         val THEME = stringPreferencesKey("theme_mode")

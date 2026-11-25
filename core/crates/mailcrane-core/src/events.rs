@@ -24,6 +24,10 @@ pub enum SyncErrorKind {
     NotFound,
     /// The folder's `UIDVALIDITY` changed; sync the folder again.
     FolderReset,
+    /// Another sync was writing to the local database and kept it busy.
+    /// Local and passing: nothing is wrong with the server or the account,
+    /// and the next sync works. Apps shouldn't show it as an error.
+    Busy,
 }
 
 /// Which action the server refused, in [`CoreEvent::ActionFailed`].

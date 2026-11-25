@@ -6,6 +6,7 @@ import kotlinx.coroutines.flow.StateFlow
 /** In-memory [AppSettings] for tests. */
 class FakeAppSettings(
     cleanLinks: Boolean = true,
+    confirmLinks: Boolean = true,
     undoSendSeconds: Int = 0,
 ) : AppSettings {
     private val clean = MutableStateFlow(cleanLinks)
@@ -13,6 +14,13 @@ class FakeAppSettings(
 
     override suspend fun setCleanLinks(enabled: Boolean) {
         clean.value = enabled
+    }
+
+    private val confirm = MutableStateFlow(confirmLinks)
+    override val confirmLinks: StateFlow<Boolean> = confirm
+
+    override suspend fun setConfirmLinks(enabled: Boolean) {
+        confirm.value = enabled
     }
 
     private val undo = MutableStateFlow(undoSendSeconds)

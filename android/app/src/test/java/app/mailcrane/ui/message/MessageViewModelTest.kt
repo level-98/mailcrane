@@ -2,7 +2,11 @@ package app.mailcrane.ui.message
 
 import app.mailcrane.core.ActionFailure
 import app.mailcrane.core.InlinePart
+import app.mailcrane.core.LinkCheck
+import app.mailcrane.core.LinkChecker
 import app.mailcrane.core.LinkCleaner
+import app.mailcrane.core.LinkText
+import app.mailcrane.core.LinkWarning
 import app.mailcrane.core.MessageAction
 import app.mailcrane.core.MessageAddress
 import app.mailcrane.core.MessageBody
@@ -43,7 +47,14 @@ private fun messageViewModel(
     core: MessageCore = FakeMessageCore(),
     settings: FakeAppSettings = FakeAppSettings(),
     cleaner: LinkCleaner = NoCleaning,
-) = MessageViewModel(core, settings, cleaner, ID)
+    checker: LinkChecker = NoWarnings,
+) = MessageViewModel(core, settings, cleaner, checker, ID)
+
+private val NoWarnings =
+    LinkChecker { _, url, _ -> LinkCheck(url.substringAfter("://").substringBefore('/'), "", false, emptyList()) }
+
+private fun warning(vararg warnings: LinkWarning) =
+    LinkChecker { _, _, _ -> LinkCheck("example.net", "example.net", false, warnings.toList()) }
 
 private fun detail(
     body: MessageBody,
@@ -71,7 +82,10 @@ private fun html(
     remoteBlocked = remoteBlocked,
     trackersRemoved = 0u,
     trackers = emptyList(),
+    links = HTML_LINKS,
 )
+
+private val HTML_LINKS = listOf(LinkText("https://example.net/login", "https://example.com/login"))
 
 private class FakeMessageCore(
     var downloaded: Boolean = true,
@@ -280,6 +294,99 @@ class MessageViewModelTest {
 
             settings.setCleanLinks(true)
             assertEquals("cleaned:https://example.com/", vm.linkToOpen("https://example.com/"))
+        }
+
+    @Test
+    fun aWebLinkWaitsForConfirmationAndOpensOnlyAfterOpen() =
+        runTest {
+            val vm = messageViewModel()
+            vm.onLinkTapped("https://example.com/a")
+            assertEquals("https://example.com/a", vm.linkPreview.value?.url)
+            vm.openPreviewedLink()
+            assertNull(vm.linkPreview.value)
+            assertEquals(MessageEffect.OpenLink("https://example.com/a"), vm.effects.first())
+        }
+
+    @Test
+    fun cancelOpensNothing() =
+        runTest {
+            val vm = messageViewModel()
+            vm.onLinkTapped("https://example.com/a")
+            vm.dismissLinkPreview()
+            assertNull(vm.linkPreview.value)
+            vm.openPreviewedLink()
+            vm.onLinkTapped("mailto:a@example.org")
+            // The only effect is the mailto, so nothing opened for the cancelled link.
+            assertEquals(MessageEffect.OpenLink("mailto:a@example.org"), vm.effects.first())
+        }
+
+    @Test
+    fun withTheSettingOffAMatchingLinkOpensAtOnceButAWarningStillAsks() =
+        runTest {
+            val off = FakeAppSettings(confirmLinks = false)
+            val vm = messageViewModel(settings = off)
+            vm.onLinkTapped("https://example.com/a")
+            assertNull(vm.linkPreview.value)
+            assertEquals(MessageEffect.OpenLink("https://example.com/a"), vm.effects.first())
+
+            val warned = messageViewModel(settings = off, checker = warning(LinkWarning.IpAddress))
+            warned.onLinkTapped("https://192.0.2.1/")
+            assertEquals("https://192.0.2.1/", warned.linkPreview.value?.url)
+        }
+
+    @Test
+    fun theCleanedLinkIsWhatIsShownAndOpened() =
+        runTest {
+            val vm = messageViewModel(cleaner = MarkingCleaner)
+            vm.onLinkTapped("https://example.com/?utm_source=x")
+            assertEquals("cleaned:https://example.com/?utm_source=x", vm.linkPreview.value?.url)
+        }
+
+    @Test
+    fun plainTextLinksOnlyStopForAHiddenHost() =
+        runTest {
+            val core = FakeMessageCore(plain = true)
+            val calm = messageViewModel(core, checker = warning(LinkWarning.Http))
+            calm.onLinkTapped("http://example.com/")
+            assertNull(calm.linkPreview.value)
+            assertEquals(MessageEffect.OpenLink("http://example.com/"), calm.effects.first())
+
+            val risky = messageViewModel(FakeMessageCore(plain = true), checker = warning(LinkWarning.UserInfo))
+            risky.onLinkTapped("https://example.com@example.net/")
+            assertEquals("https://example.com@example.net/", risky.linkPreview.value?.url)
+
+            val lookalike =
+                messageViewModel(FakeMessageCore(plain = true), checker = warning(LinkWarning.LookalikeHost))
+            lookalike.onLinkTapped("https://xn--80ak6aa92e.com/")
+            assertEquals("https://xn--80ak6aa92e.com/", lookalike.linkPreview.value?.url)
+        }
+
+    @Test
+    fun theCoreGetsTheTappedUrlTheCleanedUrlAndTheBodyLinks() =
+        runTest {
+            val seen = mutableListOf<Triple<String, String, List<LinkText>>>()
+            val recording =
+                LinkChecker { tapped, target, links ->
+                    seen += Triple(tapped, target, links)
+                    LinkCheck("example.net", "example.net", false, emptyList())
+                }
+            val vm = messageViewModel(cleaner = MarkingCleaner, checker = recording)
+            ready(vm)
+            vm.onLinkTapped("https://example.net/login")
+            assertEquals(
+                listOf(Triple("https://example.net/login", "cleaned:https://example.net/login", HTML_LINKS)),
+                seen,
+            )
+        }
+
+    @Test
+    fun anUnsupportedLinkCanNeverOpen() =
+        runTest {
+            val vm = messageViewModel(checker = warning(LinkWarning.UnsupportedScheme))
+            vm.onLinkTapped("https://example.com/")
+            vm.openPreviewedLink()
+            vm.onLinkTapped("mailto:a@example.org")
+            assertEquals(MessageEffect.OpenLink("mailto:a@example.org"), vm.effects.first())
         }
 
     @Test

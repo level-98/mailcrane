@@ -54,7 +54,7 @@ impl Store {
     /// Upserts every folder in one transaction: either all are saved or,
     /// on error, none are.
     pub fn upsert_folders(&self, folders: &[NewFolder]) -> Result<Vec<FolderId>, StoreError> {
-        let tx = self.conn.unchecked_transaction()?;
+        let tx = self.write_tx()?;
         let mut ids = Vec::with_capacity(folders.len());
         for f in folders {
             ids.push(self.upsert_folder(f)?);
@@ -83,7 +83,7 @@ impl Store {
         uidvalidity: i64,
         uidnext: i64,
     ) -> Result<bool, StoreError> {
-        let tx = self.conn.unchecked_transaction()?;
+        let tx = self.write_tx()?;
         tx.execute("DELETE FROM messages WHERE folder_id = ?1", params![id.0])?;
         let n = tx.execute(
             "UPDATE folders SET uidvalidity = ?2, uidnext = ?3, highestmodseq = NULL \

@@ -192,6 +192,21 @@ class MessageListViewModelTest {
         }
 
     @Test
+    fun aBusyDatabaseIsNotReportedAsAnError() =
+        runTest {
+            val core = FakeMailbox(stored = 3)
+            val vm = MessageListViewModel(core, FakeAppSettings(), FOLDER)
+            // Another sync was saving at the same time (issue #282): no snackbar.
+            core.syncFailure = SyncErrorKind.BUSY
+            vm.refresh()
+            assertFalse(vm.state.value.isRefreshing)
+            // The next real failure is the first error anyone sees.
+            core.syncFailure = SyncErrorKind.NETWORK
+            vm.refresh()
+            assertEquals(SyncErrorKind.NETWORK, vm.errors.first())
+        }
+
+    @Test
     fun scrollingShowsMoreStoredMessagesBeforeAskingTheServer() {
         val core = FakeMailbox(stored = 120, onServer = 100)
         val vm = MessageListViewModel(core, FakeAppSettings(), FOLDER)

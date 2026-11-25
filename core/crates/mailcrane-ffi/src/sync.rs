@@ -11,8 +11,8 @@ use std::time::Duration;
 use mailcrane_core::events::{self, EventListener};
 use mailcrane_core::secrets::SecretKey;
 use mailcrane_core::sync::{
-    live_stop, log_failure, run_live_updates, FolderSyncer, ImapLogin, LiveConfig, LiveStop,
-    SyncConfig, SyncError as CoreSyncError,
+    live_stop, log_failure, run_live_updates, FolderSyncer, ImapLogin, LiveAccount, LiveConfig,
+    LiveStop, SyncConfig, SyncError as CoreSyncError,
 };
 use mailcrane_imap::{save_folders, ImapConfig, ImapError, ImapSecurity, Secret, Session};
 use mailcrane_store::{AccountId, FolderId, FolderRole, MessageId, Security, Store};
@@ -36,6 +36,10 @@ pub enum SyncErrorKind {
     NotFound,
     /// The folder's `UIDVALIDITY` changed; sync the folder again.
     FolderReset,
+    /// Another sync was writing to the local database and kept it busy.
+    /// Local and passing: nothing is wrong with the server or the account,
+    /// and the next sync works. Apps shouldn't show it as an error.
+    Busy,
 }
 
 impl From<events::SyncErrorKind> for SyncErrorKind {
@@ -49,6 +53,7 @@ impl From<events::SyncErrorKind> for SyncErrorKind {
             events::SyncErrorKind::Storage => Self::Storage,
             events::SyncErrorKind::NotFound => Self::NotFound,
             events::SyncErrorKind::FolderReset => Self::FolderReset,
+            events::SyncErrorKind::Busy => Self::Busy,
         }
     }
 }
@@ -412,6 +417,7 @@ impl SyncEngine {
         };
         let (sync_config, live_config) = (self.config, self.live_config);
         let extra_root_cert = self.extra_root_cert();
+        let write_lock = self.account_lock(account).write_lock();
         let thread = std::thread::Builder::new()
             .name(format!("mailcrane-live-{account_id}"))
             .spawn(move || {
@@ -432,7 +438,10 @@ impl SyncEngine {
                 let login = || imap_login(&store, account, extra_root_cert.as_deref());
                 runtime.block_on(run_live_updates(
                     &store,
-                    account,
+                    LiveAccount {
+                        id: account,
+                        write_lock,
+                    },
                     &listener,
                     login,
                     sync_config,

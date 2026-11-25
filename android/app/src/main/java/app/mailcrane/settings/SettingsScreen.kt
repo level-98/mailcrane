@@ -56,6 +56,13 @@ class SettingsViewModel
             viewModelScope.launch { settings.setCleanLinks(enabled) }
         }
 
+        val confirmLinks: StateFlow<Boolean> =
+            settings.confirmLinks.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), true)
+
+        fun setConfirmLinks(enabled: Boolean) {
+            viewModelScope.launch { settings.setConfirmLinks(enabled) }
+        }
+
         val undoSendSeconds: StateFlow<Int> =
             settings.undoSendSeconds.stateIn(
                 viewModelScope,
@@ -127,6 +134,7 @@ fun SettingsScreen(
     viewModel: SettingsViewModel = hiltViewModel(),
 ) {
     val cleanLinks by viewModel.cleanLinks.collectAsStateWithLifecycle()
+    val confirmLinks by viewModel.confirmLinks.collectAsStateWithLifecycle()
     val undoSend by viewModel.undoSendSeconds.collectAsStateWithLifecycle()
     val themeMode by viewModel.themeMode.collectAsStateWithLifecycle()
     val dynamicColor by viewModel.dynamicColor.collectAsStateWithLifecycle()
@@ -138,6 +146,8 @@ fun SettingsScreen(
     SettingsContent(
         cleanLinks = cleanLinks,
         onCleanLinksChange = viewModel::setCleanLinks,
+        confirmLinks = confirmLinks,
+        onConfirmLinksChange = viewModel::setConfirmLinks,
         onBack = onBack,
         undoSendSeconds = undoSend,
         onUndoSendChange = viewModel::setUndoSendSeconds,
@@ -194,6 +204,8 @@ fun SettingsContent(
     cleanLinks: Boolean,
     onCleanLinksChange: (Boolean) -> Unit,
     onBack: () -> Unit,
+    confirmLinks: Boolean = true,
+    onConfirmLinksChange: (Boolean) -> Unit = {},
     undoSendSeconds: Int = DEFAULT_UNDO_SEND_SECONDS,
     onUndoSendChange: (Int) -> Unit = {},
     appearance: AppearanceSettings = AppearanceSettings(),
@@ -224,6 +236,18 @@ fun SettingsContent(
                     Modifier.toggleable(value = cleanLinks, role = Role.Switch, onValueChange = onCleanLinksChange),
             ) {
                 Text(stringResource(R.string.settings_clean_links))
+            }
+            ListItem(
+                supportingContent = { Text(stringResource(R.string.settings_confirm_links_summary)) },
+                trailingContent = { Switch(checked = confirmLinks, onCheckedChange = null) },
+                modifier =
+                    Modifier.toggleable(
+                        value = confirmLinks,
+                        role = Role.Switch,
+                        onValueChange = onConfirmLinksChange,
+                    ),
+            ) {
+                Text(stringResource(R.string.settings_confirm_links))
             }
             AppearanceSection(appearance)
             UndoSendSection(undoSendSeconds, onUndoSendChange)

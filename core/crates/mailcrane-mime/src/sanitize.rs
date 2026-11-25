@@ -63,6 +63,24 @@ pub struct SanitizedHtml {
     pub trackers_removed: u32,
     /// The trackers found, one per domain (M5-01), in order of appearance.
     pub trackers: Vec<TrackerHit>,
+    /// Each kept `<a href>` with its visible text (M5-07), in order, at most
+    /// [`MAX_LINKS`]. Read-only: collecting it changes nothing in `html`.
+    pub links: Vec<LinkText>,
+}
+
+/// Most links collected from one message.
+pub const MAX_LINKS: usize = 500;
+/// Most characters kept of a link's visible text.
+pub const MAX_LINK_TEXT_CHARS: usize = 200;
+
+/// A link in sanitised HTML and the text the reader sees for it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LinkText {
+    /// The `href`, as the web view will report it when tapped.
+    pub href: String,
+    /// The visible text, tags removed, whitespace collapsed, at most
+    /// [`MAX_LINK_TEXT_CHARS`] characters. May be empty.
+    pub text: String,
 }
 
 impl std::fmt::Debug for SanitizedHtml {
@@ -88,6 +106,7 @@ pub fn sanitize_html(html: &UnsanitisedHtml, opts: &SanitizeOptions) -> Sanitize
             remote_resources_blocked: 0,
             trackers_removed: 0,
             trackers: Vec::new(),
+            links: Vec::new(),
         };
     }
     // The internal URL prefix `cid:` references become. Used again below so a
@@ -132,12 +151,75 @@ pub fn sanitize_html(html: &UnsanitisedHtml, opts: &SanitizeOptions) -> Sanitize
     // after removing something in front of it (a character, or a tracking
     // pixel here); drop it so a second pass gives the same result.
     let html = html.trim_start_matches('\u{feff}').to_owned();
+    let links = collect_links(&html);
     SanitizedHtml {
         html,
         remote_resources_blocked: counts.blocked,
         trackers_removed: counts.trackers,
         trackers: counts.hits,
+        links,
     }
+}
+
+/// Collects `<a href>` and the visible text up to the matching `</a>` from
+/// sanitised HTML (every tag is well formed there). Links don't nest in
+/// the output, but if one opens before the last closes, the first ends.
+fn collect_links(html: &str) -> Vec<LinkText> {
+    let mut links = Vec::new();
+    let mut pos = 0;
+    // The open link: its href and the raw text collected so far.
+    let mut open: Option<(String, String)> = None;
+    let finish = |links: &mut Vec<LinkText>, open: &mut Option<(String, String)>| {
+        if let Some((href, raw)) = open.take() {
+            let text = unescape(&raw)
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ");
+            let text = text.chars().take(MAX_LINK_TEXT_CHARS).collect();
+            links.push(LinkText { href, text });
+        }
+    };
+    while links.len() < MAX_LINKS {
+        let Some(rel) = html.get(pos..).and_then(|rest| rest.find('<')) else {
+            break;
+        };
+        let lt = pos.saturating_add(rel);
+        if let Some((_, raw)) = open.as_mut() {
+            // Only the first part of long text is needed.
+            if raw.len() < MAX_LINK_TEXT_CHARS.saturating_mul(8) {
+                raw.push_str(html.get(pos..lt).unwrap_or_default());
+            }
+        }
+        let Some(tag) = parse_tag(html, lt) else {
+            // Closing tags aren't parsed as tags (no letter after `<`): skip
+            // to the `>`, and end the link at `</a>`.
+            let rest = html.get(lt..).unwrap_or_default();
+            if rest.starts_with("</") {
+                if rest
+                    .get(..4)
+                    .is_some_and(|r| r.eq_ignore_ascii_case("</a>"))
+                {
+                    finish(&mut links, &mut open);
+                }
+                let close = rest.find('>').map_or(rest.len(), |i| i.saturating_add(1));
+                pos = lt.saturating_add(close);
+            } else {
+                pos = lt.saturating_add(1);
+            }
+            continue;
+        };
+        pos = tag.end;
+        if tag.name.eq_ignore_ascii_case("a") {
+            finish(&mut links, &mut open);
+            let href = tag.attrs.iter().find(|(n, _)| *n == "href");
+            if let Some((_, raw)) = href {
+                open = Some((unescape(raw), String::new()));
+            }
+        }
+    }
+    finish(&mut links, &mut open);
+    links.truncate(MAX_LINKS);
+    links
 }
 
 /// Tags that don't stay open, so they don't add to the nesting depth.

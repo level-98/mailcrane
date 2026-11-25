@@ -9,7 +9,7 @@ impl Store {
         message: MessageId,
         items: &[NewAttachment],
     ) -> Result<Vec<AttachmentId>, StoreError> {
-        let tx = self.conn.unchecked_transaction()?;
+        let tx = self.write_tx()?;
         let mut ids = Vec::with_capacity(items.len());
         {
             let mut stmt = tx.prepare(

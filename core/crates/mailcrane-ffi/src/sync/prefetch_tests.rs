@@ -34,6 +34,15 @@ fn raws(count: usize) -> Vec<Vec<u8>> {
 
 /// An engine with one IMAP account whose INBOX is on `imap`.
 fn imap_engine(dir: &tempfile::TempDir, imap: &FakeImap) -> (Arc<SyncEngine>, String, FolderId) {
+    imap_engine_with(dir, imap, Arc::new(Collect::default()))
+}
+
+/// [`imap_engine`] sending events to `listener`.
+fn imap_engine_with(
+    dir: &tempfile::TempDir,
+    imap: &FakeImap,
+    listener: Arc<Collect>,
+) -> (Arc<SyncEngine>, String, FolderId) {
     let path = dir.path().join("p.db").to_string_lossy().into_owned();
     let store = Store::open(&path).expect("store");
     let account = store
@@ -72,7 +81,7 @@ fn imap_engine(dir: &tempfile::TempDir, imap: &FakeImap) -> (Arc<SyncEngine>, St
         )
         .expect("password");
     install_secret_store(platform);
-    let engine = SyncEngine::new(path.clone(), Arc::new(Collect::default()));
+    let engine = SyncEngine::new(path.clone(), listener);
     *engine.extra_root_cert.lock().expect("lock") = Some(imap.root_cert_der().to_vec());
     (engine, path, folder)
 }
@@ -321,4 +330,78 @@ fn a_jmap_inbox_is_downloaded_too_without_setting_seen() {
         let keywords = server.email_keywords(&format!("m{n}")).expect("email");
         assert!(!keywords.iter().any(|k| k == "$seen"), "m{n}: {keywords:?}");
     }
+}
+
+#[test]
+fn live_updates_and_a_download_share_one_writer_and_never_hit_busy() {
+    let runtime = runtime_for_fakes();
+    // Slow enough that new mail arrives while the download runs.
+    let imap = runtime.block_on(async {
+        FakeImap::builder()
+            .user("alice@example.org", "pw")
+            .folder("INBOX", raws(200))
+            .fault(Fault::Delay(Duration::from_millis(20)))
+            .start()
+            .await
+            .expect("fake imap")
+    });
+    let dir = tempfile::tempdir().expect("tempdir");
+    let collect = Arc::new(Collect::default());
+    let (engine, path, folder) = imap_engine_with(&dir, &imap, collect.clone());
+    let account = Store::open(&path)
+        .expect("store")
+        .get_folder(folder)
+        .expect("read")
+        .expect("folder")
+        .details
+        .account_id;
+    assert_eq!(engine.sync_folder(folder.0), Ok(200));
+    assert_eq!(engine.start_live_updates(account.0), Ok(()));
+
+    engine.set_device_conditions(on_wifi());
+    engine.prefetch_after_sync(folder);
+    // New mail while the download runs: live updates store it (and start
+    // downloads of their own, which join the running one).
+    for n in 201..=205 {
+        runtime.block_on(imap.mailbox().deliver(
+            "INBOX",
+            format!("Subject: Message {n}\r\n\r\nBody {n}\r\n").into_bytes(),
+        ));
+        std::thread::sleep(Duration::from_millis(150));
+    }
+    let started = Instant::now();
+    let stored = || {
+        Store::open(&path)
+            .expect("store")
+            .list_uids(folder)
+            .expect("uids")
+            .len()
+    };
+    while stored() < 205 || cached(&path, folder) < 200 || !engine.prefetch.wait(Duration::ZERO) {
+        assert!(started.elapsed() < Duration::from_secs(60), "not done");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    // Downloads started by the last live sync may still be running.
+    assert!(engine.prefetch.wait(Duration::from_secs(30)));
+    engine.stop_live_updates(account.0);
+
+    // The new messages were downloaded too (the window moves with them).
+    let fresh = Store::open(&path)
+        .expect("store")
+        .list_messages(folder, 1000, 0)
+        .expect("list")
+        .into_iter()
+        .filter(|m| m.details.uid > 200)
+        .filter(|m| m.body_state == BodyState::Fetched)
+        .count();
+    assert_eq!(fresh, 5);
+    let errors: Vec<CoreEvent> = collect
+        .0
+        .lock()
+        .expect("lock")
+        .iter()
+        .filter(|e| matches!(e, CoreEvent::SyncError { .. }))
+        .cloned()
+        .collect();
+    assert!(errors.is_empty(), "{errors:?}");
 }

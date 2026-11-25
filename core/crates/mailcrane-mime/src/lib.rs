@@ -28,7 +28,9 @@ pub use build::{
     OutgoingMessage, TransferEncoding, MAX_ATTACHMENT_BYTES,
 };
 pub use model::{Address, AttachmentInfo, Disposition, ParsedMessage, UnsanitisedHtml};
-pub use sanitize::{sanitize_html, SanitizeOptions, SanitizedHtml};
+pub use sanitize::{
+    sanitize_html, LinkText, SanitizeOptions, SanitizedHtml, MAX_LINKS, MAX_LINK_TEXT_CHARS,
+};
 pub use trackers::{TrackerHit, TrackerKind};
 
 /// The name of this crate.
