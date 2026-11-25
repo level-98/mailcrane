@@ -1,5 +1,6 @@
 package app.mailcrane.settings
 
+import app.mailcrane.R
 import app.mailcrane.core.CoreEvent
 import app.mailcrane.core.FolderRole
 import app.mailcrane.core.FolderSummary
@@ -13,12 +14,15 @@ import app.mailcrane.core.RuleInput
 import app.mailcrane.core.RuleLocation
 import app.mailcrane.core.RuleRunsOn
 import app.mailcrane.core.RulesCore
+import app.mailcrane.core.RulesFailure
 import app.mailcrane.core.ServerRulesNotice
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.resetMain
+import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -57,10 +61,15 @@ private class FakeRules : RulesCore {
 
     override suspend fun deleteRule(id: Long) = Unit
 
+    /** Thrown by [setRuleEnabled], as the core refuses a rule with no actions (#323). */
+    var enableFailure: RulesFailure? = null
+
     override suspend fun setRuleEnabled(
         id: Long,
         enabled: Boolean,
-    ) = Unit
+    ) {
+        enableFailure?.let { throw it }
+    }
 
     override suspend fun moveRule(
         id: Long,
@@ -136,6 +145,46 @@ class RulesViewModelTest {
 
     @After
     fun tearDown() = Dispatchers.resetMain()
+
+    @Test
+    fun aRemovedFolderShowsUpInTheOpenRulesScreen() =
+        runTest {
+            // Manage folders deletes a folder while the Rules screen stays open (#323).
+            val core = FakeRules()
+            val mailbox = FakeMailbox()
+            val vm = RulesViewModel(core, mailbox, 7)
+            assertEquals(
+                null,
+                vm.state.value.rules
+                    .first()
+                    .missingFolder,
+            )
+            core.rules = listOf(info(1).copy(missingFolder = "Receipts"), info(2))
+            mailbox.events.emit(CoreEvent.FolderChanged(5))
+            assertEquals(
+                "Receipts",
+                vm.state.value.rules
+                    .first()
+                    .missingFolder,
+            )
+            // And when the screen is shown again.
+            core.rules = listOf(info(1), info(2).copy(missingFolder = "Old"))
+            vm.refresh()
+            assertEquals(
+                "Old",
+                vm.state.value.rules[1]
+                    .missingFolder,
+            )
+        }
+
+    @Test
+    fun turningOnARuleWithNothingToDoIsExplained() =
+        runTest {
+            val core = FakeRules().apply { enableFailure = RulesFailure.Invalid() }
+            val vm = RulesViewModel(core, FakeMailbox(), 7)
+            vm.setEnabled(1, true)
+            assertEquals(R.string.rules_enable_no_actions, vm.results.first().first)
+        }
 
     @Test
     fun withoutServerRulesNothingIsMarked() {

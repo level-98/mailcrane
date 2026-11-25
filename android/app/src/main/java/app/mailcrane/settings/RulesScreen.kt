@@ -52,6 +52,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import app.mailcrane.R
+import app.mailcrane.core.CoreEvent
 import app.mailcrane.core.FolderRole
 import app.mailcrane.core.FolderSummary
 import app.mailcrane.core.MailboxCore
@@ -74,6 +75,8 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.conflate
+import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -236,16 +239,31 @@ class RulesViewModel
         val results: Flow<Pair<Int, Int>> = _results.receiveAsFlow()
 
         init {
+            viewModelScope.launch { reloadAll() }
             viewModelScope.launch {
-                val folders =
-                    try {
-                        mailbox.listFolders(accountId)
-                    } catch (_: SyncFailure) {
-                        emptyList()
-                    }
-                _state.update { it.copy(folders = folders) }
-                reload()
+                // A folder was removed or renamed (#323): rules may have been turned off, and the
+                // folder list for the editor changed. This screen outlives a trip to Manage folders.
+                mailbox.events
+                    .filter { it is CoreEvent.FolderChanged }
+                    .conflate()
+                    .collect { reloadAll() }
             }
+        }
+
+        /** Re-reads everything; the screen calls it each time it's shown. */
+        fun refresh() {
+            viewModelScope.launch { reloadAll() }
+        }
+
+        private suspend fun reloadAll() {
+            val folders =
+                try {
+                    mailbox.listFolders(accountId)
+                } catch (_: SyncFailure) {
+                    _state.value.folders
+                }
+            _state.update { it.copy(folders = folders) }
+            reload()
         }
 
         private suspend fun reload() {
@@ -284,10 +302,16 @@ class RulesViewModel
             }
         }
 
-        private fun act(block: suspend () -> Unit) {
+        /** Runs [block], then re-reads the rules. [refused] is what to say when the core says `Invalid`. */
+        private fun act(
+            refused: Int = R.string.rules_failed,
+            block: suspend () -> Unit,
+        ) {
             viewModelScope.launch {
                 try {
                     block()
+                } catch (_: RulesFailure.Invalid) {
+                    _results.send(refused to -1)
                 } catch (_: RulesFailure) {
                     _results.send(R.string.rules_failed to -1)
                 }
@@ -307,7 +331,7 @@ class RulesViewModel
         fun setEnabled(
             id: Long,
             enabled: Boolean,
-        ) = act { core.setRuleEnabled(id, enabled) }
+        ) = act(refused = R.string.rules_enable_no_actions) { core.setRuleEnabled(id, enabled) }
 
         /** Moves a rule one place up (-1) or down (+1). */
         fun move(
@@ -375,6 +399,8 @@ fun RulesScreen(
         ),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
+    // Shown again after another screen (such as Manage folders) may have changed rules (#323).
+    LaunchedEffect(Unit) { viewModel.refresh() }
     var editing by rememberSaveable { mutableStateOf(startWith) }
     val snackbar = remember { SnackbarHostState() }
     val resources = LocalResources.current
@@ -486,6 +512,14 @@ internal fun RulesList(
                         val n = rule.rule.conditions.size
                         Column {
                             Text(pluralStringResource(R.plurals.rules_summary, n, n))
+                            // Turned off because its folder was removed (#323).
+                            rule.missingFolder?.let { folder ->
+                                Text(
+                                    text = stringResource(R.string.rules_missing_folder, folder),
+                                    color = MaterialTheme.colorScheme.error,
+                                    modifier = Modifier.testTag("rule-missing-folder-${rule.id}"),
+                                )
+                            }
                             when (state.locations[rule.id]) {
                                 RuleRunsOn.SERVER -> Text(stringResource(R.string.rules_on_server))
                                 RuleRunsOn.DEVICE -> Text(stringResource(R.string.rules_on_device))
@@ -499,7 +533,13 @@ internal fun RulesList(
                             TextButton(onClick = { onMove(rule.id, 1) }, enabled = index < state.rules.lastIndex) {
                                 Text("↓")
                             }
-                            Switch(checked = rule.rule.enabled, onCheckedChange = { onEnabled(rule.id, it) })
+                            Switch(
+                                checked = rule.rule.enabled,
+                                onCheckedChange = { onEnabled(rule.id, it) },
+                                // A rule with nothing left to do stays off until it's edited (#323).
+                                enabled = rule.rule.enabled || rule.rule.actions.isNotEmpty(),
+                                modifier = Modifier.testTag("rule-switch-${rule.id}"),
+                            )
                         }
                     },
                     modifier = Modifier.clickable { onOpen(rule) }.testTag("rule-${rule.id}"),

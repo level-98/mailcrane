@@ -63,6 +63,80 @@ impl Store {
         Ok(ids)
     }
 
+    /// Gives folders new names, all in one transaction (M4-22): each
+    /// `(folder, remote_name, display_name)`. A folder's messages and sync
+    /// state stay with it. On error nothing changes, for example when a new
+    /// name is taken in the account.
+    pub fn rename_folders(&self, renames: &[(FolderId, String, String)]) -> Result<(), StoreError> {
+        let tx = self.write_tx()?;
+        for (id, remote, display) in renames {
+            let n = self.conn.execute(
+                "UPDATE folders SET remote_name = ?2, display_name = ?3 WHERE id = ?1",
+                params![id.0, remote, display],
+            )?;
+            if n == 0 {
+                return Err(StoreError::Invalid { field: "folder" });
+            }
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Deletes a folder and, with it, its messages and everything else
+    /// stored for it (M4-22). Rules that moved mail to it are turned off
+    /// with a note (#323). Returns whether it existed.
+    pub fn delete_folder(&self, id: FolderId) -> Result<bool, StoreError> {
+        let tx = self.write_tx()?;
+        let n = self.remove_folder(id)?;
+        tx.commit()?;
+        Ok(n)
+    }
+
+    /// Removes one folder inside the caller's transaction. Every rule with
+    /// an action pointing at it is turned off and remembers the folder's
+    /// name (`rules.missing_folder`); the action itself goes with the
+    /// folder, as a move needs a folder.
+    fn remove_folder(&self, id: FolderId) -> Result<bool, StoreError> {
+        self.conn.execute(
+            "UPDATE rules SET enabled = 0, \
+             missing_folder = (SELECT display_name FROM folders WHERE id = ?1) \
+             WHERE id IN (SELECT rule_id FROM rule_actions WHERE folder_id = ?1)",
+            params![id.0],
+        )?;
+        let n = self
+            .conn
+            .execute("DELETE FROM folders WHERE id = ?1", params![id.0])?;
+        Ok(n > 0)
+    }
+
+    /// Saves a folder list from the server in one transaction (#323):
+    /// `renames` first (standard folders found again under a new name), then
+    /// `rows` upserted, then `removed` taken out as [`Store::delete_folder`]
+    /// does. Returns the ids of `rows`, in order. On error nothing changes.
+    pub fn apply_folder_list(
+        &self,
+        renames: &[(FolderId, String, String)],
+        rows: &[NewFolder],
+        removed: &[FolderId],
+    ) -> Result<Vec<FolderId>, StoreError> {
+        let tx = self.write_tx()?;
+        for (id, remote, display) in renames {
+            self.conn.execute(
+                "UPDATE folders SET remote_name = ?2, display_name = ?3 WHERE id = ?1",
+                params![id.0, remote, display],
+            )?;
+        }
+        let mut ids = Vec::with_capacity(rows.len());
+        for f in rows {
+            ids.push(self.upsert_folder(f)?);
+        }
+        for id in removed {
+            self.remove_folder(*id)?;
+        }
+        tx.commit()?;
+        Ok(ids)
+    }
+
     /// Returns the folder, or `None` if it doesn't exist.
     pub fn get_folder(&self, id: FolderId) -> Result<Option<Folder>, StoreError> {
         let mut stmt = self.conn.prepare(

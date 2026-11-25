@@ -141,7 +141,30 @@ impl Session {
             .run_command("SELECT", &[Arg::Str(raw_name.as_bytes())])
             .await?;
         expect_ok(&done)?;
-        select_info(&done.untagged)
+        let info = select_info(&done.untagged)?;
+        self.selected = Some((raw_name.to_owned(), info));
+        Ok(info)
+    }
+
+    /// Like [`Session::select`], but when `raw_name` is already the selected
+    /// folder of this session, returns what its `SELECT` reported without
+    /// sending anything. For a reused connection that opens messages one
+    /// after another in the same folder (issue #294). The cached
+    /// `UIDVALIDITY` is the one from that `SELECT`; a server can't change it
+    /// while the folder stays selected without ending the session.
+    pub async fn select_reusing(&mut self, raw_name: &str) -> Result<SelectInfo, ImapError> {
+        match &self.selected {
+            Some((name, info)) if name == raw_name => Ok(*info),
+            _ => self.select(raw_name).await,
+        }
+    }
+
+    /// `NOOP` (RFC 9051 §6.1.2): a cheap check that the connection still
+    /// works, and lets the server send pending updates. Never retried
+    /// automatically by this crate.
+    pub async fn noop(&mut self) -> Result<(), ImapError> {
+        let done = self.run_command("NOOP", &[]).await?;
+        expect_ok(&done)
     }
 
     /// The UIDs in `low..=high` that match every key in `keys`, newest

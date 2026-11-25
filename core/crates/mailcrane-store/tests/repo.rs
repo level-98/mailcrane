@@ -375,3 +375,74 @@ fn prefetch_candidates_keep_to_the_newest_recent_small_uncached() -> R {
     assert_eq!(uids, [5, 4, 3, 2, 1, 8]);
     Ok(())
 }
+
+#[test]
+fn write_transactions_wait_for_urgent_writes_to_finish() -> R {
+    // Issue #294: a write the user waits for gets the next turn.
+    let dir = tempfile::tempdir()?;
+    let path = dir.path().join("u.db");
+    let s = Store::open(&path)?;
+    let acc = s.insert_account(&account())?;
+    let f = s.upsert_folder(&folder(acc, "INBOX"))?;
+    let (inside_tx, inside) = std::sync::mpsc::channel();
+    let (release_tx, release) = std::sync::mpsc::channel::<()>();
+    let urgent_path = path.clone();
+    let key = path.to_string_lossy().into_owned();
+    let urgent = std::thread::spawn(move || {
+        urgent_writes(&key, || {
+            let store = Store::open(&urgent_path).expect("store");
+            let _ = inside_tx.send(());
+            let _ = release.recv_timeout(std::time::Duration::from_secs(10));
+            // Its own writes are never held up.
+            store
+                .upsert_message_header(&header(f, 1, 10))
+                .expect("urgent write");
+            std::time::Instant::now()
+        })
+    });
+    inside.recv()?;
+    let started = std::time::Instant::now();
+    let release_after = std::time::Duration::from_millis(300);
+    let releaser = std::thread::spawn(move || {
+        std::thread::sleep(release_after);
+        let _ = release_tx.send(());
+    });
+    // Another thread's write transaction (as a sync's batches are) waits
+    // until the urgent one is done.
+    s.upsert_message_headers(&[header(f, 2, 20)])?;
+    let ordinary_done = std::time::Instant::now();
+    let urgent_done = urgent.join().map_err(|_| "urgent thread")?;
+    releaser.join().map_err(|_| "releaser")?;
+    assert!(started.elapsed() >= release_after);
+    assert!(urgent_done <= ordinary_done, "the urgent write went first");
+    // Nothing is held up once no urgent write runs.
+    let quick = std::time::Instant::now();
+    s.upsert_message_headers(&[header(f, 3, 30)])?;
+    assert!(quick.elapsed() < std::time::Duration::from_secs(1));
+    Ok(())
+}
+
+#[test]
+fn urgent_writes_on_one_database_never_delay_another() -> R {
+    let dir = tempfile::tempdir()?;
+    let other = Store::open(dir.path().join("other.db"))?;
+    let acc = other.insert_account(&account())?;
+    let f = other.upsert_folder(&folder(acc, "INBOX"))?;
+    let urgent_key = dir.path().join("urgent.db").to_string_lossy().into_owned();
+    let (inside_tx, inside) = std::sync::mpsc::channel();
+    let (done_tx, done) = std::sync::mpsc::channel::<()>();
+    let urgent = std::thread::spawn(move || {
+        urgent_writes(&urgent_key, || {
+            let _ = inside_tx.send(());
+            let _ = done.recv_timeout(std::time::Duration::from_secs(10));
+        })
+    });
+    inside.recv()?;
+    let started = std::time::Instant::now();
+    other.upsert_message_headers(&[header(f, 1, 10)])?;
+    let took = started.elapsed();
+    let _ = done_tx.send(());
+    urgent.join().map_err(|_| "urgent thread")?;
+    assert!(took < std::time::Duration::from_millis(200), "{took:?}");
+    Ok(())
+}

@@ -34,6 +34,8 @@ data class FolderDrawerState(
     val loadError: SyncErrorKind? = null,
     /** Unread messages in every account's inbox, for "All inboxes" (M4-01). */
     val unifiedUnread: Int = 0,
+    /** Whether to offer "Manage folders" (M4-22). */
+    val canManageFolders: Boolean = false,
 ) {
     val selected: FolderSummary?
         get() =
@@ -125,6 +127,7 @@ class FolderDrawerViewModel
                         return
                     }
                 val unified = core.unifiedUnreadCount()
+                val manage = core.canManageFolders(accountId)
                 _state.update { current ->
                     val open =
                         current.selectedFolderId?.takeIf { id ->
@@ -136,6 +139,7 @@ class FolderDrawerViewModel
                         isLoading = current.isLoading && folders.isEmpty(),
                         loadError = if (folders.isEmpty()) current.loadError else null,
                         unifiedUnread = unified,
+                        canManageFolders = manage,
                     )
                 }
             }

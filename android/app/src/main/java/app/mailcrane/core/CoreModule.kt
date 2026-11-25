@@ -38,6 +38,9 @@ object CoreModule {
     fun provideMessageCore(core: UniffiMailboxCore): MessageCore = core
 
     @Provides
+    fun provideFolderAdminCore(core: UniffiMailboxCore): FolderAdminCore = core
+
+    @Provides
     fun provideLiveUpdatesEngine(core: UniffiMailboxCore): LiveUpdatesEngine = core
 
     @Provides

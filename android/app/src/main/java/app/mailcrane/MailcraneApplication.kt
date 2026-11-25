@@ -35,6 +35,8 @@ class MailcraneApplication : Application() {
 
     @Inject lateinit var backgroundDownloads: app.mailcrane.sync.BackgroundDownloads
 
+    @Inject lateinit var reusedConnections: app.mailcrane.sync.ReusedConnections
+
     override fun onCreate() {
         super.onCreate()
         // Before anything connects: the core checks certificates through Android's trust store.
@@ -61,6 +63,9 @@ class MailcraneApplication : Application() {
         backgroundMail.start()
         // Recent messages are downloaded after each sync when the network and battery allow (M4-25).
         backgroundDownloads.start()
+        // Opening mail reuses one connection per account (#294); it is closed when the network
+        // changes or the app has been in the background for a minute.
+        reusedConnections.start()
         // Recovers sends interrupted by a stopped app, then sends what's queued.
         outbox.start()
         // The home-screen widget follows mail changes (M4-11).
