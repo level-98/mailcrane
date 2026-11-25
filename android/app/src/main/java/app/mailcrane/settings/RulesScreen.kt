@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -58,8 +59,10 @@ import app.mailcrane.core.RuleActionInfo
 import app.mailcrane.core.RuleConditionInfo
 import app.mailcrane.core.RuleInfo
 import app.mailcrane.core.RuleInput
+import app.mailcrane.core.RuleRunsOn
 import app.mailcrane.core.RulesCore
 import app.mailcrane.core.RulesFailure
+import app.mailcrane.core.ServerRulesNotice
 import app.mailcrane.core.SyncFailure
 import app.mailcrane.ui.folders.folderName
 import dagger.assisted.Assisted
@@ -203,7 +206,14 @@ data class RulesState(
     val rules: List<RuleInfo> = emptyList(),
     val folders: List<FolderSummary> = emptyList(),
     val loading: Boolean = true,
-)
+    /** Where each rule runs, by rule id (M4-23). Missing: unmarked. */
+    val locations: Map<Long, RuleRunsOn> = emptyMap(),
+    /** This account's server runs another filter script, so its rules stay here. */
+    val notice: ServerRulesNotice? = null,
+) {
+    /** Whether any rule shows where it runs. */
+    val showsLocations: Boolean get() = locations.values.any { it != RuleRunsOn.UNMARKED }
+}
 
 @HiltViewModel(assistedFactory = RulesViewModel.Factory::class)
 class RulesViewModel
@@ -246,6 +256,19 @@ class RulesViewModel
                     _results.send(R.string.rules_failed to -1)
                     _state.value.rules
                 }
+            // Where rules run is extra information: without it, nothing is marked.
+            val locations =
+                try {
+                    core.ruleLocations().associate { it.ruleId to it.runsOn }
+                } catch (_: RulesFailure) {
+                    emptyMap()
+                }
+            val notice =
+                try {
+                    core.serverRulesNotices().firstOrNull { it.accountId == accountId }
+                } catch (_: RulesFailure) {
+                    null
+                }
             // Only rules this account sees: its own and the ones for every account.
             _state.update { s ->
                 s.copy(
@@ -255,6 +278,8 @@ class RulesViewModel
                                 it.rule.accountId == accountId
                         },
                     loading = false,
+                    locations = locations,
+                    notice = notice,
                 )
             }
         }
@@ -297,6 +322,29 @@ class RulesViewModel
             act {
                 val everything = core.listRules()
                 core.moveRule(id, everything.indexOfFirst { it.id == target.id })
+            }
+        }
+
+        /**
+         * The user confirmed running the rules on the server instead of its other filter script.
+         * A sync of the inbox right after carries it out.
+         */
+        fun useServerRules() {
+            viewModelScope.launch {
+                try {
+                    core.useServerRules(accountId)
+                } catch (_: RulesFailure) {
+                    _results.send(R.string.rules_failed to -1)
+                    return@launch
+                }
+                reload()
+                val inbox = _state.value.folders.firstOrNull { it.role == FolderRole.INBOX } ?: return@launch
+                try {
+                    mailbox.syncFolder(inbox.id)
+                } catch (_: SyncFailure) {
+                    // The next sync tries again.
+                }
+                reload()
             }
         }
 
@@ -364,6 +412,7 @@ fun RulesScreen(
         onOpen = { editing = RuleDraft.of(it) },
         onEnabled = viewModel::setEnabled,
         onMove = viewModel::move,
+        onUseServerRules = viewModel::useServerRules,
     )
 }
 
@@ -377,7 +426,26 @@ internal fun RulesList(
     onOpen: (RuleInfo) -> Unit,
     onEnabled: (Long, Boolean) -> Unit,
     onMove: (Long, Int) -> Unit,
+    onUseServerRules: () -> Unit = {},
 ) {
+    var confirmSwitch by rememberSaveable { mutableStateOf(false) }
+    val notice = state.notice
+    if (confirmSwitch && notice != null) {
+        AlertDialog(
+            onDismissRequest = { confirmSwitch = false },
+            title = { Text(stringResource(R.string.rules_switch_title)) },
+            text = { Text(stringResource(R.string.rules_switch_body, notice.scriptName, notice.accountEmail)) },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmSwitch = false
+                    onUseServerRules()
+                }) { Text(stringResource(R.string.rules_switch_confirm)) }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmSwitch = false }) { Text(stringResource(R.string.rules_cancel)) }
+            },
+        )
+    }
     Scaffold(
         snackbarHost = { SnackbarHost(snackbar) },
         topBar = {
@@ -397,11 +465,17 @@ internal fun RulesList(
     ) { padding ->
         Column(Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState())) {
             Text(
-                text = stringResource(R.string.rules_explain),
+                text =
+                    stringResource(
+                        if (state.showsLocations) R.string.rules_explain_server else R.string.rules_explain,
+                    ),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(16.dp),
             )
+            if (notice != null) {
+                ServerRulesNoticeRow(notice = notice, onSwitch = { confirmSwitch = true })
+            }
             if (!state.loading && state.rules.isEmpty()) {
                 Text(stringResource(R.string.rules_empty), modifier = Modifier.padding(horizontal = 16.dp))
             }
@@ -410,7 +484,14 @@ internal fun RulesList(
                     headlineContent = { Text(rule.rule.name) },
                     supportingContent = {
                         val n = rule.rule.conditions.size
-                        Text(pluralStringResource(R.plurals.rules_summary, n, n))
+                        Column {
+                            Text(pluralStringResource(R.plurals.rules_summary, n, n))
+                            when (state.locations[rule.id]) {
+                                RuleRunsOn.SERVER -> Text(stringResource(R.string.rules_on_server))
+                                RuleRunsOn.DEVICE -> Text(stringResource(R.string.rules_on_device))
+                                RuleRunsOn.UNMARKED, null -> {}
+                            }
+                        }
                     },
                     trailingContent = {
                         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -425,6 +506,32 @@ internal fun RulesList(
                 )
                 HorizontalDivider()
             }
+        }
+    }
+}
+
+/** One line: the server runs another filter script, with the explicit switch (M4-23). */
+@Composable
+private fun ServerRulesNoticeRow(
+    notice: ServerRulesNotice,
+    onSwitch: () -> Unit,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp).testTag("server-rules-notice"),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text =
+                if (notice.switchRequested) {
+                    stringResource(R.string.rules_switch_pending)
+                } else {
+                    stringResource(R.string.rules_other_script, notice.scriptName)
+                },
+            style = MaterialTheme.typography.bodyMedium,
+            modifier = Modifier.weight(1f),
+        )
+        if (!notice.switchRequested) {
+            TextButton(onClick = onSwitch) { Text(stringResource(R.string.rules_switch)) }
         }
     }
 }

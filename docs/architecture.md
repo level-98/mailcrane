@@ -24,11 +24,12 @@ Mailcrane has one shared engine and two native apps.
 | `mailcrane-core` | Accounts, sync scheduling, the public API | `tokio`, `hyper` (autoconfig, unsubscribe), `quick-xml`, `url` |
 | `mailcrane-imap` | IMAP client (our own), IDLE, CONDSTORE/QRESYNC, server quirks | `rustls` |
 | `mailcrane-smtp` | Sending (our own SMTP client) | `rustls` |
+| `mailcrane-sieve` | ManageSieve client (our own) and Sieve scripts for server-side rules ([ADR 0004](decisions/0004-server-side-rules-managesieve.md)) | `rustls` |
 | `mailcrane-jmap` | JMAP client (our own). Not yet connected to `mailcrane-core` | `hyper`, `serde_json` |
 | `mailcrane-mime` | Parsing, building and sanitising messages | `mail-parser`, `ammonia` |
 | `mailcrane-store` | SQLite storage, migrations, FTS5 search | `rusqlite` |
 | `mailcrane-ffi` | The only API the apps see | `uniffi` |
-| `mailcrane-testkit` | Fake IMAP, SMTP and JMAP servers for tests, able to misbehave on purpose | `rcgen`, `hyper` |
+| `mailcrane-testkit` | Fake IMAP, SMTP, JMAP and ManageSieve servers for tests, able to misbehave on purpose | `rcgen`, `hyper` |
 
 [ADR 0001](decisions/0001-tech-stack.md#library-choices) records which of these were decided and where.
 
@@ -45,7 +46,7 @@ To keep it portable, the core never reaches into the operating system for anythi
 
 Platform-specific code (`#[cfg(target_os = …)]`, `std::os::unix`, crates that only work on mobile) stays out of the core crates. If it is unavoidable, it goes behind a feature or a trait with an implementation for every platform, and it needs a decision record first.
 
-**Known exception, not yet recorded:** TLS certificate checking uses `rustls-platform-verifier`, which needs Android-specific setup. The TLS code in `mailcrane-imap`, `mailcrane-smtp`, `mailcrane-jmap`, `mailcrane-core` (autoconfig and unsubscribe) and `mailcrane-ffi` (`android_tls`) has `#[cfg(target_os = "android")]` branches. It needs a decision record, or to move behind a trait as described above.
+**Known exception, not yet recorded:** TLS certificate checking uses `rustls-platform-verifier`, which needs Android-specific setup. The TLS code in `mailcrane-imap`, `mailcrane-smtp`, `mailcrane-sieve`, `mailcrane-jmap`, `mailcrane-core` (autoconfig and unsubscribe) and `mailcrane-ffi` (`android_tls`) has `#[cfg(target_os = "android")]` branches. It needs a decision record, or to move behind a trait as described above.
 
 ## Data flow
 

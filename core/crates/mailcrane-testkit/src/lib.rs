@@ -1,4 +1,4 @@
-//! Fake IMAP, SMTP and JMAP servers for tests, able to misbehave on purpose.
+//! Fake IMAP, SMTP, JMAP and ManageSieve servers for tests, able to misbehave on purpose.
 
 #![forbid(unsafe_code)]
 
@@ -10,6 +10,7 @@ mod loopback;
 pub mod mailbox;
 pub mod oauth;
 pub mod secrets;
+pub mod sieve;
 pub mod smtp;
 mod tls;
 
@@ -20,6 +21,7 @@ pub use jmap::{FakeEmail, FakeJmap, FakeMailbox, JmapSentRequest};
 pub use mailbox::{Mailbox, Message};
 pub use oauth::FakeTokenEndpoint;
 pub use secrets::MemorySecretStore;
+pub use sieve::{FakeSieve, FakeSieveBuilder, SieveFault};
 pub use smtp::{FakeSmtp, SentMessage};
 
 /// Start a fake IMAP server, deliver a synthetic message, and inspect the mailbox.

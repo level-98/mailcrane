@@ -18,6 +18,7 @@ pub use repo::{
 };
 pub use repo::{JmapRow, Protocol};
 pub use repo::{KeywordedMessage, NewSnooze, Snooze, SnoozeId, SnoozeState};
+pub use repo::{ServerRules, ServerRulesState};
 
 use rusqlite::Connection;
 use std::path::Path;

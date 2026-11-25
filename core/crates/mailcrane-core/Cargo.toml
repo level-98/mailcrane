@@ -26,6 +26,7 @@ hyper-util = { version = "0.1.21", features = ["tokio"] }
 mailcrane-imap = { path = "../mailcrane-imap" }
 mailcrane-jmap = { path = "../mailcrane-jmap" }
 mailcrane-mime = { path = "../mailcrane-mime" }
+mailcrane-sieve = { path = "../mailcrane-sieve" }
 mailcrane-smtp = { path = "../mailcrane-smtp" }
 mailcrane-store = { path = "../mailcrane-store" }
 quick-xml = "0.42.0"

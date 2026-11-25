@@ -1005,6 +1005,7 @@ dependencies = [
  "mailcrane-imap",
  "mailcrane-jmap",
  "mailcrane-mime",
+ "mailcrane-sieve",
  "mailcrane-smtp",
  "mailcrane-store",
  "mailcrane-testkit",
@@ -1089,6 +1090,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "mailcrane-sieve"
+version = "0.0.0"
+dependencies = [
+ "base64",
+ "mailcrane-testkit",
+ "proptest",
+ "rustls",
+ "rustls-platform-verifier",
+ "thiserror",
+ "tokio",
+ "tokio-rustls",
+]
+
+[[package]]
 name = "mailcrane-smtp"
 version = "0.0.0"
 dependencies = [
@@ -1113,6 +1128,7 @@ dependencies = [
 name = "mailcrane-testkit"
 version = "0.0.0"
 dependencies = [
+ "base64",
  "http-body-util",
  "hyper",
  "hyper-util",
