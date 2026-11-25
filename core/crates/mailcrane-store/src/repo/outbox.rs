@@ -88,6 +88,44 @@ impl SentCopy {
     }
 }
 
+/// Who sends a scheduled message (M4-07).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScheduleMode {
+    /// Not scheduled.
+    None,
+    /// Scheduled; who sends it isn't known yet.
+    Pending,
+    /// Held by the server (RFC 4865); goes out on time with the phone off.
+    Server,
+    /// This device sends it at the time.
+    Device,
+}
+
+impl ScheduleMode {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::Pending => "pending",
+            Self::Server => "server",
+            Self::Device => "device",
+        }
+    }
+
+    fn parse(text: &str) -> Result<Self, StoreError> {
+        Ok(match text {
+            "none" => Self::None,
+            "pending" => Self::Pending,
+            "server" => Self::Server,
+            "device" => Self::Device,
+            _ => {
+                return Err(StoreError::Corrupt {
+                    column: "schedule_mode",
+                })
+            }
+        })
+    }
+}
+
 /// Whether to save sent messages to the Sent folder, per account.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SaveSentCopy {
@@ -133,6 +171,8 @@ pub struct NewOutboxMessage {
     pub fields: DraftFields,
     /// Held back until this time (Unix seconds); 0 for at once.
     pub not_before: i64,
+    /// A scheduled message (M4-07), rather than one held for undo send.
+    pub scheduled: bool,
 }
 
 /// A message in the outbox.
@@ -156,6 +196,8 @@ pub struct OutboxMessage {
     /// Its copy in the Sent folder, once sent.
     pub sent_copy: SentCopy,
     pub copy_attempts: u32,
+    /// Who sends it, for a scheduled message.
+    pub schedule_mode: ScheduleMode,
 }
 
 fn lines(entries: &[String]) -> String {
@@ -177,7 +219,7 @@ fn split(text: &str) -> Vec<String> {
 const COLS: &str = "id, account_id, raw, envelope_from, envelope_to, message_id_header, \
     to_list, cc_list, bcc_list, subject, body, in_reply_to, references_list, state, attempts, \
     next_attempt_at, not_before, last_error, rejected, created_at, sent_at, sent_copy, \
-    copy_attempts";
+    copy_attempts, schedule_mode";
 
 fn from_row(r: &Row<'_>) -> Result<OutboxMessage, StoreError> {
     let references: String = r.get(12)?;
@@ -207,6 +249,7 @@ fn from_row(r: &Row<'_>) -> Result<OutboxMessage, StoreError> {
         sent_at: r.get(20)?,
         sent_copy: SentCopy::parse(&r.get::<_, String>(21)?)?,
         copy_attempts: narrow(r.get(22)?, "copy_attempts")?,
+        schedule_mode: ScheduleMode::parse(&r.get::<_, String>(23)?)?,
     })
 }
 
@@ -218,8 +261,8 @@ impl Store {
         self.conn.execute(
             "INSERT INTO outbox (account_id, raw, envelope_from, envelope_to, message_id_header, \
              to_list, cc_list, bcc_list, subject, body, in_reply_to, references_list, \
-             next_attempt_at, not_before, created_at) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+             next_attempt_at, not_before, created_at, schedule_mode) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
             params![
                 m.account_id.0,
                 m.raw,
@@ -235,7 +278,8 @@ impl Store {
                 f.references.join(" "),
                 now.max(m.not_before),
                 m.not_before,
-                now
+                now,
+                if m.scheduled { "pending" } else { "none" }
             ],
         )?;
         Ok(OutboxId(self.conn.last_insert_rowid()))
@@ -264,12 +308,47 @@ impl Store {
     }
 
     /// The account's messages that need attention: queued, sending and
-    /// failed, plus sent ones whose copy in Sent failed. Oldest first.
+    /// failed, sent ones whose copy in Sent failed, and ones the server
+    /// holds until a time still to come. Oldest first.
     pub fn list_outbox(&self, account: AccountId) -> Result<Vec<OutboxMessage>, StoreError> {
         self.outbox_where(
-            "account_id = ?1 AND (state != 'sent' OR sent_copy = 'failed')",
+            "account_id = ?1 AND (state != 'sent' OR sent_copy = 'failed' \
+             OR (schedule_mode = 'server' AND not_before > CAST(strftime('%s', 'now') AS INTEGER)))",
             &[&account.0],
         )
+    }
+
+    /// Scheduled, queued messages of the account whose sender isn't decided
+    /// yet.
+    pub fn undecided_scheduled(
+        &self,
+        account: AccountId,
+    ) -> Result<Vec<OutboxMessage>, StoreError> {
+        self.outbox_where(
+            "account_id = ?1 AND state = 'queued' AND schedule_mode = 'pending'",
+            &[&account.0],
+        )
+    }
+
+    /// Records who sends a scheduled message.
+    pub fn set_schedule_mode(&self, id: OutboxId, mode: ScheduleMode) -> Result<(), StoreError> {
+        self.conn.execute(
+            "UPDATE outbox SET schedule_mode = ?2 WHERE id = ?1",
+            params![id.0, mode.as_str()],
+        )?;
+        Ok(())
+    }
+
+    /// Moves a queued scheduled message to `send_at` (and lets the server
+    /// question be asked again). Returns false if it isn't queued, or the
+    /// server already holds it.
+    pub fn reschedule_outbox(&self, id: OutboxId, send_at: i64) -> Result<bool, StoreError> {
+        let n = self.conn.execute(
+            "UPDATE outbox SET not_before = ?2, next_attempt_at = ?2, schedule_mode = 'pending' \
+             WHERE id = ?1 AND state = 'queued' AND schedule_mode != 'none'",
+            params![id.0, send_at],
+        )?;
+        Ok(n > 0)
     }
 
     /// Sent messages of the account whose copy is due to be uploaded.

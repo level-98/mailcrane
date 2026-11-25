@@ -91,6 +91,21 @@ interface ComposeCore {
     suspend fun cancelPending(outboxId: Long): ComposeDraft?
 
     /**
+     * Scheduled send: queues [draft] to go out at [sendAt] (Unix seconds); returns its outbox id.
+     * @throws SendFailure
+     */
+    suspend fun scheduleMessage(
+        draft: ComposeDraft,
+        sendAt: Long,
+    ): Long
+
+    /** Moves a scheduled message that hasn't gone out. @throws OutboxFailure */
+    suspend fun rescheduleOutbox(
+        outboxId: Long,
+        sendAt: Long,
+    )
+
+    /**
      * Sends [draft] now.
      *
      * @throws SendFailure when nothing was sent.
@@ -188,6 +203,26 @@ class UniffiComposeCore(
 
     override suspend fun cancelPending(outboxId: Long): ComposeDraft? =
         withContext(io) { app.mailcrane.core.cancelPending(dbPath, outboxId) }
+
+    override suspend fun scheduleMessage(
+        draft: ComposeDraft,
+        sendAt: Long,
+    ): Long {
+        val id = withContext(io) { app.mailcrane.core.scheduleMessage(dbPath, draft, sendAt) }
+        // Lets the server take it now if it can; the job at the time is the device's fallback.
+        outbox?.kick(draft.accountId)
+        outbox?.sendAt(sendAt)
+        return id
+    }
+
+    override suspend fun rescheduleOutbox(
+        outboxId: Long,
+        sendAt: Long,
+    ) {
+        withContext(io) { app.mailcrane.core.rescheduleOutbox(dbPath, outboxId, sendAt) }
+        outbox?.kickAll()
+        outbox?.sendAt(sendAt)
+    }
 
     override suspend fun listOutbox(accountId: Long): List<OutboxEntry> =
         withContext(io) { app.mailcrane.core.listOutbox(dbPath, accountId) }

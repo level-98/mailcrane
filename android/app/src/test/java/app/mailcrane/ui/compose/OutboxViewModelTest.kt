@@ -27,7 +27,7 @@ private fun entry(
     state: OutboxEntryState,
     error: String? = null,
     attempts: UInt = 0u,
-) = OutboxEntry(id, "bob@example.net", "Subject $id", state, error, attempts, 0)
+) = OutboxEntry(id, "bob@example.net", "Subject $id", state, error, attempts, 0, null, null)
 
 private class FakeOutboxCore : ComposeCore {
     val entries = mutableListOf(entry(1, OutboxEntryState.FAILED, "refused", 1u), entry(2, OutboxEntryState.QUEUED))
@@ -95,6 +95,21 @@ private class FakeOutboxCore : ComposeCore {
         draft: ComposeDraft,
         delaySeconds: Int,
     ): Long = 0
+
+    override suspend fun scheduleMessage(
+        draft: ComposeDraft,
+        sendAt: Long,
+    ): Long {
+        scheduled += draft to sendAt
+        return 88
+    }
+
+    override suspend fun rescheduleOutbox(
+        outboxId: Long,
+        sendAt: Long,
+    ) = Unit
+
+    val scheduled = mutableListOf<Pair<ComposeDraft, Long>>()
 
     override suspend fun cancelPending(outboxId: Long): ComposeDraft? = null
 }

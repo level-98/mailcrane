@@ -25,4 +25,7 @@ pub enum Quirk {
     NoMove,
     NoUidplus,
     NoSpecialUse,
+    /// SMTP: advertise `FUTURERELEASE 604800 …` (RFC 4865) and accept
+    /// `HOLDUNTIL` on `MAIL FROM`.
+    FutureRelease,
 }

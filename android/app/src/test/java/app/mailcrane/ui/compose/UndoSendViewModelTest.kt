@@ -25,6 +25,21 @@ private class FakeUndoCore(
 ) : ComposeCore {
     val saved = mutableListOf<ComposeDraft>()
 
+    override suspend fun scheduleMessage(
+        draft: ComposeDraft,
+        sendAt: Long,
+    ): Long {
+        scheduled += draft to sendAt
+        return 88
+    }
+
+    override suspend fun rescheduleOutbox(
+        outboxId: Long,
+        sendAt: Long,
+    ) = Unit
+
+    val scheduled = mutableListOf<Pair<ComposeDraft, Long>>()
+
     override suspend fun cancelPending(outboxId: Long) = waiting
 
     override suspend fun saveDraft(

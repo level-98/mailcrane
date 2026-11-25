@@ -35,6 +35,7 @@ import app.mailcrane.ui.compose.ComposeScreen
 import app.mailcrane.ui.compose.DraftRequest
 import app.mailcrane.ui.compose.ReplyRequest
 import app.mailcrane.ui.compose.UndoSendViewModel
+import app.mailcrane.ui.compose.formatSendAt
 import app.mailcrane.ui.folders.MailboxScreen
 import kotlinx.coroutines.withTimeoutOrNull
 
@@ -116,6 +117,9 @@ fun MailHome(accountId: Long) {
                                     }
                             }
                             if (result is ComposeResult.Undoable) undoable = result.outboxId to result.seconds
+                            if (result is ComposeResult.Scheduled) {
+                                notice = resources.getString(R.string.schedule_done, formatSendAt(result.sendAt))
+                            }
                             if (result is ComposeResult.Queued) {
                                 notice = resources.getString(R.string.compose_queued)
                             }

@@ -88,6 +88,7 @@ fun ComposeScreen(
                 onSubjectChange = viewModel::onSubjectChange,
                 onBodyChange = viewModel::onBodyChange,
                 onSend = viewModel::send,
+                onSchedule = viewModel::schedule,
                 onClose = viewModel::requestClose,
                 onDiscard = viewModel::requestDiscard,
                 onConfirmDiscard = viewModel::confirmDiscard,
@@ -109,6 +110,7 @@ data class ComposeActions(
     val onSubjectChange: (String) -> Unit = {},
     val onBodyChange: (String) -> Unit = {},
     val onSend: () -> Unit = {},
+    val onSchedule: (Long) -> Unit = {},
     val onClose: () -> Unit = {},
     val onDiscard: () -> Unit = {},
     val onConfirmDiscard: () -> Unit = {},
@@ -143,6 +145,7 @@ fun ComposeContent(
                             contentDescription = stringResource(R.string.compose_discard),
                         )
                     }
+                    ScheduleButton(enabled = state.canSend, onSchedule = actions.onSchedule)
                     SendButton(state, actions.onSend)
                 },
             )

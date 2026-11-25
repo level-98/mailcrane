@@ -108,6 +108,21 @@ class ComposeViewModelTest {
             return 77
         }
 
+        override suspend fun scheduleMessage(
+            draft: ComposeDraft,
+            sendAt: Long,
+        ): Long {
+            scheduled += draft to sendAt
+            return 88
+        }
+
+        override suspend fun rescheduleOutbox(
+            outboxId: Long,
+            sendAt: Long,
+        ) = Unit
+
+        val scheduled = mutableListOf<Pair<ComposeDraft, Long>>()
+
         override suspend fun cancelPending(outboxId: Long): ComposeDraft? = null
 
         override suspend fun listOutbox(accountId: Long): List<OutboxEntry> = emptyList()
@@ -563,5 +578,16 @@ class ComposeViewModelTest {
         assertEquals(ComposeResult.Undoable(77, 10), vm.state.value.result)
         assertEquals(10, core.delayed.single().second)
         assertNull("not sent directly", core.sent)
+    }
+
+    @Test
+    fun aScheduledMessageIsQueuedForItsTimeAndClosesTheScreen() {
+        val core = FakeCore()
+        val vm = started(core)
+        vm.onRecipientInput(RecipientField.TO, "bob@example.net")
+        vm.schedule(1_900_000_000)
+        assertEquals(ComposeResult.Scheduled(1_900_000_000), vm.state.value.result)
+        assertEquals(1_900_000_000L, core.scheduled.single().second)
+        assertNull("not sent now", core.sent)
     }
 }
