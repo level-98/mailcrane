@@ -1,6 +1,8 @@
 package app.mailcrane.core
 
 import android.content.Context
+import app.mailcrane.contacts.AndroidDeviceContacts
+import app.mailcrane.contacts.DeviceContacts
 import app.mailcrane.work.OutboxSender
 import dagger.Module
 import dagger.Provides
@@ -42,6 +44,9 @@ object CoreModule {
 
     @Provides
     fun provideLinkCleaner(): LinkCleaner = CoreLinkCleaner
+
+    @Provides
+    fun provideDeviceContacts(contacts: AndroidDeviceContacts): DeviceContacts = contacts
 
     @Provides
     @Singleton

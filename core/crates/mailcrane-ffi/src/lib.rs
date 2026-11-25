@@ -10,6 +10,7 @@ uniffi::setup_scaffolding!();
 pub mod account;
 pub mod actions;
 pub mod compose;
+pub mod contacts;
 pub mod drafts;
 pub mod folders;
 pub mod links;

@@ -92,6 +92,7 @@ pub async fn decide_scheduled(
             Ok(report) => {
                 // The server has it now; `sent_at` records the hand-over.
                 store.outbox_sent(message.id, &report.rejected, now)?;
+                crate::contacts::record_sent(store, &message, now)?;
                 store.set_schedule_mode(message.id, ScheduleMode::Server)?;
             }
             Err(error) => {

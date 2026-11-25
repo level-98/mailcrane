@@ -185,6 +185,7 @@ pub fn record(
     Ok(match result {
         Ok(report) => {
             store.outbox_sent(id, &report.rejected, now)?;
+            crate::contacts::record_sent(store, &message, now)?;
             SendOutcome::Sent {
                 rejected: report.rejected,
             }
@@ -300,6 +301,7 @@ pub async fn recover_interrupted(
                 .unwrap_or(false);
         if in_sent {
             store.outbox_sent(message.id, &[], now)?;
+            crate::contacts::record_sent(store, &message, now)?;
             found += 1;
         } else {
             store.requeue_outbox(message.id, now)?;
