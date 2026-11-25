@@ -317,3 +317,62 @@ fn live_updates_start_once_deliver_and_stop_through_the_ffi() {
     drop(store);
     let _ = std::fs::remove_file(&path);
 }
+
+#[test]
+fn a_stop_that_runs_over_its_limit_keeps_a_new_start_from_opening_a_second_connection() {
+    let path = std::env::temp_dir().join(format!(
+        "mailcrane-ffi-live-slow-stop-{}.db",
+        std::process::id()
+    ));
+    let mut engine = SyncEngine::new(
+        path.to_string_lossy().into_owned(),
+        Arc::new(Collect::default()),
+    );
+    Arc::get_mut(&mut engine)
+        .expect("only reference")
+        .live_config
+        .stop_within = Duration::from_millis(100);
+
+    // A live thread stuck closing its connection: it ignores the stop
+    // until released.
+    let (release, released) = mpsc::channel::<()>();
+    let (done_tx, done) = mpsc::channel();
+    let (stop, _signal) = live_stop();
+    let thread = std::thread::spawn(move || {
+        let _ = released.recv();
+        let _ = done_tx.send(());
+    });
+    engine.live.lock().expect("lock").insert(
+        7,
+        LiveThread {
+            stop,
+            done,
+            thread,
+            stopping: false,
+        },
+    );
+
+    // The stop gives up waiting, but the thread is remembered as stopping.
+    engine.stop_live_updates(7);
+    assert!(engine
+        .live
+        .lock()
+        .expect("lock")
+        .get(&7)
+        .is_some_and(|t| t.stopping));
+
+    // A start while it is still stuck fails instead of starting beside it.
+    assert!(engine.start_live_updates(7).is_err());
+    assert!(engine
+        .live
+        .lock()
+        .expect("lock")
+        .get(&7)
+        .is_some_and(|t| t.stopping));
+
+    // Once it finishes, a stop clears it.
+    release.send(()).expect("release");
+    engine.stop_live_updates(7);
+    assert!(engine.live.lock().expect("lock").get(&7).is_none());
+    let _ = std::fs::remove_file(&path);
+}

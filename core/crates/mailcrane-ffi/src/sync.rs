@@ -130,6 +130,10 @@ struct LiveThread {
     /// Receives once the thread's loop has returned.
     done: mpsc::Receiver<()>,
     thread: JoinHandle<()>,
+    /// A stop was asked for but the thread had not finished in time. It is
+    /// kept here so a new start waits for it instead of opening a second
+    /// connection beside it.
+    stopping: bool,
 }
 
 /// Syncs folders of the accounts in one database. Calls are blocking: call
@@ -264,11 +268,19 @@ impl SyncEngine {
     /// once. Calling it again while it runs does nothing.
     pub fn start_live_updates(&self, account_id: i64) -> Result<(), SyncFailure> {
         let mut live = self.live.lock().unwrap_or_else(|p| p.into_inner());
-        if live
-            .get(&account_id)
-            .is_some_and(|running| !running.thread.is_finished())
-        {
-            return Ok(());
+        if let Some(running) = live.get(&account_id) {
+            if !running.thread.is_finished() {
+                if !running.stopping {
+                    return Ok(());
+                }
+                // A stop that ran over its limit: let that thread finish
+                // first, so the account never has two connections.
+                if let Err(mpsc::RecvTimeoutError::Timeout) =
+                    running.done.recv_timeout(self.stop_limit())
+                {
+                    return Err(failed(events::SyncErrorKind::Timeout));
+                }
+            }
         }
         let store = self.open_store()?;
         let account = AccountId(account_id);
@@ -316,31 +328,44 @@ impl SyncEngine {
             .map_err(|_| failed(events::SyncErrorKind::Network))?;
         // A finished thread for this account (it could not open the
         // database, say) is replaced.
-        live.insert(account_id, LiveThread { stop, done, thread });
+        live.insert(
+            account_id,
+            LiveThread {
+                stop,
+                done,
+                thread,
+                stopping: false,
+            },
+        );
         Ok(())
     }
 
     /// Stops live updates for the account: ends IDLE and logs out, within
     /// about 2 seconds. Does nothing if they are not running.
     pub fn stop_live_updates(&self, account_id: i64) {
-        let running = self
-            .live
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .remove(&account_id);
-        let Some(running) = running else {
+        // The lock is held while waiting, so a start for this account can't
+        // slip in beside a thread that is still closing its connection.
+        let mut live = self.live.lock().unwrap_or_else(|p| p.into_inner());
+        let Some(running) = live.get_mut(&account_id) else {
             return;
         };
         running.stop.stop();
+        running.stopping = true;
         // The loop gives DONE and LOGOUT `stop_within`; allow a little more
         // for the thread to finish, but never block forever.
-        let limit = self.live_config.stop_within + Duration::from_millis(500);
-        match running.done.recv_timeout(limit) {
-            Ok(()) | Err(mpsc::RecvTimeoutError::Disconnected) => {
-                let _ = running.thread.join();
-            }
-            Err(mpsc::RecvTimeoutError::Timeout) => {}
+        let waited = running.done.recv_timeout(self.stop_limit());
+        if let Err(mpsc::RecvTimeoutError::Timeout) = waited {
+            // Kept, marked as stopping: the next start waits for it.
+            return;
         }
+        if let Some(finished) = live.remove(&account_id) {
+            let _ = finished.thread.join();
+        }
+    }
+
+    /// How long a stop waits for the live thread to finish.
+    fn stop_limit(&self) -> Duration {
+        self.live_config.stop_within + Duration::from_millis(500)
     }
 }
 
