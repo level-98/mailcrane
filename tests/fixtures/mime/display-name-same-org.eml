@@ -1,0 +1,9 @@
+From: "support@example.com" <noreply@mail.example.com>
+To: Bob <bob@example.org>
+Subject: Display name: same organisation
+Date: Wed, 25 Nov 2026 09:02:00 +0000
+Message-ID: <display-name-same-org@example.net>
+
+The From name is support@example.com and the message is from
+noreply@mail.example.com: the same organisation.
+Expected: no warning banner.

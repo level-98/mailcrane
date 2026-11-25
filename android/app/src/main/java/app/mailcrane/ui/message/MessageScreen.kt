@@ -345,6 +345,7 @@ private fun Message(
     val message = state.message
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
         Headers(message)
+        DisplayNameBanner(message.senderCheck?.displayNameWarning)
         state.unsubscribe?.let { UnsubscribeAction(it, state.unsubscribing, onUnsubscribe) }
         state.snooze?.let { SnoozedBanner(it, onUnsnooze) }
         val trackers = (message.body as? MessageBody.Html)?.trackers.orEmpty()

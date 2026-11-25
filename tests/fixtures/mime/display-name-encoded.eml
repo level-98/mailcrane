@@ -1,0 +1,9 @@
+From: =?UTF-8?Q?ceo=EF=BC=A0exa=E2=80=8Bmple=2Ecom?= <x@example.net>
+To: Bob <bob@example.org>
+Subject: Display name: encoded, fullwidth and zero-width
+Date: Wed, 25 Nov 2026 09:03:00 +0000
+Message-ID: <display-name-encoded@example.net>
+
+The From name is RFC 2047 encoded. Decoded, it is ceo@example.com
+written with a fullwidth @ and a hidden zero-width space.
+Expected: a warning banner naming ceo@example.com and x@example.net.

@@ -147,6 +147,9 @@
     <string name="message_auth_result_unknown">Unknown result</string>
     <string name="message_auth_result_domain">%1$s (%2$s)</string>
     <string name="message_auth_footnote">These results come from your email provider. Mailcrane doesn’t look anything up online.</string>
+    <!-- Display-name warning banner (M5-07). %1$s is the address or domain the name shows, %2$s the real sender. -->
+    <string name="message_display_name_title">Check who sent this</string>
+    <string name="message_display_name_warning">The name says %1$s, but this message was sent from %2$s.</string>
     <string name="message_attachments">Attachments</string>
     <string name="message_attachment_unnamed">Unnamed file</string>
 
