@@ -84,6 +84,7 @@ fun MessageListScreen(
     onNoticeShown: () -> Unit = {},
     onOpenFolders: (() -> Unit)? = null,
     folders: List<FolderSummary> = emptyList(),
+    onOpenSearch: (() -> Unit)? = null,
     viewModel: MessageListViewModel =
         hiltViewModel<MessageListViewModel, MessageListViewModel.Factory>(
             key = "folder-$folderId",
@@ -154,6 +155,7 @@ fun MessageListScreen(
         fabModifier = composeFabModifier,
         onOpenFolders = onOpenFolders,
         swipe = swipeHandlers,
+        onOpenSearch = onOpenSearch,
     )
 }
 
@@ -178,11 +180,22 @@ fun MessageListContent(
     onCompose: (() -> Unit)? = null,
     fabModifier: Modifier = Modifier,
     swipe: SwipeHandlers = SwipeHandlers(),
+    onOpenSearch: (() -> Unit)? = null,
 ) {
     Scaffold(
         topBar = {
             TopAppBar(
                 title = { Text(title, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                actions = {
+                    if (onOpenSearch != null) {
+                        IconButton(onClick = onOpenSearch) {
+                            Icon(
+                                painter = painterResource(R.drawable.ic_mc_search),
+                                contentDescription = stringResource(R.string.search_open),
+                            )
+                        }
+                    }
+                },
                 navigationIcon = {
                     if (onOpenFolders != null) {
                         IconButton(onClick = onOpenFolders) {

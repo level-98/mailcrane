@@ -276,4 +276,10 @@
     <string name="swipe_deleted">Deleted</string>
     <string name="swipe_undo_too_late">Too late to undo: the change already reached the server</string>
     <string name="message_mark_read">Mark as read</string>
+
+    <!-- Search (M4-03) -->
+    <string name="search_open">Search</string>
+    <string name="search_hint">Search mail</string>
+    <string name="search_recent">Recent searches</string>
+    <string name="search_clear_recent">Clear</string>
 </resources>

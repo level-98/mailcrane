@@ -105,6 +105,18 @@ private class FakeMailbox(
         swiped += action to undoable
     }
 
+    override suspend fun searchMessages(
+        accountId: Long,
+        folderId: Long?,
+        query: String,
+        limit: Int,
+    ) = emptyList<app.mailcrane.core.MessageSummary>()
+
+    override suspend fun searchServer(
+        folderId: Long,
+        query: String,
+    ) = 0
+
     override suspend fun undoAction(messageId: Long) = undoResult
 }
 

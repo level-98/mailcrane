@@ -59,7 +59,18 @@ interface AppSettings {
     val swipeLeft: Flow<SwipeAction>
 
     suspend fun setSwipeLeft(action: SwipeAction)
+
+    /** The last few searches, newest first; kept on this device only. */
+    val recentSearches: Flow<List<String>>
+
+    /** Puts [query] first in the recent searches (at most [MAX_RECENT_SEARCHES]). */
+    suspend fun addRecentSearch(query: String)
+
+    suspend fun clearRecentSearches()
 }
+
+/** How many recent searches are kept. */
+const val MAX_RECENT_SEARCHES = 5
 
 /** What a swipe on a message does (M4-04). */
 enum class SwipeAction { NONE, ARCHIVE, DELETE, READ_UNREAD, FLAG, MOVE }
@@ -133,9 +144,27 @@ class DataStoreAppSettings(
         dataStore.edit { it[SWIPE_LEFT] = action.name }
     }
 
+    override val recentSearches: Flow<List<String>> =
+        prefs.map { p -> p[RECENT]?.split('\n')?.filter { it.isNotBlank() }.orEmpty() }
+
+    override suspend fun addRecentSearch(query: String) {
+        val clean = query.replace('\n', ' ').trim()
+        if (clean.isEmpty()) return
+        dataStore.edit { p ->
+            val old = p[RECENT]?.split('\n').orEmpty()
+            val kept = old.filter { it != clean && it.isNotBlank() }
+            p[RECENT] = (listOf(clean) + kept).take(MAX_RECENT_SEARCHES).joinToString("\n")
+        }
+    }
+
+    override suspend fun clearRecentSearches() {
+        dataStore.edit { it.remove(RECENT) }
+    }
+
     private fun swipe(name: String?): SwipeAction? = SwipeAction.entries.firstOrNull { it.name == name }
 
     private companion object {
+        val RECENT = stringPreferencesKey("recent_searches")
         val SWIPE_RIGHT = stringPreferencesKey("swipe_right")
         val SWIPE_LEFT = stringPreferencesKey("swipe_left")
         val CLEAN_LINKS = booleanPreferencesKey("clean_links")

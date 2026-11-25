@@ -36,6 +36,7 @@ import app.mailcrane.ui.compose.ReplyRequest
 import app.mailcrane.ui.message.MessageScreen
 import app.mailcrane.ui.messagelist.MessageListScreen
 import app.mailcrane.ui.messagelist.errorText
+import app.mailcrane.ui.search.SearchScreen
 import kotlinx.coroutines.launch
 
 /**
@@ -69,6 +70,7 @@ fun MailboxScreen(
             var showSettings by rememberSaveable { mutableStateOf(false) }
             var showDrafts by rememberSaveable { mutableStateOf(false) }
             var showOutbox by rememberSaveable { mutableStateOf(false) }
+            var showSearch by rememberSaveable { mutableStateOf(false) }
             if (showOutbox) {
                 BackHandler { showOutbox = false }
                 OutboxScreen(
@@ -93,6 +95,16 @@ fun MailboxScreen(
                 return
             }
             val messageId = openMessage
+            if (showSearch && messageId == null) {
+                BackHandler { showSearch = false }
+                SearchScreen(
+                    accountId = accountId,
+                    folderId = selected.id,
+                    onOpenMessage = { openMessage = it },
+                    onBack = { showSearch = false },
+                )
+                return
+            }
             if (messageId != null) {
                 BackHandler { openMessage = null }
                 MessageScreen(
@@ -154,6 +166,7 @@ fun MailboxScreen(
                         },
                         onOpenFolders = { scope.launch { drawerState.open() } },
                         folders = state.folders,
+                        onOpenSearch = { showSearch = true },
                         onCompose = onCompose,
                         composeFabModifier = composeFabModifier,
                         notice = notice,
