@@ -127,6 +127,7 @@ private class FakeMessageCore(
         calls += "oneClick"
         unsubscribeFailure?.let { throw it }
     }
+
     var snoozeInfo: SnoozeInfo? = null
     var snoozeFailure: SnoozeFailure? = null
 
