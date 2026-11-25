@@ -111,7 +111,7 @@ Goal: add an IMAP account and read your inbox, online and offline.
 - [ ] **M4-18** Settings backup and restore to an encrypted, password-protected file: accounts (server settings only, never passwords or tokens), signatures, rules, templates and app settings 🔒🤖
 - [ ] **M4-19** Date headers in the message list: Today, Yesterday, This week, then by month 🟢🤖
 - [x] **M4-20** Let users choose each account's colour (the automatic colours from M4-01 stay the default) 🟢🤖
-- [ ] **M4-21** Search filter chips (from, has attachment, unread, flagged, date range, account) built on the existing search syntax, adding `account:` to it 🟢🤖
+- [x] **M4-21** Search filter chips (from, has attachment, unread, flagged, date range, account) built on the existing search syntax, adding `account:` to it 🟢🤖
 - [ ] **M4-22** Create, rename, move and delete folders from the phone 🤖
 - [ ] **M4-23** Server-side rules through ManageSieve (RFC 5804), so rules run when the phone is off; local rules (M4-09) stay for servers without it 🤖
 
