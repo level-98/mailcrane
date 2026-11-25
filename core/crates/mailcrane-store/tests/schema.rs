@@ -50,6 +50,9 @@ fn every_table_and_index_exists() -> R {
             "rule_conditions",
             "rules",
             "rules_seen",
+            // Server-side rules (M4-23).
+            "server_rules",
+            "server_rules_deployed",
             "snoozes",
             "thread_keys",
             "threads"
@@ -94,7 +97,7 @@ fn reopen_runs_no_migrations_and_keeps_data() -> R {
     let dir = tempfile::tempdir()?;
     let path = dir.path().join("m.db");
     let store = Store::open(&path)?;
-    assert_eq!(store.schema_version()?, 17);
+    assert_eq!(store.schema_version()?, 18);
     drop(store);
     let conn = Connection::open(&path)?;
     conn.execute(
@@ -105,7 +108,7 @@ fn reopen_runs_no_migrations_and_keeps_data() -> R {
     )?;
     drop(conn);
     let store = Store::open(&path)?;
-    assert_eq!(store.schema_version()?, 17);
+    assert_eq!(store.schema_version()?, 18);
     assert_eq!(store.list_accounts()?.len(), 1);
     Ok(())
 }

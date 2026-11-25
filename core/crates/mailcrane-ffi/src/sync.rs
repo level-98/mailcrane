@@ -191,6 +191,8 @@ pub struct SyncEngine {
     busy: Mutex<HashMap<i64, Arc<Mutex<()>>>>,
     /// Live updates, by account id.
     live: Mutex<HashMap<i64, LiveThread>>,
+    /// The platform's resolver, for the `_sieve._tcp` SRV record (M4-23).
+    dns: Mutex<Option<Arc<dyn crate::autoconfig::PlatformDns>>>,
     #[cfg(test)]
     extra_root_cert: Mutex<Option<Vec<u8>>>,
 }
@@ -207,9 +209,18 @@ impl SyncEngine {
             live_config: LiveConfig::default(),
             busy: Mutex::new(HashMap::new()),
             live: Mutex::new(HashMap::new()),
+            dns: Mutex::new(None),
             #[cfg(test)]
             extra_root_cert: Mutex::new(None),
         })
+    }
+
+    /// Gives the engine the platform's DNS resolver, used to find the
+    /// account's ManageSieve server through its `_sieve._tcp` SRV record
+    /// (server-side rules, M4-23). Without one, only the IMAP host on port
+    /// 4190 is tried.
+    pub fn set_platform_dns(&self, dns: Option<Arc<dyn crate::autoconfig::PlatformDns>>) {
+        *self.dns.lock().unwrap_or_else(|p| p.into_inner()) = dns;
     }
 
     /// Fetches headers for the newest messages of the folder (200 at first,
@@ -648,6 +659,26 @@ impl SyncEngine {
                     FolderSyncer::new(&store, &mut session, &listener, account, self.config);
                 job(&mut syncer).await
             };
+            // Server-side rules (M4-23): bring the account's ManageSieve
+            // script up to date when it's time (usually it isn't, and nothing
+            // connects). Before local rules run, so they skip what the server
+            // runs. A failure leaves the server and the device as they were.
+            if result.is_ok() && replay {
+                if let Some(login) = sieve_login(&store, account, self.extra_root_cert().as_deref())
+                {
+                    let dns = crate::autoconfig::ForeignDns(
+                        self.dns.lock().unwrap_or_else(|p| p.into_inner()).clone(),
+                    );
+                    let _ = mailcrane_core::rules::server::sync(
+                        &store,
+                        account,
+                        &login,
+                        &dns,
+                        crate::actions::now(),
+                    )
+                    .await;
+                }
+            }
             // Rules on new inbox mail (M4-09), then their actions go out in
             // this session. A failure only leaves them for the next sync.
             if result.is_ok() {
@@ -802,6 +833,35 @@ fn imap_login(
         config,
         username: row.details.username,
         password: Secret::new(password),
+    })
+}
+
+/// How to log in to the account's ManageSieve server: the IMAP username
+/// and password (RFC 5804 servers normally share them). `None` for an
+/// account without a stored password (OAuth), which keeps rules local.
+fn sieve_login(
+    store: &Store,
+    account: AccountId,
+    extra_root_cert: Option<&[u8]>,
+) -> Option<mailcrane_core::rules::server::SieveLogin> {
+    // Never for a local-only account (#289); an unreadable marker counts as
+    // local, so nothing connects.
+    if store.is_local_account(account).unwrap_or(true) {
+        return None;
+    }
+    let row = store.get_account(account).ok()??;
+    let password = crate::secrets::secret_store()
+        .and_then(|s| s.get(&SecretKey::account_password(account.0)))
+        .ok()??;
+    let password = std::str::from_utf8(password.expose()).ok()?.to_owned();
+    let domain = row.details.email.rsplit_once('@')?.1.to_ascii_lowercase();
+    Some(mailcrane_core::rules::server::SieveLogin {
+        username: row.details.username,
+        password: mailcrane_core::rules::server::Secret::new(password),
+        imap_host: row.details.imap_host,
+        email_domain: domain,
+        extra_root_cert: extra_root_cert.map(<[u8]>::to_vec),
+        port_override: None,
     })
 }
 

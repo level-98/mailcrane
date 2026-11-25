@@ -1,6 +1,6 @@
 [package]
 name = "mailcrane-testkit"
-description = "Fake IMAP, SMTP and JMAP servers for tests, able to misbehave on purpose"
+description = "Fake IMAP, SMTP, JMAP and ManageSieve servers for tests, able to misbehave on purpose"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -11,6 +11,7 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
+base64 = "0.23"
 mailcrane-core = { path = "../mailcrane-core" }
 http-body-util = "0.1.5"
 hyper = { version = "1.13.0", features = ["server", "http1"] }

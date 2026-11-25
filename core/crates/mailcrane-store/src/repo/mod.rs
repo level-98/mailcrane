@@ -12,6 +12,7 @@ mod outbox;
 mod pending_ops;
 mod rules;
 mod search;
+mod server_rules;
 mod settings;
 mod snooze;
 mod threads;
@@ -26,6 +27,7 @@ pub use outbox::{
 pub use pending_ops::{OpId, OpKind, OpMessage, PendingOp};
 pub use rules::{NewRule, Rule, RuleAction, RuleCondition, RuleId};
 pub use search::SearchFilter;
+pub use server_rules::{ServerRules, ServerRulesState};
 pub use settings::{SignatureSetting, ACCOUNT_COLOR_COUNT, MAX_SIGNATURE_BYTES};
 pub use snooze::{KeywordedMessage, NewSnooze, Snooze, SnoozeId, SnoozeState};
 pub use threads::{ThreadSummary, UnthreadedMessage};
