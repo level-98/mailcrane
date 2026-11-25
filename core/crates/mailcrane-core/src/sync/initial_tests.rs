@@ -523,6 +523,10 @@ async fn a_refused_select_logs_the_command_and_error_but_no_server_text() {
             kind: SyncErrorKind::Protocol,
             error: "CommandFailed",
             command: "SELECT",
+            store: "none",
+            field: "none",
+            sqlite: "none",
+            sqlite_code: 0,
         }
     );
     // No server text, folder name, account or credential in it. (Every
@@ -531,4 +535,47 @@ async fn a_refused_select_logs_the_command_and_error_but_no_server_text() {
     for secret in ["no such folder", "NONEXISTENT", "Private", USER, PASSWORD] {
         assert!(!text.contains(secret), "{text} holds {secret:?}");
     }
+}
+
+#[test]
+fn a_database_failure_logs_the_sqlite_code_but_no_values() {
+    let conn = rusqlite::Connection::open_in_memory().expect("open");
+    conn.execute_batch(
+        "CREATE TABLE m (folder_id INTEGER, uid INTEGER, subject TEXT, UNIQUE (folder_id, uid));
+         INSERT INTO m VALUES (1, 42, 'Private subject');",
+    )
+    .expect("schema");
+    let error = conn
+        .execute_batch("INSERT INTO m VALUES (1, 42, 'Private subject');")
+        .expect_err("duplicate");
+    let error = SyncError::Store(mailcrane_store::StoreError::from(error));
+
+    let log = FailureLog::new("sync", &error, Some("UID FETCH"));
+    assert_eq!(
+        log,
+        FailureLog {
+            stage: "sync",
+            kind: SyncErrorKind::Storage,
+            error: "Store",
+            command: "UID FETCH",
+            store: "Sqlite",
+            field: "none",
+            sqlite: "SQLITE_CONSTRAINT_UNIQUE",
+            sqlite_code: rusqlite::ffi::SQLITE_CONSTRAINT_UNIQUE,
+        }
+    );
+    let text = format!("{log:?}");
+    for secret in ["Private", "42", "folder_id", "m.uid"] {
+        assert!(!text.contains(secret), "{text} holds {secret:?}");
+    }
+
+    // The same through the IMAP error (save_folders).
+    let wrapped = SyncError::Imap(mailcrane_imap::ImapError::Store(
+        mailcrane_store::StoreError::Invalid { field: "uid" },
+    ));
+    let log = FailureLog::new("list folders", &wrapped, Some("LIST"));
+    assert_eq!(
+        (log.store, log.field, log.sqlite),
+        ("Invalid", "uid", "none")
+    );
 }

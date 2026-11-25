@@ -1010,6 +1010,7 @@ dependencies = [
  "mailcrane-testkit",
  "proptest",
  "quick-xml",
+ "rusqlite",
  "rustls",
  "rustls-platform-verifier",
  "serde_json",
