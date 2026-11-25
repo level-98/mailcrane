@@ -42,6 +42,7 @@ pub struct FakeHttpsBuilder {
     status: u16,
     location: Option<String>,
     delay: Option<std::time::Duration>,
+    body: Vec<u8>,
 }
 
 /// A running fake HTTPS server on the loopback interface, with a
@@ -67,6 +68,12 @@ impl FakeHttpsBuilder {
         self
     }
 
+    /// The response body (default `ok`).
+    pub fn body(mut self, body: impl Into<Vec<u8>>) -> Self {
+        self.body = body.into();
+        self
+    }
+
     /// Waits this long before answering.
     pub fn delay(mut self, delay: std::time::Duration) -> Self {
         self.delay = Some(delay);
@@ -82,6 +89,7 @@ impl FakeHttpsBuilder {
         let status = StatusCode::from_u16(self.status).map_err(|e| e.to_string())?;
         let location = self.location;
         let delay = self.delay;
+        let body = Bytes::from(self.body);
         let handle = tokio::spawn(async move {
             loop {
                 let Ok((stream, _)) = listener.accept().await else {
@@ -90,6 +98,7 @@ impl FakeHttpsBuilder {
                 let recorded = recorded.clone();
                 let config = tls.config.clone();
                 let location = location.clone();
+                let body = body.clone();
                 tokio::spawn(async move {
                     let acceptor = tokio_rustls::TlsAcceptor::from(config);
                     let Ok(stream) = acceptor.accept(stream).await else {
@@ -98,6 +107,7 @@ impl FakeHttpsBuilder {
                     let service = service_fn(move |request: Request<hyper::body::Incoming>| {
                         let recorded = recorded.clone();
                         let location = location.clone();
+                        let reply_body = body.clone();
                         async move {
                             let method = request.method().to_string();
                             let target = request
@@ -130,7 +140,7 @@ impl FakeHttpsBuilder {
                             if let Some(d) = delay {
                                 tokio::time::sleep(d).await;
                             }
-                            let mut response = Response::new(Full::new(Bytes::from_static(b"ok")));
+                            let mut response = Response::new(Full::new(reply_body));
                             *response.status_mut() = status;
                             if let Some(l) = location.as_deref().and_then(|l| l.parse().ok()) {
                                 response.headers_mut().insert(hyper::header::LOCATION, l);
@@ -158,6 +168,7 @@ impl FakeHttps {
         FakeHttpsBuilder {
             status: 200,
             location: None,
+            body: b"ok".to_vec(),
             delay: None,
         }
     }
