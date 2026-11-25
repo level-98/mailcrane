@@ -48,7 +48,7 @@ Goal: add an IMAP account and read your inbox, online and offline.
 - [x] **M1-12** Message view screen with "load remote images" button, Android 🤖
 - [x] **M1-13** Folder drawer, Android 🟢🤖
 - [x] **M1-14** Read, unread, flag, archive, delete and move, synced back to the server 🤖
-- [ ] **M1-15** Automatic account setup: Mozilla ISPDB (Thunderbird autoconfig), `/.well-known/autoconfig`, SRV records 🤖
+- [x] **M1-15** Automatic account setup: Mozilla ISPDB (Thunderbird autoconfig), `/.well-known/autoconfig`, SRV records 🤖
 - [x] **M1-16** Empty states using the illustrations in `design/` 🟢🤖
 
 ## M2 — Send mail
