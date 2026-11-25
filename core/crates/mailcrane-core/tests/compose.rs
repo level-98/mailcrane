@@ -78,6 +78,7 @@ mod compose {
             references: vec![],
             attachments: Vec::new(),
             forward_attachments_of: None,
+            rich: None,
         }
     }
 

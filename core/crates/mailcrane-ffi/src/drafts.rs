@@ -103,6 +103,7 @@ pub fn get_draft(db_path: String, draft_id: i64) -> Result<ComposeDraft, DraftFa
         references: f.references,
         attachments: Vec::new(),
         forward_attachments_of: None,
+        rich: None,
     })
 }
 
@@ -180,6 +181,7 @@ mod tests {
             references: vec!["p@example.net".into()],
             attachments: Vec::new(),
             forward_attachments_of: None,
+            rich: None,
         }
     }
 

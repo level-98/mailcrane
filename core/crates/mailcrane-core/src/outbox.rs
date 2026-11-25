@@ -334,6 +334,7 @@ pub fn cancel_pending(store: &Store, id: OutboxId) -> Result<Option<ComposeDraft
             })
             .collect(),
         forward_attachments_of: None,
+        rich: None,
     }))
 }
 

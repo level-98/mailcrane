@@ -12,6 +12,7 @@ pub mod build;
 mod headers;
 pub mod limits;
 mod model;
+pub mod richtext;
 mod sanitize;
 mod snippet;
 mod trackers;

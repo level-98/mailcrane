@@ -23,6 +23,7 @@ fn draft() -> OutgoingMessage {
         message_id: None,
         is_draft: false,
         attachments: Vec::new(),
+        rich: None,
     }
 }
 
