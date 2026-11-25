@@ -3,6 +3,7 @@ package app.mailcrane.ui.compose
 import app.mailcrane.core.AccountSummary
 import app.mailcrane.core.ComposeCore
 import app.mailcrane.core.ComposeDraft
+import app.mailcrane.core.DraftKind
 import app.mailcrane.core.RecipientEntry
 import app.mailcrane.core.RecipientError
 import app.mailcrane.core.RecipientField
@@ -63,6 +64,35 @@ class ComposeViewModelTest {
 
         var replies = 0
         var replyFailure: ReplyFailure? = null
+        var signatures = mapOf<Long, String>()
+
+        override suspend fun signatureFor(accountId: Long): String? = signatures[accountId]
+
+        // Simple stand-ins for the core's rules (tested in Rust).
+        override fun applySignature(
+            body: String,
+            signature: String?,
+            kind: DraftKind,
+        ): String =
+            when {
+                signature.isNullOrBlank() -> body
+                kind == DraftKind.NEW -> "$body\n\n-- \n$signature"
+                else -> "\n\n-- \n$signature\n$body"
+            }
+
+        override fun swapSignature(
+            body: String,
+            old: String?,
+            new: String?,
+        ): String {
+            val oldBlock = old?.let { "\n\n-- \n$it" }
+            val newBlock = new?.let { "\n\n-- \n$it" }.orEmpty()
+            return when {
+                oldBlock == null -> if (body.isEmpty()) newBlock else body
+                body.endsWith(oldBlock) -> body.removeSuffix(oldBlock) + newBlock
+                else -> body
+            }
+        }
 
         override suspend fun prepareReply(
             messageId: Long,
@@ -331,5 +361,45 @@ class ComposeViewModelTest {
         assertEquals(ComposeError.REPLY_UNAVAILABLE, vm.state.value.error)
         assertFalse(vm.state.value.hasContent)
         assertEquals(1L, vm.state.value.fromAccountId)
+    }
+
+    @Test
+    fun aNewMessageGetsTheSignatureOnce() {
+        val core = FakeCore().apply { signatures = mapOf(1L to "Ann") }
+        val vm = started(core)
+        assertEquals("\n\n-- \nAnn", vm.state.value.body)
+        // Rotation starts the screen again: no second signature.
+        vm.start(1)
+        assertEquals("\n\n-- \nAnn", vm.state.value.body)
+    }
+
+    @Test
+    fun aReplyGetsTheSignatureAboveTheQuote() {
+        val core = FakeCore().apply { signatures = mapOf(2L to "Bea") }
+        val vm = ComposeViewModel(core)
+        vm.start(1, ReplyRequest(42, ReplyKind.REPLY, "Ana wrote:"))
+        assertEquals("\n\n-- \nBea\n\n\nAna wrote:\n> Noon?\n", vm.state.value.body)
+    }
+
+    @Test
+    fun changingFromSwapsAnUneditedSignatureOnly() {
+        val accounts = listOf(AccountSummary(1, "a@example.org", "A"), AccountSummary(2, "b@example.org", "B"))
+        val core = FakeCore(accounts).apply { signatures = mapOf(1L to "Ann", 2L to "Bea") }
+        val vm = started(core)
+        vm.onFromChange(2)
+        assertEquals("\n\n-- \nBea", vm.state.value.body)
+        vm.onFromChange(1)
+        assertEquals("\n\n-- \nAnn", vm.state.value.body)
+
+        vm.onBodyChange(vm.state.value.body + " (on holiday)")
+        vm.onFromChange(2)
+        assertEquals("\n\n-- \nAnn (on holiday)", vm.state.value.body)
+    }
+
+    @Test
+    fun noSignatureMeansNoSeparator() {
+        val vm = started(FakeCore())
+        assertEquals("", vm.state.value.body)
+        assertFalse(vm.state.value.hasContent)
     }
 }

@@ -5,9 +5,11 @@ import androidx.lifecycle.viewModelScope
 import app.mailcrane.core.AccountSummary
 import app.mailcrane.core.ComposeCore
 import app.mailcrane.core.ComposeDraft
+import app.mailcrane.core.DraftKind
 import app.mailcrane.core.RecipientEntry
 import app.mailcrane.core.RecipientField
 import app.mailcrane.core.RecipientProblem
+import app.mailcrane.core.ReplyKind
 import app.mailcrane.core.SendFailure
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.CancellationException
@@ -99,6 +101,10 @@ data class ComposeUiState(
     val references: List<String> = emptyList(),
     /** The reply this screen was filled for, so rotation doesn't fill it again. */
     val prefilledFor: ReplyRequest? = null,
+    /** The signature put into [body], so a change of From can swap it if it wasn't edited. */
+    val signature: String? = null,
+    /** Whether the signature was added already (once per message, not again on rotation). */
+    val signatureAdded: Boolean = false,
 ) {
     fun field(which: RecipientField) =
         when (which) {
@@ -137,6 +143,7 @@ class ComposeViewModel
         ) {
             _state.update { if (it.fromAccountId == null) it.copy(fromAccountId = accountId) else it }
             if (reply != null && _state.value.prefilledFor != reply) prefill(reply)
+            if (reply == null && !_state.value.signatureAdded) addSignature(accountId)
             viewModelScope.launch {
                 val accounts =
                     try {
@@ -154,9 +161,20 @@ class ComposeViewModel
             }
         }
 
+        /** Adds the From account's signature to a new message, once. */
+        private fun addSignature(accountId: Long) {
+            _state.update { it.copy(signatureAdded = true) }
+            viewModelScope.launch {
+                val signature = core.signatureFor(accountId) ?: return@launch
+                _state.update {
+                    it.copy(body = core.applySignature(it.body, signature, DraftKind.NEW), signature = signature)
+                }
+            }
+        }
+
         /** Fills the screen with the core's reply draft: recipients as chips, subject, quoted body. */
         private fun prefill(reply: ReplyRequest) {
-            _state.update { it.copy(prefilledFor = reply) }
+            _state.update { it.copy(prefilledFor = reply, signatureAdded = true) }
             viewModelScope.launch {
                 val draft =
                     try {
@@ -168,6 +186,9 @@ class ComposeViewModel
                         return@launch
                     }
                 val cc = chipsOf(draft.cc)
+                val signature = core.signatureFor(draft.accountId)
+                val kind = if (reply.kind == ReplyKind.FORWARD) DraftKind.FORWARD else DraftKind.REPLY
+                val body = core.applySignature(draft.bodyText, signature, kind)
                 _state.update {
                     it.copy(
                         fromAccountId = draft.accountId,
@@ -175,7 +196,8 @@ class ComposeViewModel
                         cc = cc,
                         showCcBcc = it.showCcBcc || !cc.isEmpty,
                         subject = draft.subject,
-                        body = draft.bodyText,
+                        body = body,
+                        signature = signature,
                         inReplyTo = draft.inReplyTo,
                         references = draft.references,
                     )
@@ -188,7 +210,21 @@ class ComposeViewModel
                 chips = entries.flatMap { entry -> parse(entry, whole = true)?.entries?.map { it.toChip() }.orEmpty() },
             )
 
-        fun onFromChange(accountId: Long) = _state.update { it.copy(fromAccountId = accountId, error = null) }
+        /** Picks the sender, swapping in its signature if the old one wasn't edited. */
+        fun onFromChange(accountId: Long) {
+            val before = _state.value.fromAccountId
+            _state.update { it.copy(fromAccountId = accountId, error = null) }
+            if (before == accountId) return
+            viewModelScope.launch {
+                val signature = core.signatureFor(accountId)
+                _state.update {
+                    val swapped = core.swapSignature(it.body, it.signature, signature)
+                    // An edited signature stays, and keeps being the one to match.
+                    val kept = swapped == it.body && it.signature != null && it.signature != signature
+                    it.copy(body = swapped, signature = if (kept) it.signature else signature)
+                }
+            }
+        }
 
         /** Text typed into a recipient field. Finished entries (followed by a comma or semicolon) become chips. */
         fun onRecipientInput(

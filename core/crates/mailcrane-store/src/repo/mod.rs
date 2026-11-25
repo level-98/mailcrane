@@ -5,8 +5,10 @@ mod attachments;
 mod folders;
 mod messages;
 mod pending_ops;
+mod settings;
 
 pub use pending_ops::{OpId, OpKind, OpMessage, PendingOp};
+pub use settings::{SignatureSetting, MAX_SIGNATURE_BYTES};
 
 use crate::error::StoreError;
 

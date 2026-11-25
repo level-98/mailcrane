@@ -33,6 +33,23 @@ interface ComposeCore {
         quoteHeader: String,
     ): ComposeDraft
 
+    /** The account's signature for a new draft: its text when turned on and not empty, else null. */
+    suspend fun signatureFor(accountId: Long): String?
+
+    /** Adds [signature] to [body] where [kind] of draft needs it; null or empty adds nothing. */
+    fun applySignature(
+        body: String,
+        signature: String?,
+        kind: DraftKind,
+    ): String
+
+    /** Swaps an unedited [old] signature in [body] for [new]; an edited one is left alone. */
+    fun swapSignature(
+        body: String,
+        old: String?,
+        new: String?,
+    ): String
+
     /**
      * Sends [draft] now.
      *
@@ -58,6 +75,21 @@ class UniffiComposeCore(
         kind: ReplyKind,
         quoteHeader: String,
     ): ComposeDraft = withContext(io) { app.mailcrane.core.prepareReply(dbPath, messageId, kind, quoteHeader) }
+
+    override suspend fun signatureFor(accountId: Long): String? =
+        withContext(io) { signatureForDraft(dbPath, accountId) }
+
+    override fun applySignature(
+        body: String,
+        signature: String?,
+        kind: DraftKind,
+    ): String = app.mailcrane.core.applySignature(body, signature, kind)
+
+    override fun swapSignature(
+        body: String,
+        old: String?,
+        new: String?,
+    ): String = app.mailcrane.core.swapSignature(body, old, new)
 
     override suspend fun send(draft: ComposeDraft): SendResult = app.mailcrane.core.send(dbPath, draft)
 }

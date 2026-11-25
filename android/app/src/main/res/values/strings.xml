@@ -184,4 +184,13 @@
     <!-- Line above the original's headers in a forwarded message -->
     <string name="forward_header">---------- Forwarded message ----------</string>
     <string name="compose_error_reply_unavailable">The original message couldn’t be loaded. You can still write your message.</string>
+
+    <!-- Signature (M2-10) -->
+    <string name="settings_signature_header">Signature</string>
+    <string name="settings_signature_enabled">Add a signature to new messages, replies and forwards</string>
+    <string name="settings_signature_field">Signature</string>
+    <string name="settings_signature_save">Save signature</string>
+    <string name="settings_signature_saved">Signature saved</string>
+    <string name="settings_signature_too_long">That signature is too long. Keep it under 10 KB.</string>
+    <string name="settings_signature_failed">The signature couldn’t be saved</string>
 </resources>
