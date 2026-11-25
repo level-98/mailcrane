@@ -123,9 +123,13 @@ mod tests {
 
     #[test]
     fn literal_args_are_always_literals() {
-        let segments = build("A1".into(), "APPEND", &[Arg::Str(b"Drafts"), Arg::Literal(b"ab")])
-            .map(|c| c.segments)
-            .unwrap_or_default();
+        let segments = build(
+            "A1".into(),
+            "APPEND",
+            &[Arg::Str(b"Drafts"), Arg::Literal(b"ab")],
+        )
+        .map(|c| c.segments)
+        .unwrap_or_default();
         assert_eq!(
             segments,
             [b"A1 APPEND Drafts {2}\r\n".to_vec(), b"ab\r\n".to_vec()]

@@ -2,11 +2,13 @@
 
 mod accounts;
 mod attachments;
+mod drafts;
 mod folders;
 mod messages;
 mod pending_ops;
 mod settings;
 
+pub use drafts::{Draft, DraftFields, DraftId, ServerCopy};
 pub use pending_ops::{OpId, OpKind, OpMessage, PendingOp};
 pub use settings::{SignatureSetting, MAX_SIGNATURE_BYTES};
 

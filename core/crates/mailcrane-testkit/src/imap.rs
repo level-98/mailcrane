@@ -540,7 +540,12 @@ async fn handle_imap_command(
         "LOGOUT" => format!("{tag} OK LOGOUT completed\r\n"),
         "APPEND" => {
             // `APPEND <folder> [(<flags>)] {LITERAL}` (RFC 9051 §6.3.12).
-            let folder = parts.get(2).copied().unwrap_or("").trim_matches('"').to_string();
+            let folder = parts
+                .get(2)
+                .copied()
+                .unwrap_or("")
+                .trim_matches('"')
+                .to_string();
             let flags: Vec<String> = parts
                 .iter()
                 .skip(3)
@@ -750,7 +755,9 @@ fn header_contains(raw: &[u8], name: &str, value: &str) -> bool {
     text.split("\r\n")
         .take_while(|line| !line.is_empty())
         .filter_map(|line| line.split_once(':'))
-        .any(|(n, v)| n.trim().eq_ignore_ascii_case(name) && v.to_ascii_lowercase().contains(&value))
+        .any(|(n, v)| {
+            n.trim().eq_ignore_ascii_case(name) && v.to_ascii_lowercase().contains(&value)
+        })
 }
 
 fn quoted(text: &str) -> String {

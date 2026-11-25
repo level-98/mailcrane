@@ -20,6 +20,8 @@ fn draft() -> OutgoingMessage {
         encoding: TransferEncoding::QuotedPrintable,
         in_reply_to: None,
         references: vec![],
+        message_id: None,
+        is_draft: false,
     }
 }
 
@@ -408,4 +410,40 @@ fn no_reply_headers_without_ids() {
     let head = header_block(&build(&draft()));
     assert!(!head.contains("In-Reply-To"));
     assert!(!head.contains("References"));
+}
+
+#[test]
+fn drafts_keep_a_fixed_message_id_and_may_have_no_recipients() {
+    let mut d = draft();
+    d.to.clear();
+    assert_eq!(
+        crate::build::build_with(&d, DATE, &RANDOM),
+        Err(BuildError::NoRecipients)
+    );
+    d.is_draft = true;
+    d.message_id = Some("fixed1@example.org".into());
+    let bytes = build(&d);
+    assert_wire_format(&bytes);
+    let head = header_block(&bytes);
+    assert!(head.contains("Message-ID: <fixed1@example.org>\r\n"));
+    assert!(!head.contains("To:"));
+
+    // An invalid fixed id falls back to a random one.
+    d.message_id = Some("bad id\r\nX: y".into());
+    let head = header_block(&build(&d));
+    assert!(!head.contains("X: y"));
+    assert!(head.contains("@example.org>\r\n"));
+}
+
+#[test]
+fn new_message_ids_are_unique_and_safe() {
+    let a = crate::new_message_id("example.org").expect("id");
+    let b = crate::new_message_id("example.org").expect("id");
+    assert_ne!(a, b);
+    assert!(a.ends_with("@example.org"));
+    let odd = crate::new_message_id("exa mple\r\n.org>").expect("id");
+    assert!(odd.ends_with("@example.org"));
+    assert!(crate::new_message_id("")
+        .expect("id")
+        .ends_with("@localhost"));
 }
