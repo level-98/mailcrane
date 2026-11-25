@@ -90,10 +90,14 @@ fn raws(count: usize) -> Vec<Vec<u8>> {
 }
 
 async fn connect(imap: &FakeImap) -> Session {
+    connect_within(imap, Duration::from_secs(10)).await
+}
+
+/// A session whose commands time out after `limit`.
+async fn connect_within(imap: &FakeImap, limit: Duration) -> Session {
     let mut config = ImapConfig::new("localhost", imap.addr().port(), ImapSecurity::ImplicitTls)
         .with_extra_root_cert(imap.root_cert_der().to_vec());
-    // Generous: a 1 MiB answer from the fake is slow in debug builds under load.
-    config.command_timeout = Duration::from_secs(10);
+    config.command_timeout = limit;
     Session::connect(&config, USER, &Secret::new(PASSWORD))
         .await
         .expect("connects")
@@ -242,7 +246,9 @@ async fn messages_over_the_size_limit_are_not_downloaded() {
     assert_eq!(uids, [4, 3, 1], "uid 2 is over 1 MiB");
 
     // Even if the stored size was wrong, a body over the limit isn't saved.
-    let mut session = connect(&imap).await;
+    // A 1 MiB answer through the fake and the debug-build parser took over
+    // 10 s on the Windows CI runner: allow a minute for this one.
+    let mut session = connect_within(&imap, Duration::from_secs(60)).await;
     session.select("INBOX").await.expect("select");
     let header = store
         .list_messages(folder, 10, 0)
