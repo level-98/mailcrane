@@ -248,6 +248,19 @@ class UniffiMailboxCore(
         const val MAX_RETRY_MS = 600_000L
     }
 
+    override suspend fun unsubscribeOptions(messageId: Long): UnsubscribeInfo? =
+        withContext(io) {
+            try {
+                unsubscribeOptions(dbPath, messageId)
+            } catch (_: UnsubscribeFailure) {
+                null
+            }
+        }
+
+    override suspend fun oneClickUnsubscribe(messageId: Long) {
+        withContext(io) { oneClickUnsubscribe(dbPath, messageId) }
+    }
+
     override fun inlinePart(
         messageId: Long,
         contentId: String,

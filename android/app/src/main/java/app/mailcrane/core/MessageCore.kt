@@ -30,6 +30,15 @@ interface MessageCore {
         action: MessageAction,
     )
 
+    /** How the message can be unsubscribed from, or null (M4-10). Reads only the database. */
+    suspend fun unsubscribeOptions(messageId: Long): UnsubscribeInfo? = null
+
+    /**
+     * Sends the one-click unsubscribe request. Call only after the user confirmed.
+     * @throws UnsubscribeFailure
+     */
+    suspend fun oneClickUnsubscribe(messageId: Long): Unit = throw UnsubscribeFailure.NotOffered()
+
     /**
      * Snoozes the message until [wakeAt] (Unix seconds): it leaves its folder at once and moves to the
      * Snoozed folder on the server in the background. A message already snoozed gets the new time.

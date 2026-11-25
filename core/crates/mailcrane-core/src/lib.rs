@@ -15,6 +15,7 @@ pub mod search;
 pub mod secrets;
 pub mod snooze;
 pub mod sync;
+pub mod unsubscribe;
 
 /// The name of this crate.
 pub const CRATE_NAME: &str = env!("CARGO_PKG_NAME");

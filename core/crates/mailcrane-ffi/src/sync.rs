@@ -383,7 +383,7 @@ impl SyncEngine {
     }
 }
 
-fn runtime() -> Result<tokio::runtime::Runtime, events::SyncErrorKind> {
+pub(crate) fn runtime() -> Result<tokio::runtime::Runtime, events::SyncErrorKind> {
     tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
