@@ -86,6 +86,8 @@ fun MessageListScreen(
     folders: List<FolderSummary> = emptyList(),
     onOpenSearch: (() -> Unit)? = null,
     onOpenThread: (Long, String) -> Unit = { _, _ -> },
+    /** The ids shown, in order, for next/previous message (M4-13). */
+    onShownMessages: (List<Long>) -> Unit = {},
     viewModel: MessageListViewModel =
         hiltViewModel<MessageListViewModel, MessageListViewModel.Factory>(
             key = "folder-$folderId",
@@ -93,6 +95,8 @@ fun MessageListScreen(
         ),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
+    val shown by rememberUpdatedState(onShownMessages)
+    LaunchedEffect(state.messages) { shown(state.messages.map { it.id }) }
     val snackbar = remember { SnackbarHostState() }
     val resources = LocalResources.current
     LaunchedEffect(viewModel) {
