@@ -87,6 +87,23 @@ fn mime_type_of(part: &mail_parser::MessagePart<'_>) -> String {
         .unwrap_or_else(|| "application/octet-stream".to_owned())
 }
 
+/// The id part of a List-Id value (RFC 2919 §3): inside the angle
+/// brackets if there are any, lower-case; `None` if it isn't plausible.
+fn list_id_of(value: &str) -> Option<String> {
+    let id = match (value.rfind('<'), value.rfind('>')) {
+        (Some(a), Some(b)) if a < b => &value[a + 1..b],
+        _ => value,
+    };
+    let id = id.trim().to_ascii_lowercase();
+    let ok = !id.is_empty()
+        && id.len() <= 255
+        && id.contains('.')
+        && id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_' | '+' | '='));
+    ok.then_some(id)
+}
+
 /// Parses raw message bytes.
 pub fn parse_message(raw: &[u8]) -> Result<ParsedMessage, MimeError> {
     let message = parse_limited(raw)?;
@@ -164,6 +181,7 @@ pub fn parse_message(raw: &[u8]) -> Result<ParsedMessage, MimeError> {
             .unwrap_or_default(),
         list_unsubscribe: raw_header("List-Unsubscribe"),
         list_unsubscribe_post: raw_header("List-Unsubscribe-Post"),
+        list_id: raw_header("List-Id").and_then(|v| list_id_of(&v)),
         authentication_results: hdrs
             .iter()
             .filter(|h| {

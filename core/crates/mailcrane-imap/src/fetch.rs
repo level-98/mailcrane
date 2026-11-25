@@ -38,7 +38,7 @@ pub struct FetchedHeaders {
 
 /// The items fetched for each message in the message list.
 const HEADER_ITEMS: &str = "(UID FLAGS INTERNALDATE RFC822.SIZE ENVELOPE BODYSTRUCTURE \
-    BODY.PEEK[HEADER.FIELDS (REFERENCES IN-REPLY-TO LIST-UNSUBSCRIBE LIST-UNSUBSCRIBE-POST)])";
+    BODY.PEEK[HEADER.FIELDS (REFERENCES IN-REPLY-TO LIST-UNSUBSCRIBE LIST-UNSUBSCRIBE-POST LIST-ID)])";
 
 fn code_number<T: std::str::FromStr>(done: &[Untagged], wanted: &str) -> Option<T> {
     done.iter().find_map(|u| match u {
