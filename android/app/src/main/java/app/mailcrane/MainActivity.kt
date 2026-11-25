@@ -13,7 +13,10 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
 import app.mailcrane.settings.ThemeMode
 import app.mailcrane.ui.MailHome
 import app.mailcrane.ui.account.ManualSetupScreen
@@ -22,12 +25,27 @@ import app.mailcrane.ui.theme.LocalDarkMessageBodies
 import app.mailcrane.ui.theme.LocalDarkTheme
 import app.mailcrane.ui.theme.MailcraneTheme
 import app.mailcrane.ui.theme.ThemeViewModel
+import app.mailcrane.work.SnoozeWaker
 import dagger.hilt.android.AndroidEntryPoint
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import javax.inject.Inject
 
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
+    @Inject lateinit var snoozeWaker: SnoozeWaker
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Snoozed messages come back when the app opens and on the minute while it's shown (M4-06).
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.RESUMED) {
+                while (true) {
+                    snoozeWaker.wake()
+                    delay(SNOOZE_CHECK_MS)
+                }
+            }
+        }
         setContent {
             val themeModel: ThemeViewModel = hiltViewModel()
             val appearance by themeModel.appearance.collectAsStateWithLifecycle()
@@ -63,3 +81,5 @@ class MainActivity : ComponentActivity() {
         }
     }
 }
+
+private const val SNOOZE_CHECK_MS = 60_000L

@@ -64,6 +64,17 @@ fn check(done: &Done) -> Result<(), ChangeError> {
     Err(ChangeError::Refused { transient })
 }
 
+/// A keyword is an atom (RFC 9051 §9: `flag-keyword = atom`, minus
+/// `atom-specials`, and `]` which `resp-specials` excludes too).
+pub(crate) fn is_keyword_atom(keyword: &str) -> bool {
+    !keyword.is_empty()
+        && keyword.len() <= 200
+        && keyword.bytes().all(|b| {
+            b.is_ascii_graphic()
+                && !matches!(b, b'(' | b')' | b'{' | b'%' | b'*' | b'"' | b'\\' | b']')
+        })
+}
+
 /// The fixed `+FLAGS.SILENT (...)` / `-FLAGS.SILENT (...)` arguments.
 /// `.SILENT` because the next sync reads flags anyway (RFC 9051 §6.4.6).
 fn flags_args(flag: SystemFlag, add: bool) -> (&'static str, &'static str) {
@@ -115,6 +126,43 @@ impl Session {
                     Arg::Built(&set),
                     Arg::Raw(op),
                     Arg::Raw(list),
+                ],
+            )
+            .await?;
+        check(&done)
+    }
+
+    /// `UID STORE <uids> +FLAGS.SILENT (<keyword>)`, or `-FLAGS.SILENT`
+    /// when `add` is false (RFC 9051 §6.4.6). `keyword` must be a valid
+    /// keyword atom (no `\`, spaces, brackets, quotes, `%`, `*` or control
+    /// characters); anything else is refused with `InvalidInput` before
+    /// sending.
+    pub async fn uid_store_keyword(
+        &mut self,
+        uids: &[u32],
+        keyword: &str,
+        add: bool,
+    ) -> Result<(), ChangeError> {
+        if !is_keyword_atom(keyword) {
+            return Err(ChangeError::Imap(ImapError::InvalidInput));
+        }
+        if uids.is_empty() {
+            return Ok(());
+        }
+        let set = uid_set(uids);
+        let op = if add {
+            "+FLAGS.SILENT"
+        } else {
+            "-FLAGS.SILENT"
+        };
+        let done = self
+            .run_command(
+                "UID",
+                &[
+                    Arg::Raw("STORE"),
+                    Arg::Built(&set),
+                    Arg::Raw(op),
+                    Arg::KeywordList(keyword),
                 ],
             )
             .await?;
@@ -197,6 +245,18 @@ mod tests {
                 text: String::new(),
             },
         }
+    }
+
+    #[test]
+    fn keyword_atoms() {
+        assert!(is_keyword_atom("$snoozed-until-20261125T0800Z"));
+        assert!(is_keyword_atom("$Label1"));
+        for bad in [
+            "", "\\Seen", "a b", "a(b", "a)b", "a{1}", "a%", "a*", "a\"b", "a]b", "a\r\nb", "é",
+        ] {
+            assert!(!is_keyword_atom(bad), "{bad:?}");
+        }
+        assert!(!is_keyword_atom(&"a".repeat(201)));
     }
 
     #[test]

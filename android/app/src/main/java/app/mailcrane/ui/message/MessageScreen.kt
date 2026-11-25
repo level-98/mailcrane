@@ -114,6 +114,7 @@ fun MessageScreen(
                         resources.getString(
                             when (effect.reason) {
                                 ActionRefusal.NO_ARCHIVE_FOLDER -> R.string.action_no_archive_folder
+                                ActionRefusal.CANNOT_SNOOZE -> R.string.snooze_no_message_id
                                 ActionRefusal.FAILED -> R.string.action_not_applied
                             },
                         ),
@@ -121,9 +122,22 @@ fun MessageScreen(
             }
         }
     }
+    var snoozing by rememberSaveable { mutableStateOf(false) }
+    val askNotifications = rememberNotificationPermissionRequest()
+    if (snoozing) {
+        SnoozeSheet(
+            onPick = {
+                snoozing = false
+                askNotifications()
+                viewModel.snooze(it)
+            },
+            onDismiss = { snoozing = false },
+        )
+    }
     MessageContent(
         state = state,
         onBack = onBack,
+        onUnsnooze = viewModel::unsnooze,
         snackbar = snackbar,
         folders = folders,
         onReply = { kind ->
@@ -137,6 +151,7 @@ fun MessageScreen(
                 onMarkUnread = viewModel::markUnread,
                 onToggleFlag = viewModel::toggleFlag,
                 onMove = viewModel::moveTo,
+                onSnooze = { snoozing = true },
             ),
         onRetry = viewModel::load,
         onLoadRemoteImages = viewModel::loadRemoteImages,
@@ -158,6 +173,7 @@ fun MessageContent(
     folders: List<FolderSummary> = emptyList(),
     actions: MessageActions = MessageActions(),
     onReply: (ReplyKind) -> Unit = {},
+    onUnsnooze: () -> Unit = {},
 ) {
     Scaffold(
         snackbarHost = { SnackbarHost(snackbar) },
@@ -197,7 +213,7 @@ fun MessageContent(
                         }
                     }
                 is MessageState.Ready ->
-                    Message(state, onLoadRemoteImages, inlinePart, onOpenLink)
+                    Message(state, onLoadRemoteImages, inlinePart, onOpenLink, onUnsnooze)
             }
         }
     }
@@ -209,10 +225,12 @@ private fun Message(
     onLoadRemoteImages: () -> Unit,
     inlinePart: (String) -> InlinePart?,
     onOpenLink: (Uri) -> Unit,
+    onUnsnooze: () -> Unit,
 ) {
     val message = state.message
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
         Headers(message)
+        state.snooze?.let { SnoozedBanner(it, onUnsnooze) }
         val trackers = (message.body as? MessageBody.Html)?.trackers.orEmpty()
         if (trackers.isNotEmpty()) TrackersIndicator(trackers)
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)

@@ -5,6 +5,8 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <!-- To send the outbox when the network comes back (M2-06). -->
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- To say when a snoozed message comes back (M4-06). Asked for when the user first snoozes. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <application
         android:name=".MailcraneApplication"
