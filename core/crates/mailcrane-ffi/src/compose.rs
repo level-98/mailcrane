@@ -470,14 +470,18 @@ impl From<core::SendError> for SendFailure {
 /// draft's account in the database at `db_path`.
 #[uniffi::export(async_runtime = "tokio")]
 pub async fn send(db_path: String, draft: ComposeDraft) -> Result<SendResult, SendFailure> {
-    let secrets = secrets::secret_store().map_err(|_| SendFailure::NotReady)?;
-    send_with(
-        &db_path,
-        secrets.as_ref(),
-        draft,
-        &core::SendOptions::default(),
-    )
+    crate::worker::on_worker_thread(move || async move {
+        let secrets = secrets::secret_store().map_err(|_| SendFailure::NotReady)?;
+        send_with(
+            &db_path,
+            secrets.as_ref(),
+            draft,
+            &core::SendOptions::default(),
+        )
+        .await
+    })
     .await
+    .unwrap_or(Err(SendFailure::NotReady))
 }
 
 async fn send_with(

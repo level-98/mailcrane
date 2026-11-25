@@ -11,6 +11,8 @@ pub mod account;
 #[cfg(test)]
 mod accounts_tests;
 pub mod actions;
+#[cfg(target_os = "android")]
+mod android_tls;
 pub mod attachments;
 pub mod autoconfig;
 pub mod compose;
@@ -29,6 +31,7 @@ pub mod sync;
 pub mod threads;
 pub mod unsubscribe;
 pub mod widget;
+mod worker;
 
 /// The name of this crate.
 pub const CRATE_NAME: &str = env!("CARGO_PKG_NAME");

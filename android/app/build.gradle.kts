@@ -129,8 +129,33 @@ val buildRust by tasks.registering(Exec::class) {
     )
 }
 
+// The Kotlin component of rustls-platform-verifier must be the version the Rust crate expects,
+// or certificate checks fail at run time. Cargo.lock is the source of truth.
+val checkRustlsVerifierVersion by tasks.registering {
+    group = "verification"
+    description = "Checks the rustls-platform-verifier Android component matches Cargo.lock."
+    val lockFile = coreDir.file("Cargo.lock").asFile
+    val expected = libs.versions.rustlsPlatformVerifier.get()
+    inputs.file(lockFile)
+    doLast {
+        val lines = lockFile.readLines()
+        val at = lines.indexOfFirst { it.trim() == "name = \"rustls-platform-verifier-android\"" }
+        val locked =
+            lines
+                .drop(at + 1)
+                .firstOrNull { it.trim().startsWith("version = ") }
+                ?.substringAfter('"')
+                ?.substringBefore('"')
+        if (at < 0 || locked != expected) {
+            throw GradleException(
+                "rustlsPlatformVerifier in libs.versions.toml is $expected but core/Cargo.lock has $locked",
+            )
+        }
+    }
+}
+
 tasks.named("preBuild") {
-    dependsOn(buildRust)
+    dependsOn(buildRust, checkRustlsVerifierVersion)
 }
 
 // ktlint scans the source sets, which include the generated bindings.
@@ -148,6 +173,7 @@ ktlint {
 
 dependencies {
     implementation(platform(libs.androidx.compose.bom))
+    implementation(libs.rustls.platform.verifier)
     implementation(libs.androidx.compose.ui)
     implementation(libs.androidx.compose.ui.tooling.preview)
     debugImplementation(libs.androidx.compose.ui.tooling)

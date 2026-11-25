@@ -28,8 +28,14 @@ mailcrane-imap = { path = "../mailcrane-imap" }
 mailcrane-mime = { path = "../mailcrane-mime" }
 mailcrane-store = { path = "../mailcrane-store" }
 thiserror = "2.0.21"
-tokio = { version = "1.54.1", features = ["rt", "time"] }
+tokio = { version = "1.54.1", features = ["rt", "sync", "time"] }
 uniffi = { version = "0.32.2", features = ["tokio"] }
+
+# Android's certificate checks go through the JVM; the app hands the core its
+# Context once at start-up (`android_tls`).
+[target.'cfg(target_os = "android")'.dependencies]
+jni = "0.22.4"
+rustls-platform-verifier = "0.7.1"
 
 [dev-dependencies]
 tokio = { version = "1.54.1", features = ["macros", "rt-multi-thread", "time"] }

@@ -129,8 +129,12 @@ pub async fn discover_settings(
     email: String,
     dns: Option<Arc<dyn PlatformDns>>,
 ) -> Result<Vec<DiscoveredSettings>, DiscoverError> {
-    let found = core::discover(&email, &ForeignDns(dns)).await?;
-    Ok(found.into_iter().map(Into::into).collect())
+    crate::worker::on_worker_thread(move || async move {
+        let found = core::discover(&email, &ForeignDns(dns)).await?;
+        Ok(found.into_iter().map(Into::into).collect())
+    })
+    .await
+    .unwrap_or(Err(DiscoverError::Timeout))
 }
 
 #[cfg(test)]
