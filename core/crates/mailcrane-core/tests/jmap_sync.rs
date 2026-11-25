@@ -228,3 +228,94 @@ async fn bodies_are_downloaded_once() {
     j.fetch_body(message).await.expect("again");
     assert_eq!(s.server.requests().await.len(), before);
 }
+
+#[tokio::test]
+async fn queued_actions_reach_the_server() {
+    use mailcrane_core::actions::{apply_action, Action};
+    let s = setup().await;
+    let mut j = syncer(&s).await;
+    let inbox = j
+        .refresh_mailboxes()
+        .await
+        .expect("mailboxes")
+        .expect("inbox");
+    j.sync_folder(inbox).await.expect("sync");
+    let m2 = s
+        .store
+        .list_messages(inbox, 10, 0)
+        .expect("list")
+        .into_iter()
+        .find(|m| m.details.subject == "Subject m2")
+        .expect("m2")
+        .id;
+    apply_action(&s.store, &[m2], Action::MarkRead, 0, &NoListener).expect("mark read");
+    let report = j.replay_actions(0).await.expect("replay");
+    assert_eq!((report.done, report.failed, report.remaining), (1, 0, 0));
+    assert!(s
+        .server
+        .email_keywords("m2")
+        .expect("m2 on server")
+        .contains(&"$seen".to_string()));
+
+    // Delete moves it to Trash on the server.
+    apply_action(&s.store, &[m2], Action::Delete, 0, &NoListener).expect("delete");
+    let report = j.replay_actions(0).await.expect("replay");
+    assert_eq!(report.done, 1);
+    assert_eq!(
+        s.server.email_mailboxes("m2").expect("still on server"),
+        vec!["mb-trash".to_string()]
+    );
+}
+
+#[tokio::test]
+async fn sending_submits_and_files_the_message_in_sent() {
+    use mailcrane_core::compose::{send, ComposeDraft, SendOptions};
+    use mailcrane_core::secrets::{Secret, SecretKey, SecretStore};
+    use mailcrane_testkit::MemorySecretStore;
+    let s = setup().await;
+    let secrets = MemorySecretStore::new();
+    secrets
+        .put(
+            &SecretKey::account_password(s.account.0),
+            &Secret::from_string("pw".into()),
+        )
+        .expect("password");
+    let draft = ComposeDraft {
+        account_id: s.account,
+        to: vec!["Bob Example <bob@example.net>".into()],
+        cc: vec![],
+        bcc: vec!["dan@example.org".into()],
+        subject: "Over JMAP".into(),
+        body_text: "Hello Bob\n".into(),
+        in_reply_to: None,
+        references: vec![],
+        attachments: Vec::new(),
+        forward_attachments_of: None,
+        rich: None,
+    };
+    let options = SendOptions {
+        timeout: Duration::from_secs(10),
+        extra_root_certs: vec![s.server.root_cert_der().to_vec()],
+    };
+    send(&s.store, &secrets, &draft, &options)
+        .await
+        .expect("sent");
+    let submissions = s.server.submissions();
+    assert_eq!(submissions.len(), 1);
+    let sub = &submissions[0];
+    assert_eq!(sub.mail_from, "ana@example.org");
+    // Bcc is in the envelope, never in the message.
+    assert!(sub.rcpt_to.contains(&"dan@example.org".to_string()));
+    assert!(sub.rcpt_to.contains(&"bob@example.net".to_string()));
+    let raw = s
+        .server
+        .email_raw(&sub.email_id)
+        .expect("the message on the server");
+    assert!(!String::from_utf8_lossy(&raw)
+        .to_ascii_lowercase()
+        .contains("bcc:"));
+    assert_eq!(
+        s.server.email_mailboxes(&sub.email_id).expect("filed"),
+        vec!["mb-sent".to_string()]
+    );
+}

@@ -9,7 +9,7 @@ use mailcrane_store::Protocol;
 impl SyncEngine {
     /// Runs `job` for a JMAP account and threads what it stored; `None` if
     /// the account speaks IMAP (the caller then does the IMAP work).
-    pub(super) fn run_jmap<T>(
+    pub(crate) fn run_jmap<T>(
         &self,
         account: AccountId,
         job: impl for<'a> FnOnce(&'a mut JmapSyncer<'_>) -> SyncFuture<'a, T>,

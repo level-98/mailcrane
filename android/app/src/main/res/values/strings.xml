@@ -479,4 +479,11 @@
     <string name="settings_notifications_blocked">Notifications are turned off for Mailcrane in your phone’s settings</string>
     <string name="settings_always_on">Always-on sync</string>
     <string name="settings_always_on_summary">Notify within a minute of new mail by keeping a connection open. Uses more battery and shows a permanent notification. When off, Mailcrane checks about every 15 minutes.</string>
+    <!-- JMAP accounts (M3-04) -->
+    <string name="setup_section_type">Type of account</string>
+    <string name="setup_type_imap">IMAP</string>
+    <string name="setup_type_jmap">JMAP</string>
+    <string name="setup_section_jmap">JMAP server</string>
+    <string name="setup_jmap_server">Server</string>
+    <string name="setup_jmap_server_hint">Your provider’s domain (such as example.org) or its JMAP session URL. Use an app password if your provider has them.</string>
 </resources>

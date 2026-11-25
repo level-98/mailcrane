@@ -172,6 +172,13 @@ impl SyncEngine {
         if ops == 0 && drafts == 0 {
             return Ok(0);
         }
+        // JMAP accounts (M3-04): actions only. Drafts stay on this device and
+        // snoozes are local until JMAP gets its own way to share them.
+        if let Some(r) = self.run_jmap(account, |s| {
+            Box::pin(async move { s.replay_actions(now()).await.map(|r| r.remaining) })
+        }) {
+            return r.map(|n| u32::try_from(n).unwrap_or(u32::MAX));
+        }
         let remaining = self.with_session(account, |store, session, listener| {
             Box::pin(async move {
                 let replayed = actions::replay(store, session, listener, account, now()).await?;
