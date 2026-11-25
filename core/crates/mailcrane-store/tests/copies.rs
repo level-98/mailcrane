@@ -127,7 +127,8 @@ fn ids(list: &[MessageHeader]) -> Vec<MessageId> {
 
 fn search(m: &Mailbox, folder: Option<FolderId>, limit: u32) -> Result<Vec<MessageId>, StoreError> {
     Ok(ids(&m.store.search_messages(&SearchFilter {
-        account: m.account,
+        account: Some(m.account),
+        account_name: None,
         folder,
         folder_name: None,
         fts: None,

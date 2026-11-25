@@ -209,6 +209,38 @@ fn each_account_has_its_own_sync_lock() {
 }
 
 #[test]
+fn searching_every_account_names_each_rows_account() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("s.db").to_string_lossy().into_owned();
+    let store = Store::open(&path).expect("store");
+    let a = account(&store, "a@example.org");
+    let b = account(&store, "b@example.net");
+    let ia = folder(&store, a, "INBOX", Some(FolderRole::Inbox));
+    let ib = folder(&store, b, "INBOX", Some(FolderRole::Inbox));
+    message(&store, ia, 1, 100, false);
+    message(&store, ib, 1, 200, false);
+    drop(store);
+    // A chosen colour shows in the results; the other account stays automatic.
+    let chosen = (account_color(a.0) + 3) % 8;
+    set_account_color(path.clone(), a.0, Some(chosen)).expect("colour");
+    let all =
+        crate::search::search_all_accounts(path.clone(), "is:unread".into(), 50).expect("all");
+    assert_eq!(
+        all.iter()
+            .map(|m| (m.account_id, m.account_color))
+            .collect::<Vec<_>>(),
+        [(b.0, account_color(b.0)), (a.0, chosen)]
+    );
+    let only_b =
+        crate::search::search_all_accounts(path, "is:unread account:example.net".into(), 50)
+            .expect("b");
+    assert_eq!(
+        only_b.iter().map(|m| m.account_id).collect::<Vec<_>>(),
+        [b.0]
+    );
+}
+
+#[test]
 fn a_chosen_account_color_reaches_every_list_and_can_be_reset() {
     let dir = tempfile::tempdir().expect("tempdir");
     let path = dir.path().join("c.db").to_string_lossy().into_owned();

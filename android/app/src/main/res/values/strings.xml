@@ -453,6 +453,21 @@
     <string name="search_hint">Search mail</string>
     <string name="search_recent">Recent searches</string>
     <string name="search_clear_recent">Clear</string>
+    <string name="search_chip_from">From</string>
+    <string name="search_chip_from_value">From: %1$s</string>
+    <string name="search_chip_attachment">Has attachment</string>
+    <string name="search_chip_unread">Unread</string>
+    <string name="search_chip_flagged">Flagged</string>
+    <string name="search_chip_date">Date</string>
+    <string name="search_chip_date_range">%1$s – %2$s</string>
+    <string name="search_chip_date_from">From %1$s</string>
+    <string name="search_chip_date_until">Until %1$s</string>
+    <string name="search_chip_account">Account</string>
+    <string name="search_chip_all_accounts">All accounts</string>
+    <string name="search_date_title">Dates to search</string>
+    <string name="search_date_ok">Search</string>
+    <string name="search_date_clear">Clear</string>
+    <string name="search_date_cancel">Cancel</string>
     <!-- App lock (M5-03) -->
     <string name="app_lock_header">Security</string>
     <string name="app_lock_title">App lock</string>
