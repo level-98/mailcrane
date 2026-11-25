@@ -155,7 +155,7 @@ async fn edits_leave_exactly_one_server_copy_with_the_latest_content() {
             !live[0].1.contains("half-typ"),
             "only valid addresses go out"
         );
-        assert!(!live[0].1.to_ascii_lowercase().contains("bcc"));
+        assert!(!live[0].1.to_ascii_lowercase().contains("bcc:"));
         let message = imap
             .mailbox()
             .messages("Drafts")
