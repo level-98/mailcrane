@@ -1,0 +1,15 @@
+# LF everywhere, so `cargo fmt --check` and the tests behave the same on a
+# Windows checkout as on Linux and macOS.
+* text=auto eol=lf
+
+# Mail and IMAP wire data is CRLF by definition (RFC 5322 §2.1, RFC 9051 §2.2).
+# Keep these bytes exactly as committed.
+tests/fixtures/** -text
+# The bundled ISPDB snapshot is kept byte-identical to upstream (ADR 0003).
+core/crates/mailcrane-core/data/ispdb/** -text
+
+# Windows batch files need CRLF.
+*.bat text eol=crlf
+
+*.png binary
+*.jar binary
