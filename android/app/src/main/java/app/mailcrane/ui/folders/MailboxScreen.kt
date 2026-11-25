@@ -180,6 +180,7 @@ fun MailboxScreen(
                         folderId = selected.id,
                         onOpenMessage = { openMessage = it },
                         onBack = { showSearch = false },
+                        accounts = accounts,
                     )
                     return
                 }
@@ -262,6 +263,7 @@ fun MailboxScreen(
                             folderId = selected.id,
                             onOpenMessage = { openMessage = it },
                             onBack = { showSearch = false },
+                            accounts = accounts,
                         )
                     layout != MailLayout.ONE_PANE && thread != null ->
                         ConversationScreen(

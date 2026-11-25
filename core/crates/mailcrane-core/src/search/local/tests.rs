@@ -209,3 +209,53 @@ fn fifty_thousand_messages_search_fast() {
     assert_eq!(found.len(), 100);
     assert!(took.as_millis() < 200, "took {took:?}");
 }
+
+#[test]
+fn every_account_is_searched_and_account_narrows_it() {
+    let f = fixture();
+    let other = f
+        .store
+        .insert_account(&NewAccount {
+            display_name: "Ann Work".into(),
+            email: "ann@example.net".into(),
+            imap_host: "imap.example.net".into(),
+            imap_port: 993,
+            imap_security: Security::Tls,
+            smtp_host: "smtp.example.net".into(),
+            smtp_port: 465,
+            smtp_security: Security::Tls,
+            username: "ann".into(),
+        })
+        .expect("account");
+    let other_inbox = f
+        .store
+        .upsert_folder(&NewFolder {
+            account_id: other,
+            remote_name: "INBOX".into(),
+            display_name: "INBOX".into(),
+            delimiter: Some("/".into()),
+            role: None,
+            uidvalidity: Some(1),
+            uidnext: Some(1),
+            highestmodseq: None,
+            is_subscribed: true,
+        })
+        .expect("inbox");
+    add(&f, f.inbox, 1, "lunch at home", "a@example.com", 100);
+    add(&f, other_inbox, 1, "lunch at work", "b@example.com", 200);
+    let all = |query: &str| -> Vec<String> {
+        local_search_all(&f.store, &parse_query(query), 100)
+            .expect("search")
+            .into_iter()
+            .map(|m| m.details.subject)
+            .collect()
+    };
+    assert_eq!(all("lunch"), ["lunch at work", "lunch at home"]);
+    assert_eq!(all("lunch account:EXAMPLE.NET"), ["lunch at work"]);
+    assert_eq!(all("lunch account:\"ann work\""), ["lunch at work"]);
+    assert_eq!(all("account:me@example.org"), ["lunch at home"]);
+    assert!(all("lunch account:nobody").is_empty());
+    // One account's search stays in that account, and `account:` narrows it further.
+    assert_eq!(subjects(&f, "lunch"), ["lunch at home"]);
+    assert!(subjects(&f, "lunch account:example.net").is_empty());
+}

@@ -77,6 +77,38 @@ interface MailboxCore {
         query: String,
     ): Int
 
+    /** Searches the stored mail of every account (M4-21); each row names its account. */
+    suspend fun searchAllAccounts(
+        query: String,
+        limit: Int,
+    ): List<MessageSummary> = emptyList()
+
+    /** The filters [query] uses, for the search chips (M4-21). Pure and quick: no I/O. */
+    fun searchFilters(query: String): SearchFilters = NO_FILTERS
+
+    /** [query] with [flag] turned on or off. */
+    fun searchWithFlag(
+        query: String,
+        flag: SearchFlag,
+        on: Boolean,
+    ): String = query
+
+    /** [query] without its `from:` terms. */
+    fun searchWithoutFrom(query: String): String = query
+
+    /** [query] limited to days [afterDay] (inclusive) to [beforeDay] (exclusive), days since 1970-01-01. */
+    fun searchWithDates(
+        query: String,
+        afterDay: Long?,
+        beforeDay: Long?,
+    ): String = query
+
+    /** [query] limited to accounts matching [account], or every account with null. */
+    fun searchWithAccount(
+        query: String,
+        account: String?,
+    ): String = query
+
     /**
      * Wakes every snooze that is due and starts moving those messages back; returns them, once each,
      * for a notification. @throws SnoozeFailure
@@ -121,6 +153,9 @@ interface MailboxCore {
 
 /** The folder id the apps use for the Unified Inbox, every account's inbox together (M4-01). */
 const val UNIFIED_FOLDER_ID = -1L
+
+/** A query with no filters. */
+val NO_FILTERS = SearchFilters(emptyList(), false, false, false, null, null, null)
 
 /** How long Undo is offered after archiving or deleting with a swipe. */
 const val UNDO_WINDOW_MS = 5_000L
@@ -324,6 +359,32 @@ class UniffiMailboxCore(
         folderId: Long,
         query: String,
     ): Int = withContext(io) { engine.searchServer(folderId, query).toInt() }
+
+    override suspend fun searchAllAccounts(
+        query: String,
+        limit: Int,
+    ): List<MessageSummary> = withContext(io) { searchAllAccounts(dbPath, query, limit.coerceAtLeast(0).toUInt()) }
+
+    override fun searchFilters(query: String): SearchFilters = app.mailcrane.core.searchFilters(query)
+
+    override fun searchWithFlag(
+        query: String,
+        flag: SearchFlag,
+        on: Boolean,
+    ): String = app.mailcrane.core.searchWithFlag(query, flag, on)
+
+    override fun searchWithoutFrom(query: String): String = app.mailcrane.core.searchWithoutFrom(query)
+
+    override fun searchWithDates(
+        query: String,
+        afterDay: Long?,
+        beforeDay: Long?,
+    ): String = app.mailcrane.core.searchWithDates(query, afterDay, beforeDay)
+
+    override fun searchWithAccount(
+        query: String,
+        account: String?,
+    ): String = app.mailcrane.core.searchWithAccount(query, account)
 
     // Replays outlive the screen that started them (an archived message's screen closes at once).
     private val background = CoroutineScope(SupervisorJob() + io)

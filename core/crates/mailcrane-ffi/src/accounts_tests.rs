@@ -204,3 +204,32 @@ fn each_account_has_its_own_sync_lock() {
     assert!(two.try_lock().is_ok());
     assert!(again.try_lock().is_err());
 }
+
+#[test]
+fn searching_every_account_names_each_rows_account() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("s.db").to_string_lossy().into_owned();
+    let store = Store::open(&path).expect("store");
+    let a = account(&store, "a@example.org");
+    let b = account(&store, "b@example.net");
+    let ia = folder(&store, a, "INBOX", Some(FolderRole::Inbox));
+    let ib = folder(&store, b, "INBOX", Some(FolderRole::Inbox));
+    message(&store, ia, 1, 100, false);
+    message(&store, ib, 1, 200, false);
+    drop(store);
+    let all =
+        crate::search::search_all_accounts(path.clone(), "is:unread".into(), 50).expect("all");
+    assert_eq!(
+        all.iter()
+            .map(|m| (m.account_id, m.account_color))
+            .collect::<Vec<_>>(),
+        [(b.0, account_color(b.0)), (a.0, account_color(a.0))]
+    );
+    let only_b =
+        crate::search::search_all_accounts(path, "is:unread account:example.net".into(), 50)
+            .expect("b");
+    assert_eq!(
+        only_b.iter().map(|m| m.account_id).collect::<Vec<_>>(),
+        [b.0]
+    );
+}

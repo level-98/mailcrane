@@ -26,6 +26,8 @@ pub struct SearchQuery {
     pub before: Option<i64>,
     /// `in:<folder>`.
     pub folder: Option<String>,
+    /// `account:<address or name>` (M4-21).
+    pub account: Option<String>,
 }
 
 impl SearchQuery {
@@ -112,6 +114,106 @@ fn parse_date(text: &str) -> Option<i64> {
     Some(days * 86_400)
 }
 
+/// `days` since 1970-01-01 as `YYYY-MM-DD`, or `None` outside years
+/// 1–9999 (what [`parse_date`] accepts).
+pub fn format_day(days: i64) -> Option<String> {
+    // Civil from days (Howard Hinnant's algorithm).
+    let z = days.checked_add(719_468)?;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = yoe.checked_add(era.checked_mul(400)?)? + i64::from(month <= 2);
+    if !(1..=9999).contains(&year) {
+        return None;
+    }
+    Some(format!("{year:04}-{month:02}-{day:02}"))
+}
+
+/// A filter the search chips can add or remove (M4-21).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Filter {
+    /// `from:<value>`.
+    From,
+    /// `has:attachment`.
+    HasAttachment,
+    /// `is:unread`.
+    Unread,
+    /// `is:flagged`.
+    Flagged,
+    /// `after:<YYYY-MM-DD>`.
+    After,
+    /// `before:<YYYY-MM-DD>`.
+    Before,
+    /// `account:<value>`.
+    Account,
+}
+
+impl Filter {
+    /// The key, and for on/off filters the one value they take.
+    fn key_value(self) -> (&'static str, Option<&'static str>) {
+        match self {
+            Filter::From => ("from", None),
+            Filter::HasAttachment => ("has", Some("attachment")),
+            Filter::Unread => ("is", Some("unread")),
+            Filter::Flagged => ("is", Some("flagged")),
+            Filter::After => ("after", None),
+            Filter::Before => ("before", None),
+            Filter::Account => ("account", None),
+        }
+    }
+
+    /// Whether `token` is this filter (an empty `from:` being typed counts).
+    fn matches(self, token: &str) -> bool {
+        let Some((key, value)) = token.split_once(':') else {
+            return false;
+        };
+        let (want_key, want_value) = self.key_value();
+        key.eq_ignore_ascii_case(want_key)
+            && want_value.map_or(true, |w| value.trim().eq_ignore_ascii_case(w))
+    }
+}
+
+/// A token written back as query text, quoted where it has spaces.
+fn render(token: &str, quoted: bool) -> String {
+    match token.split_once(':') {
+        Some((key, value)) if quoted || value.chars().any(char::is_whitespace) => {
+            format!("{key}:\"{value}\"")
+        }
+        _ if quoted => format!("\"{token}\""),
+        _ => token.to_owned(),
+    }
+}
+
+/// `text` with every `filter` term removed, then `filter` added with
+/// `value` when it is `Some` (for on/off filters any `Some` turns it on).
+/// Everything else in `text` is kept, in order. A value is cleaned of
+/// quotes and control characters; an empty value adds nothing.
+pub fn with_filter(text: &str, filter: Filter, value: Option<&str>) -> String {
+    let mut parts: Vec<String> = tokens(text)
+        .into_iter()
+        .filter(|(token, _)| !filter.matches(token))
+        .map(|(token, quoted)| render(&token, quoted))
+        .collect();
+    if let Some(value) = value {
+        let (key, fixed) = filter.key_value();
+        let clean: String = fixed
+            .unwrap_or(value)
+            .chars()
+            .filter(|c| *c != '"' && !c.is_control())
+            .take(MAX_QUERY_CHARS)
+            .collect();
+        let clean = clean.trim();
+        if !clean.is_empty() {
+            parts.push(render(&format!("{key}:{clean}"), false));
+        }
+    }
+    parts.join(" ")
+}
+
 /// Parses `text`. See [`SearchQuery`] for what's understood.
 pub fn parse_query(text: &str) -> SearchQuery {
     let mut q = SearchQuery::default();
@@ -142,6 +244,10 @@ pub fn parse_query(text: &str) -> SearchQuery {
             }
             ("in", v) => {
                 q.folder = Some(v.to_owned());
+                true
+            }
+            ("account", v) => {
+                q.account = Some(v.to_owned());
                 true
             }
             ("has", v) if v.eq_ignore_ascii_case("attachment") => {
@@ -217,6 +323,74 @@ mod tests {
         assert_eq!(parse_query("a\u{0}b").words, ["ab"]);
         let huge = "word ".repeat(10_000);
         assert!(parse_query(&huge).words.len() <= MAX_TERMS);
+    }
+
+    #[test]
+    fn account_filter_is_understood() {
+        let q = parse_query("account:work@example.org lunch account:\"Ann Home\"");
+        assert_eq!(q.account.as_deref(), Some("Ann Home"), "the last one wins");
+        assert_eq!(q.words, ["lunch"]);
+    }
+
+    #[test]
+    fn filters_are_added_replaced_and_removed_keeping_the_rest() {
+        let text = r#"lunch from:ana "big plan" is:unread"#;
+        let added = with_filter(text, Filter::HasAttachment, Some(""));
+        assert_eq!(
+            added,
+            r#"lunch from:ana "big plan" is:unread has:attachment"#
+        );
+        // Turning it on twice leaves one.
+        assert_eq!(with_filter(&added, Filter::HasAttachment, Some("")), added);
+        // Removing one `is:` keeps the other.
+        let flagged = with_filter(&added, Filter::Flagged, Some(""));
+        let unflagged = with_filter(&flagged, Filter::Unread, None);
+        assert_eq!(
+            unflagged,
+            r#"lunch from:ana "big plan" has:attachment is:flagged"#
+        );
+        // Values replace, and get quotes when they have spaces.
+        let account = with_filter(text, Filter::Account, Some("Ann Home"));
+        assert_eq!(
+            account,
+            r#"lunch from:ana "big plan" is:unread account:"Ann Home""#
+        );
+        assert_eq!(parse_query(&account).account.as_deref(), Some("Ann Home"));
+        let other = with_filter(&account, Filter::Account, Some("bob@example.org"));
+        assert!(
+            other.ends_with("is:unread account:bob@example.org"),
+            "{other}"
+        );
+        // Removing `from:` also removes one still being typed.
+        assert_eq!(with_filter("from:ana x from:", Filter::From, None), "x");
+        // Quoted values survive a rewrite.
+        assert_eq!(
+            with_filter(r#"from:"Ana Lopez" x"#, Filter::Unread, Some("")),
+            r#"from:"Ana Lopez" x is:unread"#
+        );
+    }
+
+    #[test]
+    fn hostile_filter_values_cannot_inject_terms() {
+        let text = with_filter("x", Filter::Account, Some("a\" is:flagged \"b\n"));
+        let q = parse_query(&text);
+        assert!(!q.flagged, "{text}");
+        assert_eq!(q.account.as_deref(), Some("a is:flagged b"));
+        assert_eq!(with_filter("x", Filter::Account, Some(" \" ")), "x");
+    }
+
+    #[test]
+    fn days_format_and_round_trip() {
+        assert_eq!(format_day(0).as_deref(), Some("1970-01-01"));
+        assert_eq!(format_day(20_757).as_deref(), Some("2026-10-31"));
+        for days in [-719_162, -1, 0, 59, 10_956, 20_758, 2_932_896] {
+            let text = format_day(days).expect("in range");
+            assert_eq!(parse_date(&text), Some(days * 86_400), "{text}");
+        }
+        assert_eq!(format_day(-719_163), None, "year 0");
+        assert_eq!(format_day(2_932_897), None, "year 10000");
+        assert_eq!(format_day(i64::MAX), None);
+        assert_eq!(format_day(i64::MIN), None);
     }
 
     #[test]

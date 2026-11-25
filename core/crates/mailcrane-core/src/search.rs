@@ -8,5 +8,5 @@
 mod local;
 mod query;
 
-pub use local::{fts_expression, local_search};
-pub use query::{parse_query, SearchQuery};
+pub use local::{fts_expression, local_search, local_search_all};
+pub use query::{format_day, parse_query, with_filter, Filter, SearchQuery};
