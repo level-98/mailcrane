@@ -447,3 +447,84 @@ fn new_mail_is_notified_once_through_background_sync() {
     assert_eq!(engine.take_new_mail(), Ok(vec![]));
     let _ = std::fs::remove_file(&path);
 }
+
+#[test]
+fn a_jmap_account_syncs_through_the_same_calls() {
+    use mailcrane_testkit::{FakeEmail, FakeJmap};
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(1)
+        .enable_all()
+        .build()
+        .expect("runtime");
+    let server = runtime.block_on(async {
+        FakeJmap::builder()
+            .user("ana@example.org", "pw")
+            .email(FakeEmail {
+                id: "m1".into(),
+                mailbox_id: "mb-inbox".into(),
+                received_at: "2026-11-25T08:00:00Z".into(),
+                subject: "Hello over JMAP".into(),
+                from: "bob@example.net".into(),
+                seen: false,
+                raw: "From: bob@example.net\r\nSubject: Hello over JMAP\r\n\r\nJMAP body\r\n"
+                    .into(),
+            })
+            .start()
+            .await
+            .expect("fake jmap")
+    });
+    let path = std::env::temp_dir().join(format!("mailcrane-ffi-jmap-{}.db", std::process::id()));
+    let _ = std::fs::remove_file(&path);
+    let store = Store::open(&path).expect("store");
+    let account = store
+        .insert_jmap_account(
+            &NewAccount {
+                display_name: "Ana".into(),
+                email: "ana@example.org".into(),
+                imap_host: String::new(),
+                imap_port: 0,
+                imap_security: Security::Tls,
+                smtp_host: String::new(),
+                smtp_port: 0,
+                smtp_security: Security::Tls,
+                username: "ana@example.org".into(),
+            },
+            &server.base_url(),
+        )
+        .expect("account");
+    drop(store);
+    let platform = Arc::new(Platform::default());
+    platform
+        .put(
+            SecretKey::account_password(account.0).as_str().to_owned(),
+            b"pw".to_vec(),
+        )
+        .expect("password");
+    install_secret_store(platform);
+    let engine = SyncEngine::new(
+        path.to_string_lossy().into_owned(),
+        Arc::new(Collect::default()),
+    );
+    *engine.extra_root_cert.lock().expect("lock") = Some(server.root_cert_der().to_vec());
+
+    let inbox = engine
+        .refresh_folders(account.0)
+        .expect("folders")
+        .expect("an inbox");
+    assert_eq!(engine.sync_folder(inbox), Ok(1));
+    let store = Store::open(&path).expect("store");
+    let message = store
+        .list_messages(FolderId(inbox), 10, 0)
+        .expect("list")
+        .pop()
+        .expect("the message");
+    assert_eq!(message.details.subject, "Hello over JMAP");
+    drop(store);
+    assert_eq!(engine.fetch_body(message.id.0), Ok(()));
+    let store = Store::open(&path).expect("store");
+    let body = store.get_body(message.id).expect("read").expect("stored");
+    assert!(String::from_utf8_lossy(&body).contains("JMAP body"));
+    // Live updates are a no-op for JMAP (push comes later), not an error.
+    assert_eq!(engine.start_live_updates(account.0), Ok(()));
+    let _ = std::fs::remove_file(&path);
+}

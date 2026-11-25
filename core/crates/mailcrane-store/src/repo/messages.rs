@@ -94,7 +94,15 @@ impl Store {
     /// Inserts the header or, if `(folder, uid)` exists, updates it. The
     /// cached-body state is kept.
     pub fn upsert_message_header(&self, m: &NewMessageHeader) -> Result<MessageId, StoreError> {
-        let id: i64 = self.conn.query_row(
+        Self::upsert_header_in(&self.conn, m)
+    }
+
+    /// [`Self::upsert_message_header`] on a given connection or transaction.
+    pub(crate) fn upsert_header_in(
+        conn: &rusqlite::Connection,
+        m: &NewMessageHeader,
+    ) -> Result<MessageId, StoreError> {
+        let id: i64 = conn.query_row(
             "INSERT INTO messages (folder_id, uid, message_id_header, in_reply_to, \
              references_json, thread_id, subject, from_name, from_addr, to_json, cc_json, date, \
              internal_date, size, seen, flagged, answered, draft, deleted, keywords_json, \

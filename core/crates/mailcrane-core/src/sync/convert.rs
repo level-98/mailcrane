@@ -38,7 +38,7 @@ fn decode_date(raw: &[u8]) -> Option<i64> {
     mailcrane_mime::parse_message(&line).ok()?.date
 }
 
-fn json_string(text: &str, out: &mut String) {
+pub(crate) fn json_string(text: &str, out: &mut String) {
     out.push('"');
     for c in text.chars() {
         match c {
@@ -51,7 +51,7 @@ fn json_string(text: &str, out: &mut String) {
     out.push('"');
 }
 
-fn json_strings(items: &[String]) -> String {
+pub(crate) fn json_strings(items: &[String]) -> String {
     let mut out = String::from("[");
     for (i, item) in items.iter().enumerate() {
         if i > 0 {
@@ -193,6 +193,72 @@ pub(crate) fn header_row(folder: FolderId, data: &FetchData) -> Option<NewMessag
         has_attachments: data.has_attachment.unwrap_or(false),
         snippet: String::new(),
     })
+}
+
+/// `[{"name":..,"email":..}, ...]` from JMAP addresses (RFC 8621 §4.1.2.3),
+/// the same shape as [`json_addresses`] writes for IMAP.
+fn json_jmap_addresses(list: &[mailcrane_jmap::JmapAddress]) -> String {
+    let mut out = String::from("[");
+    for (i, a) in list.iter().enumerate() {
+        if i > 0 {
+            out.push(',');
+        }
+        out.push_str("{\"name\":");
+        match a.name.as_deref().map(str::trim).filter(|n| !n.is_empty()) {
+            Some(name) => json_string(name, &mut out),
+            None => out.push_str("null"),
+        }
+        out.push_str(",\"email\":");
+        json_string(&a.email, &mut out);
+        out.push('}');
+    }
+    out.push(']');
+    out
+}
+
+/// The store row for a JMAP email in `folder` (RFC 8621 §4.1). `uid` is
+/// filled in by the store. Keywords map to flags the way IMAP flags do
+/// (RFC 8621 §4.1.1: `$seen` is `\Seen` and so on).
+pub(crate) fn jmap_header_row(folder: FolderId, e: &mailcrane_jmap::JmapEmail) -> NewMessageHeader {
+    let mut f = Flags::default();
+    let mut keywords = Vec::new();
+    for k in &e.keywords {
+        match k.to_ascii_lowercase().as_str() {
+            "$seen" => f.seen = true,
+            "$flagged" => f.flagged = true,
+            "$answered" => f.answered = true,
+            "$draft" => f.draft = true,
+            _ => keywords.push(k.clone()),
+        }
+    }
+    let from = e.from.first();
+    NewMessageHeader {
+        folder_id: folder,
+        uid: 0,
+        message_id_header: e.message_id.clone().filter(|m| !m.is_empty()),
+        in_reply_to: e.in_reply_to.clone().filter(|m| !m.is_empty()),
+        references_json: json_strings(&e.references),
+        thread_id: None,
+        subject: e.subject.chars().filter(|c| !c.is_control()).collect(),
+        from_name: from
+            .and_then(|a| a.name.clone())
+            .filter(|n| !n.trim().is_empty()),
+        from_addr: from.map(|a| a.email.clone()),
+        to_json: json_jmap_addresses(&e.to),
+        cc_json: json_jmap_addresses(&e.cc),
+        date: e.sent_at.unwrap_or(e.received_at),
+        internal_date: e.received_at,
+        size: i64::try_from(e.size).unwrap_or(i64::MAX),
+        flags: f,
+        keywords_json: json_strings(&keywords),
+        has_attachments: e.has_attachment,
+        snippet: e
+            .preview
+            .chars()
+            .filter(|c| !c.is_control())
+            .take(200)
+            .collect(),
+    }
 }
 
 #[cfg(test)]
