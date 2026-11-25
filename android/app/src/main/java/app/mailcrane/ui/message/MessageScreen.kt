@@ -116,6 +116,7 @@ fun MessageScreen(
                         resources.getString(
                             when (effect.reason) {
                                 ActionRefusal.NO_ARCHIVE_FOLDER -> R.string.action_no_archive_folder
+                                ActionRefusal.CANNOT_SNOOZE -> R.string.snooze_no_message_id
                                 ActionRefusal.FAILED -> R.string.action_not_applied
                             },
                         ),
@@ -131,9 +132,22 @@ fun MessageScreen(
             }
         }
     }
+    var snoozing by rememberSaveable { mutableStateOf(false) }
+    val askNotifications = rememberNotificationPermissionRequest()
+    if (snoozing) {
+        SnoozeSheet(
+            onPick = {
+                snoozing = false
+                askNotifications()
+                viewModel.snooze(it)
+            },
+            onDismiss = { snoozing = false },
+        )
+    }
     MessageContent(
         state = state,
         onBack = onBack,
+        onUnsnooze = viewModel::unsnooze,
         snackbar = snackbar,
         folders = folders,
         onReply = { kind ->
@@ -147,6 +161,7 @@ fun MessageScreen(
                 onMarkUnread = viewModel::markUnread,
                 onToggleFlag = viewModel::toggleFlag,
                 onMove = viewModel::moveTo,
+                onSnooze = { snoozing = true },
             ),
         onUnsubscribe = viewModel::unsubscribe,
         onRetry = viewModel::load,
@@ -170,6 +185,7 @@ fun MessageContent(
     actions: MessageActions = MessageActions(),
     onReply: (ReplyKind) -> Unit = {},
     onUnsubscribe: () -> Unit = {},
+    onUnsnooze: () -> Unit = {},
 ) {
     Scaffold(
         snackbarHost = { SnackbarHost(snackbar) },
@@ -209,7 +225,7 @@ fun MessageContent(
                         }
                     }
                 is MessageState.Ready ->
-                    Message(state, onLoadRemoteImages, inlinePart, onOpenLink, onUnsubscribe)
+                    Message(state, onLoadRemoteImages, inlinePart, onOpenLink, onUnsubscribe, onUnsnooze)
             }
         }
     }
@@ -222,11 +238,13 @@ private fun Message(
     inlinePart: (String) -> InlinePart?,
     onOpenLink: (Uri) -> Unit,
     onUnsubscribe: () -> Unit,
+    onUnsnooze: () -> Unit,
 ) {
     val message = state.message
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
         Headers(message)
         state.unsubscribe?.let { UnsubscribeAction(it, state.unsubscribing, onUnsubscribe) }
+        state.snooze?.let { SnoozedBanner(it, onUnsnooze) }
         val trackers = (message.body as? MessageBody.Html)?.trackers.orEmpty()
         if (trackers.isNotEmpty()) TrackersIndicator(trackers)
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)

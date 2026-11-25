@@ -8,6 +8,7 @@ use crate::session::{expect_ok, Session};
 
 /// What `SELECT` told us about a folder (RFC 9051 §6.3.2).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct SelectInfo {
     /// Number of messages.
     pub exists: u32,
@@ -19,6 +20,10 @@ pub struct SelectInfo {
     /// send one or said `NOMODSEQ` (§3.1.2.2): then mod-sequences cannot be
     /// used for this folder.
     pub highestmodseq: Option<u64>,
+    /// Whether new keywords can be stored permanently: `PERMANENTFLAGS`
+    /// lists `\*`, or the server sent no `PERMANENTFLAGS`, in which case all
+    /// flags can be changed permanently (RFC 9051 §7.1).
+    pub custom_keywords: bool,
 }
 
 /// The result of fetching headers for a set of UIDs.
@@ -45,6 +50,20 @@ fn code_number<T: std::str::FromStr>(done: &[Untagged], wanted: &str) -> Option<
                 },
             ..
         } if name.eq_ignore_ascii_case(wanted) => args.as_deref()?.trim().parse().ok(),
+        _ => None,
+    })
+}
+
+fn code_args<'a>(done: &'a [Untagged], wanted: &str) -> Option<&'a str> {
+    done.iter().find_map(|u| match u {
+        Untagged::Condition {
+            text:
+                crate::parser::RespText {
+                    code: Some(Code::Other { name, args }),
+                    ..
+                },
+            ..
+        } if name.eq_ignore_ascii_case(wanted) => Some(args.as_deref().unwrap_or_default()),
         _ => None,
     })
 }
@@ -81,11 +100,16 @@ pub(crate) fn select_info(untagged: &[Untagged]) -> Result<SelectInfo, ImapError
         code_number::<u64>(untagged, "HIGHESTMODSEQ")
             .filter(|m| *m > 0 && i64::try_from(*m).is_ok())
     };
+    let custom_keywords = code_args(untagged, "PERMANENTFLAGS").is_none_or(|args| {
+        args.split_whitespace()
+            .any(|f| f.trim_matches(['(', ')']) == "\\*")
+    });
     Ok(SelectInfo {
         exists,
         uidvalidity,
         uidnext,
         highestmodseq,
+        custom_keywords,
     })
 }
 
@@ -287,6 +311,35 @@ mod tests {
         assert_eq!(parse_internal_date("garbage"), None);
         assert_eq!(parse_internal_date("32-Jan-2026 00:00:00 +0000"), None);
         assert_eq!(parse_internal_date("01-Foo-2026 00:00:00 +0000"), None);
+    }
+
+    fn code(name: &str, args: Option<&str>) -> Untagged {
+        Untagged::Condition {
+            condition: crate::parser::Condition::Ok,
+            text: crate::parser::RespText {
+                code: Some(Code::Other {
+                    name: name.into(),
+                    args: args.map(Into::into),
+                }),
+                text: String::new(),
+            },
+        }
+    }
+
+    #[test]
+    fn permanentflags_decides_custom_keywords() {
+        let base = || vec![code("UIDVALIDITY", Some("7")), code("UIDNEXT", Some("9"))];
+        let with = |flags: &str| {
+            let mut u = base();
+            u.push(code("PERMANENTFLAGS", Some(flags)));
+            select_info(&u).expect("info").custom_keywords
+        };
+        assert!(with("(\\Seen \\Flagged \\*)"));
+        assert!(with("(\\*)"));
+        assert!(!with("(\\Seen \\Flagged \\Deleted)"));
+        assert!(!with("()"));
+        // Missing: every flag can be changed permanently (RFC 9051 §7.1).
+        assert!(select_info(&base()).expect("info").custom_keywords);
     }
 
     #[test]

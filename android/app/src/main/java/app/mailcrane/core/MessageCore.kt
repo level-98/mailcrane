@@ -40,6 +40,22 @@ interface MessageCore {
     suspend fun oneClickUnsubscribe(messageId: Long): Unit = throw UnsubscribeFailure.NotOffered()
 
     /**
+     * Snoozes the message until [wakeAt] (Unix seconds): it leaves its folder at once and moves to the
+     * Snoozed folder on the server in the background. A message already snoozed gets the new time.
+     * @throws SnoozeFailure
+     */
+    suspend fun snooze(
+        messageId: Long,
+        wakeAt: Long,
+    )
+
+    /** Brings a snoozed message back now, without marking it unread. @throws SnoozeFailure */
+    suspend fun unsnooze(messageId: Long)
+
+    /** The message's snooze, or null if it isn't snoozed. @throws SnoozeFailure */
+    suspend fun snoozeInfo(messageId: Long): SnoozeInfo?
+
+    /**
      * The inline image with Content-ID [contentId] from this message's stored body, or null.
      * Blocking: called on the web view's background thread.
      */

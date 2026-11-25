@@ -26,6 +26,9 @@ pub(crate) enum Arg<'a> {
     /// e.g. `(CHANGEDSINCE 42)`. Checked before sending: only letters,
     /// digits, space, `:`, `,`, `(` and `)` are allowed.
     Built(&'a str),
+    /// A flag keyword, sent as `(<keyword>)`. Checked before sending to be
+    /// a keyword atom (RFC 9051 §9).
+    KeywordList(&'a str),
     /// A string from data: sent as an atom, a quoted string or a literal,
     /// whichever fits.
     Str(&'a [u8]),
@@ -63,6 +66,14 @@ pub(crate) fn build(tag: String, name: &str, args: &[Arg<'_>]) -> Result<Command
                     return Err(ImapError::InvalidInput);
                 }
                 current.extend_from_slice(text.as_bytes());
+            }
+            Arg::KeywordList(keyword) => {
+                if !crate::store_cmds::is_keyword_atom(keyword) {
+                    return Err(ImapError::InvalidInput);
+                }
+                current.push(b'(');
+                current.extend_from_slice(keyword.as_bytes());
+                current.push(b')');
             }
             Arg::Str(bytes) => {
                 if let Some(literal) = push_string(bytes, &mut current)? {

@@ -38,6 +38,7 @@ fn every_table_and_index_exists() -> R {
             "outbox",
             "pending_op_messages",
             "pending_ops",
+            "snoozes",
             "threads"
         ]
     );
@@ -79,7 +80,7 @@ fn reopen_runs_no_migrations_and_keeps_data() -> R {
     let dir = tempfile::tempdir()?;
     let path = dir.path().join("m.db");
     let store = Store::open(&path)?;
-    assert_eq!(store.schema_version()?, 8);
+    assert_eq!(store.schema_version()?, 9);
     drop(store);
     let conn = Connection::open(&path)?;
     conn.execute(
@@ -90,7 +91,7 @@ fn reopen_runs_no_migrations_and_keeps_data() -> R {
     )?;
     drop(conn);
     let store = Store::open(&path)?;
-    assert_eq!(store.schema_version()?, 8);
+    assert_eq!(store.schema_version()?, 9);
     assert_eq!(store.list_accounts()?.len(), 1);
     Ok(())
 }

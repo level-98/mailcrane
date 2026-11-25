@@ -9,6 +9,8 @@ import app.mailcrane.core.MessageAction
 import app.mailcrane.core.MessageBody
 import app.mailcrane.core.MessageCore
 import app.mailcrane.core.MessageDetail
+import app.mailcrane.core.SnoozeFailure
+import app.mailcrane.core.SnoozeInfo
 import app.mailcrane.core.SyncErrorKind
 import app.mailcrane.core.SyncFailure
 import app.mailcrane.core.UnsubscribeFailure
@@ -82,6 +84,9 @@ enum class ActionRefusal {
     /** The account has no Archive folder. */
     NO_ARCHIVE_FOLDER,
 
+    /** The message has no Message-ID, so it can't be snoozed. */
+    CANNOT_SNOOZE,
+
     /** The message or folder is gone, or the database failed. */
     FAILED,
 }
@@ -98,6 +103,8 @@ sealed interface MessageState {
         val unsubscribe: UnsubscribeInfo? = null,
         /** A one-click unsubscribe request is running. */
         val unsubscribing: Boolean = false,
+        /** The message's snooze, if it is snoozed (M4-06). */
+        val snooze: SnoozeInfo? = null,
     ) : MessageState {
         /** Whether to offer "Load remote images". */
         val showRemoteBanner: Boolean
@@ -158,7 +165,13 @@ class MessageViewModel
                             core.fetchBody(messageId)
                             message = core.getMessage(messageId, remoteAllowed)
                         }
-                        _state.value = MessageState.Ready(message, remoteAllowed, core.unsubscribeOptions(messageId))
+                        _state.value =
+                            MessageState.Ready(
+                                message,
+                                remoteAllowed,
+                                unsubscribe = core.unsubscribeOptions(messageId),
+                                snooze = snoozeOf(),
+                            )
                         markRead(message)
                     } catch (e: SyncFailure.Failed) {
                         _state.value = MessageState.Failed(e.kind)
@@ -176,7 +189,13 @@ class MessageViewModel
                 viewModelScope.launch {
                     try {
                         val unsubscribe = (_state.value as? MessageState.Ready)?.unsubscribe
-                        _state.value = MessageState.Ready(core.getMessage(messageId, true), true, unsubscribe)
+                        _state.value =
+                            MessageState.Ready(
+                                core.getMessage(messageId, true),
+                                true,
+                                unsubscribe = unsubscribe,
+                                snooze = snoozeOf(),
+                            )
                     } catch (e: SyncFailure.Failed) {
                         _state.value = MessageState.Failed(e.kind)
                     }
@@ -243,6 +262,35 @@ class MessageViewModel
                 null -> {}
             }
         }
+
+        /** Snoozes the message until [wakeAt] (Unix seconds) and closes it: it leaves this folder. */
+        fun snooze(wakeAt: Long) =
+            snoozeAction {
+                core.snooze(messageId, wakeAt)
+            }
+
+        /** Brings a snoozed message back now (not marked unread) and closes it. */
+        fun unsnooze() = snoozeAction { core.unsnooze(messageId) }
+
+        private fun snoozeAction(block: suspend () -> Unit) {
+            viewModelScope.launch {
+                try {
+                    block()
+                    _effects.send(MessageEffect.Close)
+                } catch (e: SnoozeFailure) {
+                    val reason =
+                        if (e is SnoozeFailure.NoMessageId) ActionRefusal.CANNOT_SNOOZE else ActionRefusal.FAILED
+                    _effects.send(MessageEffect.ActionRefused(reason))
+                }
+            }
+        }
+
+        private suspend fun snoozeOf(): SnoozeInfo? =
+            try {
+                core.snoozeInfo(messageId)
+            } catch (_: SnoozeFailure) {
+                null
+            }
 
         /** Flags or unflags the message; the screen shows the new state at once. */
         fun toggleFlag() {

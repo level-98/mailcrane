@@ -14,6 +14,7 @@ pub use repo::{
     OutboxMessage, OutboxState, PendingOp, SaveSentCopy, ScheduleMode, SearchFilter, SentCopy,
     ServerCopy, SignatureSetting, MAX_SIGNATURE_BYTES,
 };
+pub use repo::{KeywordedMessage, NewSnooze, Snooze, SnoozeId, SnoozeState};
 
 use rusqlite::Connection;
 use std::path::Path;

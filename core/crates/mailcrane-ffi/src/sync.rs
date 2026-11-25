@@ -293,6 +293,15 @@ impl SyncEngine {
                     crate::actions::now(),
                 )
                 .await;
+                // And snoozes to carry out (M4-06).
+                let _ = mailcrane_core::snooze::sync_snoozes(
+                    &store,
+                    &mut session,
+                    &listener,
+                    account,
+                    crate::actions::now(),
+                )
+                .await;
             }
             // The syncer borrows the session; end that borrow before logout.
             let result = {

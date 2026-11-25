@@ -13,6 +13,7 @@ pub mod links;
 pub mod outbox;
 pub mod search;
 pub mod secrets;
+pub mod snooze;
 pub mod sync;
 pub mod unsubscribe;
 

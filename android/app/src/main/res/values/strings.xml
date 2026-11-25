@@ -192,6 +192,27 @@
     <string name="unsubscribe_failed">Couldn’t unsubscribe automatically. Try again to use another way.</string>
     <string name="action_no_archive_folder">This account has no Archive folder</string>
     <string name="action_not_applied">Couldn’t change this message</string>
+
+    <!-- Snooze (M4-06) -->
+    <string name="message_snooze">Snooze</string>
+    <string name="snooze_title">Snooze until…</string>
+    <string name="snooze_later_today">Later today</string>
+    <string name="snooze_tomorrow">Tomorrow</string>
+    <string name="snooze_this_weekend">This weekend</string>
+    <string name="snooze_next_week">Next week</string>
+    <string name="snooze_pick_date_time">Pick date and time</string>
+    <string name="snooze_next">Next</string>
+    <string name="snooze_cancel">Cancel</string>
+    <string name="snooze_confirm">Snooze</string>
+    <string name="snooze_time_passed">That time has already passed.</string>
+    <string name="snooze_until">Snoozed until %1$s</string>
+    <string name="snooze_device_only">Only this device will bring it back: your mail server can’t store the wake time.</string>
+    <string name="snooze_unsnooze">Unsnooze</string>
+    <string name="snooze_no_message_id">This message can’t be snoozed.</string>
+    <string name="snooze_channel_name">Snoozed messages</string>
+    <string name="snooze_channel_description">When a snoozed message comes back</string>
+    <string name="snooze_woken_title">Back from snooze</string>
+    <string name="snooze_woken_no_subject">(no subject)</string>
     <string name="action_undone">The server didn’t accept a change, so it was undone</string>
 
     <!-- Reply and forward (M2-03) -->
