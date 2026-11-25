@@ -1,6 +1,9 @@
 //! Folders deleted or renamed on the server by another client leave the
 //! store too (#323).
 
+// Lets clippy's test allowances (clippy.toml) cover the helpers too.
+#![cfg(test)]
+
 use mailcrane_imap::{save_folder_list, ImapConfig, ImapSecurity, Secret, Session};
 use mailcrane_store::{
     AccountId, FolderId, NewAccount, NewRule, RuleAction, RuleCondition, Security, Store,
@@ -12,7 +15,8 @@ const USER: &str = "ann@example.org";
 const PASSWORD: &str = "app-password";
 
 fn raw(n: u32) -> Vec<u8> {
-    format!("From: a@example.net\r\nSubject: {n}\r\nMessage-ID: <{n}@example.net>\r\n\r\nHi\r\n").into_bytes()
+    format!("From: a@example.net\r\nSubject: {n}\r\nMessage-ID: <{n}@example.net>\r\n\r\nHi\r\n")
+        .into_bytes()
 }
 
 async fn fake(faults: &[Fault]) -> FakeImap {
@@ -78,7 +82,12 @@ async fn folders_gone_from_the_server_are_removed_and_standard_ones_rematched() 
     let store = Store::open_in_memory().expect("store");
     let account = account(&store);
     let mut session = connect(&imap).await.expect("connects");
-    save_folder_list(&store, account, &session.list_folders().await.expect("list")).expect("save");
+    save_folder_list(
+        &store,
+        account,
+        &session.list_folders().await.expect("list"),
+    )
+    .expect("save");
     let notes = id_of(&store, account, "Notes").expect("notes");
     let trash = id_of(&store, account, "Trash").expect("trash");
     // Pretend Notes was synced: a message stored in it.
@@ -123,8 +132,12 @@ async fn folders_gone_from_the_server_are_removed_and_standard_ones_rematched() 
     assert!(mailbox.rename_folder("Projects", "Work").await);
     assert!(mailbox.rename_folder("Trash", "Deleted Items").await);
 
-    let saved = save_folder_list(&store, account, &session.list_folders().await.expect("list"))
-        .expect("save");
+    let saved = save_folder_list(
+        &store,
+        account,
+        &session.list_folders().await.expect("list"),
+    )
+    .expect("save");
     session.logout().await;
 
     assert_eq!(
@@ -137,7 +150,10 @@ async fn folders_gone_from_the_server_are_removed_and_standard_ones_rematched() 
     assert!(saved.removed.contains(&notes));
     assert_eq!(id_of(&store, account, "Deleted Items"), Some(trash));
     assert!(store.get_folder(notes).expect("get").is_none());
-    assert!(store.list_messages(notes, 10, 0).expect("messages").is_empty());
+    assert!(store
+        .list_messages(notes, 10, 0)
+        .expect("messages")
+        .is_empty());
 
     // The rule is turned off and says why; its move went with the folder.
     let r = store.get_rule(rule).expect("get").expect("rule");
@@ -146,7 +162,14 @@ async fn folders_gone_from_the_server_are_removed_and_standard_ones_rematched() 
     assert_eq!(r.rule.actions, vec![RuleAction::Flag]);
     // Turning it back on clears the note.
     store.set_rule_enabled(rule, true).expect("enable");
-    assert_eq!(store.get_rule(rule).expect("get").expect("rule").missing_folder, None);
+    assert_eq!(
+        store
+            .get_rule(rule)
+            .expect("get")
+            .expect("rule")
+            .missing_folder,
+        None
+    );
 }
 
 #[tokio::test]
@@ -155,7 +178,12 @@ async fn an_empty_or_failed_list_removes_nothing() {
     let store = Store::open_in_memory().expect("store");
     let account = account(&store);
     let mut session = connect(&imap).await.expect("connects");
-    save_folder_list(&store, account, &session.list_folders().await.expect("list")).expect("save");
+    save_folder_list(
+        &store,
+        account,
+        &session.list_folders().await.expect("list"),
+    )
+    .expect("save");
     session.logout().await;
     let before = names(&store, account);
 
@@ -167,7 +195,9 @@ async fn an_empty_or_failed_list_removes_nothing() {
     let mut hit = false;
     for after in 1..=6 {
         let flaky = fake(&[Fault::DropAfterCommands(after)]).await;
-        let Ok(mut session) = connect(&flaky).await else { continue };
+        let Ok(mut session) = connect(&flaky).await else {
+            continue;
+        };
         match session.list_folders().await {
             Ok(_) => {}
             Err(_) => {

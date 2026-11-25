@@ -427,7 +427,9 @@ pub fn save_folder_list(
             folders.iter().find(|l| {
                 l.role == Some(role)
                     && !existing.contains_key(&l.raw_name)
-                    && !renames.iter().any(|(_, r, _): &(FolderId, String, String)| *r == l.raw_name)
+                    && !renames
+                        .iter()
+                        .any(|(_, r, _): &(FolderId, String, String)| *r == l.raw_name)
             })
         });
         match found {

@@ -14,9 +14,7 @@ use mailcrane_core::sync::{
     live_stop, log_failure, run_live_updates, FolderSyncer, ImapLogin, LiveAccount, LiveConfig,
     LiveStop, SyncConfig, SyncError as CoreSyncError,
 };
-use mailcrane_imap::{
-    save_folder_list, ImapConfig, ImapError, ImapSecurity, Secret, Session,
-};
+use mailcrane_imap::{save_folder_list, ImapConfig, ImapError, ImapSecurity, Secret, Session};
 use mailcrane_store::{AccountId, FolderId, FolderRole, MessageId, Security, Store};
 
 /// Why a sync failed. Never carries server text.
