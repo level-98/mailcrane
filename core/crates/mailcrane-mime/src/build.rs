@@ -62,6 +62,11 @@ pub struct OutgoingMessage {
     /// The thread's Message-IDs, oldest first, without angle brackets.
     /// Written as `References`; invalid ids are left out.
     pub references: Vec<String>,
+    /// A fixed Message-ID (without angle brackets) instead of a random one,
+    /// for a draft that keeps its id across versions. Ignored if invalid.
+    pub message_id: Option<String>,
+    /// A draft: may have no recipients yet.
+    pub is_draft: bool,
 }
 
 /// Which address header a problem is in.
@@ -144,7 +149,11 @@ pub(crate) fn build_with(
     }
     // Bcc is deliberately never written (RFC 5322 §3.6.3 allows leaving it out).
     header(&mut out, "Subject", &unstructured_units(&draft.subject));
-    header(&mut out, "Message-ID", &[format!("<{id}@{domain}>")]);
+    let message_id = match draft.message_id.as_deref().filter(|i| is_msg_id(i)) {
+        Some(fixed) => format!("<{fixed}>"),
+        None => format!("<{id}@{domain}>"),
+    };
+    header(&mut out, "Message-ID", &[message_id]);
     if let Some(parent) = draft.in_reply_to.as_deref().filter(|i| is_msg_id(i)) {
         header(&mut out, "In-Reply-To", &[format!("<{parent}>")]);
     }
@@ -208,7 +217,7 @@ fn check_addresses(draft: &OutgoingMessage) -> Result<(), BuildError> {
         .len()
         .saturating_add(draft.cc.len())
         .saturating_add(draft.bcc.len());
-    if count == 0 {
+    if count == 0 && !draft.is_draft {
         return Err(BuildError::NoRecipients);
     }
     if count > MAX_RECIPIENTS {
@@ -397,6 +406,25 @@ fn base64(bytes: &[u8]) -> String {
         out.push(if chunk.len() > 2 { sym(n) } else { '=' });
     }
     out
+}
+
+/// A new random Message-ID for `domain`, without angle brackets: 32 hex
+/// characters, `@`, the domain. For drafts, which keep one id across
+/// versions.
+pub fn new_message_id(domain: &str) -> Result<String, BuildError> {
+    let mut random = [0u8; 16];
+    getrandom::fill(&mut random).map_err(|_| BuildError::Random)?;
+    let id: String = random.iter().map(|b| format!("{b:02x}")).collect();
+    let domain: String = domain
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '.' || *c == '-')
+        .collect();
+    let domain = if domain.is_empty() {
+        "localhost".to_owned()
+    } else {
+        domain
+    };
+    Ok(format!("{id}@{domain}"))
 }
 
 /// RFC 5322 §3.3 date in UTC, such as `Tue, 24 Nov 2026 21:32:00 +0000`.

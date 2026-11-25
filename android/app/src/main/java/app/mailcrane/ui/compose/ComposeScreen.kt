@@ -63,10 +63,11 @@ fun ComposeScreen(
     onDone: (ComposeResult) -> Unit,
     modifier: Modifier = Modifier,
     reply: ReplyRequest? = null,
+    draft: DraftRequest? = null,
     viewModel: ComposeViewModel = hiltViewModel(),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
-    LaunchedEffect(viewModel, accountId, reply) { viewModel.start(accountId, reply) }
+    LaunchedEffect(viewModel, accountId, reply, draft) { viewModel.start(accountId, reply, draft) }
     LaunchedEffect(state.result) {
         state.result?.let {
             viewModel.reset()
@@ -88,6 +89,7 @@ fun ComposeScreen(
                 onBodyChange = viewModel::onBodyChange,
                 onSend = viewModel::send,
                 onClose = viewModel::requestClose,
+                onDiscard = viewModel::requestDiscard,
                 onConfirmDiscard = viewModel::confirmDiscard,
                 onKeepEditing = viewModel::keepEditing,
                 onDismissError = viewModel::dismissError,
@@ -108,6 +110,7 @@ data class ComposeActions(
     val onBodyChange: (String) -> Unit = {},
     val onSend: () -> Unit = {},
     val onClose: () -> Unit = {},
+    val onDiscard: () -> Unit = {},
     val onConfirmDiscard: () -> Unit = {},
     val onKeepEditing: () -> Unit = {},
     val onDismissError: () -> Unit = {},
@@ -133,7 +136,15 @@ fun ComposeContent(
                         )
                     }
                 },
-                actions = { SendButton(state, actions.onSend) },
+                actions = {
+                    IconButton(onClick = actions.onDiscard, enabled = !state.sending) {
+                        Icon(
+                            painter = painterResource(R.drawable.ic_mc_trash),
+                            contentDescription = stringResource(R.string.compose_discard),
+                        )
+                    }
+                    SendButton(state, actions.onSend)
+                },
             )
         },
     ) { padding ->
@@ -364,6 +375,7 @@ internal fun errorText(error: ComposeError): Int =
         ComposeError.REFUSED_PERMANENT -> R.string.compose_error_refused_permanent
         ComposeError.UNEXPECTED -> R.string.compose_error_unexpected
         ComposeError.REPLY_UNAVAILABLE -> R.string.compose_error_reply_unavailable
+        ComposeError.DRAFT_UNAVAILABLE -> R.string.compose_error_draft_unavailable
     }
 
 @Composable

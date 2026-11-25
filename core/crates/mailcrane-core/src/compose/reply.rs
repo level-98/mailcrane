@@ -173,7 +173,7 @@ fn entries(list: &[Address], seen: &mut HashSet<String>, own: Option<&str>) -> V
 /// `Name <email>`, quoting the name when it has characters that would be
 /// read as address syntax (RFC 5322 §3.2.3), so the entry parses back to
 /// the same address.
-fn format_entry(a: &Address) -> String {
+pub(crate) fn format_entry(a: &Address) -> String {
     let name = a
         .name
         .as_deref()

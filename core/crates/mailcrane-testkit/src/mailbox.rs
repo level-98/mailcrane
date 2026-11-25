@@ -394,6 +394,26 @@ impl Mailbox {
         true
     }
 
+    /// Appends a message with `flags` to an existing folder, as `APPEND`
+    /// does. Returns its UID, or `None` if the folder doesn't exist.
+    pub async fn append(&self, folder: &str, raw: Vec<u8>, flags: Vec<String>) -> Option<u32> {
+        let mut inner = self.inner.lock().await;
+        let target = inner.folders.get_mut(folder)?;
+        let uid = target.next_uid;
+        target.next_uid = target.next_uid.saturating_add(1);
+        let modseq = target.bump();
+        target.messages.push(Message {
+            uid,
+            raw,
+            flags,
+            corrupt_envelope: false,
+            modseq,
+        });
+        drop(inner);
+        self.notify.notify_waiters();
+        Some(uid)
+    }
+
     /// Creates an empty folder if it doesn't exist.
     pub async fn create_folder(&self, folder: &str) {
         let mut inner = self.inner.lock().await;

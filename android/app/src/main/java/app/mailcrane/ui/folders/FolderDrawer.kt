@@ -44,6 +44,7 @@ fun FolderDrawer(
     onSelect: (Long) -> Unit,
     modifier: Modifier = Modifier,
     onOpenSettings: (() -> Unit)? = null,
+    onOpenLocalDrafts: (() -> Unit)? = null,
 ) {
     ModalDrawerSheet(modifier = modifier) {
         Text(
@@ -61,8 +62,19 @@ fun FolderDrawer(
                 )
             }
         }
-        if (onOpenSettings != null) {
+        if (onOpenSettings != null || onOpenLocalDrafts != null) {
             HorizontalDivider(Modifier.padding(horizontal = 28.dp))
+        }
+        if (onOpenLocalDrafts != null) {
+            NavigationDrawerItem(
+                label = { Text(stringResource(R.string.local_drafts_title)) },
+                icon = { Icon(painterResource(R.drawable.ic_mc_drafts), contentDescription = null) },
+                selected = false,
+                onClick = onOpenLocalDrafts,
+                modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding),
+            )
+        }
+        if (onOpenSettings != null) {
             NavigationDrawerItem(
                 label = { Text(stringResource(R.string.settings_title)) },
                 icon = { Icon(painterResource(R.drawable.ic_mc_settings), contentDescription = null) },

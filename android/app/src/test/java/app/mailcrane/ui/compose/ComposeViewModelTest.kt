@@ -3,7 +3,9 @@ package app.mailcrane.ui.compose
 import app.mailcrane.core.AccountSummary
 import app.mailcrane.core.ComposeCore
 import app.mailcrane.core.ComposeDraft
+import app.mailcrane.core.DraftFailure
 import app.mailcrane.core.DraftKind
+import app.mailcrane.core.DraftSummary
 import app.mailcrane.core.RecipientEntry
 import app.mailcrane.core.RecipientError
 import app.mailcrane.core.RecipientField
@@ -16,6 +18,7 @@ import app.mailcrane.core.SendResult
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.test.TestCoroutineScheduler
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.setMain
@@ -65,6 +68,33 @@ class ComposeViewModelTest {
         var replies = 0
         var replyFailure: ReplyFailure? = null
         var signatures = mapOf<Long, String>()
+        val drafts = mutableMapOf<Long, ComposeDraft>()
+        val deleted = mutableListOf<Long>()
+        var nextDraftId = 100L
+
+        override suspend fun saveDraft(
+            draftId: Long?,
+            draft: ComposeDraft,
+        ): Long {
+            val id = draftId ?: nextDraftId++
+            drafts[id] = draft
+            return id
+        }
+
+        override suspend fun getDraft(draftId: Long): ComposeDraft = drafts[draftId] ?: throw DraftFailure.NotFound()
+
+        override suspend fun openDraft(messageId: Long): Long {
+            drafts[7] =
+                ComposeDraft(1, listOf("bob@example.net"), emptyList(), listOf("carol@example.com"), "Old", "Body")
+            return 7
+        }
+
+        override suspend fun deleteDraft(draftId: Long) {
+            deleted += draftId
+            drafts.remove(draftId)
+        }
+
+        override suspend fun listDrafts(accountId: Long): List<DraftSummary> = emptyList()
 
         override suspend fun signatureFor(accountId: Long): String? = signatures[accountId]
 
@@ -263,28 +293,118 @@ class ComposeViewModelTest {
     }
 
     @Test
-    fun closingWithContentAsksFirst() {
-        val vm = started()
+    fun closingKeepsWhatWasTypedAsADraft() {
+        val core = FakeCore()
+        val vm = started(core)
         vm.requestClose()
         assertEquals("nothing typed closes at once", ComposeResult.Closed, vm.state.value.result)
+        assertTrue(core.drafts.isEmpty())
 
         vm.reset()
+        vm.start(1)
+        vm.onRecipientInput(RecipientField.TO, "half-typed")
         vm.onBodyChange("Draft text")
         vm.requestClose()
-        assertTrue(vm.state.value.confirmingDiscard)
+        assertEquals(ComposeResult.SavedDraft, vm.state.value.result)
+        val saved = core.drafts.values.single()
+        assertEquals("Draft text", saved.bodyText)
+        assertEquals("a half-typed recipient is kept", listOf("half-typed"), saved.to)
+    }
+
+    @Test
+    fun aDraftThatCantBeSavedIsNotClosedSilently() {
+        val core =
+            object : ComposeCore by FakeCore() {
+                override suspend fun saveDraft(
+                    draftId: Long?,
+                    draft: ComposeDraft,
+                ): Long = throw DraftFailure.Storage()
+            }
+        val vm = ComposeViewModel(core).apply { start(1) }
+        vm.onBodyChange("Precious")
+        vm.requestClose()
         assertNull(vm.state.value.result)
-        vm.keepEditing()
-        assertFalse(vm.state.value.confirmingDiscard)
-        assertEquals("Draft text", vm.state.value.body)
+        assertTrue(vm.state.value.confirmingDiscard)
+        assertEquals("Precious", vm.state.value.body)
+    }
 
+    @Test
+    fun discardAsksAndDeletesTheSavedDraft() {
+        val core = FakeCore()
+        val vm = started(core)
+        vm.onBodyChange("Draft text")
         vm.requestClose()
-        vm.confirmDiscard()
-        assertEquals(ComposeResult.Closed, vm.state.value.result)
+        val id = core.drafts.keys.single()
 
-        vm.reset()
-        vm.onRecipientInput(RecipientField.TO, "half-typed")
+        val reopened = ComposeViewModel(core).apply { start(1, draft = DraftRequest(draftId = id)) }
+        reopened.requestDiscard()
+        assertTrue(reopened.state.value.confirmingDiscard)
+        reopened.keepEditing()
+        assertFalse(reopened.state.value.confirmingDiscard)
+        assertEquals("Draft text", reopened.state.value.body)
+        reopened.requestDiscard()
+        reopened.confirmDiscard()
+        assertEquals(ComposeResult.Closed, reopened.state.value.result)
+        assertEquals(listOf(id), core.deleted)
+    }
+
+    @Test
+    fun editsAreSavedTwoSecondsAfterTheLastOne() {
+        val scheduler = TestCoroutineScheduler()
+        Dispatchers.setMain(UnconfinedTestDispatcher(scheduler))
+        val core = FakeCore()
+        val vm = started(core)
+        vm.onBodyChange("H")
+        scheduler.advanceTimeBy(1_500)
+        vm.onBodyChange("Hi")
+        scheduler.advanceTimeBy(1_500)
+        scheduler.runCurrent()
+        assertTrue("not yet: the timer restarts on each edit", core.drafts.isEmpty())
+        scheduler.advanceTimeBy(600)
+        scheduler.runCurrent()
+        assertEquals(
+            "Hi",
+            core.drafts.values
+                .single()
+                .bodyText,
+        )
+        val id = vm.state.value.draftId
+        vm.onBodyChange("Hi there")
+        scheduler.advanceTimeBy(2_100)
+        scheduler.runCurrent()
+        assertEquals("the same draft is updated", id, vm.state.value.draftId)
+        assertEquals(1, core.drafts.size)
+    }
+
+    @Test
+    fun sendingDeletesTheDraft() {
+        val core = FakeCore()
+        val vm = started(core)
+        vm.onRecipientInput(RecipientField.TO, "bob@example.net")
         vm.requestClose()
-        assertTrue("a half-typed recipient counts as content", vm.state.value.confirmingDiscard)
+        val id = core.drafts.keys.single()
+        val again = ComposeViewModel(core).apply { start(1, draft = DraftRequest(draftId = id)) }
+        again.send()
+        assertEquals(ComposeResult.Sent(emptyList()), again.state.value.result)
+        assertEquals(listOf(id), core.deleted)
+    }
+
+    @Test
+    fun aDraftsFolderMessageOpensAsADraft() {
+        val core = FakeCore()
+        val vm = ComposeViewModel(core)
+        vm.start(1, draft = DraftRequest(messageId = 55))
+        val state = vm.state.value
+        assertEquals(7L, state.draftId)
+        assertEquals(listOf("bob@example.net"), state.to.chips.map { it.email })
+        assertEquals(listOf("carol@example.com"), state.bcc.chips.map { it.email })
+        assertTrue(state.showCcBcc)
+        assertEquals("Old", state.subject)
+        assertEquals("Body", state.body)
+        // Rotation doesn't reload over the user's typing.
+        vm.onBodyChange("Edited")
+        vm.start(1, draft = DraftRequest(messageId = 55))
+        assertEquals("Edited", vm.state.value.body)
     }
 
     @Test

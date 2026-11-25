@@ -24,6 +24,8 @@ use tokio::task::JoinHandle;
 #[derive(Debug, Default)]
 struct ConnState {
     selected: Option<String>,
+    /// The literal sent with the current command, if any (RFC 9051 §4.3).
+    literal: Option<Vec<u8>>,
     /// `ENABLE QRESYNC` succeeded (RFC 7162 §3.2.3).
     qresync: bool,
 }
@@ -294,9 +296,29 @@ async fn handle_connection(
     loop {
         let mut line = Vec::new();
         let mut byte = [0u8; 1];
+        state.literal = None;
         while tls_stream.read_exact(&mut byte).await.is_ok() {
             line.push(byte[0]);
             if line.ends_with(b"\r\n") {
+                // A synchronizing literal `{n}`: say go ahead, read n bytes,
+                // then the rest of the command line (RFC 9051 §4.3).
+                if let Some(size) = literal_size(&line) {
+                    line.truncate(line.len() - 2);
+                    while line.last().is_some_and(|b| *b != b'{') {
+                        line.pop();
+                    }
+                    line.pop();
+                    line.extend_from_slice(b"{LITERAL}");
+                    if tls_stream.write_all(b"+ go ahead\r\n").await.is_err() {
+                        return Ok(());
+                    }
+                    let mut literal = vec![0u8; size];
+                    if tls_stream.read_exact(&mut literal).await.is_err() {
+                        return Ok(());
+                    }
+                    state.literal = Some(literal);
+                    continue;
+                }
                 break;
             }
         }
@@ -516,7 +538,33 @@ async fn handle_imap_command(
         }
         "NOOP" => "* 0 RECENT\r\n".to_string() + &format!("{tag} OK NOOP completed\r\n"),
         "LOGOUT" => format!("{tag} OK LOGOUT completed\r\n"),
-        "APPEND" => format!("{tag} OK APPEND completed\r\n"),
+        "APPEND" => {
+            // `APPEND <folder> [(<flags>)] {LITERAL}` (RFC 9051 §6.3.12).
+            let folder = parts
+                .get(2)
+                .copied()
+                .unwrap_or("")
+                .trim_matches('"')
+                .to_string();
+            let flags: Vec<String> = parts
+                .iter()
+                .skip(3)
+                .take_while(|p| **p != "{LITERAL}")
+                .map(|p| p.trim_matches(|c| c == '(' || c == ')').to_string())
+                .filter(|p| !p.is_empty())
+                .collect();
+            match state.literal.take() {
+                None => format!("{tag} BAD APPEND needs a message\r\n"),
+                Some(raw) => match mailbox.append(&folder, raw, flags).await {
+                    None => format!("{tag} NO [TRYCREATE] no such folder\r\n"),
+                    Some(uid) if !quirks.contains(&Quirk::NoUidplus) => format!(
+                        "{tag} OK [APPENDUID {} {uid}] APPEND completed\r\n",
+                        mailbox.uidvalidity()
+                    ),
+                    Some(_) => format!("{tag} OK APPEND completed\r\n"),
+                },
+            }
+        }
         "IDLE" => {
             if quirks.contains(&Quirk::NoIdle) {
                 format!("{tag} BAD IDLE disabled\r\n")
@@ -692,6 +740,26 @@ fn in_uid_set(set: &str, uid: u32, max: u32) -> bool {
     })
 }
 
+/// The size of a synchronizing literal `{n}` that ends a command line.
+fn literal_size(line: &[u8]) -> Option<usize> {
+    let text = std::str::from_utf8(line).ok()?.strip_suffix("\r\n")?;
+    let open = text.rfind('{')?;
+    text.get(open + 1..)?.strip_suffix('}')?.parse().ok()
+}
+
+/// Whether the message has header `name` containing `value`, both compared
+/// ignoring case.
+fn header_contains(raw: &[u8], name: &str, value: &str) -> bool {
+    let text = String::from_utf8_lossy(raw);
+    let value = value.to_ascii_lowercase();
+    text.split("\r\n")
+        .take_while(|line| !line.is_empty())
+        .filter_map(|line| line.split_once(':'))
+        .any(|(n, v)| {
+            n.trim().eq_ignore_ascii_case(name) && v.to_ascii_lowercase().contains(&value)
+        })
+}
+
 fn quoted(text: &str) -> String {
     text.replace('\\', "\\\\").replace('"', "\\\"")
 }
@@ -848,6 +916,13 @@ async fn handle_uid_command(
                 .filter(
                     |m| match parts.get(3).map(|p| p.to_ascii_uppercase()).as_deref() {
                         Some("UID") => in_uid_set(parts.get(4).copied().unwrap_or(""), m.uid, max),
+                        // `HEADER <name> <value>`: a substring match on that
+                        // header, case-insensitive (RFC 9051 §6.4.4).
+                        Some("HEADER") => header_contains(
+                            &m.raw,
+                            parts.get(4).copied().unwrap_or(""),
+                            parts.get(5).copied().unwrap_or("").trim_matches('"'),
+                        ),
                         _ => true,
                     },
                 )

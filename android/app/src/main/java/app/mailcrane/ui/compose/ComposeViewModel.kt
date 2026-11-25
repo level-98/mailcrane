@@ -13,6 +13,8 @@ import app.mailcrane.core.ReplyKind
 import app.mailcrane.core.SendFailure
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -66,6 +68,9 @@ enum class ComposeError {
 
     /** The message being replied to couldn't be loaded; the screen is empty but usable. */
     REPLY_UNAVAILABLE,
+
+    /** The draft couldn't be opened. */
+    DRAFT_UNAVAILABLE,
 }
 
 /** How the screen ended. */
@@ -77,6 +82,9 @@ sealed interface ComposeResult {
 
     /** Closed with nothing typed, or after the user confirmed discarding. */
     data object Closed : ComposeResult
+
+    /** Closed with the message kept as a draft. */
+    data object SavedDraft : ComposeResult
 }
 
 /** Everything the compose screen shows. Holds all typed content, so nothing is lost on errors. */
@@ -105,6 +113,10 @@ data class ComposeUiState(
     val signature: String? = null,
     /** Whether the signature was added already (once per message, not again on rotation). */
     val signatureAdded: Boolean = false,
+    /** The saved draft this message is, once saved or opened. */
+    val draftId: Long? = null,
+    /** The draft request this screen was filled for, so rotation doesn't fill it again. */
+    val openedDraft: DraftRequest? = null,
 ) {
     fun field(which: RecipientField) =
         when (which) {
@@ -140,10 +152,15 @@ class ComposeViewModel
         fun start(
             accountId: Long,
             reply: ReplyRequest? = null,
+            draft: DraftRequest? = null,
         ) {
             _state.update { if (it.fromAccountId == null) it.copy(fromAccountId = accountId) else it }
-            if (reply != null && _state.value.prefilledFor != reply) prefill(reply)
-            if (reply == null && !_state.value.signatureAdded) addSignature(accountId)
+            if (draft != null) {
+                if (_state.value.openedDraft != draft) openDraft(draft)
+            } else {
+                if (reply != null && _state.value.prefilledFor != reply) prefill(reply)
+                if (reply == null && !_state.value.signatureAdded) addSignature(accountId)
+            }
             viewModelScope.launch {
                 val accounts =
                     try {
@@ -159,6 +176,86 @@ class ComposeViewModel
                     s.copy(accounts = accounts, fromAccountId = from ?: accounts.firstOrNull()?.id)
                 }
             }
+        }
+
+        /** Fills the screen from a saved draft (opening a Drafts folder message first if needed). */
+        private fun openDraft(request: DraftRequest) {
+            _state.update { it.copy(openedDraft = request, signatureAdded = true) }
+            viewModelScope.launch {
+                val loaded =
+                    try {
+                        val id = request.draftId ?: request.messageId?.let { core.openDraft(it) } ?: return@launch
+                        id to core.getDraft(id)
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        _state.update { it.copy(error = ComposeError.DRAFT_UNAVAILABLE) }
+                        return@launch
+                    }
+                val (id, draft) = loaded
+                val cc = chipsOf(draft.cc)
+                val bcc = chipsOf(draft.bcc)
+                _state.update {
+                    it.copy(
+                        draftId = id,
+                        fromAccountId = draft.accountId,
+                        to = chipsOf(draft.to),
+                        cc = cc,
+                        bcc = bcc,
+                        showCcBcc = it.showCcBcc || !cc.isEmpty || !bcc.isEmpty,
+                        subject = draft.subject,
+                        body = draft.bodyText,
+                        inReplyTo = draft.inReplyTo,
+                        references = draft.references,
+                    )
+                }
+            }
+        }
+
+        private var saveJob: Job? = null
+
+        /** Saves a draft [AUTOSAVE_MS] after the last edit. */
+        private fun scheduleSave() {
+            saveJob?.cancel()
+            saveJob =
+                viewModelScope.launch {
+                    delay(AUTOSAVE_MS)
+                    saveNow()
+                }
+        }
+
+        /** Saves the message as a draft now, if there is anything to keep. Returns whether it is saved. */
+        private suspend fun saveNow(): Boolean {
+            val s = _state.value
+            if (!s.hasContent || s.sending || s.result != null) return false
+            val draft = s.toDraft() ?: return false
+            return try {
+                val id = core.saveDraft(s.draftId, draft)
+                _state.update { it.copy(draftId = id) }
+                true
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                // It stays on screen; the next edit or close tries again.
+                false
+            }
+        }
+
+        private fun ComposeUiState.toDraft(): ComposeDraft? {
+            val account = fromAccountId ?: return null
+
+            // Half-typed recipients are kept too.
+            fun entries(f: RecipientFieldState) = f.chips.map { it.text } + listOf(f.input).filter { it.isNotBlank() }
+            return ComposeDraft(
+                accountId = account,
+                to = entries(to),
+                cc = entries(cc),
+                bcc = entries(bcc),
+                subject = subject,
+                bodyText = body,
+                inReplyTo = inReplyTo,
+                references = references,
+            )
         }
 
         /** Adds the From account's signature to a new message, once. */
@@ -269,9 +366,15 @@ class ComposeViewModel
 
         fun showCcBcc() = _state.update { it.copy(showCcBcc = true) }
 
-        fun onSubjectChange(value: String) = _state.update { it.copy(subject = value) }
+        fun onSubjectChange(value: String) {
+            _state.update { it.copy(subject = value) }
+            scheduleSave()
+        }
 
-        fun onBodyChange(value: String) = _state.update { it.copy(body = value) }
+        fun onBodyChange(value: String) {
+            _state.update { it.copy(body = value) }
+            scheduleSave()
+        }
 
         fun dismissError() = _state.update { it.copy(error = null, errorAddresses = emptyList()) }
 
@@ -297,6 +400,7 @@ class ComposeViewModel
                     )
                 return
             }
+            saveJob?.cancel()
             _state.value = committed.copy(sending = true)
             val draft =
                 ComposeDraft(
@@ -318,6 +422,7 @@ class ComposeViewModel
                     } catch (e: Exception) {
                         Result.failure(e)
                     }
+                if (outcome.isSuccess) committed.draftId?.let { deleteQuietly(it) }
                 _state.update { s ->
                     outcome.fold(
                         onSuccess = { s.copy(sending = false, result = ComposeResult.Sent(it.rejected)) },
@@ -327,17 +432,58 @@ class ComposeViewModel
             }
         }
 
-        /** Close or Back. Asks first if anything has been typed; does nothing while sending. */
-        fun requestClose() =
+        /**
+         * Close or Back: keeps what was typed as a draft and closes. With nothing typed it just closes (and
+         * deletes a draft that was emptied). Does nothing while sending.
+         */
+        fun requestClose() {
+            val s = _state.value
+            if (s.sending || s.result != null) return
+            saveJob?.cancel()
+            viewModelScope.launch {
+                if (s.hasContent) {
+                    // If it can't be saved, ask before anything typed is lost.
+                    val saved = saveNow()
+                    _state.update {
+                        if (saved) it.copy(result = ComposeResult.SavedDraft) else it.copy(confirmingDiscard = true)
+                    }
+                } else {
+                    s.draftId?.let { deleteQuietly(it) }
+                    _state.update { it.copy(result = ComposeResult.Closed) }
+                }
+            }
+        }
+
+        /** The Discard button: asks first when there is anything to lose. */
+        fun requestDiscard() =
             _state.update { s ->
                 when {
                     s.sending -> s
-                    s.hasContent -> s.copy(confirmingDiscard = true)
+                    s.hasContent || s.draftId != null -> s.copy(confirmingDiscard = true)
                     else -> s.copy(result = ComposeResult.Closed)
                 }
             }
 
-        fun confirmDiscard() = _state.update { it.copy(confirmingDiscard = false, result = ComposeResult.Closed) }
+        /** Discards the message and its saved draft. */
+        fun confirmDiscard() {
+            saveJob?.cancel()
+            val id = _state.value.draftId
+            _state.update { it.copy(confirmingDiscard = false) }
+            viewModelScope.launch {
+                id?.let { deleteQuietly(it) }
+                _state.update { it.copy(result = ComposeResult.Closed) }
+            }
+        }
+
+        private suspend fun deleteQuietly(id: Long) {
+            try {
+                core.deleteDraft(id)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                // An orphaned draft is better than a crash; it shows in the drafts list.
+            }
+        }
 
         fun keepEditing() = _state.update { it.copy(confirmingDiscard = false) }
 
@@ -345,6 +491,11 @@ class ComposeViewModel
         fun reset() = _state.update { ComposeUiState(accounts = it.accounts) }
 
         private fun hasCcBcc(s: ComposeUiState) = !s.cc.isEmpty || !s.bcc.isEmpty
+
+        companion object {
+            /** A draft is saved this long after the last edit. */
+            const val AUTOSAVE_MS = 2_000L
+        }
 
         private fun ComposeUiState.withFailure(e: Throwable): ComposeUiState {
             val base = copy(sending = false)
@@ -389,12 +540,15 @@ class ComposeViewModel
         private fun editField(
             which: RecipientField,
             change: (RecipientFieldState) -> RecipientFieldState,
-        ) = _state.update { s ->
-            when (which) {
-                RecipientField.TO -> s.copy(to = change(s.to))
-                RecipientField.CC -> s.copy(cc = change(s.cc))
-                RecipientField.BCC -> s.copy(bcc = change(s.bcc))
+        ) {
+            _state.update { s ->
+                when (which) {
+                    RecipientField.TO -> s.copy(to = change(s.to))
+                    RecipientField.CC -> s.copy(cc = change(s.cc))
+                    RecipientField.BCC -> s.copy(bcc = change(s.bcc))
+                }
             }
+            scheduleSave()
         }
 
         private fun RecipientFieldState.committed(): RecipientFieldState {

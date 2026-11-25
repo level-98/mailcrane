@@ -22,7 +22,7 @@ use mailcrane_store::{AccountId, Security, Store};
 
 use crate::secrets::{SecretKey, SecretStore};
 
-mod reply;
+pub(crate) mod reply;
 pub mod signature;
 
 pub use reply::{prepare_reply, ReplyError, ReplyKind};
@@ -254,6 +254,8 @@ pub fn prepare_send(
         encoding: TransferEncoding::QuotedPrintable,
         in_reply_to: draft.in_reply_to.clone(),
         references: draft.references.clone(),
+        message_id: None,
+        is_draft: false,
     })
     .map_err(|e| match e {
         BuildError::InvalidAddress { .. } => SendError::InvalidSender,
