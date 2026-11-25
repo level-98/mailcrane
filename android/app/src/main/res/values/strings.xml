@@ -509,6 +509,14 @@
     <string name="settings_dynamic_color_summary">Take the app’s colours from your wallpaper</string>
     <string name="settings_group_threads">Group by conversation</string>
     <string name="settings_group_threads_summary">Show replies together with the message they answer</string>
+    <!-- Mailbox density and sender pictures (M4-24). -->
+    <string name="settings_density">Mailbox density</string>
+    <string name="settings_density_comfortable">Comfortable</string>
+    <string name="settings_density_comfortable_summary">Sender pictures, subject and a preview line</string>
+    <string name="settings_density_compact">Compact</string>
+    <string name="settings_density_compact_summary">No pictures and tighter rows, so more messages fit on screen</string>
+    <string name="settings_contact_photos">Use photos from your contacts</string>
+    <string name="settings_contact_photos_summary">Show a sender\'s contact photo in place of their initials. Photos are read on this device only and never sent anywhere.</string>
     <string name="thread_back">Back</string>
     <plurals name="thread_a11y_count">
         <item quantity="one">%1$d message</item>

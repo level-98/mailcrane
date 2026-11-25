@@ -28,6 +28,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
+import app.mailcrane.contacts.LocalContactPhotos
 import app.mailcrane.security.AppLock
 import app.mailcrane.security.LockScreen
 import app.mailcrane.security.LockUi
@@ -38,6 +39,7 @@ import app.mailcrane.ui.account.ManualSetupScreen
 import app.mailcrane.ui.components.WelcomeState
 import app.mailcrane.ui.theme.LocalDarkMessageBodies
 import app.mailcrane.ui.theme.LocalDarkTheme
+import app.mailcrane.ui.theme.LocalMailboxDensity
 import app.mailcrane.ui.theme.MailcraneTheme
 import app.mailcrane.ui.theme.ThemeViewModel
 import app.mailcrane.widget.EXTRA_ACCOUNT_ID
@@ -98,6 +100,8 @@ class MainActivity : FragmentActivity() {
         setContent {
             val themeModel: ThemeViewModel = hiltViewModel()
             val appearance by themeModel.appearance.collectAsStateWithLifecycle()
+            val density by themeModel.mailboxDensity.collectAsStateWithLifecycle()
+            val contactPhotos by themeModel.contactPhotos.collectAsStateWithLifecycle()
             val dark =
                 when (appearance.mode) {
                     ThemeMode.SYSTEM -> isSystemInDarkTheme()
@@ -108,6 +112,8 @@ class MainActivity : FragmentActivity() {
                 CompositionLocalProvider(
                     LocalDarkTheme provides dark,
                     LocalDarkMessageBodies provides appearance.darkMessageBodies,
+                    LocalMailboxDensity provides density,
+                    LocalContactPhotos provides contactPhotos,
                 ) {
                     // Nothing from the mailbox is composed until the lock allows it, whatever opened
                     // the app (launcher, widget tap): a widget's message opens after unlocking.

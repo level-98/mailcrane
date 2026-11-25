@@ -1,5 +1,9 @@
 package app.mailcrane.settings
 
+import android.Manifest
+import android.content.pm.PackageManager
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
@@ -23,6 +27,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
@@ -30,6 +35,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -103,6 +109,24 @@ class SettingsViewModel
             viewModelScope.launch { settings.setGroupByConversation(enabled) }
         }
 
+        val mailboxDensity: StateFlow<MailboxDensity> =
+            settings.mailboxDensity.stateIn(
+                viewModelScope,
+                SharingStarted.WhileSubscribed(5_000),
+                MailboxDensity.COMFORTABLE,
+            )
+
+        fun setMailboxDensity(density: MailboxDensity) {
+            viewModelScope.launch { settings.setMailboxDensity(density) }
+        }
+
+        val contactPhotos: StateFlow<Boolean> =
+            settings.contactPhotos.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
+
+        fun setContactPhotos(enabled: Boolean) {
+            viewModelScope.launch { settings.setContactPhotos(enabled) }
+        }
+
         fun setDarkMessageBodies(enabled: Boolean) {
             viewModelScope.launch { settings.setDarkMessageBodies(enabled) }
         }
@@ -140,6 +164,17 @@ fun SettingsScreen(
     val dynamicColor by viewModel.dynamicColor.collectAsStateWithLifecycle()
     val darkBodies by viewModel.darkMessageBodies.collectAsStateWithLifecycle()
     val grouped by viewModel.groupByConversation.collectAsStateWithLifecycle()
+    val density by viewModel.mailboxDensity.collectAsStateWithLifecycle()
+    val photosSetting by viewModel.contactPhotos.collectAsStateWithLifecycle()
+    // Contact photos (M4-24): on only after the user allows reading contacts. Refusing leaves it off.
+    val context = LocalContext.current
+    val contactsAllowed =
+        ContextCompat.checkSelfPermission(context, Manifest.permission.READ_CONTACTS) ==
+            PackageManager.PERMISSION_GRANTED
+    val askContacts =
+        rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+            viewModel.setContactPhotos(granted)
+        }
     val hideOutside by viewModel.hideContentOutsideApp.collectAsStateWithLifecycle()
     val swipeRight by viewModel.swipeRight.collectAsStateWithLifecycle()
     val swipeLeft by viewModel.swipeLeft.collectAsStateWithLifecycle()
@@ -158,6 +193,17 @@ fun SettingsScreen(
                 darkMessageBodies = darkBodies,
                 groupByConversation = grouped,
                 onGroupByConversationChange = viewModel::setGroupByConversation,
+                density = density,
+                onDensityChange = viewModel::setMailboxDensity,
+                // Shown as on only while the permission still allows it.
+                contactPhotos = photosSetting && contactsAllowed,
+                onContactPhotosChange = { on ->
+                    when {
+                        !on -> viewModel.setContactPhotos(false)
+                        contactsAllowed -> viewModel.setContactPhotos(true)
+                        else -> askContacts.launch(Manifest.permission.READ_CONTACTS)
+                    }
+                },
                 onModeChange = viewModel::setThemeMode,
                 onDynamicColorChange = viewModel::setDynamicColor,
                 onDarkMessageBodiesChange = viewModel::setDarkMessageBodies,
@@ -304,6 +350,10 @@ data class AppearanceSettings(
     val onDarkMessageBodiesChange: (Boolean) -> Unit = {},
     val groupByConversation: Boolean = true,
     val onGroupByConversationChange: (Boolean) -> Unit = {},
+    val density: MailboxDensity = MailboxDensity.COMFORTABLE,
+    val onDensityChange: (MailboxDensity) -> Unit = {},
+    val contactPhotos: Boolean = false,
+    val onContactPhotosChange: (Boolean) -> Unit = {},
 )
 
 @Composable
@@ -350,7 +400,45 @@ private fun AppearanceSection(a: AppearanceSettings) {
         checked = a.groupByConversation,
         onChange = a.onGroupByConversationChange,
     )
+    // Mailbox density (M4-24).
+    Column(Modifier.fillMaxWidth().selectableGroup()) {
+        Text(
+            text = stringResource(R.string.settings_density),
+            style = MaterialTheme.typography.titleSmall,
+            modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 4.dp).semantics { heading() },
+        )
+        for ((choice, label, summary) in DENSITY_CHOICES) {
+            ListItem(
+                leadingContent = { RadioButton(selected = a.density == choice, onClick = null) },
+                supportingContent = { Text(stringResource(summary)) },
+                modifier =
+                    Modifier.selectable(
+                        selected = a.density == choice,
+                        role = Role.RadioButton,
+                        onClick = { a.onDensityChange(choice) },
+                    ),
+            ) {
+                Text(stringResource(label))
+            }
+        }
+    }
+    SwitchRow(
+        title = R.string.settings_contact_photos,
+        summary = R.string.settings_contact_photos_summary,
+        checked = a.contactPhotos,
+        onChange = a.onContactPhotosChange,
+    )
 }
+
+private val DENSITY_CHOICES =
+    listOf(
+        Triple(
+            MailboxDensity.COMFORTABLE,
+            R.string.settings_density_comfortable,
+            R.string.settings_density_comfortable_summary,
+        ),
+        Triple(MailboxDensity.COMPACT, R.string.settings_density_compact, R.string.settings_density_compact_summary),
+    )
 
 private val THEME_CHOICES =
     listOf(

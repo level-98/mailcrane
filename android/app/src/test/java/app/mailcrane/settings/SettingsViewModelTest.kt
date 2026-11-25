@@ -8,6 +8,7 @@ import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import org.junit.After
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -48,5 +49,29 @@ class SettingsViewModelTest {
             vm.setConfirmLinks(false)
             assertFalse(vm.confirmLinks.value)
             assertFalse(settings.confirmLinks.value)
+        }
+
+    @Test
+    fun mailboxDensityIsComfortableByDefaultAndCanBeCompact() =
+        runTest {
+            val settings = FakeAppSettings()
+            val vm = SettingsViewModel(settings)
+            backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { vm.mailboxDensity.collect {} }
+            assertEquals(MailboxDensity.COMFORTABLE, vm.mailboxDensity.value)
+
+            vm.setMailboxDensity(MailboxDensity.COMPACT)
+            assertEquals(MailboxDensity.COMPACT, vm.mailboxDensity.value)
+            assertEquals(MailboxDensity.COMPACT, settings.density.value)
+        }
+
+    @Test
+    fun contactPhotosAreOffByDefault() =
+        runTest {
+            val settings = FakeAppSettings()
+            val vm = SettingsViewModel(settings)
+            backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { vm.contactPhotos.collect {} }
+            assertFalse(vm.contactPhotos.value)
+            vm.setContactPhotos(true)
+            assertTrue(settings.photos.value)
         }
 }
