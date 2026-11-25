@@ -174,6 +174,7 @@ fun SettingsScreen(
             SignatureSection(accountId)
             SaveSentSection(accountId)
             AccountColorSection(accountId, onChanged = onAccountsChanged)
+            AccountAdvancedSection(accountId)
         }
         if (onAddAccount != null) {
             AccountsSection(accounts, onAddAccount, onRemoveAccount)

@@ -113,3 +113,76 @@ impl Store {
         Ok(n > 0)
     }
 }
+
+/// Longest provider authserv-id accepted (a host name).
+pub const MAX_AUTHSERV_ID_LEN: usize = 253;
+
+/// Whether `id` is a valid provider authserv-id: a host name of at most
+/// [`MAX_AUTHSERV_ID_LEN`] lowercase ASCII letters, digits, `-`, `_` and
+/// dots, with at least one dot and no empty label.
+pub fn is_valid_authserv_id(id: &str) -> bool {
+    id.len() <= MAX_AUTHSERV_ID_LEN
+        && id.contains('.')
+        && id.split('.').all(|label| {
+            !label.is_empty()
+                && label
+                    .bytes()
+                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-' || b == b'_')
+        })
+}
+
+impl Store {
+    /// The authserv-id the user said their provider writes (M5-08), or
+    /// `None` when it is unset or the account doesn't exist.
+    pub fn get_provider_authserv_id(
+        &self,
+        account: AccountId,
+    ) -> Result<Option<String>, StoreError> {
+        Ok(self
+            .conn
+            .query_row(
+                "SELECT provider_authserv_id FROM accounts WHERE id = ?1",
+                params![account.0],
+                |r| r.get::<_, Option<String>>(0),
+            )
+            .optional()?
+            .flatten())
+    }
+
+    /// The provider authserv-id of the account `message` belongs to, or
+    /// `None` when it is unset or the message doesn't exist.
+    pub fn provider_authserv_id_for_message(
+        &self,
+        message: crate::MessageId,
+    ) -> Result<Option<String>, StoreError> {
+        Ok(self
+            .conn
+            .query_row(
+                "SELECT a.provider_authserv_id FROM messages m                  JOIN folders f ON f.id = m.folder_id                  JOIN accounts a ON a.id = f.account_id WHERE m.id = ?1",
+                params![message.0],
+                |r| r.get::<_, Option<String>>(0),
+            )
+            .optional()?
+            .flatten())
+    }
+
+    /// Sets the account's provider authserv-id, or clears it with `None`.
+    /// Returns whether the account exists. An id that isn't a valid host
+    /// name (see [`is_valid_authserv_id`]) is refused and nothing changes.
+    pub fn set_provider_authserv_id(
+        &self,
+        account: AccountId,
+        id: Option<&str>,
+    ) -> Result<bool, StoreError> {
+        if id.is_some_and(|id| !is_valid_authserv_id(id)) {
+            return Err(StoreError::Invalid {
+                field: "provider_authserv_id",
+            });
+        }
+        let n = self.conn.execute(
+            "UPDATE accounts SET provider_authserv_id = ?2 WHERE id = ?1",
+            params![account.0, id],
+        )?;
+        Ok(n > 0)
+    }
+}

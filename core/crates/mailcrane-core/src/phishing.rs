@@ -7,7 +7,7 @@
 //! Results the sender wrote into the message themselves are ignored.
 //! Nothing is looked up online.
 
-use mailcrane_mime::auth::{summarize, trusted_results, AuthSummary};
+use mailcrane_mime::auth::{summarize, trusted_results_with, AuthSummary};
 use mailcrane_mime::ParsedMessage;
 
 pub use mailcrane_mime::auth::AuthResult;
@@ -37,14 +37,16 @@ pub struct SenderCheck {
 }
 
 /// Reads the trusted authentication results of `parsed`.
-pub fn sender_check(parsed: &ParsedMessage) -> SenderCheck {
+/// `provider_authserv_id` is the account's setting (M5-08), if any: see
+/// [`trusted_results_with`].
+pub fn sender_check(parsed: &ParsedMessage, provider_authserv_id: Option<&str>) -> SenderCheck {
     let from_domain = parsed
         .from
         .first()
         .and_then(|a| a.email.rsplit_once('@'))
         .map(|(_, d)| d)
         .unwrap_or_default();
-    let trusted = trusted_results(&parsed.trace);
+    let trusted = trusted_results_with(&parsed.trace, provider_authserv_id);
     let auth = summarize(trusted.unwrap_or_default(), from_domain);
     SenderCheck {
         trusted: trusted.is_some(),

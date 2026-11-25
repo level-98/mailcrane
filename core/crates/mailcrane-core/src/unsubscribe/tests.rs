@@ -107,3 +107,22 @@ fn status_lines() {
     assert_eq!(http::parse_status(b"HTTP/1.1 99 x\r\n"), None);
     assert_eq!(http::parse_status(b"HTTP/1.1 abc x\r\n"), None);
 }
+
+#[test]
+fn one_click_in_the_postfix_layout_needs_the_accounts_authserv_id() {
+    // M5-08: the provider's DKIM result right below its own Received.
+    let m = format!(
+        "Received: from out.example.net by mx2.example.org with ESMTPS; \
+         Wed, 25 Nov 2026 08:00:00 +0000\r\n\
+         Authentication-Results: mx2.example.org; dkim=pass header.d=example.net\r\n\
+         From: News <news@example.net>\r\nTo: alice@example.org\r\nSubject: Weekly\r\n\
+         List-Unsubscribe: {LIST}\r\nList-Unsubscribe-Post: List-Unsubscribe=One-Click\r\n\
+         \r\nHello\r\n"
+    );
+    let without = options_from_raw(m.as_bytes()).expect("options");
+    assert_eq!(without.one_click, None);
+    let with = options_from_raw_with(m.as_bytes(), Some("mx2.example.org")).expect("options");
+    assert_eq!(with.one_click.as_deref(), Some("https://example.net/u/1"));
+    let other = options_from_raw_with(m.as_bytes(), Some("mx1.example.org")).expect("options");
+    assert_eq!(other.one_click, None);
+}

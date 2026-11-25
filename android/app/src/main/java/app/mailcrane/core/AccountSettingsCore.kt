@@ -35,6 +35,18 @@ interface AccountSettingsCore {
 
     /** The colour the account gets when none is chosen. */
     fun automaticAccountColor(accountId: Long): Int
+
+    /** The provider's authentication server name the user set (M5-08), or null. @throws SettingsFailure */
+    suspend fun getProviderAuthservId(accountId: Long): String?
+
+    /**
+     * Saves the provider's authentication server name as typed; empty clears it. Returns the value
+     * saved, as the core cleaned it. @throws SettingsFailure, for example [SettingsFailure.InvalidAuthservId].
+     */
+    suspend fun setProviderAuthservId(
+        accountId: Long,
+        value: String,
+    ): String?
 }
 
 /** Calls the core through the generated UniFFI bindings. [dbPath] is the app's database file. */
@@ -70,4 +82,12 @@ class UniffiAccountSettingsCore(
     }
 
     override fun automaticAccountColor(accountId: Long): Int = accountColor(accountId).toInt()
+
+    override suspend fun getProviderAuthservId(accountId: Long): String? =
+        withContext(io) { getProviderAuthservId(dbPath, accountId) }
+
+    override suspend fun setProviderAuthservId(
+        accountId: Long,
+        value: String,
+    ): String? = withContext(io) { setProviderAuthservId(dbPath, accountId, value) }
 }

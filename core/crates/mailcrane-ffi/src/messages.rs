@@ -527,7 +527,11 @@ pub fn get_message(
         .collect();
     detail.body = match parse_message(&raw) {
         Ok(parsed) => {
-            detail.sender_check = Some(phishing::sender_check(&parsed).into());
+            let provider_id = store
+                .provider_authserv_id_for_message(id)
+                .map_err(|_| storage())?;
+            detail.sender_check =
+                Some(phishing::sender_check(&parsed, provider_id.as_deref()).into());
             detail.to = parsed.to.into_iter().map(address).collect();
             detail.cc = parsed.cc.into_iter().map(address).collect();
             match parsed.text_html {
@@ -931,6 +935,32 @@ mod tests {
             .expect("checked");
         assert!(!check.trusted);
         assert_eq!(check.verdict, None);
+    }
+
+    #[test]
+    fn the_accounts_authserv_id_reaches_the_sender_check() {
+        // M5-08: Postfix's header right below its own Received.
+        let (_dir, path, folder) = setup();
+        let raw = b"Received: from out.example.net (out.example.net [192.0.2.1]) by mx2.example.org; \
+                    Wed, 25 Nov 2026 08:00:00 +0000\r\n\
+                    Authentication-Results: mx2.example.org; dmarc=pass header.from=example.net\r\n\
+                    From: Ana <ana@example.net>\r\nTo: bob@example.org\r\nSubject: Hi\r\n\r\nHello\r\n";
+        let id = with_body(&path, folder, 1, raw);
+        let verdict = |path: &str| {
+            get_message(path.to_owned(), id, false)
+                .expect("message")
+                .sender_check
+                .expect("checked")
+                .verdict
+        };
+        assert_eq!(verdict(&path), None);
+        let store = Store::open(&path).expect("store");
+        let account = store.list_accounts().expect("accounts")[0].id;
+        assert!(store
+            .set_provider_authserv_id(account, Some("mx2.example.org"))
+            .expect("set"));
+        drop(store);
+        assert_eq!(verdict(&path), Some(AuthVerdict::Verified));
     }
 
     #[test]

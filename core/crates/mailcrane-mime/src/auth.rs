@@ -430,6 +430,23 @@ pub enum TraceHeader {
 /// is inside the provider, only headers above the bottom-most Received
 /// count. Of the trusted headers, the topmost wins.
 pub fn trusted_results(trace: &[TraceHeader]) -> Option<&str> {
+    trusted_results_with(trace, None)
+}
+
+/// [`trusted_results`], plus the account's own provider authserv-id when the
+/// user set one (M5-08). Some servers (Postfix with an OpenDMARC milter)
+/// write their header directly *below* their own Received header, where a
+/// sender could put one too. So that spot is trusted only for a header
+/// whose authserv-id is exactly `provider_authserv_id` (compared without
+/// case or a trailing dot), only in the run of Authentication-Results
+/// headers right below the Received header where the message entered the
+/// provider, and only when nothing above that point was trusted. The user
+/// sets it knowing their provider removes such headers from incoming mail;
+/// it is never guessed or learned from mail.
+pub fn trusted_results_with<'a>(
+    trace: &'a [TraceHeader],
+    provider_authserv_id: Option<&str>,
+) -> Option<&'a str> {
     let provider_host = trace.iter().find_map(|h| match h {
         TraceHeader::Received(r) => Some(r),
         TraceHeader::AuthenticationResults(_) => None,
@@ -440,7 +457,7 @@ pub fn trusted_results(trace: &[TraceHeader]) -> Option<&str> {
     }
     let mut found = None;
     let mut confirmed = None;
-    for header in trace {
+    for (i, header) in trace.iter().enumerate() {
         match header {
             TraceHeader::AuthenticationResults(a) => {
                 if found.is_none() && authserv_in(a, &provider) {
@@ -450,12 +467,37 @@ pub fn trusted_results(trace: &[TraceHeader]) -> Option<&str> {
             TraceHeader::Received(r) => {
                 confirmed = found;
                 if !internal_hop(r, &provider) {
-                    return confirmed;
+                    let provider_wrote_it =
+                        received_by(r).is_some_and(|by| org_domain(&by) == provider);
+                    return confirmed.or_else(|| {
+                        let id = provider_authserv_id.filter(|_| provider_wrote_it)?;
+                        right_below(trace.get(i.saturating_add(1)..)?, id)
+                    });
                 }
             }
         }
     }
     confirmed
+}
+
+/// The first Authentication-Results header with authserv-id `id` in the run
+/// of them at the start of `rest`, before any Received header.
+fn right_below<'a>(rest: &'a [TraceHeader], id: &str) -> Option<&'a str> {
+    let want = id.trim_end_matches('.');
+    if want.is_empty() {
+        return None;
+    }
+    rest.iter()
+        .map_while(|h| match h {
+            TraceHeader::AuthenticationResults(a) => Some(a.as_str()),
+            TraceHeader::Received(_) => None,
+        })
+        .find(|a| {
+            let first = strip_comments(a);
+            let first = first.split(';').next().unwrap_or_default();
+            let authserv = first.split_whitespace().next().unwrap_or_default();
+            authserv.trim_end_matches('.').eq_ignore_ascii_case(want)
+        })
 }
 
 /// Whether a Received header records a hop between the provider's own

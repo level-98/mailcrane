@@ -16,7 +16,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 
-private class FakeSettings : AccountSettingsCore {
+internal class FakeSettings : AccountSettingsCore {
     var stored = AccountSignature("Ann", true)
     var failure: SettingsFailure? = null
 
@@ -57,6 +57,23 @@ private class FakeSettings : AccountSettingsCore {
     }
 
     override fun automaticAccountColor(accountId: Long) = 3
+
+    var authservId: String? = null
+    var authservFailure: SettingsFailure? = null
+
+    override suspend fun getProviderAuthservId(accountId: Long) = authservId
+
+    override suspend fun setProviderAuthservId(
+        accountId: Long,
+        value: String,
+    ): String? {
+        authservFailure?.let { throw it }
+        // Like the core: trimmed and lowercased, empty clears, a space is refused.
+        val cleaned = value.trim().lowercase().ifEmpty { null }
+        if (cleaned?.contains(' ') == true) throw SettingsFailure.InvalidAuthservId()
+        authservId = cleaned
+        return cleaned
+    }
 }
 
 @OptIn(ExperimentalCoroutinesApi::class)
