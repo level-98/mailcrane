@@ -22,6 +22,8 @@ use mailcrane_store::{AccountId, Security, Store};
 
 use crate::secrets::{SecretKey, SecretStore};
 
+pub mod signature;
+
 /// A message the user is writing. Each recipient entry is one chip or field
 /// value as typed, such as `Ann <ann@example.org>`; an entry may also hold
 /// several addresses separated by commas.

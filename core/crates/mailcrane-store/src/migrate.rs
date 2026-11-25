@@ -7,6 +7,7 @@ use rusqlite::Connection;
 pub(crate) const MIGRATIONS: &[&str] = &[
     include_str!("../migrations/0001_init.sql"),
     include_str!("../migrations/0002_pending_ops.sql"),
+    include_str!("../migrations/0003_account_settings.sql"),
 ];
 
 fn user_version(conn: &Connection) -> Result<i64, StoreError> {

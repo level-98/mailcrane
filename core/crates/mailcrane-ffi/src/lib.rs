@@ -14,6 +14,7 @@ pub mod folders;
 pub mod links;
 pub mod messages;
 pub mod secrets;
+pub mod settings;
 pub mod sync;
 
 /// The name of this crate.
