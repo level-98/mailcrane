@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -125,18 +126,20 @@ fun MessageRow(
                     selected = selected,
                     onClick = onAvatarClick,
                 )
-                // In the Unified Inbox the account colour sits on the picture's corner (M4-01).
+                // In the Unified Inbox the account colour sits on the picture's edge (M4-01), offset outward
+                // so it never covers the initials. Fixed in dp, like the circle, whatever the font scale.
                 if (message.accountId != 0L) {
                     Box(
                         modifier =
                             Modifier
                                 .align(Alignment.BottomEnd)
-                                .size(dotSize + 6.dp)
+                                .offset(x = CORNER_DOT_OFFSET, y = CORNER_DOT_OFFSET)
+                                .size(CORNER_DOT_RING)
                                 .background(colors.surface, CircleShape),
                         contentAlignment = Alignment.Center,
                     ) {
                         app.mailcrane.ui.components
-                            .AccountDot(message.accountColor.toInt(), size = dotSize + 2.dp)
+                            .AccountDot(message.accountColor.toInt(), size = CORNER_DOT)
                     }
                 }
             }
@@ -232,6 +235,11 @@ fun MessageRow(
         }
     }
 }
+
+/** The Unified Inbox account dot on a picture: its size, the surface ring around it, and how far it sits out. */
+private val CORNER_DOT = 10.dp
+private val CORNER_DOT_RING = 14.dp
+private val CORNER_DOT_OFFSET = 4.dp
 
 /** What leads a message row (M4-24); for tests only, since TalkBack reads the row as one item. */
 enum class RowLeading { PICTURE, CHECK_MARK, CHECKBOX, UNREAD_DOT }

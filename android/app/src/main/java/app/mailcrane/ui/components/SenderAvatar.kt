@@ -25,11 +25,16 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.text.PlatformTextStyle
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.LineHeightStyle
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import app.mailcrane.contacts.LocalContactPhotos
 import app.mailcrane.ui.theme.LocalDarkTheme
 import java.text.BreakIterator
@@ -85,9 +90,8 @@ fun SenderAvatar(
                     Text(
                         text = initials,
                         color = foreground,
-                        // Fixed relative to the circle, which doesn't grow with font scale either.
-                        fontSize = (size.value * 0.4f).sp,
-                        fontWeight = FontWeight.Medium,
+                        // A fixed share of the circle, which doesn't grow with font scale either.
+                        style = initialsTextStyle(size, LocalDensity.current),
                         maxLines = 1,
                     )
                 }
@@ -98,6 +102,36 @@ fun SenderAvatar(
 
 /** The avatar's size: also its touch target when it selects the row. */
 val AVATAR_SIZE = 40.dp
+
+/** How much of the circle's diameter the initials' font size takes. */
+private const val INITIALS_SHARE = 0.4f
+
+/**
+ * The initials' font size for a circle of [circle]: 40% of it in dp whatever the user's font scale, since
+ * the circle doesn't grow with it either (larger initials would be clipped or hidden by the account dot).
+ */
+fun initialsFontSize(
+    circle: Dp,
+    density: Density,
+): TextUnit =
+    // Through the density's own converter: Android scales large fonts non-linearly, so dividing by
+    // fontScale would be off.
+    with(density) { (circle * INITIALS_SHARE).toSp() }
+
+/** The initials' text style: [initialsFontSize], with a line exactly that tall so it centres in the circle. */
+fun initialsTextStyle(
+    circle: Dp,
+    density: Density,
+): TextStyle {
+    val size = initialsFontSize(circle, density)
+    return TextStyle(
+        fontSize = size,
+        lineHeight = size,
+        fontWeight = FontWeight.Medium,
+        lineHeightStyle = LineHeightStyle(LineHeightStyle.Alignment.Center, LineHeightStyle.Trim.Both),
+        platformStyle = PlatformTextStyle(includeFontPadding = false),
+    )
+}
 
 @Composable
 private fun CheckMark(
