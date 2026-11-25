@@ -59,7 +59,7 @@ Goal: add an IMAP account and read your inbox, online and offline.
 - [ ] **M2-04** Attachments: add, send, preview and save 🤖
 - [x] **M2-05** Drafts: autosave locally and to the server's Drafts folder 🤖
 - [x] **M2-06** Offline outbox with retry 🤖
-- [ ] **M2-07** Save sent messages to Sent (skip for providers that do it themselves, such as Gmail) 🤖
+- [x] **M2-07** Save sent messages to Sent (skip for providers that do it themselves, such as Gmail) 🤖
 - [ ] **M2-08** Contact autocomplete from the device's contacts and past correspondents 🤖
 - [ ] **M2-09** Rich-text compose (bold, italic, lists, links) 🤖
 - [x] **M2-10** Signatures, per account 🟢🤖
