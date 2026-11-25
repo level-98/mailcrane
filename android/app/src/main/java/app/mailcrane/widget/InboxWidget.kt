@@ -76,7 +76,7 @@ fun widgetContent(
 /**
  * The inbox widget (M4-11): every account's inbox together. Small, it shows the unread count; larger,
  * the latest messages (up to 5). Tapping a message opens it; tapping elsewhere opens the app. With "Hide
- * message content outside the app" on, only the count is shown.
+ * message content outside the app" or the app lock on, only the count is shown.
  */
 class InboxWidget : GlanceAppWidget() {
     override val sizeMode = SizeMode.Responsive(setOf(SMALL, LARGE))
@@ -86,7 +86,8 @@ class InboxWidget : GlanceAppWidget() {
         id: GlanceId,
     ) {
         val settings = EntryPointAccessors.fromApplication(context, WidgetEntryPoint::class.java).settings()
-        val hide = settings.hideContentOutsideApp.first()
+        // With the app lock on, the widget never shows senders or subjects (M5-03).
+        val hide = settings.hideContentOutsideApp.first() || settings.appLockEnabled.first()
         val snapshot =
             withContext(Dispatchers.IO) {
                 try {

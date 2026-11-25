@@ -442,4 +442,27 @@
     <string name="search_hint">Search mail</string>
     <string name="search_recent">Recent searches</string>
     <string name="search_clear_recent">Clear</string>
+    <!-- App lock (M5-03) -->
+    <string name="app_lock_header">Security</string>
+    <string name="app_lock_title">App lock</string>
+    <string name="app_lock_summary">Unlock Mailcrane with your fingerprint, face or screen lock. Widgets show only how many messages are unread while it’s on.</string>
+    <string name="app_lock_no_credential">Set up a screen lock (PIN, pattern or password) in your phone’s settings first.</string>
+    <string name="app_lock_confirm_title">Confirm it’s you</string>
+    <string name="app_lock_after">Lock after</string>
+    <string name="app_lock_after_immediately">Immediately</string>
+    <plurals name="app_lock_after_minutes">
+        <item quantity="one">%d minute</item>
+        <item quantity="other">%d minutes</item>
+    </plurals>
+    <plurals name="app_lock_after_hours">
+        <item quantity="one">%d hour</item>
+        <item quantity="other">%d hours</item>
+    </plurals>
+    <string name="app_lock_screenshots">Allow screenshots</string>
+    <string name="app_lock_screenshots_summary">Let screenshots and the recent apps screen show your mail while App lock is on</string>
+    <string name="app_lock_prompt_title">Unlock Mailcrane</string>
+    <string name="app_lock_locked_title">Mailcrane is locked</string>
+    <string name="app_lock_locked_body">Unlock with your fingerprint, face or screen lock.</string>
+    <string name="app_lock_no_credential_locked">This phone no longer has a screen lock. Set one up in your phone’s settings to unlock Mailcrane.</string>
+    <string name="app_lock_unlock">Unlock</string>
 </resources>
