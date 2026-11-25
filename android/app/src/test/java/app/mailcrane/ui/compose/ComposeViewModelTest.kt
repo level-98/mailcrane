@@ -6,6 +6,7 @@ import app.mailcrane.core.ComposeDraft
 import app.mailcrane.core.DraftFailure
 import app.mailcrane.core.DraftKind
 import app.mailcrane.core.DraftSummary
+import app.mailcrane.core.OutboxEntry
 import app.mailcrane.core.RecipientEntry
 import app.mailcrane.core.RecipientError
 import app.mailcrane.core.RecipientField
@@ -95,6 +96,14 @@ class ComposeViewModelTest {
         }
 
         override suspend fun listDrafts(accountId: Long): List<DraftSummary> = emptyList()
+
+        override suspend fun listOutbox(accountId: Long): List<OutboxEntry> = emptyList()
+
+        override suspend fun retryOutbox(outboxId: Long) = Unit
+
+        override suspend fun deleteOutbox(outboxId: Long) = Unit
+
+        override suspend fun editOutbox(outboxId: Long): Long = 0
 
         override suspend fun signatureFor(accountId: Long): String? = signatures[accountId]
 
@@ -521,5 +530,14 @@ class ComposeViewModelTest {
         val vm = started(FakeCore())
         assertEquals("", vm.state.value.body)
         assertFalse(vm.state.value.hasContent)
+    }
+
+    @Test
+    fun aQueuedMessageClosesAsQueued() {
+        val core = FakeCore().apply { outcome = { SendResult(emptyList(), queued = true) } }
+        val vm = started(core)
+        vm.onRecipientInput(RecipientField.TO, "bob@example.net")
+        vm.send()
+        assertEquals(ComposeResult.Queued, vm.state.value.result)
     }
 }

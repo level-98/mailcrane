@@ -160,6 +160,7 @@ dependencies {
     ksp(libs.hilt.compiler)
     implementation("${libs.jna.get()}@aar")
     implementation(libs.androidx.datastore.preferences)
+    implementation(libs.androidx.work.runtime.ktx)
 
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
