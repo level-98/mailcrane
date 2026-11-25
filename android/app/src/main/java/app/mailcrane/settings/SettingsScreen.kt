@@ -82,6 +82,13 @@ class SettingsViewModel
             viewModelScope.launch { settings.setDynamicColor(enabled) }
         }
 
+        val hideContentOutsideApp: StateFlow<Boolean> =
+            settings.hideContentOutsideApp.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
+
+        fun setHideContentOutsideApp(hide: Boolean) {
+            viewModelScope.launch { settings.setHideContentOutsideApp(hide) }
+        }
+
         val groupByConversation: StateFlow<Boolean> =
             settings.groupByConversation.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), true)
 
@@ -124,6 +131,7 @@ fun SettingsScreen(
     val dynamicColor by viewModel.dynamicColor.collectAsStateWithLifecycle()
     val darkBodies by viewModel.darkMessageBodies.collectAsStateWithLifecycle()
     val grouped by viewModel.groupByConversation.collectAsStateWithLifecycle()
+    val hideOutside by viewModel.hideContentOutsideApp.collectAsStateWithLifecycle()
     val swipeRight by viewModel.swipeRight.collectAsStateWithLifecycle()
     val swipeLeft by viewModel.swipeLeft.collectAsStateWithLifecycle()
     SettingsContent(
@@ -158,6 +166,12 @@ fun SettingsScreen(
         if (onAddAccount != null) {
             AccountsSection(accounts, onAddAccount, onRemoveAccount)
         }
+        SwitchRow(
+            title = R.string.settings_hide_outside,
+            summary = R.string.settings_hide_outside_summary,
+            checked = hideOutside,
+            onChange = viewModel::setHideContentOutsideApp,
+        )
         onOpenRules?.let { open ->
             androidx.compose.material3.ListItem(
                 headlineContent = { Text(stringResource(R.string.rules_settings_row)) },

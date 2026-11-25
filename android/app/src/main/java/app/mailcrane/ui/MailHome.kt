@@ -52,6 +52,8 @@ fun MailHome(
     onSwitchAccount: (Long) -> Unit = {},
     onAddAccount: () -> Unit = {},
     onRemoveAccount: (Long) -> Unit = {},
+    openMessageId: Long? = null,
+    onMessageOpened: () -> Unit = {},
 ) {
     var composing by rememberSaveable { mutableStateOf(false) }
     var reply by rememberSaveable { mutableStateOf<ReplyRequest?>(null) }
@@ -149,6 +151,8 @@ fun MailHome(
                         onSwitchAccount = onSwitchAccount,
                         onAddAccount = onAddAccount,
                         onRemoveAccount = onRemoveAccount,
+                        openMessageId = openMessageId,
+                        onMessageOpened = onMessageOpened,
                         onCompose = {
                             reply = null
                             draft = null

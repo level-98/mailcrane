@@ -88,4 +88,11 @@ class FakeAppSettings(
     override suspend fun setLastAccountId(id: Long) {
         lastAccount.value = id
     }
+
+    private val hideOutside = MutableStateFlow(false)
+    override val hideContentOutsideApp: StateFlow<Boolean> = hideOutside
+
+    override suspend fun setHideContentOutsideApp(hide: Boolean) {
+        hideOutside.value = hide
+    }
 }
