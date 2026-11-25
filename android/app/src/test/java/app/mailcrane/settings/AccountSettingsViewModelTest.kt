@@ -113,17 +113,29 @@ class AccountSettingsViewModelTest {
         val core = FakeSettings()
         val vm = AccountSettingsViewModel(core, 1)
         assertEquals(AccountColorState(chosen = null, automatic = 3), vm.state.value.color)
-        assertEquals(3, vm.state.value.color?.shown)
+        assertEquals(
+            3,
+            vm.state.value.color
+                ?.shown,
+        )
         var refreshed = 0
         vm.onColorChange(5) { refreshed++ }
         assertEquals(5, core.color)
-        assertEquals(5, vm.state.value.color?.shown)
+        assertEquals(
+            5,
+            vm.state.value.color
+                ?.shown,
+        )
         assertEquals(1, refreshed)
         vm.onColorChange(5) { refreshed++ }
         assertEquals("choosing the same colour again saves nothing", 1, refreshed)
         vm.onColorChange(null) { refreshed++ }
         assertEquals(null, core.color)
-        assertEquals(3, vm.state.value.color?.shown)
+        assertEquals(
+            3,
+            vm.state.value.color
+                ?.shown,
+        )
         assertEquals(2, refreshed)
     }
 
@@ -134,7 +146,11 @@ class AccountSettingsViewModelTest {
         core.colorFailure = SettingsFailure.Storage()
         var refreshed = false
         vm.onColorChange(6) { refreshed = true }
-        assertEquals(1, vm.state.value.color?.chosen)
+        assertEquals(
+            1,
+            vm.state.value.color
+                ?.chosen,
+        )
         assertFalse(refreshed)
     }
 }

@@ -67,7 +67,9 @@ data class SignatureState(
     val saveSent: SaveSentSetting? = null,
     /** The marker colour (M4-20); null until loaded. */
     val color: AccountColorState? = null,
-)
+) {
+    val dirty: Boolean get() = loaded && saved != AccountSignature(text, enabled)
+}
 
 /** The account's marker colour: the one chosen ([chosen], null for automatic) and the automatic one. */
 data class AccountColorState(
@@ -76,8 +78,6 @@ data class AccountColorState(
 ) {
     /** The colour the account shows. */
     val shown: Int get() = chosen ?: automatic
-} {
-    val dirty: Boolean get() = loaded && saved != AccountSignature(text, enabled)
 }
 
 /** The signature setting of one account. */
@@ -101,7 +101,8 @@ class AccountSettingsViewModel
                 try {
                     val saved = core.getSignature(accountId)
                     val saveSent = core.getSaveSent(accountId)
-                    val color = AccountColorState(core.getAccountColor(accountId), core.automaticAccountColor(accountId))
+                    val color =
+                        AccountColorState(core.getAccountColor(accountId), core.automaticAccountColor(accountId))
                     _state.update {
                         SignatureState(
                             loaded = true,
