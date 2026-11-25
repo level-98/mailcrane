@@ -328,25 +328,32 @@ impl Session {
             )
             .await?;
         expect_ok(&done)?;
-        let limit = usize::try_from(PREFETCH_MAX_OCTETS).unwrap_or(usize::MAX);
-        let mut out: Vec<(u32, Vec<u8>)> = Vec::new();
-        for untagged in done.untagged {
-            let Untagged::Fetch(data) = untagged else {
-                continue;
-            };
-            let (Some(uid), Some(body)) = (data.uid, data.body) else {
-                continue;
-            };
-            let complete = body.len() <= limit
-                && data
-                    .size
-                    .is_none_or(|size| u64::try_from(body.len()).is_ok_and(|len| len == size));
-            if complete && uids.contains(&uid) && !out.iter().any(|(u, _)| *u == uid) {
-                out.push((uid, body));
-            }
-        }
-        Ok(out)
+        Ok(complete_bodies(done.untagged, uids, PREFETCH_MAX_OCTETS))
     }
+}
+
+/// The complete bodies among `untagged` for the asked-for `uids`, each UID
+/// once: a body longer than `limit`, or whose length isn't the
+/// `RFC822.SIZE` sent with it, was cut off and is left out.
+fn complete_bodies(untagged: Vec<Untagged>, uids: &[u32], limit: u32) -> Vec<(u32, Vec<u8>)> {
+    let limit = usize::try_from(limit).unwrap_or(usize::MAX);
+    let mut out: Vec<(u32, Vec<u8>)> = Vec::new();
+    for response in untagged {
+        let Untagged::Fetch(data) = response else {
+            continue;
+        };
+        let (Some(uid), Some(body)) = (data.uid, data.body) else {
+            continue;
+        };
+        let complete = body.len() <= limit
+            && data
+                .size
+                .is_none_or(|size| u64::try_from(body.len()).is_ok_and(|len| len == size));
+        if complete && uids.contains(&uid) && !out.iter().any(|(u, _)| *u == uid) {
+            out.push((uid, body));
+        }
+    }
+    out
 }
 
 /// The largest message [`Session::uid_fetch_complete_bodies`] returns: 1 MiB.
@@ -463,6 +470,43 @@ mod tests {
         assert!(!with("()"));
         // Missing: every flag can be changed permanently (RFC 9051 §7.1).
         assert!(select_info(&base()).expect("info").custom_keywords);
+    }
+
+    #[test]
+    fn only_complete_asked_for_bodies_are_kept() {
+        let fetch = |uid: u32, size: Option<u64>, len: usize| {
+            Untagged::Fetch(Box::new(FetchData {
+                uid: Some(uid),
+                size,
+                body: Some(vec![b'x'; len]),
+                ..FetchData::default()
+            }))
+        };
+        let got = complete_bodies(
+            vec![
+                // Fine: at the limit, size matches.
+                fetch(1, Some(10), 10),
+                // Cut off by the partial fetch: one octet over the limit.
+                fetch(2, Some(50), 11),
+                // Shorter than its RFC822.SIZE: incomplete.
+                fetch(3, Some(9), 5),
+                // No RFC822.SIZE sent: judged by the limit only.
+                fetch(4, None, 3),
+                // Not asked for.
+                fetch(9, Some(1), 1),
+                // A repeat of uid 1.
+                fetch(1, Some(2), 2),
+                // No body at all.
+                Untagged::Fetch(Box::new(FetchData {
+                    uid: Some(5),
+                    ..FetchData::default()
+                })),
+            ],
+            &[1, 2, 3, 4, 5],
+            10,
+        );
+        let uids: Vec<(u32, usize)> = got.iter().map(|(u, b)| (*u, b.len())).collect();
+        assert_eq!(uids, [(1, 10), (4, 3)]);
     }
 
     #[test]
