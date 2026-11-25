@@ -278,6 +278,10 @@ pub fn validate_recipients(draft: ComposeDraft) -> Vec<RecipientError> {
 pub struct SendResult {
     /// Recipients the server refused; everyone else got the message.
     pub rejected: Vec<String>,
+    /// Not sent yet: it's in the outbox and will be retried (from
+    /// `send_via_outbox`; always false from `send`).
+    #[uniffi(default = false)]
+    pub queued: bool,
 }
 
 /// Why the message was not sent. Nothing was sent in any of these cases.
@@ -370,6 +374,7 @@ async fn send_with(
     let report = core::send_prepared(prepared).await?;
     Ok(SendResult {
         rejected: report.rejected,
+        queued: false,
     })
 }
 

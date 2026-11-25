@@ -14,6 +14,7 @@ pub mod drafts;
 pub mod folders;
 pub mod links;
 pub mod messages;
+pub mod outbox;
 pub mod secrets;
 pub mod settings;
 pub mod sync;
