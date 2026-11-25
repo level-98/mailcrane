@@ -171,12 +171,18 @@ fn an_inbox_namespace_is_the_top_level() {
     let (_dir, path, account) = local_account();
     let store = Store::open(&path).expect("store");
     let inbox = store.list_folders(AccountId(account)).expect("list")[0].id;
-    let mut details = store.get_folder(inbox).expect("get").expect("inbox").details;
+    let mut details = store
+        .get_folder(inbox)
+        .expect("get")
+        .expect("inbox")
+        .details;
     details.delimiter = Some(".".into());
     store.upsert_folder(&details).expect("delimiter");
-    store
-        .set_personal_namespace(AccountId(account), Some("INBOX."))
-        .expect("namespace");
+    // A folder already under INBOX.: the list suggests the namespace.
+    details.remote_name = "INBOX.Archive".into();
+    details.display_name = "INBOX.Archive".into();
+    details.role = None;
+    store.upsert_folder(&details).expect("archive");
     drop(store);
     let engine = SyncEngine::new(path.clone(), Arc::new(Quiet));
 
@@ -202,6 +208,7 @@ fn an_inbox_namespace_is_the_top_level() {
         names(&path, account),
         [
             ("INBOX".into(), 0, false),
+            ("Archive".into(), 0, true),
             ("Projects".into(), 0, true),
             ("2026".into(), 1, true),
         ]

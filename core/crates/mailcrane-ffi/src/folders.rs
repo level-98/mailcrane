@@ -102,9 +102,9 @@ pub fn list_folders(db_path: String, account_id: i64) -> Result<Vec<FolderSummar
         .map_err(|_| storage())?;
     let manageable = folders_manageable(&store, AccountId(account_id)).map_err(|_| storage())?;
     let mut rows = Vec::with_capacity(folders.len());
-    let namespace = store
-        .get_personal_namespace(AccountId(account_id))
-        .map_err(|_| storage())?;
+    // Shown without the personal namespace prefix (#325), as the folder
+    // list suggests it; nothing is asked of the server here.
+    let namespace = folder_admin::derive_namespace(&folders);
     for (folder, place) in arrange(&folders, namespace.as_deref()) {
         let unread = store.count_unread(folder.id).map_err(|_| storage())?;
         rows.push(FolderSummary {
@@ -176,7 +176,7 @@ pub fn move_targets(db_path: String, folder_id: i64) -> Result<MoveTargets, Sync
     let account = folder.details.account_id;
     let all = list_folders(db_path, account.0)?;
     let folders = store.list_folders(account).map_err(|_| storage())?;
-    let namespace = store.get_personal_namespace(account).map_err(|_| storage())?;
+    let namespace = folder_admin::derive_namespace(&folders);
     let (to_top, under) = folder_admin::move_targets_in(&folders, folder.id, namespace.as_deref());
     Ok(MoveTargets {
         to_top,

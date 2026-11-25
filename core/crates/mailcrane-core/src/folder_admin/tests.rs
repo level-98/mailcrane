@@ -469,7 +469,9 @@ fn top_level_create_goes_under_the_namespace() {
     let p = plan_create_in(&all, ACCOUNT, Some(FolderId(3)), "Q1", None, NS).expect("plan");
     assert_eq!(p.remote_name, "INBOX.Projects.Q1");
     assert_eq!(
-        plan_create(&all, ACCOUNT, None, "Receipts", None).expect("plan").remote_name,
+        plan_create(&all, ACCOUNT, None, "Receipts", None)
+            .expect("plan")
+            .remote_name,
         "Receipts"
     );
     assert!(matches!(
@@ -478,7 +480,9 @@ fn top_level_create_goes_under_the_namespace() {
     ));
     assert!(matches!(
         plan_create_in(&all, ACCOUNT, None, "a.b", None, NS),
-        Err(FolderAdminError::InvalidName(FolderNameError::Delimiter('.')))
+        Err(FolderAdminError::InvalidName(FolderNameError::Delimiter(
+            '.'
+        )))
     ));
 }
 
@@ -488,13 +492,19 @@ fn moving_to_the_top_stays_in_the_namespace() {
     let p = plan_move_in(&all, FolderId(4), None, NS).expect("plan");
     assert_eq!(p.new_remote, "INBOX.2026");
     // Already at the top of the namespace.
-    assert!(plan_move_in(&all, FolderId(3), None, NS).expect("plan").is_noop());
+    assert!(plan_move_in(&all, FolderId(3), None, NS)
+        .expect("plan")
+        .is_noop());
     // Renames keep their place.
     assert_eq!(
         plan_rename(&all, FolderId(3), "Work").expect("plan").rows,
         vec![
             (FolderId(3), "INBOX.Work".into(), "INBOX.Work".into()),
-            (FolderId(4), "INBOX.Work.2026".into(), "INBOX.Work.2026".into()),
+            (
+                FolderId(4),
+                "INBOX.Work.2026".into(),
+                "INBOX.Work.2026".into()
+            ),
         ]
     );
 }
@@ -506,7 +516,10 @@ fn the_namespace_folder_is_the_top_in_the_move_picker() {
     assert_eq!(namespace_root(&all, "Other/"), None);
     let (top, under) = move_targets_in(&all, FolderId(4), NS);
     assert!(top);
-    assert!(!under.contains(&FolderId(1)), "INBOX is the top, not a target");
+    assert!(
+        !under.contains(&FolderId(1)),
+        "INBOX is the top, not a target"
+    );
     assert!(under.contains(&FolderId(5)));
     let (top, under) = move_targets_in(&all, FolderId(5), NS);
     assert!(!top, "already at the top");
@@ -523,8 +536,9 @@ mod namespace_imap {
     const PASSWORD: &str = "app-password";
 
     async fn connect(imap: &FakeImap) -> Session {
-        let mut config = ImapConfig::new("localhost", imap.addr().port(), ImapSecurity::ImplicitTls)
-            .with_extra_root_cert(imap.root_cert_der().to_vec());
+        let mut config =
+            ImapConfig::new("localhost", imap.addr().port(), ImapSecurity::ImplicitTls)
+                .with_extra_root_cert(imap.root_cert_der().to_vec());
         config.command_timeout = Duration::from_millis(500);
         Session::connect(&config, USER, &Secret::new(PASSWORD))
             .await
@@ -559,7 +573,12 @@ mod namespace_imap {
         let mut session = connect(&imap).await;
         let ns = session.personal_namespace().await.expect("namespace");
         assert_eq!(ns.as_deref(), Some("INBOX."));
-        save_folders(&store, account, &session.list_folders().await.expect("list")).expect("save");
+        save_folders(
+            &store,
+            account,
+            &session.list_folders().await.expect("list"),
+        )
+        .expect("save");
         let id = |remote: &str| {
             store
                 .list_folders(account)
@@ -570,8 +589,8 @@ mod namespace_imap {
         };
 
         let listed = store.list_folders(account).expect("list");
-        let plan = plan_create_in(&listed, account, None, "Receipts", None, ns.as_deref())
-            .expect("plan");
+        let plan =
+            plan_create_in(&listed, account, None, "Receipts", None, ns.as_deref()).expect("plan");
         create_on_server(&mut session, &plan).await.expect("create");
         save_created(&store, &plan).expect("save");
 
@@ -582,15 +601,18 @@ mod namespace_imap {
         save_renamed(&store, &plan).expect("save");
 
         let listed = store.list_folders(account).expect("list");
-        let plan = plan_rename(&listed, id("INBOX.Projects").expect("projects"), "Work")
-            .expect("plan");
+        let plan =
+            plan_rename(&listed, id("INBOX.Projects").expect("projects"), "Work").expect("plan");
         rename_on_server(&mut session, &plan).await.expect("rename");
         save_renamed(&store, &plan).expect("save");
         session.logout().await;
 
         let mut server = imap.mailbox().folder_names().await;
         server.sort();
-        assert_eq!(server, ["INBOX", "INBOX.2026", "INBOX.Receipts", "INBOX.Work"]);
+        assert_eq!(
+            server,
+            ["INBOX", "INBOX.2026", "INBOX.Receipts", "INBOX.Work"]
+        );
     }
 
     #[tokio::test]
@@ -612,4 +634,22 @@ mod namespace_imap {
             session.logout().await;
         }
     }
+}
+
+#[test]
+fn the_namespace_is_derived_from_the_folder_list() {
+    assert_eq!(derive_namespace(&namespaced()).as_deref(), Some("INBOX."));
+    // Folders outside INBOX: no namespace.
+    assert_eq!(derive_namespace(&folders()), None);
+    let mut mixed = namespaced();
+    let mut outside = folder(9, "Archive", None);
+    outside.details.delimiter = Some(".".into());
+    mixed.push(outside);
+    assert_eq!(derive_namespace(&mixed), None);
+    // Only the Inbox, or an Inbox without a delimiter: nothing to go by.
+    assert_eq!(derive_namespace(&namespaced()[..1]), None);
+    let mut flat = namespaced();
+    flat[0].details.delimiter = None;
+    assert_eq!(derive_namespace(&flat), None);
+    assert_eq!(derive_namespace(&[]), None);
 }

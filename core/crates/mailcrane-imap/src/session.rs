@@ -315,9 +315,7 @@ impl Session {
         Ok(prefix
             .and_then(|(raw, _)| String::from_utf8(raw).ok())
             .filter(|p| {
-                !p.is_empty()
-                    && p.len() <= MAX_NAMESPACE_PREFIX
-                    && !p.chars().any(char::is_control)
+                !p.is_empty() && p.len() <= MAX_NAMESPACE_PREFIX && !p.chars().any(char::is_control)
             }))
     }
 

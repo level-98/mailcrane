@@ -402,15 +402,32 @@ pub fn move_targets_in(
     (ok(None), under)
 }
 
+/// The personal namespace prefix the folder list suggests, for servers
+/// that don't answer NAMESPACE and for showing the list without connecting
+/// (#325): `INBOX` plus its delimiter when the Inbox has one and every other
+/// folder is under it, as on Courier-style servers. `None` otherwise,
+/// including when the Inbox is the only folder.
+pub fn derive_namespace(folders: &[Folder]) -> Option<String> {
+    let inbox = folders
+        .iter()
+        .find(|f| f.details.remote_name.eq_ignore_ascii_case("INBOX"))?;
+    let d = delimiter_of(inbox)?;
+    let prefix = format!("{}{d}", inbox.details.remote_name);
+    let mut others = folders.iter().filter(|f| f.id != inbox.id).peekable();
+    others.peek()?;
+    others
+        .all(|f| f.details.remote_name.starts_with(&prefix))
+        .then_some(prefix)
+}
+
 /// The folder a namespace prefix hangs under: `INBOX` for `INBOX.`, if it's
 /// stored. `None` for a prefix with no such folder.
 pub fn namespace_root(folders: &[Folder], namespace: &str) -> Option<FolderId> {
     folders
         .iter()
         .find(|f| {
-            delimiter_of(f).is_some_and(|d| {
-                namespace.strip_suffix(d) == Some(f.details.remote_name.as_str())
-            })
+            delimiter_of(f)
+                .is_some_and(|d| namespace.strip_suffix(d) == Some(f.details.remote_name.as_str()))
         })
         .map(|f| f.id)
 }

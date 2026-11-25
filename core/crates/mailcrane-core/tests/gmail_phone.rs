@@ -231,7 +231,6 @@ async fn a_v15_database_with_partial_gmail_rows_syncs_with_v16_code() {
              ALTER TABLE folders DROP COLUMN selectable;
              ALTER TABLE accounts DROP COLUMN local_only;
              ALTER TABLE rules DROP COLUMN missing_folder;
-             ALTER TABLE accounts DROP COLUMN personal_namespace;
              DROP TABLE server_rules_deployed;
              DROP TABLE server_rules;
              PRAGMA user_version = 15;",

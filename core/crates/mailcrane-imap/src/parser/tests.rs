@@ -705,7 +705,10 @@ fn namespace_responses() {
         Ok(Some((Vec::new(), Some('/'))))
     );
     assert_eq!(ns(b"* NAMESPACE NIL NIL NIL\r\n"), Ok(None));
-    assert_eq!(ns(b"* namespace ((\"INBOX.\" NIL)) NIL NIL\r\n"), Ok(Some((b"INBOX.".to_vec(), None))));
+    assert_eq!(
+        ns(b"* namespace ((\"INBOX.\" NIL)) NIL NIL\r\n"),
+        Ok(Some((b"INBOX.".to_vec(), None)))
+    );
     // A literal prefix and an extension after the delimiter.
     assert_eq!(
         ns(b"* NAMESPACE (({6}\r\nINBOX. \".\" \"X-PARAM\" (\"a\"))) NIL NIL\r\n"),
@@ -722,4 +725,3 @@ fn namespace_responses() {
         assert!(ns(bad).is_err(), "{:?}", String::from_utf8_lossy(bad));
     }
 }
-

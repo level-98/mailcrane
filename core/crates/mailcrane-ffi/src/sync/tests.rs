@@ -771,8 +771,10 @@ fn an_unreadable_local_marker_fails_loudly_and_never_connects() {
 }
 
 #[test]
-fn refresh_folders_saves_the_personal_namespace() {
-    // #325: a Courier-style server with every personal folder under INBOX.
+fn the_servers_namespace_is_used_for_top_level_folders() {
+    // #325: the server says INBOX. is the personal namespace. A folder
+    // outside it ("Shared") means the folder list alone wouldn't suggest
+    // it, so INBOX.Receipts can only come from NAMESPACE.
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(1)
         .enable_all()
@@ -784,6 +786,7 @@ fn refresh_folders_saves_the_personal_namespace() {
             .namespace("INBOX.", '.')
             .folder("INBOX", Vec::new())
             .folder("INBOX.Projects", Vec::new())
+            .folder("Shared", Vec::new())
             .start()
             .await
             .expect("fake imap")
@@ -815,21 +818,32 @@ fn refresh_folders_saves_the_personal_namespace() {
     install_secret_store(platform);
     let engine = SyncEngine::new(path.to_string_lossy().into_owned(), Arc::new(Collect::default()));
     *engine.extra_root_cert.lock().expect("lock") = Some(imap.root_cert_der().to_vec());
-
     engine.refresh_folders(account.0).expect("refresh");
-    let store = Store::open(&path).expect("store");
-    assert_eq!(
-        store.get_personal_namespace(account).expect("namespace").as_deref(),
-        Some("INBOX.")
-    );
-    // The new folder goes under it on the server.
+
     let id = engine
         .create_folder(account.0, None, "Receipts".into())
         .expect("create");
-    assert_eq!(
-        store.get_folder(FolderId(id)).expect("get").expect("folder").details.remote_name,
-        "INBOX.Receipts"
-    );
-    let names = runtime.block_on(imap.mailbox().folder_names());
-    assert!(names.iter().any(|n| n == "INBOX.Receipts"), "{names:?}");
+    let store = Store::open(&path).expect("store");
+    let remote = |id: i64| {
+        store
+            .get_folder(FolderId(id))
+            .expect("get")
+            .expect("folder")
+            .details
+            .remote_name
+    };
+    assert_eq!(remote(id), "INBOX.Receipts");
+    // "Shared" moved to the top lands in the namespace too.
+    let shared = store
+        .list_folders(account)
+        .expect("list")
+        .into_iter()
+        .find(|f| f.details.remote_name == "Shared")
+        .expect("shared")
+        .id;
+    engine.move_folder(shared.0, None).expect("move");
+    assert_eq!(remote(shared.0), "INBOX.Shared");
+    let mut names = runtime.block_on(imap.mailbox().folder_names());
+    names.sort();
+    assert_eq!(names, ["INBOX", "INBOX.Projects", "INBOX.Receipts", "INBOX.Shared"]);
 }

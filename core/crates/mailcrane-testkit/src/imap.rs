@@ -633,7 +633,9 @@ async fn handle_imap_command(
                     }
                 }
                 let quoted = name.replace('\\', "\\\\").replace('"', "\\\"");
-                output.push_str(&format!("* LIST ({attributes}) \"{delim}\" \"{quoted}\"\r\n"));
+                output.push_str(&format!(
+                    "* LIST ({attributes}) \"{delim}\" \"{quoted}\"\r\n"
+                ));
             }
             if quirks.contains(&Quirk::GmailLabels)
                 && !listed.iter().any(|n| n == "[Gmail]/All Mail")

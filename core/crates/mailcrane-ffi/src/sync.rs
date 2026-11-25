@@ -358,28 +358,7 @@ impl SyncEngine {
             let mut session = self.connect(&store, account).await.map_err(report)?;
             let listed = session.list_folders().await;
             let command = session.last_command();
-            // The personal namespace (#325), for creating top-level folders.
-            // A failure here keeps what was saved before; it isn't a reason
-            // to fail the refresh.
-            let namespace = match &listed {
-                Ok(_) => session.personal_namespace().await.ok(),
-                Err(_) => None,
-            };
             session.logout().await;
-            if let Some(prefix) = namespace {
-                if store
-                    .set_personal_namespace(account, prefix.as_deref())
-                    .is_err()
-                {
-                    log_failure(
-                        "save namespace",
-                        &CoreSyncError::Store(mailcrane_store::StoreError::Invalid {
-                            field: "personal_namespace",
-                        }),
-                        None,
-                    );
-                }
-            }
             let folders = listed.map_err(|e| {
                 let e = CoreSyncError::from(e);
                 log_failure("list folders", &e, command);

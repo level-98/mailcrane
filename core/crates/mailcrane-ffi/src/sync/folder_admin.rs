@@ -115,7 +115,8 @@ enum Kind {
 #[uniffi::export]
 impl SyncEngine {
     /// Creates a folder `name` under `parent_id`, or at the top with `None`,
-    /// and returns its id.
+    /// and returns its id. On a server with a personal namespace (such as
+    /// `INBOX.`, #325), a top-level folder goes under it.
     pub fn create_folder(
         &self,
         account_id: i64,
@@ -125,19 +126,26 @@ impl SyncEngine {
         let account = AccountId(account_id);
         let (store, kind) = self.admin_open(account)?;
         let folders = list(&store, account)?;
-        let namespace = namespace(&store, account)?;
-        let plan = admin::plan_create_in(
-            &folders,
-            account,
-            parent_id.map(FolderId),
-            &name,
-            Some(LOCAL_SEPARATOR),
-            namespace.as_deref(),
-        )?;
+        let derived = admin::derive_namespace(&folders);
+        let plan_with = |namespace: Option<&str>| {
+            admin::plan_create_in(
+                &folders,
+                account,
+                parent_id.map(FolderId),
+                &name,
+                Some(LOCAL_SEPARATOR),
+                namespace,
+            )
+        };
+        // Bad names, unknown parents and taken names are refused before
+        // connecting.
+        let mut plan = plan_with(derived.as_deref())?;
         if let Kind::Imap = kind {
-            let target = plan.clone();
-            self.on_server(&store, account, |s| {
-                Box::pin(async move { admin::create_on_server(s, &target).await })
+            plan = self.on_server(&store, account, async |s| {
+                let namespace = server_namespace(s).await.or(derived.clone());
+                let plan = plan_with(namespace.as_deref())?;
+                admin::create_on_server(s, &plan).await?;
+                Ok(plan)
             })?;
         }
         let id = admin::save_created(&store, &plan)?;
@@ -152,7 +160,8 @@ impl SyncEngine {
         })
     }
 
-    /// Moves the folder under `parent_id`, or to the top with `None`.
+    /// Moves the folder under `parent_id`, or to the top with `None` (under
+    /// the personal namespace, if the server has one).
     pub fn move_folder(&self, folder_id: i64, parent_id: Option<i64>) -> Result<(), FolderFailure> {
         self.change(folder_id, |folders, id, namespace| {
             admin::plan_move_in(folders, id, parent_id.map(FolderId), namespace)
@@ -166,9 +175,8 @@ impl SyncEngine {
         let folders = list(&store, account)?;
         let folder = admin::plan_delete(&folders, FolderId(folder_id))?;
         if let Kind::Imap = kind {
-            let target = folder.clone();
-            self.on_server(&store, account, |s| {
-                Box::pin(async move { admin::delete_on_server(s, &target).await })
+            self.on_server(&store, account, async |s| {
+                admin::delete_on_server(s, &folder).await
             })?;
         }
         admin::save_deleted(&store, &folder)?;
@@ -177,11 +185,10 @@ impl SyncEngine {
     }
 }
 
-type AdminFuture<'a> =
-    std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), FolderAdminError>> + 'a>>;
-
 impl SyncEngine {
-    /// A rename or move.
+    /// A rename or move. `plan` gets the personal namespace prefix: the
+    /// server's (NAMESPACE, on the connection that makes the change) when it
+    /// has one, otherwise the one the folder list suggests.
     fn change(
         &self,
         folder_id: i64,
@@ -193,16 +200,20 @@ impl SyncEngine {
     ) -> Result<(), FolderFailure> {
         let (store, account, kind) = self.admin_folder(folder_id)?;
         let folders = list(&store, account)?;
-        let namespace = namespace(&store, account)?;
-        let p = plan(&folders, FolderId(folder_id), namespace.as_deref())?;
+        let derived = admin::derive_namespace(&folders);
+        let id = FolderId(folder_id);
+        // Refused moves and renames fail before connecting.
+        let mut p = plan(&folders, id, derived.as_deref())?;
+        if let Kind::Imap = kind {
+            p = self.on_server(&store, account, async |s| {
+                let namespace = server_namespace(s).await.or(derived.clone());
+                let p = plan(&folders, id, namespace.as_deref())?;
+                admin::rename_on_server(s, &p).await?;
+                Ok(p)
+            })?;
+        }
         if p.is_noop() {
             return Ok(());
-        }
-        if let Kind::Imap = kind {
-            let target = p.clone();
-            self.on_server(&store, account, |s| {
-                Box::pin(async move { admin::rename_on_server(s, &target).await })
-            })?;
         }
         admin::save_renamed(&store, &p)?;
         for (id, ..) in &p.rows {
@@ -254,12 +265,12 @@ impl SyncEngine {
 
     /// Connects, runs `job`, logs out. Holds the account's lock so no sync
     /// runs at the same time.
-    fn on_server(
+    fn on_server<T>(
         &self,
         store: &Store,
         account: AccountId,
-        job: impl for<'a> FnOnce(&'a mut Session) -> AdminFuture<'a>,
-    ) -> Result<(), FolderFailure> {
+        job: impl AsyncFnOnce(&mut Session) -> Result<T, FolderAdminError>,
+    ) -> Result<T, FolderFailure> {
         let lock = self.account_lock(account);
         let _guard = lock.lock();
         let sync = |kind: events::SyncErrorKind| FolderFailure::Sync { kind: kind.into() };
@@ -273,12 +284,11 @@ impl SyncEngine {
     }
 }
 
-/// The account's personal namespace prefix (#325), as `refresh_folders`
-/// last saw it.
-fn namespace(store: &Store, account: AccountId) -> Result<Option<String>, FolderFailure> {
-    store
-        .get_personal_namespace(account)
-        .map_err(|_| FolderFailure::Storage)
+/// The server's personal namespace prefix (#325), asked on this
+/// connection. `None` without NAMESPACE, without a personal namespace, or
+/// if asking failed (the change itself then reports a broken connection).
+async fn server_namespace(session: &mut Session) -> Option<String> {
+    session.personal_namespace().await.ok().flatten()
 }
 
 fn list(store: &Store, account: AccountId) -> Result<Vec<mailcrane_store::Folder>, FolderFailure> {
