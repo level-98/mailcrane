@@ -414,9 +414,15 @@ fn in_the_run_below_the_handoff_the_first_header_with_the_id_wins() {
     let real = "mx2.example.org; dmarc=fail header.from=example.net";
     let forged = "mx2.example.org; dmarc=pass header.from=example.net";
     let trace = [rcv(HANDOFF), ar(real), ar(forged)];
-    assert_eq!(trusted_results_with(&trace, Some("mx2.example.org")), Some(real));
+    assert_eq!(
+        trusted_results_with(&trace, Some("mx2.example.org")),
+        Some(real)
+    );
     // A forged pass first in the run under another authserv-id is skipped.
     let other = "mx9.example.org; dmarc=pass header.from=example.net";
     let trace = [rcv(HANDOFF), ar(other), ar(real)];
-    assert_eq!(trusted_results_with(&trace, Some("mx2.example.org")), Some(real));
+    assert_eq!(
+        trusted_results_with(&trace, Some("mx2.example.org")),
+        Some(real)
+    );
 }

@@ -1,6 +1,8 @@
 package app.mailcrane.ui.message
 
 import app.mailcrane.core.ActionFailure
+import app.mailcrane.core.AuthResult
+import app.mailcrane.core.AuthVerdict
 import app.mailcrane.core.InlinePart
 import app.mailcrane.core.LinkCheck
 import app.mailcrane.core.LinkChecker
@@ -12,6 +14,8 @@ import app.mailcrane.core.MessageAddress
 import app.mailcrane.core.MessageBody
 import app.mailcrane.core.MessageCore
 import app.mailcrane.core.MessageDetail
+import app.mailcrane.core.SenderCheck
+import app.mailcrane.core.SenderTrustChanges
 import app.mailcrane.core.SnoozeFailure
 import app.mailcrane.core.SnoozeInfo
 import app.mailcrane.core.SyncErrorKind
@@ -35,10 +39,6 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
-import app.mailcrane.core.SenderTrustChanges
-import app.mailcrane.core.SenderCheck
-import app.mailcrane.core.AuthVerdict
-import app.mailcrane.core.AuthResult
 
 private const val ID = 42L
 

@@ -12,6 +12,7 @@ import app.mailcrane.core.MessageAction
 import app.mailcrane.core.MessageBody
 import app.mailcrane.core.MessageCore
 import app.mailcrane.core.MessageDetail
+import app.mailcrane.core.SenderTrustChanges
 import app.mailcrane.core.SnoozeFailure
 import app.mailcrane.core.SnoozeInfo
 import app.mailcrane.core.SyncErrorKind
@@ -31,12 +32,11 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.getAndUpdate
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
-import app.mailcrane.core.SenderTrustChanges
-import kotlinx.coroutines.flow.drop
 
 /** One-off things the message screen does after an action. */
 sealed interface MessageEffect {
