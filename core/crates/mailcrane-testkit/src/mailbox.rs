@@ -430,11 +430,17 @@ impl Mailbox {
     /// Renames a folder and every folder under it (`old/…`), keeping their
     /// messages (RFC 9051 §6.3.6). Returns whether `old` existed.
     pub async fn rename_folder(&self, old: &str, new: &str) -> bool {
+        self.rename_folder_with(old, new, '/').await
+    }
+
+    /// [`Mailbox::rename_folder`] with folders under `old` separated by
+    /// `delimiter`.
+    pub async fn rename_folder_with(&self, old: &str, new: &str, delimiter: char) -> bool {
         let mut inner = self.inner.lock().await;
         if !inner.folders.contains_key(old) {
             return false;
         }
-        let prefix = format!("{old}/");
+        let prefix = format!("{old}{delimiter}");
         let names: Vec<String> = inner
             .folders
             .keys()
