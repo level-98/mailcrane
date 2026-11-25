@@ -2,7 +2,7 @@
 //! size limits, and writing commands.
 
 use crate::error::ImapError;
-use crate::parser::{frame_end, parse_response_with, Limits, ParseError, Response};
+use crate::parser::{frame_resume, parse_response_with, FrameScan, Limits, ParseError, Response};
 use std::future::Future;
 use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
@@ -36,6 +36,8 @@ pub(crate) struct Connection {
     io: Box<dyn Io>,
     buf: Vec<u8>,
     limits: Limits,
+    /// How far the response being read has been scanned (issue #309).
+    scan: FrameScan,
 }
 
 impl Connection {
@@ -44,6 +46,7 @@ impl Connection {
             io,
             buf: Vec::new(),
             limits,
+            scan: FrameScan::default(),
         }
     }
 
@@ -59,7 +62,8 @@ impl Connection {
     /// Reads one complete response. Callers wrap this in a timeout.
     pub(crate) async fn read_response(&mut self) -> Result<Response, ImapError> {
         loop {
-            let framed = frame_end(&self.buf, &self.limits).map_err(map_parse)?;
+            let framed =
+                frame_resume(&self.buf, &self.limits, &mut self.scan).map_err(map_parse)?;
             if let Some(end) = framed {
                 let (response, used) =
                     parse_response_with(self.buf.get(..end).unwrap_or_default(), &self.limits)

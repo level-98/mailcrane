@@ -182,23 +182,68 @@ pub fn parse_response_with(input: &[u8], limits: &Limits) -> Result<(Response, u
 /// are needed. Limits are checked on what has arrived so far, so a hostile
 /// server cannot make us buffer more than the limits allow.
 pub(crate) fn frame_end(buf: &[u8], limits: &Limits) -> Result<Option<usize>, ParseError> {
+    frame_resume(buf, limits, &mut FrameScan::default())
+}
+
+/// How far [`frame_resume`] got in the response being read, so the next call
+/// carries on from there instead of starting over (issue #309). Without it,
+/// every read of a large literal rescanned the response from its first byte.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct FrameScan {
+    /// Where the line being looked at starts: after the previous line or
+    /// literal of the same response.
+    line_start: usize,
+    /// How many bytes from `line_start` are known to hold no LF.
+    searched: usize,
+    /// The buffer length needed before scanning again: the end of a literal
+    /// still arriving, or one more byte for an unfinished line.
+    need: usize,
+    /// Bytes searched in total, for tests of the scanning cost.
+    #[cfg(test)]
+    pub(crate) inspected: usize,
+}
+
+/// [`frame_end`], carrying on from `scan`, which must come from earlier
+/// calls on the same buffer with only bytes appended since. When a frame
+/// is complete, `scan` is reset for the next response, which starts at the
+/// beginning of the buffer once the caller has removed this one.
+pub(crate) fn frame_resume(
+    buf: &[u8],
+    limits: &Limits,
+    scan: &mut FrameScan,
+) -> Result<Option<usize>, ParseError> {
     let max_frame = limits.max_literal.saturating_add(limits.max_line);
-    let mut pos = 0usize;
+    if buf.len() < scan.need {
+        return Ok(None);
+    }
     loop {
-        let rest = buf.get(pos..).unwrap_or_default();
-        let Some(lf) = rest.iter().position(|&b| b == b'\n') else {
-            if rest.len() >= limits.max_line {
+        let pos = scan.line_start;
+        let from = pos.saturating_add(scan.searched);
+        let unsearched = buf.get(from..).unwrap_or_default();
+        let Some(found) = unsearched.iter().position(|&b| b == b'\n') else {
+            #[cfg(test)]
+            {
+                scan.inspected = scan.inspected.saturating_add(unsearched.len());
+            }
+            scan.searched = buf.len().saturating_sub(pos);
+            if scan.searched >= limits.max_line {
                 return Err(ParseError::LineTooLong);
             }
             if buf.len() > max_frame {
                 return Err(ParseError::TooLarge);
             }
+            scan.need = buf.len().saturating_add(1);
             return Ok(None);
         };
+        #[cfg(test)]
+        {
+            scan.inspected = scan.inspected.saturating_add(found.saturating_add(1));
+        }
+        let lf = scan.searched.saturating_add(found);
         if lf >= limits.max_line {
             return Err(ParseError::LineTooLong);
         }
-        let line = rest.get(..lf).unwrap_or_default();
+        let line = buf.get(pos..pos.saturating_add(lf)).unwrap_or_default();
         let line = line.strip_suffix(b"\r").unwrap_or(line);
         let after_line = pos.saturating_add(lf).saturating_add(1);
         match literal_suffix(line) {
@@ -210,10 +255,14 @@ pub(crate) fn frame_end(buf: &[u8], limits: &Limits) -> Result<Option<usize>, Pa
                 if end > max_frame {
                     return Err(ParseError::TooLarge);
                 }
+                // The next line starts after the literal; nothing in the
+                // literal itself is ever searched.
+                scan.line_start = end;
+                scan.searched = 0;
                 if end > buf.len() {
+                    scan.need = end;
                     return Ok(None);
                 }
-                pos = end;
             }
             // A literal size too big to even represent.
             Some(None) => return Err(ParseError::TooLarge),
@@ -221,6 +270,11 @@ pub(crate) fn frame_end(buf: &[u8], limits: &Limits) -> Result<Option<usize>, Pa
                 if after_line > max_frame {
                     return Err(ParseError::TooLarge);
                 }
+                *scan = FrameScan {
+                    #[cfg(test)]
+                    inspected: scan.inspected,
+                    ..FrameScan::default()
+                };
                 return Ok(Some(after_line));
             }
         }

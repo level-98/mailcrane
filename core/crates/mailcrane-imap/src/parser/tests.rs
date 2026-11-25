@@ -540,3 +540,130 @@ proptest! {
         prop_assert_eq!(parsed, r);
     }
 }
+
+/// Feeds `input` to [`frame_resume`] `chunk` bytes at a time, like reads
+/// from the network. Returns where the frame ended (at the read that
+/// completed it) and how many bytes were searched in total.
+fn framed_in_chunks(input: &[u8], chunk: usize, limits: &Limits) -> (Option<usize>, usize) {
+    let mut buf = Vec::new();
+    let mut scan = FrameScan::default();
+    for piece in input.chunks(chunk) {
+        buf.extend_from_slice(piece);
+        if let Some(end) = frame_resume(&buf, limits, &mut scan).expect("frames") {
+            return (Some(end), scan.inspected);
+        }
+    }
+    (None, scan.inspected)
+}
+
+#[test]
+fn a_large_literal_in_small_reads_is_framed_in_linear_time() {
+    // Issue #309: every read used to rescan the response from its start.
+    let literal = 4 * 1024 * 1024;
+    let mut input = format!("* 1 FETCH (UID 7 BODY[] {{{literal}}}\r\n").into_bytes();
+    let header = input.len();
+    input.resize(header + literal, b'x');
+    input.extend_from_slice(b")\r\n");
+    let (end, inspected) = framed_in_chunks(&input, 1024, &Limits::default());
+    assert_eq!(end, Some(input.len()));
+    // Only the two lines around the literal are searched, once each; the
+    // 4 MiB of literal are skipped, and no read starts over.
+    assert!(inspected <= header + 3, "searched {inspected} bytes");
+}
+
+#[test]
+fn a_long_line_in_small_reads_is_searched_once() {
+    let mut input = b"* OK ".to_vec();
+    input.resize(60 * 1024, b'a');
+    input.extend_from_slice(b"\r\n");
+    let (end, inspected) = framed_in_chunks(&input, 1024, &Limits::default());
+    assert_eq!(end, Some(input.len()));
+    assert_eq!(inspected, input.len());
+}
+
+#[test]
+fn resuming_finds_the_same_frame_as_a_fresh_scan_at_every_split() {
+    let input = b"* 1 FETCH (BODY[] {6}\r\nab\r\ncd BODY[HEADER] {2}\r\nxy)\r\n* 2 EXISTS\r\n";
+    let fresh = frame_end(input, &Limits::default()).expect("frames");
+    assert_eq!(fresh, Some(input.len() - b"* 2 EXISTS\r\n".len()));
+    for chunk in 1..=input.len() {
+        let (end, _) = framed_in_chunks(input, chunk, &Limits::default());
+        assert_eq!(end, fresh, "chunk {chunk}");
+    }
+}
+
+#[test]
+fn a_finished_frame_resets_the_scan_for_the_next_response() {
+    let limits = Limits::default();
+    let mut scan = FrameScan::default();
+    let mut buf = b"* 1 FETCH (BODY[] {3}\r\nabc)\r\n* 2 EX".to_vec();
+    let end = frame_resume(&buf, &limits, &mut scan)
+        .expect("frames")
+        .expect("complete");
+    // The caller removes the frame; the next response starts at 0.
+    buf.drain(..end);
+    assert_eq!(
+        frame_resume(&buf, &limits, &mut scan).expect("frames"),
+        None
+    );
+    buf.extend_from_slice(b"ISTS\r\n");
+    assert_eq!(
+        frame_resume(&buf, &limits, &mut scan).expect("frames"),
+        Some(buf.len())
+    );
+}
+
+#[test]
+fn resumed_scans_keep_the_limits() {
+    let limits = Limits {
+        max_line: 16,
+        max_literal: 32,
+    };
+    // A line growing past the limit across reads.
+    let mut buf = Vec::new();
+    let mut scan = FrameScan::default();
+    let mut result = Ok(None);
+    for piece in b"* OK this line is far too long\r\n".chunks(4) {
+        buf.extend_from_slice(piece);
+        result = frame_resume(&buf, &limits, &mut scan);
+        if result.is_err() {
+            break;
+        }
+    }
+    assert_eq!(result, Err(ParseError::LineTooLong));
+    // A literal over the limit is refused as soon as its size is read.
+    let mut scan = FrameScan::default();
+    assert_eq!(
+        frame_resume(b"* X {33}\r\n", &limits, &mut scan),
+        Err(ParseError::TooLarge)
+    );
+}
+
+proptest! {
+    /// Fed in pieces, the resumed scan gives what a fresh scan of the bytes
+    /// so far gives, at every read, for any input (issue #309).
+    #[test]
+    fn resumed_and_fresh_scans_agree(
+        input in proptest::collection::vec(
+            prop_oneof![
+                Just(b'\n'), Just(b'\r'), Just(b'{'), Just(b'}'), Just(b'+'),
+                (b'0'..=b'9'), any::<u8>(),
+            ],
+            0..300,
+        ),
+        chunk in 1usize..40,
+    ) {
+        let limits = Limits { max_line: 64, max_literal: 128 };
+        let mut buf = Vec::new();
+        let mut scan = FrameScan::default();
+        for piece in input.chunks(chunk) {
+            buf.extend_from_slice(piece);
+            let resumed = frame_resume(&buf, &limits, &mut scan);
+            let fresh = frame_end(&buf, &limits);
+            prop_assert_eq!(&resumed, &fresh);
+            if !matches!(resumed, Ok(None)) {
+                break;
+            }
+        }
+    }
+}
