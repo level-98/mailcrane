@@ -357,34 +357,42 @@ pub async fn email_changes(
 /// Fills the session's download template (RFC 8620 §6.2): `{accountId}`,
 /// `{blobId}`, `{name}` and `{type}`, each percent-encoded.
 pub fn download_url(session: &Session, blob_id: &str) -> Result<url::Url, JmapError> {
-    let enc = |s: &str| {
-        let mut out = String::new();
-        for b in s.bytes() {
-            if b.is_ascii_alphanumeric() || b"-._~".contains(&b) {
-                out.push(char::from(b));
-            } else {
-                out.push_str(&format!("%{b:02X}"));
-            }
-        }
-        out
-    };
+    let enc = percent_encode;
     let filled = session
         .download_url
         .replace("{accountId}", &enc(&session.mail_account_id))
         .replace("{blobId}", &enc(blob_id))
         .replace("{name}", "message.eml")
         .replace("{type}", "message%2Frfc822");
+    same_org_url(session, &filled)
+}
+
+/// Resolves a server-given URL against the API URL. Templates come from the
+/// server, so credentials only go to the API's own organisation, as for
+/// redirects, and only over `https:`.
+pub(crate) fn same_org_url(session: &Session, given: &str) -> Result<url::Url, JmapError> {
     let url = session
         .api_url
-        .join(&filled)
+        .join(given)
         .map_err(|_| JmapError::InvalidUrl)?;
-    // The template comes from the server; credentials only go to the API's
-    // own organisation, as for redirects.
     let host = |u: &url::Url| org(u.host_str().unwrap_or_default());
     if url.scheme() != "https" || host(&url) != host(&session.api_url) {
         return Err(JmapError::InvalidUrl);
     }
     Ok(url)
+}
+
+/// Percent-encodes everything but RFC 3986 unreserved characters.
+pub(crate) fn percent_encode(s: &str) -> String {
+    let mut out = String::new();
+    for b in s.bytes() {
+        if b.is_ascii_alphanumeric() || b"-._~".contains(&b) {
+            out.push(char::from(b));
+        } else {
+            out.push_str(&format!("%{b:02X}"));
+        }
+    }
+    out
 }
 
 /// Downloads a blob: the raw message for parsing by `mailcrane-mime`.

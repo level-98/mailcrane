@@ -119,7 +119,7 @@ pub(crate) async fn send(
     method: Method,
     url: &url::Url,
     auth: Option<&Auth>,
-    body: Option<Vec<u8>>,
+    body: Option<(Vec<u8>, &str)>,
     config: &ClientConfig,
 ) -> Result<Response, JmapError> {
     tokio::time::timeout(config.timeout, send_inner(method, url, auth, body, config))
@@ -131,7 +131,7 @@ async fn send_inner(
     method: Method,
     url: &url::Url,
     auth: Option<&Auth>,
-    body: Option<Vec<u8>>,
+    body: Option<(Vec<u8>, &str)>,
     config: &ClientConfig,
 ) -> Result<Response, JmapError> {
     if url.scheme() != "https" {
@@ -172,12 +172,15 @@ async fn send_inner(
     if let Some(a) = auth {
         builder = builder.header(hyper::header::AUTHORIZATION, a.header());
     }
-    let has_body = body.is_some();
-    if has_body {
-        builder = builder.header(hyper::header::CONTENT_TYPE, "application/json");
-    }
+    let bytes = match body {
+        Some((bytes, content_type)) => {
+            builder = builder.header(hyper::header::CONTENT_TYPE, content_type);
+            bytes
+        }
+        None => Vec::new(),
+    };
     let request = builder
-        .body(Full::new(Bytes::from(body.unwrap_or_default())))
+        .body(Full::new(Bytes::from(bytes)))
         .map_err(|_| JmapError::InvalidUrl)?;
     let response = sender
         .send_request(request)
