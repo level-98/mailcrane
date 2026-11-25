@@ -92,6 +92,153 @@ impl<'a> JmapSyncer<'a> {
         self.report(result)
     }
 
+    /// Carries the account's queued message actions out on the server,
+    /// oldest first (RFC 8621 §4.6 `Email/set`): read and flag states as
+    /// keywords, moves as `mailboxIds`, deletion for good as `destroy`. Stops
+    /// at the first that fails for now; one the server refuses is undone
+    /// locally. Errors only for a local database failure, like IMAP replay.
+    pub async fn replay_actions(
+        &mut self,
+        now: i64,
+    ) -> Result<crate::actions::ReplayReport, SyncError> {
+        use crate::actions::{backoff_secs, ReplayReport};
+        use mailcrane_jmap::EmailAction;
+        use mailcrane_store::OpKind;
+        let ops = self.store.pending_ops(self.account)?;
+        let mut report = ReplayReport::default();
+        for (index, op) in ops.iter().enumerate() {
+            if op.next_attempt_at > now {
+                report.remaining = ops.len().saturating_sub(index);
+                break;
+            }
+            // Each local row with its JMAP email, so a refusal per email can be
+            // undone per message.
+            let mut rows: Vec<(String, MessageId)> = Vec::new();
+            for m in &op.messages {
+                if let Some(row) = self.store.jmap_row(m.message_id)? {
+                    rows.push((row.email_id, m.message_id));
+                }
+            }
+            let ids: Vec<String> = rows.iter().map(|(e, _)| e.clone()).collect();
+            let action = match op.kind {
+                OpKind::MarkRead => Some(EmailAction::Keyword {
+                    keyword: "$seen".into(),
+                    on: true,
+                }),
+                OpKind::MarkUnread => Some(EmailAction::Keyword {
+                    keyword: "$seen".into(),
+                    on: false,
+                }),
+                OpKind::Flag => Some(EmailAction::Keyword {
+                    keyword: "$flagged".into(),
+                    on: true,
+                }),
+                OpKind::Unflag => Some(EmailAction::Keyword {
+                    keyword: "$flagged".into(),
+                    on: false,
+                }),
+                OpKind::Expunge => Some(EmailAction::Destroy),
+                OpKind::Move => {
+                    let from = self.store.jmap_mailbox(op.folder_id)?;
+                    let to = match op.dest_folder_id {
+                        Some(dest) => self.store.jmap_mailbox(dest)?,
+                        None => None,
+                    };
+                    from.zip(to)
+                        .map(|(from, to)| EmailAction::Move { from, to })
+                }
+            };
+            let expunged = matches!(op.kind, OpKind::Move | OpKind::Expunge);
+            // Ok(refused messages) when the server changed at least some of them.
+            let result: Result<Vec<MessageId>, Option<JmapError>> = match action {
+                // The rows are gone locally (a sync removed them): nothing to do.
+                _ if ids.is_empty() => Ok(Vec::new()),
+                None => Err(None),
+                Some(action) => {
+                    match mailcrane_jmap::apply(
+                        &self.session,
+                        &self.auth,
+                        &self.config,
+                        &ids,
+                        &action,
+                    )
+                    .await
+                    {
+                        Ok(outcome) => {
+                            // Already gone counts as done (a destroy repeated after a lost
+                            // reply); anything else refused is undone for those emails only.
+                            // Their server state never changed, so Email/changes would never
+                            // correct an optimistic local change on them.
+                            let refused: Vec<MessageId> = rows
+                                .iter()
+                                .filter(|(email, _)| {
+                                    outcome
+                                        .failed
+                                        .iter()
+                                        .any(|(id, kind)| id == email && kind != "notFound")
+                                })
+                                .map(|(_, m)| *m)
+                                .collect();
+                            if !refused.is_empty() && refused.len() == rows.len() {
+                                Err(None)
+                            } else {
+                                Ok(refused)
+                            }
+                        }
+                        Err(e) => Err(Some(e)),
+                    }
+                }
+            };
+            match result {
+                Ok(refused) => {
+                    if !refused.is_empty() {
+                        let undone = self.store.fail_op_messages(op.id, &refused)?;
+                        tracing::warn!(
+                            refused = undone.len(),
+                            "JMAP server refused part of a message action; undone for those"
+                        );
+                        report.failed = report.failed.saturating_add(1);
+                        self.listener.on_event(CoreEvent::MessagesChanged {
+                            folder_id: op.folder_id,
+                        });
+                        self.listener.on_event(CoreEvent::ActionFailed {
+                            account_id: self.account,
+                            action: crate::actions::action_kind(op.kind),
+                            message_ids: undone,
+                            reason: crate::events::SyncErrorKind::Protocol,
+                        });
+                    }
+                    self.store.complete_op(op.id, expunged)?;
+                    report.done = report.done.saturating_add(1);
+                }
+                Err(Some(e)) if transient(&e) => {
+                    let attempts = op.attempts.saturating_add(1);
+                    let next = now.saturating_add(backoff_secs(attempts));
+                    self.store.defer_op(op.id, attempts, next, "network")?;
+                    report.remaining = ops.len().saturating_sub(index);
+                    break;
+                }
+                Err(e) => {
+                    let reverted = self.store.fail_op(op.id)?;
+                    tracing::warn!(kind = ?op.kind, "JMAP server refused a message action; undone");
+                    report.failed = report.failed.saturating_add(1);
+                    self.listener.on_event(CoreEvent::MessagesChanged {
+                        folder_id: op.folder_id,
+                    });
+                    self.listener.on_event(CoreEvent::ActionFailed {
+                        account_id: self.account,
+                        action: crate::actions::action_kind(op.kind),
+                        message_ids: reverted,
+                        reason: e.map_or(crate::events::SyncErrorKind::Protocol, |e| {
+                            SyncError::from(e).kind()
+                        }),
+                    });
+                }
+            }
+        }
+        Ok(report)
+    }
+
     fn report<T>(&self, result: Result<T, SyncError>) -> Result<T, SyncError> {
         if let Err(error) = &result {
             tracing::warn!(kind = ?error.kind(), "JMAP sync failed");
@@ -364,6 +511,12 @@ impl<'a> JmapSyncer<'a> {
         });
         Ok(())
     }
+}
+
+/// Whether a failed call is worth trying again later.
+fn transient(e: &JmapError) -> bool {
+    matches!(e, JmapError::Network | JmapError::Timeout)
+        || matches!(e, JmapError::Http(code) if *code >= 500)
 }
 
 /// A mailbox role as a folder role (RFC 8621 §2, the IANA mailbox roles).

@@ -95,6 +95,8 @@ struct State {
     version: u64,
     /// Every change: (version it led to, what, email id).
     log: Vec<(u64, Change, String)>,
+    /// Emails whose updates and destroys are refused with `forbidden`.
+    refused: BTreeSet<String>,
 }
 
 impl State {
@@ -232,10 +234,10 @@ impl FakeJmapBuilder {
         self
     }
     pub async fn start(self) -> Result<FakeJmap, String> {
-        // The certificate is made once per process (see tls::generate);
-        // the time limit is for starting the server itself.
+        // The certificate is made once per process (see tls::generate).
+        // Starting is quick (see `servers_start_in_under_100_ms`), but it is
+        // not timed here: a busy machine would fail unrelated tests (#268).
         let tls = tls::generate()?;
-        let started = std::time::Instant::now();
         let listener = Loopback::bind().await?;
         let addr = listener.addr();
         let requests = Arc::new(RwLock::new(Vec::new()));
@@ -312,10 +314,6 @@ impl FakeJmapBuilder {
                 });
             }
         });
-        if started.elapsed() >= std::time::Duration::from_millis(100) {
-            handle.abort();
-            return Err("JMAP server start exceeded 100 ms".into());
-        }
         Ok(FakeJmap {
             addr,
             root_cert_der: tls.cert_der,
@@ -385,6 +383,12 @@ impl FakeJmap {
             from: e.from,
         });
         state.bump(Change::Created, &e.id);
+    }
+
+    /// From now on, changes to email `id` are refused with `forbidden`
+    /// (RFC 8620 §5.3 SetError), as for a message the user may not change.
+    pub fn refuse_changes(&self, id: &str) {
+        lock(&self.state).refused.insert(id.to_owned());
     }
 
     pub fn submissions(&self) -> Vec<FakeSubmission> {
@@ -558,6 +562,10 @@ fn email_set(state: &mut State, args: &Value, id: &str) -> Value {
     let mut not_updated = Map::new();
     if let Some(update) = args.get("update").and_then(Value::as_object) {
         for (eid, patch) in update {
+            if state.refused.contains(eid) {
+                not_updated.insert(eid.clone(), json!({"type": "forbidden"}));
+                continue;
+            }
             match (state.email(eid), patch.as_object()) {
                 (Some(e), Some(p)) => {
                     apply_patch(e, p);
@@ -577,6 +585,10 @@ fn email_set(state: &mut State, args: &Value, id: &str) -> Value {
     let mut not_destroyed = Map::new();
     if let Some(ids) = args.get("destroy").and_then(Value::as_array) {
         for eid in ids.iter().filter_map(Value::as_str) {
+            if state.refused.contains(eid) {
+                not_destroyed.insert(eid.to_owned(), json!({"type": "forbidden"}));
+                continue;
+            }
             let before = state.emails.len();
             state.emails.retain(|e| e.id != eid);
             if state.emails.len() < before {

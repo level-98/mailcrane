@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
@@ -24,6 +25,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuAnchorType
 import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
@@ -80,6 +82,8 @@ fun ManualSetupScreen(
                 onSmtpSecurityChange = viewModel::onSmtpSecurityChange,
                 onUsernameChange = viewModel::onUsernameChange,
                 onPasswordChange = viewModel::onPasswordChange,
+                onJmapChange = viewModel::onJmapChange,
+                onJmapServerChange = viewModel::onJmapServerChange,
                 onTogglePasswordVisible = viewModel::onTogglePasswordVisible,
                 onSubmit = viewModel::submit,
                 onDiscover = viewModel::discover,
@@ -101,6 +105,8 @@ data class ManualSetupActions(
     val onSmtpSecurityChange: (ConnectionSecurity) -> Unit = {},
     val onUsernameChange: (String) -> Unit = {},
     val onPasswordChange: (String) -> Unit = {},
+    val onJmapChange: (Boolean) -> Unit = {},
+    val onJmapServerChange: (String) -> Unit = {},
     val onTogglePasswordVisible: () -> Unit = {},
     val onSubmit: () -> Unit = {},
     val onDiscover: () -> Unit = {},
@@ -142,6 +148,7 @@ private fun ManualFormContent(
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             state.discoveryNote?.let { NoteCard(it.message()) }
+            AccountTypeChoice(jmap = state.jmap, enabled = enabled, onChange = actions.onJmapChange)
             SectionTitle(R.string.setup_section_account)
             FormField(
                 value = state.email,
@@ -160,31 +167,24 @@ private fun ManualFormContent(
                 capitalization = KeyboardCapitalization.Words,
             )
 
-            SectionTitle(R.string.setup_section_imap)
-            ServerFields(
-                host = state.imapHost,
-                port = state.imapPort,
-                security = state.imapSecurity,
-                hostError = state.fieldErrors[Field.IMAP_HOST],
-                portError = state.fieldErrors[Field.IMAP_PORT],
-                enabled = enabled,
-                onHostChange = actions.onImapHostChange,
-                onPortChange = actions.onImapPortChange,
-                onSecurityChange = actions.onImapSecurityChange,
-            )
-
-            SectionTitle(R.string.setup_section_smtp)
-            ServerFields(
-                host = state.smtpHost,
-                port = state.smtpPort,
-                security = state.smtpSecurity,
-                hostError = state.fieldErrors[Field.SMTP_HOST],
-                portError = state.fieldErrors[Field.SMTP_PORT],
-                enabled = enabled,
-                onHostChange = actions.onSmtpHostChange,
-                onPortChange = actions.onSmtpPortChange,
-                onSecurityChange = actions.onSmtpSecurityChange,
-            )
+            if (state.jmap) {
+                SectionTitle(R.string.setup_section_jmap)
+                FormField(
+                    value = state.jmapServer,
+                    onValueChange = actions.onJmapServerChange,
+                    label = R.string.setup_jmap_server,
+                    error = state.fieldErrors[Field.IMAP_HOST],
+                    enabled = enabled,
+                    keyboardType = KeyboardType.Uri,
+                )
+                Text(
+                    text = stringResource(R.string.setup_jmap_server_hint),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            } else {
+                ImapSmtpSections(state, actions, enabled)
+            }
 
             SectionTitle(R.string.setup_section_sign_in)
             FormField(
@@ -285,6 +285,64 @@ internal fun FormField(
         visualTransformation = visualTransformation,
         trailingIcon = trailing,
         modifier = modifier,
+    )
+}
+
+/** IMAP or JMAP, at the top of the manual form (M3-04). */
+@Composable
+private fun AccountTypeChoice(
+    jmap: Boolean,
+    enabled: Boolean,
+    onChange: (Boolean) -> Unit,
+) {
+    SectionTitle(R.string.setup_section_type)
+    Row(Modifier.selectableGroup(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        FilterChip(
+            selected = !jmap,
+            onClick = { onChange(false) },
+            label = { Text(stringResource(R.string.setup_type_imap)) },
+            enabled = enabled,
+        )
+        FilterChip(
+            selected = jmap,
+            onClick = { onChange(true) },
+            label = { Text(stringResource(R.string.setup_type_jmap)) },
+            enabled = enabled,
+        )
+    }
+}
+
+/** The incoming (IMAP) and outgoing (SMTP) server sections. */
+@Composable
+private fun ImapSmtpSections(
+    state: ManualSetupUiState,
+    actions: ManualSetupActions,
+    enabled: Boolean,
+) {
+    SectionTitle(R.string.setup_section_imap)
+    ServerFields(
+        host = state.imapHost,
+        port = state.imapPort,
+        security = state.imapSecurity,
+        hostError = state.fieldErrors[Field.IMAP_HOST],
+        portError = state.fieldErrors[Field.IMAP_PORT],
+        enabled = enabled,
+        onHostChange = actions.onImapHostChange,
+        onPortChange = actions.onImapPortChange,
+        onSecurityChange = actions.onImapSecurityChange,
+    )
+
+    SectionTitle(R.string.setup_section_smtp)
+    ServerFields(
+        host = state.smtpHost,
+        port = state.smtpPort,
+        security = state.smtpSecurity,
+        hostError = state.fieldErrors[Field.SMTP_HOST],
+        portError = state.fieldErrors[Field.SMTP_PORT],
+        enabled = enabled,
+        onHostChange = actions.onSmtpHostChange,
+        onPortChange = actions.onSmtpPortChange,
+        onSecurityChange = actions.onSmtpSecurityChange,
     )
 }
 

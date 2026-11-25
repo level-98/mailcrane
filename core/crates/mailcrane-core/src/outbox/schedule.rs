@@ -53,6 +53,17 @@ pub async fn decide_scheduled(
     if undecided.is_empty() {
         return Ok(());
     }
+    // Server-held sending is an SMTP extension; JMAP accounts send from the
+    // device at the time (JMAP sendAt is a later issue).
+    if matches!(
+        store.account_protocol(account)?,
+        Some(mailcrane_store::Protocol::Jmap { .. })
+    ) {
+        for m in &undecided {
+            store.set_schedule_mode(m.id, ScheduleMode::Device)?;
+        }
+        return Ok(());
+    }
     let Ok((config, auth)) = smtp_settings(store, secrets, account, options) else {
         // No password and so on: the device tries at the time, and that
         // send reports the problem.

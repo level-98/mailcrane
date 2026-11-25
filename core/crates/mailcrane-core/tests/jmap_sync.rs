@@ -40,15 +40,16 @@ async fn setup() -> Setup {
     let account = store
         .insert_jmap_account(
             &NewAccount {
-                display_name: "Ana".into(),
-                email: "ana@example.org".into(),
+                display_name: "Alice".into(),
+                // The fake server's identity, so sending finds it.
+                email: "alice@example.org".into(),
                 imap_host: String::new(),
                 imap_port: 0,
                 imap_security: Security::Tls,
                 smtp_host: String::new(),
                 smtp_port: 0,
                 smtp_security: Security::Tls,
-                username: "ana@example.org".into(),
+                username: "alice@example.org".into(),
             },
             &server.base_url(),
         )
@@ -227,4 +228,230 @@ async fn bodies_are_downloaded_once() {
     let before = s.server.requests().await.len();
     j.fetch_body(message).await.expect("again");
     assert_eq!(s.server.requests().await.len(), before);
+}
+
+#[tokio::test]
+async fn queued_actions_reach_the_server() {
+    use mailcrane_core::actions::{apply_action, Action};
+    let s = setup().await;
+    let mut j = syncer(&s).await;
+    let inbox = j
+        .refresh_mailboxes()
+        .await
+        .expect("mailboxes")
+        .expect("inbox");
+    j.sync_folder(inbox).await.expect("sync");
+    let m2 = s
+        .store
+        .list_messages(inbox, 10, 0)
+        .expect("list")
+        .into_iter()
+        .find(|m| m.details.subject == "Subject m2")
+        .expect("m2")
+        .id;
+    apply_action(&s.store, &[m2], Action::MarkRead, 0, &NoListener).expect("mark read");
+    let report = j.replay_actions(0).await.expect("replay");
+    assert_eq!((report.done, report.failed, report.remaining), (1, 0, 0));
+    assert!(s
+        .server
+        .email_keywords("m2")
+        .expect("m2 on server")
+        .contains(&"$seen".to_string()));
+
+    // Delete moves it to Trash on the server.
+    apply_action(&s.store, &[m2], Action::Delete, 0, &NoListener).expect("delete");
+    let report = j.replay_actions(0).await.expect("replay");
+    assert_eq!(report.done, 1);
+    assert_eq!(
+        s.server.email_mailboxes("m2").expect("still on server"),
+        vec!["mb-trash".to_string()]
+    );
+}
+
+#[tokio::test]
+async fn sending_submits_and_files_the_message_in_sent() {
+    use mailcrane_core::compose::{send, ComposeDraft, SendOptions};
+    use mailcrane_core::secrets::{Secret, SecretKey, SecretStore};
+    use mailcrane_testkit::MemorySecretStore;
+    let s = setup().await;
+    let secrets = MemorySecretStore::new();
+    secrets
+        .put(
+            &SecretKey::account_password(s.account.0),
+            &Secret::from_string("pw".into()),
+        )
+        .expect("password");
+    let draft = ComposeDraft {
+        account_id: s.account,
+        to: vec!["Bob Example <bob@example.net>".into()],
+        cc: vec![],
+        bcc: vec!["dan@example.org".into()],
+        subject: "Over JMAP".into(),
+        body_text: "Hello Bob\n".into(),
+        in_reply_to: None,
+        references: vec![],
+        attachments: Vec::new(),
+        forward_attachments_of: None,
+        rich: None,
+    };
+    let options = SendOptions {
+        timeout: Duration::from_secs(10),
+        extra_root_certs: vec![s.server.root_cert_der().to_vec()],
+    };
+    send(&s.store, &secrets, &draft, &options)
+        .await
+        .expect("sent");
+    let submissions = s.server.submissions();
+    assert_eq!(submissions.len(), 1);
+    let sub = &submissions[0];
+    assert_eq!(sub.mail_from, "alice@example.org");
+    // Bcc is in the envelope, never in the message.
+    assert!(sub.rcpt_to.contains(&"dan@example.org".to_string()));
+    assert!(sub.rcpt_to.contains(&"bob@example.net".to_string()));
+    let raw = s
+        .server
+        .email_raw(&sub.email_id)
+        .expect("the message on the server");
+    assert!(!String::from_utf8_lossy(&raw)
+        .to_ascii_lowercase()
+        .contains("bcc:"));
+    assert_eq!(
+        s.server.email_mailboxes(&sub.email_id).expect("filed"),
+        vec!["mb-sent".to_string()]
+    );
+}
+
+#[tokio::test]
+async fn a_sender_without_an_identity_is_refused_clearly() {
+    use mailcrane_core::compose::{send, ComposeDraft, SendError, SendOptions};
+    use mailcrane_core::secrets::{Secret, SecretKey, SecretStore};
+    use mailcrane_testkit::MemorySecretStore;
+    let s = setup().await;
+    // An account whose address the server has no identity for.
+    let other = s
+        .store
+        .insert_jmap_account(
+            &NewAccount {
+                display_name: "Someone".into(),
+                email: "someone@example.net".into(),
+                imap_host: String::new(),
+                imap_port: 0,
+                imap_security: Security::Tls,
+                smtp_host: String::new(),
+                smtp_port: 0,
+                smtp_security: Security::Tls,
+                username: "someone@example.net".into(),
+            },
+            &s.server.base_url(),
+        )
+        .expect("account");
+    let secrets = MemorySecretStore::new();
+    secrets
+        .put(
+            &SecretKey::account_password(other.0),
+            &Secret::from_string("pw".into()),
+        )
+        .expect("password");
+    let draft = ComposeDraft {
+        account_id: other,
+        to: vec!["bob@example.net".into()],
+        cc: vec![],
+        bcc: vec![],
+        subject: "Hi".into(),
+        body_text: "Hi\n".into(),
+        in_reply_to: None,
+        references: vec![],
+        attachments: Vec::new(),
+        forward_attachments_of: None,
+        rich: None,
+    };
+    let options = SendOptions {
+        timeout: Duration::from_secs(10),
+        extra_root_certs: vec![s.server.root_cert_der().to_vec()],
+    };
+    let result = send(&s.store, &secrets, &draft, &options).await;
+    assert!(
+        matches!(result, Err(SendError::InvalidSender)),
+        "{result:?}"
+    );
+    assert!(s.server.submissions().is_empty(), "nothing was submitted");
+}
+
+#[tokio::test]
+async fn a_partly_refused_move_keeps_the_refused_message_where_it_was() {
+    use mailcrane_core::actions::{apply_action, Action};
+    let s = setup().await;
+    let mut j = syncer(&s).await;
+    let inbox = j
+        .refresh_mailboxes()
+        .await
+        .expect("mailboxes")
+        .expect("inbox");
+    j.sync_folder(inbox).await.expect("sync");
+    let ids: Vec<_> = s
+        .store
+        .list_messages(inbox, 10, 0)
+        .expect("list")
+        .into_iter()
+        .map(|m| (m.details.subject.clone(), m.id))
+        .collect();
+    let id_of = |subject: &str| {
+        ids.iter()
+            .find(|(s, _)| s == subject)
+            .map(|(_, id)| *id)
+            .expect("message")
+    };
+    // The server won't let m1 be changed.
+    s.server.refuse_changes("m1");
+    apply_action(
+        &s.store,
+        &[id_of("Subject m1"), id_of("Subject m2")],
+        Action::Delete,
+        0,
+        &NoListener,
+    )
+    .expect("delete both");
+    let report = j.replay_actions(0).await.expect("replay");
+    assert_eq!((report.done, report.failed, report.remaining), (1, 1, 0));
+    // m2 moved to Trash on the server; m1 stayed in the inbox there and here.
+    assert_eq!(
+        s.server.email_mailboxes("m2").expect("m2"),
+        vec!["mb-trash".to_string()]
+    );
+    assert_eq!(
+        s.server.email_mailboxes("m1").expect("m1"),
+        vec!["mb-inbox".to_string()]
+    );
+    let left = subjects(&s.store, inbox);
+    assert_eq!(
+        left,
+        ["Subject m1"],
+        "the refused message is still local, in the inbox"
+    );
+}
+
+#[tokio::test]
+async fn a_partly_refused_flag_change_is_undone_for_the_refused_message() {
+    use mailcrane_core::actions::{apply_action, Action};
+    let s = setup().await;
+    let mut j = syncer(&s).await;
+    let inbox = j
+        .refresh_mailboxes()
+        .await
+        .expect("mailboxes")
+        .expect("inbox");
+    j.sync_folder(inbox).await.expect("sync");
+    let all: Vec<_> = s.store.list_messages(inbox, 10, 0).expect("list");
+    s.server.refuse_changes("m2");
+    let both: Vec<_> = all.iter().map(|m| m.id).collect();
+    apply_action(&s.store, &both, Action::Flag, 0, &NoListener).expect("flag both");
+    j.replay_actions(0).await.expect("replay");
+    for m in s.store.list_messages(inbox, 10, 0).expect("list") {
+        let flagged_on_server = m.details.subject == "Subject m1";
+        assert_eq!(
+            m.details.flags.flagged, flagged_on_server,
+            "{}",
+            m.details.subject
+        );
+    }
 }

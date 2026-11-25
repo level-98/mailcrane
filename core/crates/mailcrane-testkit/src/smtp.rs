@@ -43,10 +43,10 @@ impl FakeSmtpBuilder {
         self
     }
     pub async fn start(self) -> Result<FakeSmtp, String> {
-        // The certificate is made once per process (see tls::generate);
-        // the time limit is for starting the server itself.
+        // The certificate is made once per process (see tls::generate).
+        // Starting is quick (see `servers_start_in_under_100_ms`), but it is
+        // not timed here: a busy machine would fail unrelated tests (#268).
         let tls = tls::generate()?;
-        let started = std::time::Instant::now();
         // Like a real server (465 and 587), one port is implicit TLS and the
         // other starts in plain text for STARTTLS. Guessing the mode from
         // whether a TLS hello arrives in time fails when the client is slow
@@ -84,10 +84,6 @@ impl FakeSmtpBuilder {
                 });
             }
         });
-        if started.elapsed() >= std::time::Duration::from_millis(100) {
-            handle.abort();
-            return Err("SMTP server start exceeded 100 ms".into());
-        }
         Ok(FakeSmtp {
             addr,
             starttls_addr,
