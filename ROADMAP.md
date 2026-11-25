@@ -86,7 +86,7 @@ Goal: add an IMAP account and read your inbox, online and offline.
 - [ ] **M4-09** Local rules and filters 🤖
 - [ ] **M4-10** One-tap unsubscribe (`List-Unsubscribe`, RFC 8058) 🤖
 - [ ] **M4-11** Home-screen widgets (Android Glance) 🤖
-- [ ] **M4-12** Dark mode and dynamic colour (Material You) 🟢🤖
+- [x] **M4-12** Dark mode and dynamic colour (Material You) 🟢🤖
 - [ ] **M4-13** Tablet layouts (list and detail side by side) 🤖
 
 ## M5 — Privacy and security
