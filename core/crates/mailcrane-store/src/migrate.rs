@@ -66,7 +66,7 @@ mod tests {
     type R = Result<(), Box<dyn std::error::Error>>;
 
     #[test]
-    fn v16_with_rows_upgrades_to_v17_with_every_account_remote() -> R {
+    fn v16_with_rows_upgrades_with_every_account_remote() -> R {
         // A database as main had it before #289: schema v16, with an account,
         // a folder and a message.
         let dir = tempfile::tempdir()?;
@@ -88,7 +88,8 @@ mod tests {
         }
 
         let store = crate::Store::open(&path)?;
-        assert_eq!(store.schema_version()?, 17);
+        // Every later migration runs too (v18 is server rules, M4-23).
+        assert_eq!(store.schema_version()?, i64::try_from(MIGRATIONS.len())?);
         let accounts = store.list_accounts()?;
         assert_eq!(accounts.len(), 1);
         let id = accounts.first().ok_or("account")?.id;
