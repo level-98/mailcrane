@@ -27,6 +27,9 @@ use std::path::Path;
 #[derive(Debug)]
 pub struct Store {
     pub(crate) conn: Connection,
+    /// The path this store was opened with, which names it for
+    /// [`urgent_writes`]; `None` in memory.
+    urgent_key: Option<String>,
 }
 
 impl Store {
@@ -34,6 +37,7 @@ impl Store {
     /// the newest schema. A file with a newer schema is left untouched and
     /// reported as [`StoreError::NewerSchema`].
     pub fn open(path: impl AsRef<Path>) -> Result<Self, StoreError> {
+        let urgent_key = Some(path.as_ref().to_string_lossy().into_owned());
         let mut conn = Connection::open(path)?;
         conn.busy_timeout(std::time::Duration::from_millis(5000))?;
         // Check before any pragma that could write to the file.
@@ -41,7 +45,7 @@ impl Store {
         conn.pragma_update(None, "journal_mode", "WAL")?;
         conn.pragma_update(None, "foreign_keys", "ON")?;
         migrate::run(&mut conn, migrate::MIGRATIONS)?;
-        Ok(Store { conn })
+        Ok(Store { conn, urgent_key })
     }
 
     /// Opens a fresh in-memory database at the newest schema.
@@ -50,7 +54,10 @@ impl Store {
         conn.busy_timeout(std::time::Duration::from_millis(5000))?;
         conn.pragma_update(None, "foreign_keys", "ON")?;
         migrate::run(&mut conn, migrate::MIGRATIONS)?;
-        Ok(Store { conn })
+        Ok(Store {
+            conn,
+            urgent_key: None,
+        })
     }
 
     /// How long a statement waits for another connection's write lock
@@ -65,7 +72,7 @@ impl Store {
     /// connection still holds the lock after the timeout (`SQLITE_BUSY`),
     /// tries again [`BUSY_RETRIES`] times after a short pause (issue #282).
     pub(crate) fn write_tx(&self) -> Result<rusqlite::Transaction<'_>, StoreError> {
-        yield_to_urgent();
+        yield_to_urgent(self.urgent_key.as_deref());
         retry_busy(|| {
             rusqlite::Transaction::new_unchecked(
                 &self.conn,
@@ -82,69 +89,88 @@ impl Store {
     }
 }
 
-/// Threads in this process whose writes the user is waiting for right now
-/// (see [`urgent_writes`]).
-static URGENT_WRITERS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+/// For each database (by the path it was opened with), how many threads
+/// in this process are writing something the user waits for right now (see
+/// [`urgent_writes`]).
+static URGENT_WRITERS: std::sync::Mutex<Vec<(String, usize)>> = std::sync::Mutex::new(Vec::new());
 
 thread_local! {
-    /// Whether this thread is inside [`urgent_writes`].
-    static URGENT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// The databases this thread is inside [`urgent_writes`] for.
+    static URGENT_HERE: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 
 /// The longest a write transaction waits for urgent writes to finish before
-/// it starts anyway, so nothing can be held up for good.
-const URGENT_WAIT: std::time::Duration = std::time::Duration::from_secs(2);
+/// it starts anyway: short next to any caller's timeout, so a slow urgent
+/// call can delay others' writes a little but never hold them up.
+const URGENT_WAIT: std::time::Duration = std::time::Duration::from_millis(500);
 
-/// Runs `f` with this thread's writes marked urgent (issue #294): while it
-/// runs, write transactions of other threads in this process wait, for at
-/// most [`URGENT_WAIT`], before they start. SQLite's busy handler is not
-/// fair, so without this a short write the user is waiting for, such as
-/// saving an opened message's body, can lose every race against a sync
-/// writing batch after batch, and fail with `SQLITE_BUSY`. A transaction
-/// already running finishes first; the urgent write gets the next turn.
-pub fn urgent_writes<T>(f: impl FnOnce() -> T) -> T {
-    struct Urgent {
-        nested: bool,
-    }
+/// Runs `f` with this thread's writes to the database at `db_path` marked
+/// urgent (issue #294). While it runs, write transactions of other threads
+/// on that same database (opened with the same path) wait, for at most
+/// [`URGENT_WAIT`], before they start; other databases are not affected.
+/// SQLite's busy handler is not fair, so without this a short write the user
+/// is waiting for, such as saving an opened message's body, can lose every
+/// race against a sync writing batch after batch, and fail with
+/// `SQLITE_BUSY`. A transaction already running finishes first; the urgent
+/// write gets the next turn.
+pub fn urgent_writes<T>(db_path: &str, f: impl FnOnce() -> T) -> T {
+    struct Urgent(String);
     impl Drop for Urgent {
         fn drop(&mut self) {
-            if !self.nested {
-                URGENT.with(|u| u.set(false));
-                step_urgent(|n| n.checked_sub(1));
+            URGENT_HERE.with(|here| {
+                let mut here = here.borrow_mut();
+                if let Some(i) = here.iter().position(|k| *k == self.0) {
+                    here.swap_remove(i);
+                }
+            });
+            let mut writers = URGENT_WRITERS.lock().unwrap_or_else(|p| p.into_inner());
+            if let Some(i) = writers.iter().position(|(k, _)| *k == self.0) {
+                let left = writers.get(i).map_or(0, |(_, n)| n.saturating_sub(1));
+                if left == 0 {
+                    writers.swap_remove(i);
+                } else if let Some(entry) = writers.get_mut(i) {
+                    entry.1 = left;
+                }
             }
         }
     }
-    let nested = URGENT.with(|u| u.replace(true));
-    if !nested {
-        step_urgent(|n| n.checked_add(1));
+    let nested = URGENT_HERE.with(|here| here.borrow().iter().any(|k| k == db_path));
+    if nested {
+        return f();
     }
-    let _urgent = Urgent { nested };
+    URGENT_HERE.with(|here| here.borrow_mut().push(db_path.to_owned()));
+    {
+        let mut writers = URGENT_WRITERS.lock().unwrap_or_else(|p| p.into_inner());
+        match writers.iter_mut().find(|(k, _)| k == db_path) {
+            Some(entry) => entry.1 = entry.1.saturating_add(1),
+            None => writers.push((db_path.to_owned(), 1)),
+        }
+    }
+    let _urgent = Urgent(db_path.to_owned());
     f()
 }
 
-/// Changes [`URGENT_WRITERS`] by `change`, leaving it as it is where that
-/// would overflow.
-fn step_urgent(change: impl Fn(usize) -> Option<usize>) {
-    use std::sync::atomic::Ordering::SeqCst;
-    let mut current = URGENT_WRITERS.load(SeqCst);
-    while let Some(next) = change(current) {
-        match URGENT_WRITERS.compare_exchange_weak(current, next, SeqCst, SeqCst) {
-            Ok(_) => return,
-            Err(actual) => current = actual,
-        }
-    }
+/// Whether another thread is writing urgently to the database `key`.
+fn others_urgent(key: &str) -> bool {
+    URGENT_WRITERS
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .iter()
+        .any(|(k, n)| k == key && *n > 0)
 }
 
-/// Waits, for at most [`URGENT_WAIT`], while another thread's urgent writes
-/// run. Urgent writes themselves never wait here.
-fn yield_to_urgent() {
-    if URGENT.with(std::cell::Cell::get) {
+/// Waits, for at most [`URGENT_WAIT`], while another thread writes urgently
+/// to this store's database. Urgent writes themselves never wait here, and
+/// in-memory stores never do.
+fn yield_to_urgent(key: Option<&str>) {
+    let Some(key) = key else {
+        return;
+    };
+    if URGENT_HERE.with(|here| here.borrow().iter().any(|k| k == key)) {
         return;
     }
     let started = std::time::Instant::now();
-    while URGENT_WRITERS.load(std::sync::atomic::Ordering::SeqCst) > 0
-        && started.elapsed() < URGENT_WAIT
-    {
+    while others_urgent(key) && started.elapsed() < URGENT_WAIT {
         std::thread::sleep(std::time::Duration::from_millis(2));
     }
 }

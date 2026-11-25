@@ -387,8 +387,9 @@ fn write_transactions_wait_for_urgent_writes_to_finish() -> R {
     let (inside_tx, inside) = std::sync::mpsc::channel();
     let (release_tx, release) = std::sync::mpsc::channel::<()>();
     let urgent_path = path.clone();
+    let key = path.to_string_lossy().into_owned();
     let urgent = std::thread::spawn(move || {
-        urgent_writes(|| {
+        urgent_writes(&key, || {
             let store = Store::open(&urgent_path).expect("store");
             let _ = inside_tx.send(());
             let _ = release.recv_timeout(std::time::Duration::from_secs(10));
@@ -418,5 +419,30 @@ fn write_transactions_wait_for_urgent_writes_to_finish() -> R {
     let quick = std::time::Instant::now();
     s.upsert_message_headers(&[header(f, 3, 30)])?;
     assert!(quick.elapsed() < std::time::Duration::from_secs(1));
+    Ok(())
+}
+
+#[test]
+fn urgent_writes_on_one_database_never_delay_another() -> R {
+    let dir = tempfile::tempdir()?;
+    let other = Store::open(dir.path().join("other.db"))?;
+    let acc = other.insert_account(&account())?;
+    let f = other.upsert_folder(&folder(acc, "INBOX"))?;
+    let urgent_key = dir.path().join("urgent.db").to_string_lossy().into_owned();
+    let (inside_tx, inside) = std::sync::mpsc::channel();
+    let (done_tx, done) = std::sync::mpsc::channel::<()>();
+    let urgent = std::thread::spawn(move || {
+        urgent_writes(&urgent_key, || {
+            let _ = inside_tx.send(());
+            let _ = done.recv_timeout(std::time::Duration::from_secs(10));
+        })
+    });
+    inside.recv()?;
+    let started = std::time::Instant::now();
+    other.upsert_message_headers(&[header(f, 1, 10)])?;
+    let took = started.elapsed();
+    let _ = done_tx.send(());
+    urgent.join().map_err(|_| "urgent thread")?;
+    assert!(took < std::time::Duration::from_millis(200), "{took:?}");
     Ok(())
 }

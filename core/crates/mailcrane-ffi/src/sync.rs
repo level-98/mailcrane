@@ -310,7 +310,7 @@ impl SyncEngine {
         // batch would otherwise win every race and the save would end in
         // SQLITE_BUSY.
         let config = self.config;
-        mailcrane_store::urgent_writes(|| {
+        mailcrane_store::urgent_writes(&self.db_path, || {
             self.pooled(account, Retry::Idempotent, |store, session, listener| {
                 Box::pin(async move {
                     FolderSyncer::new(store, session, listener, account, config)
