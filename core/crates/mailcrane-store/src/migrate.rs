@@ -20,6 +20,7 @@ pub(crate) const MIGRATIONS: &[&str] = &[
     include_str!("../migrations/0013_notifications.sql"),
     include_str!("../migrations/0014_jmap.sql"),
     include_str!("../migrations/0015_account_color.sql"),
+    include_str!("../migrations/0016_folder_selectable.sql"),
     include_str!("../migrations/0017_local_accounts.sql"),
 ];
 

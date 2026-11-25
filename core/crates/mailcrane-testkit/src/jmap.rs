@@ -97,6 +97,8 @@ struct State {
     log: Vec<(u64, Change, String)>,
     /// Emails whose updates and destroys are refused with `forbidden`.
     refused: BTreeSet<String>,
+    /// Submissions still to refuse (`Fault::RefuseSubmissions`).
+    refuse_submissions: usize,
 }
 
 impl State {
@@ -280,6 +282,14 @@ impl FakeJmapBuilder {
                 })
                 .collect(),
             version: 1,
+            refuse_submissions: self
+                .faults
+                .iter()
+                .map(|f| match f {
+                    Fault::RefuseSubmissions(n) => *n,
+                    _ => 0,
+                })
+                .sum(),
             ..State::default()
         }));
         let config = Arc::new(Config {
@@ -706,6 +716,11 @@ fn submission_set(
                         .collect()
                 })
                 .unwrap_or_default();
+            if email.is_some() && state.refuse_submissions > 0 {
+                state.refuse_submissions -= 1;
+                not_created.insert(cid.clone(), json!({"type": "forbiddenToSend"}));
+                continue;
+            }
             match email {
                 Some(email_id) if identity == "id-1" && !rcpt_to.is_empty() => {
                     let sub_id = state.next_id("sub");

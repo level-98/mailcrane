@@ -23,8 +23,8 @@ pub(crate) enum Arg<'a> {
     /// Only for fixed strings in our own code, never for user data.
     Raw(&'static str),
     /// Protocol syntax our own code built from numbers and fixed keywords,
-    /// e.g. `(CHANGEDSINCE 42)`. Checked before sending: only letters,
-    /// digits, space, `:`, `,`, `(` and `)` are allowed.
+    /// e.g. `(CHANGEDSINCE 42)` or `4097:*`. Checked before sending: only
+    /// letters, digits, space, `:`, `,`, `*`, `(` and `)` are allowed.
     Built(&'a str),
     /// A flag keyword, sent as `(<keyword>)`. Checked before sending to be
     /// a keyword atom (RFC 9051 §9).
@@ -61,7 +61,7 @@ pub(crate) fn build(tag: String, name: &str, args: &[Arg<'_>]) -> Result<Command
                 let safe = !text.is_empty()
                     && text
                         .bytes()
-                        .all(|b| b.is_ascii_alphanumeric() || b" :,()".contains(&b));
+                        .all(|b| b.is_ascii_alphanumeric() || b" :,*()".contains(&b));
                 if !safe {
                     return Err(ImapError::InvalidInput);
                 }
@@ -184,6 +184,10 @@ mod tests {
         assert_eq!(
             one(&[Arg::Built("(CHANGEDSINCE 42)")]),
             [b"A0001 LOGIN (CHANGEDSINCE 42)\r\n".to_vec()]
+        );
+        assert_eq!(
+            one(&[Arg::Built("4097:*")]),
+            [b"A0001 LOGIN 4097:*\r\n".to_vec()]
         );
         for bad in ["", "1\r\nA2 LOGOUT", "\"x\"", "{5}"] {
             assert!(matches!(

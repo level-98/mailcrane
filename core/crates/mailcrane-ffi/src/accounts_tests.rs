@@ -70,6 +70,7 @@ fn folder(store: &Store, account: AccountId, name: &str, role: Option<FolderRole
             uidnext: None,
             highestmodseq: None,
             is_subscribed: true,
+            selectable: true,
         })
         .expect("folder")
 }
