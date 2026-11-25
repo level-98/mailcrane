@@ -15,7 +15,8 @@ mailcrane-store = { path = "../mailcrane-store" }
 rustls = "0.23.46"
 rustls-platform-verifier = "0.7.1"
 thiserror = "2.0.21"
-tokio = { version = "1.54.1", features = ["net", "time", "io-util"] }
+# `macros` for `tokio::select!` in IDLE (idle.rs).
+tokio = { version = "1.54.1", features = ["macros", "net", "time", "io-util"] }
 tokio-rustls = "0.26.6"
 tracing = "0.1"
 
