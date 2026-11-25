@@ -5,13 +5,13 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.DatePickerDialog
@@ -37,8 +37,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.setValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -168,7 +168,9 @@ class SearchViewModel
         /** The From chip: starts a `from:` term to type into, or removes the ones there are. */
         fun onFrom() {
             val query = _state.value.query
-            if (_state.value.filters.from.isEmpty()) {
+            if (_state.value.filters.from
+                    .isEmpty()
+            ) {
                 val start = if (query.isBlank() || query.endsWith(" ")) query else "$query "
                 _state.update { it.copy(query = "${start}from:") }
             } else {
@@ -415,12 +417,21 @@ private fun SearchChips(
             actions.onFlag(SearchFlag.HAS_ATTACHMENT, it)
         }
         FlagChip(R.string.search_chip_unread, filters.unread, "chip-unread") { actions.onFlag(SearchFlag.UNREAD, it) }
-        FlagChip(R.string.search_chip_flagged, filters.flagged, "chip-flagged") { actions.onFlag(SearchFlag.FLAGGED, it) }
+        FlagChip(
+            R.string.search_chip_flagged,
+            filters.flagged,
+            "chip-flagged",
+        ) { actions.onFlag(SearchFlag.FLAGGED, it) }
         val dated = filters.afterDay != null || filters.beforeDay != null
         FilterChip(
             selected = dated,
             onClick = { pickingDates = true },
-            label = { Text(if (dated) dateRangeLabel(filters) else stringResource(R.string.search_chip_date), maxLines = 1) },
+            label = {
+                Text(
+                    if (dated) dateRangeLabel(filters) else stringResource(R.string.search_chip_date),
+                    maxLines = 1,
+                )
+            },
             modifier = Modifier.testTag("chip-date"),
         )
         if (actions.accounts.size > 1) {
@@ -517,7 +528,11 @@ private fun DateRangeDialog(
                 onClick = {
                     // Picker dates are midnight UTC; the last day is included, so search before the day after it.
                     val start = picker.selectedStartDateMillis?.let { Math.floorDiv(it, MILLIS_PER_DAY) }
-                    val end = (picker.selectedEndDateMillis ?: picker.selectedStartDateMillis)?.let { Math.floorDiv(it, MILLIS_PER_DAY) + 1 }
+                    val end =
+                        (picker.selectedEndDateMillis ?: picker.selectedStartDateMillis)?.let {
+                            Math.floorDiv(it, MILLIS_PER_DAY) +
+                                1
+                        }
                     onChoose(start, end)
                 },
             ) { Text(stringResource(R.string.search_date_ok)) }
@@ -533,7 +548,12 @@ private fun DateRangeDialog(
     ) {
         DateRangePicker(
             state = picker,
-            title = { Text(stringResource(R.string.search_date_title), modifier = Modifier.padding(start = 24.dp, top = 16.dp)) },
+            title = {
+                Text(
+                    stringResource(R.string.search_date_title),
+                    modifier = Modifier.padding(start = 24.dp, top = 16.dp),
+                )
+            },
             modifier = Modifier.weight(1f),
         )
     }

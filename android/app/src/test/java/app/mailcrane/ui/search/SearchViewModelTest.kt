@@ -8,9 +8,9 @@ import app.mailcrane.core.MessageSummary
 import app.mailcrane.core.NO_FILTERS
 import app.mailcrane.core.SearchFilters
 import app.mailcrane.core.SearchFlag
-import app.mailcrane.core.UNIFIED_FOLDER_ID
 import app.mailcrane.core.SyncErrorKind
 import app.mailcrane.core.SyncFailure
+import app.mailcrane.core.UNIFIED_FOLDER_ID
 import app.mailcrane.settings.FakeAppSettings
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -210,7 +210,11 @@ class SearchViewModelTest {
         assertTrue(vm.state.value.filters.unread)
         scheduler.advanceTimeBy(300)
         scheduler.runCurrent()
-        assertEquals(listOf(4L), vm.state.value.results?.map { it.id })
+        assertEquals(
+            listOf(4L),
+            vm.state.value.results
+                ?.map { it.id },
+        )
         vm.onFlag(SearchFlag.UNREAD, false)
         assertEquals("lunch", vm.state.value.query)
         assertFalse(vm.state.value.filters.unread)
@@ -239,7 +243,11 @@ class SearchViewModelTest {
         vm.onQueryChange("lunch")
         vm.submit()
         scheduler.runCurrent()
-        assertEquals(listOf(2L, 3L), vm.state.value.results?.map { it.id })
+        assertEquals(
+            listOf(2L, 3L),
+            vm.state.value.results
+                ?.map { it.id },
+        )
         assertTrue(core.everywhereAsked > 0)
         assertEquals(0, core.serverAsked)
         assertFalse(vm.state.value.searchingServer)

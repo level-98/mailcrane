@@ -173,7 +173,7 @@ impl Filter {
         };
         let (want_key, want_value) = self.key_value();
         key.eq_ignore_ascii_case(want_key)
-            && want_value.map_or(true, |w| value.trim().eq_ignore_ascii_case(w))
+            && want_value.is_none_or(|w| value.trim().eq_ignore_ascii_case(w))
     }
 }
 
