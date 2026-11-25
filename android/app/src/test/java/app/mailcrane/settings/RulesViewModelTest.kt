@@ -1,5 +1,6 @@
 package app.mailcrane.settings
 
+import app.mailcrane.R
 import app.mailcrane.core.CoreEvent
 import app.mailcrane.core.FolderRole
 import app.mailcrane.core.FolderSummary
@@ -13,12 +14,15 @@ import app.mailcrane.core.RuleInput
 import app.mailcrane.core.RuleLocation
 import app.mailcrane.core.RuleRunsOn
 import app.mailcrane.core.RulesCore
+import app.mailcrane.core.RulesFailure
 import app.mailcrane.core.ServerRulesNotice
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.resetMain
+import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -27,10 +31,6 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
-import kotlinx.coroutines.test.runTest
-import kotlinx.coroutines.flow.first
-import app.mailcrane.core.RulesFailure
-import app.mailcrane.R
 
 private fun info(id: Long) =
     RuleInfo(
