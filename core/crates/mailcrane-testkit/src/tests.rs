@@ -140,6 +140,32 @@ mod suite {
             .is_ok()
     }
 
+    /// M0-11: each server starts in under 100 ms. The fastest of a few
+    /// starts is what counts, so a busy machine can't fail it; a server
+    /// that is slow every time still does (#268). The shared certificate is
+    /// made first, as every test process does it once.
+    #[tokio::test]
+    async fn servers_start_in_under_100_ms() {
+        let limit = std::time::Duration::from_millis(100);
+        crate::tls::generate().expect("certificate");
+        let mut fastest = [limit * 100; 3];
+        for _ in 0..5 {
+            let started = std::time::Instant::now();
+            let imap = FakeImap::builder().start().await.expect("imap starts");
+            fastest[0] = fastest[0].min(started.elapsed());
+            let started = std::time::Instant::now();
+            let smtp = FakeSmtp::builder().start().await.expect("smtp starts");
+            fastest[1] = fastest[1].min(started.elapsed());
+            let started = std::time::Instant::now();
+            let jmap = FakeJmap::builder().start().await.expect("jmap starts");
+            fastest[2] = fastest[2].min(started.elapsed());
+            drop((imap, smtp, jmap));
+        }
+        for (name, time) in ["imap", "smtp", "jmap"].iter().zip(fastest) {
+            assert!(time < limit, "{name} took {time:?} at best");
+        }
+    }
+
     /// Clients connect as `localhost`, which can resolve to `::1` before
     /// `127.0.0.1` (it does on Windows). Each fake server must answer on
     /// every address `localhost` resolves to, with its own certificate.
