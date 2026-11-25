@@ -10,7 +10,11 @@ import app.mailcrane.core.MessageCore
 import app.mailcrane.core.MessageDetail
 import app.mailcrane.core.SyncErrorKind
 import app.mailcrane.core.SyncFailure
+import app.mailcrane.core.UnsubscribeFailure
+import app.mailcrane.core.UnsubscribeInfo
+import app.mailcrane.core.UnsubscribeMailto
 import app.mailcrane.settings.FakeAppSettings
+import app.mailcrane.ui.compose.ComposePrefill
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.first
@@ -112,6 +116,15 @@ private class FakeMessageCore(
 
     val actions = mutableListOf<MessageAction>()
     var actionFailure: ActionFailure? = null
+    var unsubscribe: UnsubscribeInfo? = null
+    var unsubscribeFailure: UnsubscribeFailure? = null
+
+    override suspend fun unsubscribeOptions(messageId: Long): UnsubscribeInfo? = unsubscribe
+
+    override suspend fun oneClickUnsubscribe(messageId: Long) {
+        calls += "oneClick"
+        unsubscribeFailure?.let { throw it }
+    }
 
     override suspend fun applyAction(
         messageId: Long,
@@ -265,6 +278,56 @@ class MessageViewModelTest {
                 listOf(MessageAction.Archive, MessageAction.Delete, MessageAction.Move(9), MessageAction.MarkUnread),
                 core.actions,
             )
+        }
+
+    private val mailto = UnsubscribeMailto("unsub@example.net", "stop", null)
+
+    @Test
+    fun oneClickUnsubscribeSendsAndRemovesTheButton() =
+        runTest {
+            val info = UnsubscribeInfo("news@example.net", true, mailto, "https://example.net/u")
+            val core = FakeMessageCore().apply { unsubscribe = info }
+            val vm = messageViewModel(core)
+            assertEquals(info, ready(vm).unsubscribe)
+            assertFalse("nothing before the user confirms", core.calls.contains("oneClick"))
+            vm.unsubscribe()
+            assertEquals(MessageEffect.Unsubscribed(true), vm.effects.first())
+            assertTrue(core.calls.contains("oneClick"))
+            assertNull(ready(vm).unsubscribe)
+        }
+
+    @Test
+    fun aFailedOneClickFallsBackToTheOtherWays() =
+        runTest {
+            val info = UnsubscribeInfo("news@example.net", true, mailto, "https://example.net/u")
+            val core =
+                FakeMessageCore().apply {
+                    unsubscribe = info
+                    unsubscribeFailure = UnsubscribeFailure.Refused(302u)
+                }
+            val vm = messageViewModel(core)
+            vm.unsubscribe()
+            assertEquals(MessageEffect.Unsubscribed(false), vm.effects.first())
+            assertEquals(UnsubscribeMethod.EMAIL, unsubscribeMethod(ready(vm).unsubscribe!!))
+            vm.unsubscribe()
+            assertEquals(
+                MessageEffect.ComposeUnsubscribe(ComposePrefill("unsub@example.net", "stop", "")),
+                vm.effects.first(),
+            )
+        }
+
+    @Test
+    fun webOnlyOpensThePage() =
+        runTest {
+            val core =
+                FakeMessageCore().apply {
+                    unsubscribe =
+                        UnsubscribeInfo("n@example.net", false, null, "https://example.net/u")
+                }
+            val vm = messageViewModel(core)
+            vm.unsubscribe()
+            assertEquals(MessageEffect.OpenUnsubscribePage("https://example.net/u"), vm.effects.first())
+            assertFalse(core.calls.contains("oneClick"))
         }
 
     @Test

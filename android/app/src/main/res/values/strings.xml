@@ -180,6 +180,16 @@
     <string name="message_move">Move to…</string>
     <string name="message_move_title">Move to folder</string>
     <string name="message_move_cancel">Cancel</string>
+
+    <!-- One-tap unsubscribe (M4-10) -->
+    <string name="unsubscribe_button">Unsubscribe</string>
+    <string name="unsubscribe_cancel">Cancel</string>
+    <string name="unsubscribe_confirm_title">Unsubscribe from %1$s?</string>
+    <string name="unsubscribe_how_one_click">Mailcrane will ask %1$s to remove you from this list. This contacts the sender’s server directly.</string>
+    <string name="unsubscribe_how_email">Mailcrane will prepare an email to %1$s for you to check and send.</string>
+    <string name="unsubscribe_how_web">This opens %1$s in your browser, where you can finish unsubscribing.</string>
+    <string name="unsubscribe_done">Unsubscribed</string>
+    <string name="unsubscribe_failed">Couldn’t unsubscribe automatically. Try again to use another way.</string>
     <string name="action_no_archive_folder">This account has no Archive folder</string>
     <string name="action_not_applied">Couldn’t change this message</string>
     <string name="action_undone">The server didn’t accept a change, so it was undone</string>

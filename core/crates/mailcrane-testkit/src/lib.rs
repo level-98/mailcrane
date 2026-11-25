@@ -3,6 +3,7 @@
 #![forbid(unsafe_code)]
 
 pub mod fault;
+pub mod https;
 pub mod imap;
 pub mod jmap;
 mod loopback;
@@ -12,6 +13,7 @@ pub mod smtp;
 mod tls;
 
 pub use fault::{Fault, Quirk};
+pub use https::{FakeHttps, HttpsRequest};
 pub use imap::{FakeImap, FakeImapBuilder};
 pub use jmap::{FakeJmap, JmapSentRequest};
 pub use mailbox::{Mailbox, Message};

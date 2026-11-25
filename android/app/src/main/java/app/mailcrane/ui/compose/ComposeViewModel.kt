@@ -133,6 +133,8 @@ data class ComposeUiState(
     val draftId: Long? = null,
     /** The draft request this screen was filled for, so rotation doesn't fill it again. */
     val openedDraft: DraftRequest? = null,
+    /** The fields this screen was filled with, so rotation doesn't fill them again. */
+    val prefilledWith: ComposePrefill? = null,
 ) {
     fun field(which: RecipientField) =
         when (which) {
@@ -170,11 +172,24 @@ class ComposeViewModel
             accountId: Long,
             reply: ReplyRequest? = null,
             draft: DraftRequest? = null,
+            prefill: ComposePrefill? = null,
         ) {
             _state.update { if (it.fromAccountId == null) it.copy(fromAccountId = accountId) else it }
+            if (prefill != null && _state.value.prefilledWith != prefill) {
+                _state.update {
+                    it.copy(
+                        prefilledWith = prefill,
+                        to = chipsOf(listOf(prefill.to)),
+                        subject = prefill.subject,
+                        body = prefill.body,
+                        // No signature in a message to a machine.
+                        signatureAdded = true,
+                    )
+                }
+            }
             if (draft != null) {
                 if (_state.value.openedDraft != draft) openDraft(draft)
-            } else {
+            } else if (prefill == null) {
                 if (reply != null && _state.value.prefilledFor != reply) prefill(reply)
                 if (reply == null && !_state.value.signatureAdded) addSignature(accountId)
             }

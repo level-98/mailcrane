@@ -30,6 +30,7 @@ import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import app.mailcrane.R
+import app.mailcrane.ui.compose.ComposePrefill
 import app.mailcrane.ui.compose.ComposeResult
 import app.mailcrane.ui.compose.ComposeScreen
 import app.mailcrane.ui.compose.DraftRequest
@@ -49,6 +50,7 @@ fun MailHome(accountId: Long) {
     var composing by rememberSaveable { mutableStateOf(false) }
     var reply by rememberSaveable { mutableStateOf<ReplyRequest?>(null) }
     var draft by rememberSaveable { mutableStateOf<DraftRequest?>(null) }
+    var prefill by rememberSaveable { mutableStateOf<ComposePrefill?>(null) }
     var notice by rememberSaveable { mutableStateOf<String?>(null) }
     val resources = LocalResources.current
     // A sent message still waiting, as (outbox id, seconds), while Undo is offered.
@@ -104,6 +106,7 @@ fun MailHome(accountId: Long) {
                         accountId = accountId,
                         reply = reply,
                         draft = draft,
+                        prefill = prefill,
                         onDone = { result ->
                             if (result is ComposeResult.Sent) {
                                 notice =
@@ -129,6 +132,7 @@ fun MailHome(accountId: Long) {
                             composing = false
                             reply = null
                             draft = null
+                            prefill = null
                         },
                         modifier = shared,
                     )
@@ -138,16 +142,25 @@ fun MailHome(accountId: Long) {
                         onCompose = {
                             reply = null
                             draft = null
+                            prefill = null
                             composing = true
                         },
                         onReply = {
                             reply = it
                             draft = null
+                            prefill = null
                             composing = true
                         },
                         onOpenDraft = {
                             draft = it
                             reply = null
+                            prefill = null
+                            composing = true
+                        },
+                        onComposeTo = {
+                            prefill = it
+                            reply = null
+                            draft = null
                             composing = true
                         },
                         composeFabModifier = shared,

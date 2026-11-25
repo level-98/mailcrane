@@ -15,8 +15,11 @@ mailcrane-imap = { path = "../mailcrane-imap" }
 mailcrane-mime = { path = "../mailcrane-mime" }
 mailcrane-smtp = { path = "../mailcrane-smtp" }
 mailcrane-store = { path = "../mailcrane-store" }
+rustls = "0.23.46"
+rustls-platform-verifier = "0.7.1"
 thiserror = "2.0.21"
-tokio = { version = "1.54.1", features = ["time", "macros"] }
+tokio = { version = "1.54.1", features = ["time", "macros", "net", "io-util"] }
+tokio-rustls = "0.26.6"
 tracing = "0.1"
 url = "2.5.9"
 zeroize = "1.9.2"

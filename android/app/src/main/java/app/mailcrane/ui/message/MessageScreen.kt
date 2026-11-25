@@ -76,6 +76,7 @@ import app.mailcrane.core.MessageBody
 import app.mailcrane.core.MessageDetail
 import app.mailcrane.core.ReplyKind
 import app.mailcrane.core.TrackerInfo
+import app.mailcrane.ui.compose.ComposePrefill
 import app.mailcrane.ui.compose.ReplyRequest
 import app.mailcrane.ui.messagelist.errorText
 import app.mailcrane.ui.theme.LocalDarkMessageBodies
@@ -94,6 +95,7 @@ fun MessageScreen(
     onBack: () -> Unit,
     folders: List<FolderSummary> = emptyList(),
     onReply: (ReplyRequest) -> Unit = {},
+    onComposeTo: (ComposePrefill) -> Unit = {},
     viewModel: MessageViewModel =
         hiltViewModel<MessageViewModel, MessageViewModel.Factory>(
             key = "message-$messageId",
@@ -118,6 +120,14 @@ fun MessageScreen(
                             },
                         ),
                     )
+                is MessageEffect.ComposeUnsubscribe -> onComposeTo(effect.prefill)
+                is MessageEffect.OpenUnsubscribePage -> openLink(context, Uri.parse(effect.url))
+                is MessageEffect.Unsubscribed ->
+                    snackbar.showSnackbar(
+                        resources.getString(
+                            if (effect.success) R.string.unsubscribe_done else R.string.unsubscribe_failed,
+                        ),
+                    )
             }
         }
     }
@@ -138,6 +148,7 @@ fun MessageScreen(
                 onToggleFlag = viewModel::toggleFlag,
                 onMove = viewModel::moveTo,
             ),
+        onUnsubscribe = viewModel::unsubscribe,
         onRetry = viewModel::load,
         onLoadRemoteImages = viewModel::loadRemoteImages,
         inlinePart = viewModel::inlinePart,
@@ -158,6 +169,7 @@ fun MessageContent(
     folders: List<FolderSummary> = emptyList(),
     actions: MessageActions = MessageActions(),
     onReply: (ReplyKind) -> Unit = {},
+    onUnsubscribe: () -> Unit = {},
 ) {
     Scaffold(
         snackbarHost = { SnackbarHost(snackbar) },
@@ -197,7 +209,7 @@ fun MessageContent(
                         }
                     }
                 is MessageState.Ready ->
-                    Message(state, onLoadRemoteImages, inlinePart, onOpenLink)
+                    Message(state, onLoadRemoteImages, inlinePart, onOpenLink, onUnsubscribe)
             }
         }
     }
@@ -209,10 +221,12 @@ private fun Message(
     onLoadRemoteImages: () -> Unit,
     inlinePart: (String) -> InlinePart?,
     onOpenLink: (Uri) -> Unit,
+    onUnsubscribe: () -> Unit,
 ) {
     val message = state.message
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
         Headers(message)
+        state.unsubscribe?.let { UnsubscribeAction(it, state.unsubscribing, onUnsubscribe) }
         val trackers = (message.body as? MessageBody.Html)?.trackers.orEmpty()
         if (trackers.isNotEmpty()) TrackersIndicator(trackers)
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)

@@ -30,6 +30,15 @@ interface MessageCore {
         action: MessageAction,
     )
 
+    /** How the message can be unsubscribed from, or null (M4-10). Reads only the database. */
+    suspend fun unsubscribeOptions(messageId: Long): UnsubscribeInfo? = null
+
+    /**
+     * Sends the one-click unsubscribe request. Call only after the user confirmed.
+     * @throws UnsubscribeFailure
+     */
+    suspend fun oneClickUnsubscribe(messageId: Long): Unit = throw UnsubscribeFailure.NotOffered()
+
     /**
      * The inline image with Content-ID [contentId] from this message's stored body, or null.
      * Blocking: called on the web view's background thread.
