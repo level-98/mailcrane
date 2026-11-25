@@ -188,10 +188,13 @@ private fun OutboxRow(
         )
         if (entry.state != OutboxEntryState.SENDING) {
             Row {
-                if (entry.state == OutboxEntryState.FAILED) {
+                if (entry.state == OutboxEntryState.FAILED || entry.state == OutboxEntryState.NOT_SAVED) {
                     TextButton(onClick = { onRetry(entry.id) }) { Text(stringResource(R.string.outbox_retry)) }
                 }
-                TextButton(onClick = { onEdit(entry.id) }) { Text(stringResource(R.string.outbox_edit)) }
+                // A sent message can't be edited; it's only its copy that's missing.
+                if (entry.state != OutboxEntryState.NOT_SAVED) {
+                    TextButton(onClick = { onEdit(entry.id) }) { Text(stringResource(R.string.outbox_edit)) }
+                }
                 TextButton(onClick = { onDelete(entry.id) }) { Text(stringResource(R.string.outbox_delete)) }
             }
         }
@@ -202,6 +205,7 @@ private fun OutboxRow(
 internal fun outboxStatus(entry: OutboxEntry): Int =
     when (entry.state) {
         OutboxEntryState.SENDING -> R.string.outbox_sending
+        OutboxEntryState.NOT_SAVED -> R.string.outbox_not_saved
         OutboxEntryState.QUEUED ->
             if (entry.attempts == 0u) R.string.outbox_waiting else R.string.outbox_will_retry
         OutboxEntryState.FAILED ->

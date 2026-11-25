@@ -12,6 +12,10 @@
 //! file in Sent (a server that doesn't save sent mail, before M2-07 saves a
 //! copy); a lost message would be worse.
 
+mod save_sent;
+
+pub use save_sent::{save_sent_copies, SaveReport, SENT_FOLDER_NAME};
+
 use mailcrane_imap::Session;
 use mailcrane_store::{
     AccountId, DraftFields, DraftId, FolderRole, NewOutboxMessage, OutboxId, OutboxMessage,
@@ -310,9 +314,11 @@ pub enum OutboxError {
     Store(#[from] StoreError),
 }
 
-/// Queues a failed message again, due now.
+/// Queues a failed message again, due now; for a sent message whose copy
+/// in Sent failed, tries the copy again instead (the message is never sent
+/// twice for that).
 pub fn retry(store: &Store, id: OutboxId, now: i64) -> Result<(), OutboxError> {
-    if store.requeue_outbox(id, now)? {
+    if store.retry_sent_copy(id)? || store.requeue_outbox(id, now)? {
         Ok(())
     } else {
         Err(OutboxError::NotFound)

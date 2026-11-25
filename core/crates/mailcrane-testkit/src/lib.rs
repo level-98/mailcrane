@@ -12,7 +12,7 @@ pub mod smtp;
 mod tls;
 
 pub use fault::{Fault, Quirk};
-pub use imap::FakeImap;
+pub use imap::{FakeImap, FakeImapBuilder};
 pub use jmap::{FakeJmap, JmapSentRequest};
 pub use mailbox::{Mailbox, Message};
 pub use secrets::MemorySecretStore;

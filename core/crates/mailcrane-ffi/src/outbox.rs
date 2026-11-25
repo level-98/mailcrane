@@ -11,7 +11,7 @@ use mailcrane_core::compose::{self as core, PreparedSend};
 use mailcrane_core::events;
 use mailcrane_core::outbox::{self, OutboxError, SendOutcome};
 use mailcrane_core::secrets::SecretStore;
-use mailcrane_store::{AccountId, OutboxId, OutboxState, Store};
+use mailcrane_store::{AccountId, OutboxId, OutboxState, SentCopy, Store};
 
 /// Where a message in the outbox is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
@@ -22,6 +22,9 @@ pub enum OutboxEntryState {
     Sending,
     /// Refused for good, or retried for a day. Retry, edit or delete it.
     Failed,
+    /// Sent, but its copy couldn't be saved to the Sent folder. Retry saves
+    /// the copy again (it never resends the message); Delete forgets it.
+    NotSaved,
 }
 
 /// A message in the outbox, for the outbox screen.
@@ -240,6 +243,7 @@ pub fn list_outbox(db_path: String, account_id: i64) -> Result<Vec<OutboxEntry>,
                 OutboxState::Queued => OutboxEntryState::Queued,
                 OutboxState::Sending => OutboxEntryState::Sending,
                 OutboxState::Failed => OutboxEntryState::Failed,
+                OutboxState::Sent if m.sent_copy == SentCopy::Failed => OutboxEntryState::NotSaved,
                 OutboxState::Sent => return None,
             };
             Some(OutboxEntry {
@@ -275,7 +279,8 @@ pub fn outbox_accounts(db_path: String) -> Result<Vec<i64>, OutboxFailure> {
         .collect())
 }
 
-/// Queues a failed message again, to be sent now.
+/// Queues a failed message again, to be sent now (for a `NotSaved` one,
+/// tries saving its copy to Sent again).
 #[uniffi::export]
 pub fn retry_outbox(db_path: String, outbox_id: i64) -> Result<(), OutboxFailure> {
     Ok(outbox::retry(&open(&db_path)?, OutboxId(outbox_id), now())?)

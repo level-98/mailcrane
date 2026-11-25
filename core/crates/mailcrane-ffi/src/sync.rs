@@ -285,6 +285,14 @@ impl SyncEngine {
                     crate::actions::now(),
                 )
                 .await;
+                // And copies of sent messages for the Sent folder (M2-07).
+                let _ = mailcrane_core::outbox::save_sent_copies(
+                    &store,
+                    &mut session,
+                    account,
+                    crate::actions::now(),
+                )
+                .await;
             }
             // The syncer borrows the session; end that borrow before logout.
             let result = {

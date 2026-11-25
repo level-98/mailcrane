@@ -10,6 +10,7 @@ pub(crate) const MIGRATIONS: &[&str] = &[
     include_str!("../migrations/0003_account_settings.sql"),
     include_str!("../migrations/0004_drafts.sql"),
     include_str!("../migrations/0005_outbox.sql"),
+    include_str!("../migrations/0006_save_sent.sql"),
 ];
 
 fn user_version(conn: &Connection) -> Result<i64, StoreError> {

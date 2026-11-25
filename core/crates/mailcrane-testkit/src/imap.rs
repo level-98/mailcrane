@@ -536,6 +536,29 @@ async fn handle_imap_command(
             mailbox.expunge_deleted(folder, |_| true).await;
             format!("{tag} OK EXPUNGE completed\r\n")
         }
+        "CREATE" => {
+            // RFC 9051 §6.3.4; an existing name is refused with ALREADYEXISTS.
+            let name = parts.get(2).copied().unwrap_or("").trim_matches('"');
+            if name.is_empty() {
+                format!(
+                    "{tag} BAD CREATE needs a name
+"
+                )
+            } else if name.eq_ignore_ascii_case("INBOX")
+                || mailbox.folder_names().await.iter().any(|n| n == name)
+            {
+                format!(
+                    "{tag} NO [ALREADYEXISTS] folder exists
+"
+                )
+            } else {
+                mailbox.create_folder(name).await;
+                format!(
+                    "{tag} OK CREATE completed
+"
+                )
+            }
+        }
         "NOOP" => "* 0 RECENT\r\n".to_string() + &format!("{tag} OK NOOP completed\r\n"),
         "LOGOUT" => format!("{tag} OK LOGOUT completed\r\n"),
         "APPEND" => {

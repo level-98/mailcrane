@@ -31,6 +31,7 @@ mod error;
 mod fetch;
 pub mod mutf7;
 pub mod parser;
+mod quirks;
 mod roles;
 mod session;
 mod store_cmds;
@@ -41,6 +42,7 @@ pub use condstore::{FetchedFlags, FlagUpdate, QresyncParams, QresyncSelect};
 pub use error::ImapError;
 pub use fetch::{parse_internal_date, FetchedHeaders, SelectInfo};
 pub use parser::{parse_response, Envelope, EnvelopeAddress, FetchData, Limits};
+pub use quirks::{detect as detect_quirks, ServerQuirk};
 pub use session::{save_folders, ImapConfig, ImapFolder, ImapSecurity, Session};
 pub use store_cmds::{ChangeError, SystemFlag};
 
