@@ -142,6 +142,75 @@ pub struct ComposeDraft {
     /// Set by `prepare_reply`; keep it when sending.
     #[uniffi(default = None)]
     pub forward_attachments_of: Option<i64>,
+    /// Rich text (M2-09). When set, the message is sent as plain text plus
+    /// HTML made from it; keep `body_text` as its plain version
+    /// (`rich_to_plain`) for drafts.
+    #[uniffi(default = None)]
+    pub rich: Option<RichDoc>,
+}
+
+/// A run of text with the same formatting.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct RichSpan {
+    pub text: String,
+    pub bold: bool,
+    pub italic: bool,
+    /// Only `https:`, `http:` and `mailto:` links are kept.
+    pub link: Option<String>,
+}
+
+/// A block of rich text.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
+pub enum RichBlock {
+    Paragraph { spans: Vec<RichSpan> },
+    BulletList { items: Vec<Vec<RichSpan>> },
+    NumberedList { items: Vec<Vec<RichSpan>> },
+}
+
+/// A rich-text message body.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct RichDoc {
+    pub blocks: Vec<RichBlock>,
+}
+
+fn core_spans(spans: Vec<RichSpan>) -> Vec<mailcrane_mime::richtext::Span> {
+    spans
+        .into_iter()
+        .map(|s| mailcrane_mime::richtext::Span {
+            text: s.text,
+            bold: s.bold,
+            italic: s.italic,
+            link: s.link,
+        })
+        .collect()
+}
+
+impl From<RichDoc> for mailcrane_mime::richtext::RichDoc {
+    fn from(d: RichDoc) -> Self {
+        use mailcrane_mime::richtext::Block;
+        Self {
+            blocks: d
+                .blocks
+                .into_iter()
+                .map(|b| match b {
+                    RichBlock::Paragraph { spans } => Block::Paragraph(core_spans(spans)),
+                    RichBlock::BulletList { items } => {
+                        Block::BulletList(items.into_iter().map(core_spans).collect())
+                    }
+                    RichBlock::NumberedList { items } => {
+                        Block::NumberedList(items.into_iter().map(core_spans).collect())
+                    }
+                })
+                .collect(),
+        }
+    }
+}
+
+/// The plain-text version of a rich body: lists as `- ` and `1. `, links as
+/// `text <url>`. The same text is sent as the plain part.
+#[uniffi::export]
+pub fn rich_to_plain(doc: RichDoc) -> String {
+    mailcrane_mime::richtext::to_plain(&doc.into())
 }
 
 /// A file attached in compose.
@@ -183,6 +252,7 @@ impl From<ComposeDraft> for core::ComposeDraft {
                 })
                 .collect(),
             forward_attachments_of: d.forward_attachments_of.map(mailcrane_store::MessageId),
+            rich: d.rich.map(Into::into),
         }
     }
 }
@@ -208,6 +278,7 @@ impl From<core::ComposeDraft> for ComposeDraft {
                 })
                 .collect(),
             forward_attachments_of: d.forward_attachments_of.map(|m| m.0),
+            rich: None,
         }
     }
 }
@@ -456,6 +527,7 @@ mod tests {
             references: vec![],
             attachments: Vec::new(),
             forward_attachments_of: None,
+            rich: None,
         }
     }
 

@@ -149,6 +149,10 @@ data class ComposeUiState(
     val attachments: List<ComposeAttachment> = emptyList(),
     /** A forward: the original message, whose attachments go along. */
     val forwardAttachmentsOf: Long? = null,
+    /** Bold, italic and links of [body], one per character (M2-09). */
+    val bodyStyles: List<CharStyle> = emptyList(),
+    /** Send plain text only, even with formatting. Replies start this way. */
+    val plainTextOnly: Boolean = false,
 ) {
     fun field(which: RecipientField) =
         when (which) {
@@ -256,6 +260,7 @@ class ComposeViewModel
                         inReplyTo = draft.inReplyTo,
                         references = draft.references,
                         forwardAttachmentsOf = draft.forwardAttachmentsOf,
+                        plainTextOnly = true,
                     )
                 }
             }
@@ -306,6 +311,7 @@ class ComposeViewModel
                 references = references,
                 attachments = attachments,
                 forwardAttachmentsOf = forwardAttachmentsOf,
+                rich = richDoc(),
             )
         }
 
@@ -349,6 +355,7 @@ class ComposeViewModel
                         inReplyTo = draft.inReplyTo,
                         references = draft.references,
                         forwardAttachmentsOf = draft.forwardAttachmentsOf,
+                        plainTextOnly = true,
                     )
                 }
             }
@@ -496,9 +503,38 @@ class ComposeViewModel
         }
 
         fun onBodyChange(value: String) {
-            _state.update { it.copy(body = value) }
+            _state.update { it.copy(body = value, bodyStyles = restyle(it.body, value, it.bodyStyles)) }
             scheduleSave()
         }
+
+        /** Bold or italic on the selection (M2-09). */
+        fun format(
+            start: Int,
+            end: Int,
+            format: InlineFormat,
+        ) = _state.update { it.copy(bodyStyles = toggleFormat(it.body, it.bodyStyles, start, end, format)) }
+
+        /** A link on the selection; null or blank removes it. */
+        fun link(
+            start: Int,
+            end: Int,
+            url: String?,
+        ) = _state.update { it.copy(bodyStyles = setLink(it.body, it.bodyStyles, start, end, url)) }
+
+        /** Makes the selected lines a list (or plain again); returns the new selection. */
+        fun list(
+            start: Int,
+            end: Int,
+            kind: ListKind,
+        ): Pair<Int, Int> {
+            val s = _state.value
+            val edit = toggleList(s.body, s.bodyStyles, start, end, kind)
+            _state.update { it.copy(body = edit.text, bodyStyles = edit.styles) }
+            scheduleSave()
+            return edit.selectionStart to edit.selectionEnd
+        }
+
+        fun setPlainTextOnly(plain: Boolean) = _state.update { it.copy(plainTextOnly = plain) }
 
         fun dismissError() = _state.update { it.copy(error = null, errorAddresses = emptyList()) }
 
@@ -538,6 +574,7 @@ class ComposeViewModel
                     references = committed.references,
                     attachments = committed.attachments,
                     forwardAttachmentsOf = committed.forwardAttachmentsOf,
+                    rich = committed.richDoc(),
                 )
             viewModelScope.launch {
                 val delay = settings.undoSendSeconds.first()
@@ -593,6 +630,7 @@ class ComposeViewModel
                     references = committed.references,
                     attachments = committed.attachments,
                     forwardAttachmentsOf = committed.forwardAttachmentsOf,
+                    rich = committed.richDoc(),
                 )
             viewModelScope.launch {
                 try {
@@ -793,3 +831,7 @@ const val ATTACHMENT_WARNING_BYTES = 25L * 1024 * 1024
 /** Whether the attached files add up to more than [ATTACHMENT_WARNING_BYTES]. */
 val ComposeUiState.attachmentsTooLarge: Boolean
     get() = attachments.sumOf { it.bytes.size.toLong() } > ATTACHMENT_WARNING_BYTES
+
+/** The rich version of the body to send, or null for plain text (none needed, or plain chosen). */
+fun ComposeUiState.richDoc(): app.mailcrane.core.RichDoc? =
+    if (plainTextOnly || !hasFormatting(body, bodyStyles)) null else toRichDoc(body, bodyStyles)

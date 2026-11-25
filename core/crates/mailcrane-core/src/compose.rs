@@ -48,6 +48,9 @@ pub struct ComposeDraft {
     /// For a forward: attach the original message's attachments too (read
     /// from its downloaded body when sending).
     pub forward_attachments_of: Option<mailcrane_store::MessageId>,
+    /// Rich text (M2-09): sent as plain text plus HTML; `body_text` then
+    /// holds the plain version for drafts.
+    pub rich: Option<mailcrane_mime::richtext::RichDoc>,
 }
 
 /// Which recipient field an entry is in.
@@ -288,6 +291,7 @@ pub fn build_for_sending(store: &Store, draft: &ComposeDraft) -> Result<BuiltMes
         message_id: Some(message_id.clone()),
         is_draft: false,
         attachments: all_attachments(store, draft)?,
+        rich: draft.rich.clone(),
     })
     .map_err(|e| match e {
         BuildError::InvalidAddress { .. } => SendError::InvalidSender,
@@ -435,6 +439,7 @@ mod tests {
             references: vec![],
             attachments: Vec::new(),
             forward_attachments_of: None,
+            rich: None,
         }
     }
 

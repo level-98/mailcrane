@@ -212,6 +212,7 @@ fn message_bytes(store: &Store, draft: &Draft) -> Result<Vec<u8>, ChangeError> {
         message_id: Some(draft.message_id_header.clone()),
         is_draft: true,
         attachments: Vec::new(),
+        rich: None,
     })
     // Too large or unbuildable: no retry will help.
     .map_err(|_| ChangeError::Refused { transient: false })

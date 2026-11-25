@@ -197,6 +197,7 @@ fn a_plain_draft_has_no_attachments() {
         references: vec![],
         attachments: Vec::new(),
         forward_attachments_of: None,
+        rich: None,
     };
     let built = build_for_sending(&store, &draft).expect("build");
     assert!(parse_message(&built.raw)
