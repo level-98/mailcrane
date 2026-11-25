@@ -29,6 +29,12 @@ struct ConnState {
     literal: Option<Vec<u8>>,
     /// `ENABLE QRESYNC` succeeded (RFC 7162 §3.2.3).
     qresync: bool,
+    /// The selected folder as this connection was last told about it (UIDs
+    /// in sequence order, with mod-sequences): set by `SELECT`, brought up
+    /// to date by `IDLE`. A real server keeps this per session and reports
+    /// anything newer at the next chance (RFC 9051 §5.2), so mail delivered
+    /// between a sync and `IDLE` is announced when `IDLE` starts.
+    view: Option<Vec<(u32, u64)>>,
 }
 
 #[derive(Debug, Clone)]
@@ -534,6 +540,7 @@ async fn handle_imap_command(
                 format!("{tag} BAD unexpected SELECT parameters\r\n")
             } else {
                 state.selected = Some(folder.to_string());
+                state.view = Some(snapshot(mailbox, folder).await);
                 select_response(mailbox, quirks, folder, qresync, tag, &command).await
             }
         }
@@ -626,7 +633,7 @@ async fn handle_imap_command(
                 format!("{tag} BAD IDLE disabled\r\n")
             } else {
                 let folder = state.selected.clone().unwrap_or_else(|| "INBOX".into());
-                idle(stream, tag, shared, &folder).await?
+                idle(stream, tag, shared, &folder, &mut state.view).await?
             }
         }
         _ => format!("{tag} BAD unknown command\r\n"),
@@ -664,12 +671,14 @@ async fn handle_imap_command(
 
 /// `IDLE` (RFC 2177): answers `+`, then reports deliveries (`EXISTS`),
 /// expunges (`EXPUNGE`) and flag changes (`FETCH`) in `folder` as they
-/// happen, until the client sends `DONE`. Returns the tagged reply.
+/// happen, until the client sends `DONE`. Changes since the connection's
+/// `view` (what it was last told) come first. Returns the tagged reply.
 async fn idle(
     stream: &mut (impl AsyncReadExt + AsyncWriteExt + Unpin),
     tag: &str,
     shared: &Shared,
     folder: &str,
+    view: &mut Option<Vec<(u32, u64)>>,
 ) -> Result<String, String> {
     let mailbox = &shared.mailbox;
     stream
@@ -677,12 +686,10 @@ async fn idle(
         .await
         .map_err(|error| error.to_string())?;
     // What the client knows: UIDs in sequence order, with mod-sequences.
-    let mut known: Vec<(u32, u64)> = mailbox
-        .messages(folder)
-        .await
-        .iter()
-        .map(|m| (m.uid, m.modseq))
-        .collect();
+    let mut known = match view.take() {
+        Some(known) => known,
+        None => snapshot(mailbox, folder).await,
+    };
     let mut line = Vec::new();
     loop {
         // Register before looking, so no change slips between the two.
@@ -740,6 +747,7 @@ async fn idle(
                         shared.received.lock().await.push(
                             String::from_utf8_lossy(line.trim_ascii()).to_ascii_uppercase(),
                         );
+                        *view = Some(known);
                         return Ok(if done {
                             format!("{tag} OK IDLE terminated\r\n")
                         } else {
@@ -751,6 +759,16 @@ async fn idle(
             },
         }
     }
+}
+
+/// The folder's UIDs in sequence order, with their mod-sequences.
+async fn snapshot(mailbox: &Mailbox, folder: &str) -> Vec<(u32, u64)> {
+    mailbox
+        .messages(folder)
+        .await
+        .iter()
+        .map(|m| (m.uid, m.modseq))
+        .collect()
 }
 
 /// `(QRESYNC (uidvalidity modseq [known-uids]))` (RFC 7162 §3.2.5) from

@@ -374,6 +374,36 @@ mod suite {
     }
 
     #[tokio::test]
+    async fn imap_idle_announces_mail_delivered_since_select() {
+        let server = FakeImap::builder()
+            .folder("INBOX", vec![b"Subject: 1\r\n\r\n1".to_vec()])
+            .start()
+            .await
+            .expect("server starts");
+        let mut stream = open_tls(server.addr(), server.root_cert_der()).await;
+        let _ = imap_read_line(&mut stream).await;
+        stream
+            .write_all(b"a1 SELECT INBOX\r\n")
+            .await
+            .expect("select");
+        while !imap_read_line(&mut stream).await.starts_with("a1 ") {}
+        // Delivered after SELECT, before IDLE: still news to this client.
+        server
+            .mailbox()
+            .deliver("INBOX", b"Subject: 2\r\n\r\n2".to_vec())
+            .await;
+        stream.write_all(b"a2 IDLE\r\n").await.expect("idle");
+        assert!(imap_read_line(&mut stream).await.starts_with("+ "));
+        assert_eq!(imap_read_line(&mut stream).await, "* 2 EXISTS\r\n");
+        stream.write_all(b"DONE\r\n").await.expect("done");
+        assert_eq!(
+            imap_read_line(&mut stream).await,
+            "a2 OK IDLE terminated\r\n"
+        );
+        server.shutdown().await;
+    }
+
+    #[tokio::test]
     async fn imap_idle_is_advertised_unless_no_idle() {
         for (quirk, advertised) in [(None, true), (Some(Quirk::NoIdle), false)] {
             let mut builder = FakeImap::builder();
