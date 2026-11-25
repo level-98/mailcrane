@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.res.Resources
 import android.net.Uri
+import android.os.Build
 import android.text.format.Formatter
 import androidx.annotation.DrawableRes
 import androidx.annotation.StringRes
@@ -18,6 +19,7 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.CircularProgressIndicator
@@ -68,6 +70,8 @@ import app.mailcrane.core.MessageDetail
 import app.mailcrane.core.ReplyKind
 import app.mailcrane.ui.compose.ReplyRequest
 import app.mailcrane.ui.messagelist.errorText
+import app.mailcrane.ui.theme.LocalDarkMessageBodies
+import app.mailcrane.ui.theme.LocalDarkTheme
 import java.time.DateTimeException
 import java.time.Instant
 import java.time.ZoneId
@@ -205,14 +209,30 @@ private fun Message(
         if (state.showRemoteBanner) RemoteImagesBanner(onLoadRemoteImages)
         when (val body = message.body) {
             is MessageBody.Plain -> PlainBody(body.text, onOpenLink)
-            is MessageBody.Html ->
-                SafeWebView(
-                    html = body.html,
-                    allowRemote = state.remoteAllowed,
-                    inlinePart = inlinePart,
-                    onOpenLink = onOpenLink,
-                    modifier = Modifier.fillMaxWidth().testTag("message-html"),
-                )
+            is MessageBody.Html -> {
+                val dark = LocalDarkTheme.current
+                val darken = dark && LocalDarkMessageBodies.current && darkeningSupported
+                val webView = @Composable { m: Modifier ->
+                    SafeWebView(
+                        html = body.html,
+                        allowRemote = state.remoteAllowed,
+                        inlinePart = inlinePart,
+                        onOpenLink = onOpenLink,
+                        modifier = m.fillMaxWidth().testTag("message-html"),
+                        darken = darken,
+                    )
+                }
+                if (dark && !darken) {
+                    // Most HTML mail assumes a white page: show it on a light "paper" card in dark mode.
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = androidx.compose.ui.graphics.Color.White,
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp),
+                    ) { webView(Modifier.padding(4.dp)) }
+                } else {
+                    webView(Modifier)
+                }
+            }
             // The view model downloads the body before showing the message.
             MessageBody.NotDownloaded -> {}
         }
@@ -407,6 +427,9 @@ internal fun quoteHeader(
             }
         }
     }
+
+/** Darkening HTML mail needs Android 13's algorithmic darkening. */
+private val darkeningSupported: Boolean get() = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
 
 /** Opens a tapped link in the browser or mail app; never inside Mailcrane. */
 internal fun openLink(

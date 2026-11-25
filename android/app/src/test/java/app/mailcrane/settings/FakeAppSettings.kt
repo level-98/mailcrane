@@ -21,4 +21,25 @@ class FakeAppSettings(
     override suspend fun setUndoSendSeconds(seconds: Int) {
         undo.value = seconds
     }
+
+    private val theme = MutableStateFlow(ThemeMode.SYSTEM)
+    override val themeMode: StateFlow<ThemeMode> = theme
+
+    override suspend fun setThemeMode(mode: ThemeMode) {
+        theme.value = mode
+    }
+
+    private val dynamic = MutableStateFlow(true)
+    override val dynamicColor: StateFlow<Boolean> = dynamic
+
+    override suspend fun setDynamicColor(enabled: Boolean) {
+        dynamic.value = enabled
+    }
+
+    private val darkBodies = MutableStateFlow(false)
+    override val darkMessageBodies: StateFlow<Boolean> = darkBodies
+
+    override suspend fun setDarkMessageBodies(enabled: Boolean) {
+        darkBodies.value = enabled
+    }
 }

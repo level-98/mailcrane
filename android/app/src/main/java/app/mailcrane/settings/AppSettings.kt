@@ -7,6 +7,7 @@ import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.core.intPreferencesKey
+import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import dagger.Module
 import dagger.Provides
@@ -33,7 +34,25 @@ interface AppSettings {
     val undoSendSeconds: Flow<Int>
 
     suspend fun setUndoSendSeconds(seconds: Int)
+
+    /** Light, dark or as the system says. */
+    val themeMode: Flow<ThemeMode>
+
+    suspend fun setThemeMode(mode: ThemeMode)
+
+    /** "Use wallpaper colours" (Material You, Android 12+). On by default. */
+    val dynamicColor: Flow<Boolean>
+
+    suspend fun setDynamicColor(enabled: Boolean)
+
+    /** "Dark message bodies": darken HTML mail in dark mode instead of showing it on a light page. Off by default. */
+    val darkMessageBodies: Flow<Boolean>
+
+    suspend fun setDarkMessageBodies(enabled: Boolean)
 }
+
+/** The app's theme choice. */
+enum class ThemeMode { SYSTEM, LIGHT, DARK }
 
 /** The "Undo send" delays offered, in seconds; 0 is off. */
 val UNDO_SEND_CHOICES = listOf(0, 5, 10, 20, 30)
@@ -66,9 +85,31 @@ class DataStoreAppSettings(
         dataStore.edit { it[UNDO_SEND] = seconds }
     }
 
+    override val themeMode: Flow<ThemeMode> =
+        prefs.map { p -> ThemeMode.entries.firstOrNull { it.name == p[THEME] } ?: ThemeMode.SYSTEM }
+
+    override suspend fun setThemeMode(mode: ThemeMode) {
+        dataStore.edit { it[THEME] = mode.name }
+    }
+
+    override val dynamicColor: Flow<Boolean> = prefs.map { it[DYNAMIC_COLOR] ?: true }
+
+    override suspend fun setDynamicColor(enabled: Boolean) {
+        dataStore.edit { it[DYNAMIC_COLOR] = enabled }
+    }
+
+    override val darkMessageBodies: Flow<Boolean> = prefs.map { it[DARK_BODIES] ?: false }
+
+    override suspend fun setDarkMessageBodies(enabled: Boolean) {
+        dataStore.edit { it[DARK_BODIES] = enabled }
+    }
+
     private companion object {
         val CLEAN_LINKS = booleanPreferencesKey("clean_links")
         val UNDO_SEND = intPreferencesKey("undo_send_seconds")
+        val THEME = stringPreferencesKey("theme_mode")
+        val DYNAMIC_COLOR = booleanPreferencesKey("dynamic_color")
+        val DARK_BODIES = booleanPreferencesKey("dark_message_bodies")
     }
 }
 
