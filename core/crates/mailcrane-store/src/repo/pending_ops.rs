@@ -283,6 +283,42 @@ impl Store {
         Ok(messages.into_iter().map(|m| m.message_id).collect())
     }
 
+    /// The server refused the action for some of its messages only (a JMAP
+    /// `Email/set` can refuse ids one by one): undoes the local change on
+    /// those messages and takes them out of the action, so the rest can be
+    /// completed with [`Store::complete_op`]. Returns the ids it undid.
+    pub fn fail_op_messages(
+        &self,
+        op: OpId,
+        refused: &[MessageId],
+    ) -> Result<Vec<MessageId>, StoreError> {
+        let tx = self.conn.unchecked_transaction()?;
+        let kind: Option<String> = tx
+            .query_row(
+                "SELECT kind FROM pending_ops WHERE id = ?1",
+                params![op.0],
+                |r| r.get(0),
+            )
+            .optional()?;
+        let Some(kind) = kind else {
+            return Ok(Vec::new());
+        };
+        let kind = OpKind::parse(&kind)?;
+        let mut undone = Vec::new();
+        for m in load_messages(&tx, op)? {
+            if refused.contains(&m.message_id) {
+                revert_local(&tx, kind, m.message_id)?;
+                tx.execute(
+                    "DELETE FROM pending_op_messages WHERE op_id = ?1 AND message_id = ?2",
+                    params![op.0, m.message_id.0],
+                )?;
+                undone.push(m.message_id);
+            }
+        }
+        tx.commit()?;
+        Ok(undone)
+    }
+
     /// The action failed for now: records the attempt and when to try next.
     /// `error` is a short code such as `network`, never server text.
     pub fn defer_op(

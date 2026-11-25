@@ -376,3 +376,82 @@ async fn a_sender_without_an_identity_is_refused_clearly() {
     );
     assert!(s.server.submissions().is_empty(), "nothing was submitted");
 }
+
+#[tokio::test]
+async fn a_partly_refused_move_keeps_the_refused_message_where_it_was() {
+    use mailcrane_core::actions::{apply_action, Action};
+    let s = setup().await;
+    let mut j = syncer(&s).await;
+    let inbox = j
+        .refresh_mailboxes()
+        .await
+        .expect("mailboxes")
+        .expect("inbox");
+    j.sync_folder(inbox).await.expect("sync");
+    let ids: Vec<_> = s
+        .store
+        .list_messages(inbox, 10, 0)
+        .expect("list")
+        .into_iter()
+        .map(|m| (m.details.subject.clone(), m.id))
+        .collect();
+    let id_of = |subject: &str| {
+        ids.iter()
+            .find(|(s, _)| s == subject)
+            .map(|(_, id)| *id)
+            .expect("message")
+    };
+    // The server won't let m1 be changed.
+    s.server.refuse_changes("m1");
+    apply_action(
+        &s.store,
+        &[id_of("Subject m1"), id_of("Subject m2")],
+        Action::Delete,
+        0,
+        &NoListener,
+    )
+    .expect("delete both");
+    let report = j.replay_actions(0).await.expect("replay");
+    assert_eq!((report.done, report.failed, report.remaining), (1, 1, 0));
+    // m2 moved to Trash on the server; m1 stayed in the inbox there and here.
+    assert_eq!(
+        s.server.email_mailboxes("m2").expect("m2"),
+        vec!["mb-trash".to_string()]
+    );
+    assert_eq!(
+        s.server.email_mailboxes("m1").expect("m1"),
+        vec!["mb-inbox".to_string()]
+    );
+    let left = subjects(&s.store, inbox);
+    assert_eq!(
+        left,
+        ["Subject m1"],
+        "the refused message is still local, in the inbox"
+    );
+}
+
+#[tokio::test]
+async fn a_partly_refused_flag_change_is_undone_for_the_refused_message() {
+    use mailcrane_core::actions::{apply_action, Action};
+    let s = setup().await;
+    let mut j = syncer(&s).await;
+    let inbox = j
+        .refresh_mailboxes()
+        .await
+        .expect("mailboxes")
+        .expect("inbox");
+    j.sync_folder(inbox).await.expect("sync");
+    let all: Vec<_> = s.store.list_messages(inbox, 10, 0).expect("list");
+    s.server.refuse_changes("m2");
+    let both: Vec<_> = all.iter().map(|m| m.id).collect();
+    apply_action(&s.store, &both, Action::Flag, 0, &NoListener).expect("flag both");
+    j.replay_actions(0).await.expect("replay");
+    for m in s.store.list_messages(inbox, 10, 0).expect("list") {
+        let flagged_on_server = m.details.subject == "Subject m1";
+        assert_eq!(
+            m.details.flags.flagged, flagged_on_server,
+            "{}",
+            m.details.subject
+        );
+    }
+}

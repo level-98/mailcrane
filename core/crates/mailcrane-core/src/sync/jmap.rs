@@ -111,12 +111,15 @@ impl<'a> JmapSyncer<'a> {
                 report.remaining = ops.len().saturating_sub(index);
                 break;
             }
-            let mut ids = Vec::new();
+            // Each local row with its JMAP email, so a refusal per email can be
+            // undone per message.
+            let mut rows: Vec<(String, MessageId)> = Vec::new();
             for m in &op.messages {
                 if let Some(row) = self.store.jmap_row(m.message_id)? {
-                    ids.push(row.email_id);
+                    rows.push((row.email_id, m.message_id));
                 }
             }
+            let ids: Vec<String> = rows.iter().map(|(e, _)| e.clone()).collect();
             let action = match op.kind {
                 OpKind::MarkRead => Some(EmailAction::Keyword {
                     keyword: "$seen".into(),
@@ -146,9 +149,10 @@ impl<'a> JmapSyncer<'a> {
                 }
             };
             let expunged = matches!(op.kind, OpKind::Move | OpKind::Expunge);
-            let result = match action {
+            // Ok(refused messages) when the server changed at least some of them.
+            let result: Result<Vec<MessageId>, Option<JmapError>> = match action {
                 // The rows are gone locally (a sync removed them): nothing to do.
-                _ if ids.is_empty() => Ok(()),
+                _ if ids.is_empty() => Ok(Vec::new()),
                 None => Err(None),
                 Some(action) => {
                     match mailcrane_jmap::apply(
@@ -160,30 +164,50 @@ impl<'a> JmapSyncer<'a> {
                     )
                     .await
                     {
-                        // Already gone counts as done (a destroy repeated after a lost reply).
-                        Ok(outcome)
-                            if outcome.failed.iter().all(|(_, kind)| kind == "notFound") =>
-                        {
-                            Ok(())
+                        Ok(outcome) => {
+                            // Already gone counts as done (a destroy repeated after a lost
+                            // reply); anything else refused is undone for those emails only.
+                            // Their server state never changed, so Email/changes would never
+                            // correct an optimistic local change on them.
+                            let refused: Vec<MessageId> = rows
+                                .iter()
+                                .filter(|(email, _)| {
+                                    outcome
+                                        .failed
+                                        .iter()
+                                        .any(|(id, kind)| id == email && kind != "notFound")
+                                })
+                                .map(|(_, m)| *m)
+                                .collect();
+                            if !refused.is_empty() && refused.len() == rows.len() {
+                                Err(None)
+                            } else {
+                                Ok(refused)
+                            }
                         }
-                        // Partly refused: what the server did change is kept, so the op is
-                        // done; the refused emails show their real state again after the
-                        // next sync's Email/changes. Undoing all of it would also undo the
-                        // emails the server did change.
-                        Ok(outcome) if !outcome.done.is_empty() => {
-                            tracing::warn!(
-                                refused = outcome.failed.len(),
-                                "JMAP server refused part of a message action"
-                            );
-                            Ok(())
-                        }
-                        Ok(_) => Err(None),
                         Err(e) => Err(Some(e)),
                     }
                 }
             };
             match result {
-                Ok(()) => {
+                Ok(refused) => {
+                    if !refused.is_empty() {
+                        let undone = self.store.fail_op_messages(op.id, &refused)?;
+                        tracing::warn!(
+                            refused = undone.len(),
+                            "JMAP server refused part of a message action; undone for those"
+                        );
+                        report.failed = report.failed.saturating_add(1);
+                        self.listener.on_event(CoreEvent::MessagesChanged {
+                            folder_id: op.folder_id,
+                        });
+                        self.listener.on_event(CoreEvent::ActionFailed {
+                            account_id: self.account,
+                            action: crate::actions::action_kind(op.kind),
+                            message_ids: undone,
+                            reason: crate::events::SyncErrorKind::Protocol,
+                        });
+                    }
                     self.store.complete_op(op.id, expunged)?;
                     report.done = report.done.saturating_add(1);
                 }
