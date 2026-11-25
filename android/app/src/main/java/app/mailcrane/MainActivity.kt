@@ -1,10 +1,15 @@
 package app.mailcrane
 
+import android.Manifest
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import android.view.WindowManager
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -16,6 +21,7 @@ import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.Lifecycle
@@ -39,6 +45,7 @@ import app.mailcrane.widget.EXTRA_MESSAGE_ID
 import app.mailcrane.work.SnoozeWaker
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
@@ -48,6 +55,8 @@ class MainActivity : FragmentActivity() {
     @Inject lateinit var snoozeWaker: SnoozeWaker
 
     @Inject lateinit var appLock: AppLock
+
+    @Inject lateinit var settings: app.mailcrane.settings.AppSettings
 
     /** A message to open, from a widget tap (M4-11): (account, message). */
     private var openRequest by mutableStateOf<Pair<Long, Long>?>(null)
@@ -130,6 +139,7 @@ class MainActivity : FragmentActivity() {
             }
         }
         val id = accounts.currentId
+        NotificationPermissionPrompt(hasAccount = id != null)
         when {
             addingAccount -> {
                 BackHandler { addingAccount = false }
@@ -156,6 +166,28 @@ class MainActivity : FragmentActivity() {
                 Surface(color = MaterialTheme.colorScheme.surface) {
                     WelcomeState(onAddAccount = { addingAccount = true })
                 }
+        }
+    }
+
+    /**
+     * Asks once for the notification permission (Android 13+) once there is an account, so new mail
+     * can be notified (M4-05). A refusal is remembered; Settings can ask again.
+     */
+    @Composable
+    private fun NotificationPermissionPrompt(hasAccount: Boolean) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
+        val launcher =
+            rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
+                lifecycleScope.launch { settings.setNotificationPromptAnswered() }
+            }
+        LaunchedEffect(hasAccount) {
+            if (!hasAccount) return@LaunchedEffect
+            val granted =
+                ContextCompat.checkSelfPermission(this@MainActivity, Manifest.permission.POST_NOTIFICATIONS) ==
+                    PackageManager.PERMISSION_GRANTED
+            if (!granted && !settings.notificationPromptAnswered.first() && settings.notificationsEnabled.first()) {
+                launcher.launch(Manifest.permission.POST_NOTIFICATIONS)
+            }
         }
     }
 }

@@ -28,6 +28,10 @@ class MailcraneApplication : Application() {
 
     @Inject lateinit var appLock: AppLock
 
+    @Inject lateinit var newMail: app.mailcrane.notify.NewMailChecker
+
+    @Inject lateinit var backgroundMail: app.mailcrane.sync.BackgroundMail
+
     override fun onCreate() {
         super.onCreate()
         // Before anything connects: the core checks certificates through Android's trust store.
@@ -41,7 +45,15 @@ class MailcraneApplication : Application() {
         ProcessLifecycleOwner
             .get()
             .lifecycle
-            .addObserver(LiveUpdatesObserver(liveUpdates, appScope, Dispatchers.IO))
+            .addObserver(
+                LiveUpdatesObserver(liveUpdates, appScope, Dispatchers.IO) {
+                    app.mailcrane.sync.AlwaysOnSyncService.running
+                },
+            )
+        // New mail becomes notifications (M4-05): after live updates, and in the background either
+        // every ~15 minutes or always-on, as the settings say.
+        newMail.start()
+        backgroundMail.start()
         // Recovers sends interrupted by a stopped app, then sends what's queued.
         outbox.start()
         // The home-screen widget follows mail changes (M4-11).

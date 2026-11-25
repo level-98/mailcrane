@@ -39,6 +39,9 @@ object CoreModule {
     fun provideLiveUpdatesEngine(core: UniffiMailboxCore): LiveUpdatesEngine = core
 
     @Provides
+    fun provideNotificationsCore(core: UniffiMailboxCore): NotificationsCore = core
+
+    @Provides
     @Singleton
     fun provideComposeCore(
         @ApplicationContext context: Context,

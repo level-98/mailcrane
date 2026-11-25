@@ -9,6 +9,10 @@
     <uses-permission android:name="android.permission.READ_CONTACTS" />
     <!-- To say when a snoozed message comes back (M4-06). Asked for when the user first snoozes. -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- Always-on sync (M4-05): an opt-in foreground service holding the IMAP IDLE connection. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
     <application
         android:name=".MailcraneApplication"
@@ -50,5 +54,26 @@
                 android:name="android.support.FILE_PROVIDER_PATHS"
                 android:resource="@xml/file_paths" />
         </provider>
+        <!-- Notification buttons (Archive, Mark read): only this app's notifications reach it. -->
+        <receiver
+            android:name=".notify.NotificationActionReceiver"
+            android:exported="false" />
+
+        <receiver
+            android:name=".sync.BootReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
+
+        <service
+            android:name=".sync.AlwaysOnSyncService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Keeps a connection to the user's own mail server open (IMAP IDLE) so new mail is notified within a minute. Turned on by the user in Settings." />
+        </service>
     </application>
 </manifest>

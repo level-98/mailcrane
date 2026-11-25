@@ -151,7 +151,8 @@ class UniffiMailboxCore(
     private val io: CoroutineDispatcher = Dispatchers.IO,
 ) : MailboxCore,
     MessageCore,
-    LiveUpdatesEngine {
+    LiveUpdatesEngine,
+    NotificationsCore {
     private val hub = EventHub()
 
     // Created on first use, so the native library loads only when mail is needed.
@@ -200,6 +201,11 @@ class UniffiMailboxCore(
             throw SyncFailure.Failed(SyncErrorKind.STORAGE)
         }
     }
+
+    override suspend fun takeNewMail(): List<NewMailNotification> = withContext(io) { engine.takeNewMail() }
+
+    override suspend fun backgroundSync(deadlineSeconds: Int): List<NewMailNotification> =
+        withContext(io) { engine.backgroundSync(deadlineSeconds.coerceAtLeast(1).toUInt()) }
 
     override suspend fun applyAction(
         messageId: Long,

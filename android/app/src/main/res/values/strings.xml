@@ -465,4 +465,18 @@
     <string name="app_lock_locked_body">Unlock with your fingerprint, face or screen lock.</string>
     <string name="app_lock_no_credential_locked">This phone no longer has a screen lock. Set one up in your phone’s settings to unlock Mailcrane.</string>
     <string name="app_lock_unlock">Unlock</string>
+    <!-- New-mail notifications (M4-05) -->
+    <string name="notify_new_message">New message</string>
+    <string name="notify_action_archive">Archive</string>
+    <string name="notify_action_mark_read">Mark read</string>
+    <string name="notify_channel_group">Accounts</string>
+    <string name="notify_channel_description">New messages in this account’s inbox</string>
+    <string name="always_on_channel">Always-on sync</string>
+    <string name="always_on_notification">Checking for new mail</string>
+    <string name="settings_notifications_header">Notifications</string>
+    <string name="settings_notifications">New mail notifications</string>
+    <string name="settings_notifications_summary">Tell me about new messages in my inboxes</string>
+    <string name="settings_notifications_blocked">Notifications are turned off for Mailcrane in your phone’s settings</string>
+    <string name="settings_always_on">Always-on sync</string>
+    <string name="settings_always_on_summary">Notify within a minute of new mail by keeping a connection open. Uses more battery and shows a permanent notification. When off, Mailcrane checks about every 15 minutes.</string>
 </resources>

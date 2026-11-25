@@ -96,6 +96,21 @@ interface AppSettings {
 
     suspend fun setAppLockAllowScreenshots(allow: Boolean)
 
+    /** New-mail notifications (M4-05). On by default; Android 13+ also needs the permission. */
+    val notificationsEnabled: Flow<Boolean>
+
+    suspend fun setNotificationsEnabled(enabled: Boolean)
+
+    /** "Always-on sync": keep a connection open for instant notifications. Off by default. */
+    val alwaysOnSync: Flow<Boolean>
+
+    suspend fun setAlwaysOnSync(enabled: Boolean)
+
+    /** Whether the user was asked for the notification permission (Android 13+); asked once. */
+    val notificationPromptAnswered: Flow<Boolean>
+
+    suspend fun setNotificationPromptAnswered()
+
     /** The account shown last, to open it again at start-up (M4-01); 0 for none. */
     val lastAccountId: Flow<Long>
 
@@ -170,6 +185,24 @@ class DataStoreAppSettings(
 
     override suspend fun setAppLockAllowScreenshots(allow: Boolean) {
         dataStore.edit { it[APP_LOCK_SCREENSHOTS] = allow }
+    }
+
+    override val notificationsEnabled: Flow<Boolean> = prefs.map { it[NOTIFY] ?: true }
+
+    override suspend fun setNotificationsEnabled(enabled: Boolean) {
+        dataStore.edit { it[NOTIFY] = enabled }
+    }
+
+    override val alwaysOnSync: Flow<Boolean> = prefs.map { it[ALWAYS_ON] ?: false }
+
+    override suspend fun setAlwaysOnSync(enabled: Boolean) {
+        dataStore.edit { it[ALWAYS_ON] = enabled }
+    }
+
+    override val notificationPromptAnswered: Flow<Boolean> = prefs.map { it[NOTIFY_PROMPT] ?: false }
+
+    override suspend fun setNotificationPromptAnswered() {
+        dataStore.edit { it[NOTIFY_PROMPT] = true }
     }
 
     override val lastAccountId: Flow<Long> = prefs.map { it[LAST_ACCOUNT] ?: 0L }
@@ -261,6 +294,9 @@ class DataStoreAppSettings(
         val HIDE_OUTSIDE = booleanPreferencesKey("hide_content_outside_app")
         val GROUP_THREADS = booleanPreferencesKey("group_by_conversation")
         val APP_LOCK = booleanPreferencesKey("app_lock_enabled")
+        val NOTIFY = booleanPreferencesKey("notifications_enabled")
+        val ALWAYS_ON = booleanPreferencesKey("always_on_sync")
+        val NOTIFY_PROMPT = booleanPreferencesKey("notification_prompt_answered")
         val APP_LOCK_TIMEOUT = intPreferencesKey("app_lock_timeout_seconds")
         val APP_LOCK_SCREENSHOTS = booleanPreferencesKey("app_lock_allow_screenshots")
     }
