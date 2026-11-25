@@ -6,7 +6,7 @@
 
 use super::narrow;
 use crate::{AccountId, DraftFields, Store, StoreError};
-use rusqlite::{params, Row};
+use rusqlite::{params, OptionalExtension, Row};
 
 /// Row id of an outbox message.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -46,6 +46,81 @@ impl OutboxState {
     }
 }
 
+/// A sent message's copy in the Sent folder.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SentCopy {
+    /// Not sent yet.
+    None,
+    /// To upload.
+    Pending,
+    /// In the Sent folder.
+    Saved,
+    /// Not needed: the server saves it, or the account says never.
+    Skipped,
+    /// The upload was refused; the message was sent but isn't in Sent.
+    Failed,
+}
+
+impl SentCopy {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::Pending => "pending",
+            Self::Saved => "saved",
+            Self::Skipped => "skipped",
+            Self::Failed => "failed",
+        }
+    }
+
+    fn parse(text: &str) -> Result<Self, StoreError> {
+        Ok(match text {
+            "none" => Self::None,
+            "pending" => Self::Pending,
+            "saved" => Self::Saved,
+            "skipped" => Self::Skipped,
+            "failed" => Self::Failed,
+            _ => {
+                return Err(StoreError::Corrupt {
+                    column: "sent_copy",
+                })
+            }
+        })
+    }
+}
+
+/// Whether to save sent messages to the Sent folder, per account.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SaveSentCopy {
+    /// Yes, unless the server does it itself.
+    #[default]
+    Auto,
+    Always,
+    Never,
+}
+
+impl SaveSentCopy {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::Always => "always",
+            Self::Never => "never",
+        }
+    }
+
+    fn parse(text: &str) -> Result<Self, StoreError> {
+        Ok(match text {
+            "auto" => Self::Auto,
+            "always" => Self::Always,
+            "never" => Self::Never,
+            _ => {
+                return Err(StoreError::Corrupt {
+                    column: "save_sent_copy",
+                })
+            }
+        })
+    }
+}
+
 /// A message to put in the outbox.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NewOutboxMessage {
@@ -78,6 +153,9 @@ pub struct OutboxMessage {
     pub rejected: Vec<String>,
     pub created_at: i64,
     pub sent_at: Option<i64>,
+    /// Its copy in the Sent folder, once sent.
+    pub sent_copy: SentCopy,
+    pub copy_attempts: u32,
 }
 
 fn lines(entries: &[String]) -> String {
@@ -98,7 +176,8 @@ fn split(text: &str) -> Vec<String> {
 
 const COLS: &str = "id, account_id, raw, envelope_from, envelope_to, message_id_header, \
     to_list, cc_list, bcc_list, subject, body, in_reply_to, references_list, state, attempts, \
-    next_attempt_at, not_before, last_error, rejected, created_at, sent_at";
+    next_attempt_at, not_before, last_error, rejected, created_at, sent_at, sent_copy, \
+    copy_attempts";
 
 fn from_row(r: &Row<'_>) -> Result<OutboxMessage, StoreError> {
     let references: String = r.get(12)?;
@@ -126,6 +205,8 @@ fn from_row(r: &Row<'_>) -> Result<OutboxMessage, StoreError> {
         rejected: split(&r.get::<_, String>(18)?),
         created_at: r.get(19)?,
         sent_at: r.get(20)?,
+        sent_copy: SentCopy::parse(&r.get::<_, String>(21)?)?,
+        copy_attempts: narrow(r.get(22)?, "copy_attempts")?,
     })
 }
 
@@ -182,10 +263,95 @@ impl Store {
         Ok(out)
     }
 
-    /// The account's messages that haven't been sent: queued, sending and
-    /// failed, oldest first.
+    /// The account's messages that need attention: queued, sending and
+    /// failed, plus sent ones whose copy in Sent failed. Oldest first.
     pub fn list_outbox(&self, account: AccountId) -> Result<Vec<OutboxMessage>, StoreError> {
-        self.outbox_where("account_id = ?1 AND state != 'sent'", &[&account.0])
+        self.outbox_where(
+            "account_id = ?1 AND (state != 'sent' OR sent_copy = 'failed')",
+            &[&account.0],
+        )
+    }
+
+    /// Sent messages of the account whose copy is due to be uploaded.
+    pub fn pending_sent_copies(
+        &self,
+        account: AccountId,
+        now: i64,
+    ) -> Result<Vec<OutboxMessage>, StoreError> {
+        self.outbox_where(
+            "account_id = ?1 AND state = 'sent' AND sent_copy = 'pending' AND copy_next_attempt_at <= ?2",
+            &[&account.0, &now],
+        )
+    }
+
+    /// How many sent messages of the account still have a copy to upload.
+    pub fn count_pending_sent_copies(&self, account: AccountId) -> Result<u64, StoreError> {
+        let n: i64 = self.conn.query_row(
+            "SELECT count(*) FROM outbox WHERE account_id = ?1 AND state = 'sent' \
+             AND sent_copy = 'pending'",
+            params![account.0],
+            |r| r.get(0),
+        )?;
+        narrow(n, "count")
+    }
+
+    /// Records where a sent message's copy stands.
+    pub fn set_sent_copy(&self, id: OutboxId, copy: SentCopy) -> Result<(), StoreError> {
+        self.conn.execute(
+            "UPDATE outbox SET sent_copy = ?2, copy_next_attempt_at = 0 WHERE id = ?1",
+            params![id.0, copy.as_str()],
+        )?;
+        Ok(())
+    }
+
+    /// The copy upload failed for now: try again at `next_attempt_at`.
+    pub fn defer_sent_copy(
+        &self,
+        id: OutboxId,
+        attempts: u32,
+        next_attempt_at: i64,
+    ) -> Result<(), StoreError> {
+        self.conn.execute(
+            "UPDATE outbox SET copy_attempts = ?2, copy_next_attempt_at = ?3 WHERE id = ?1",
+            params![id.0, attempts, next_attempt_at],
+        )?;
+        Ok(())
+    }
+
+    /// Tries a failed copy again. Returns whether there was one.
+    pub fn retry_sent_copy(&self, id: OutboxId) -> Result<bool, StoreError> {
+        let n = self.conn.execute(
+            "UPDATE outbox SET sent_copy = 'pending', copy_attempts = 0, copy_next_attempt_at = 0 \
+             WHERE id = ?1 AND sent_copy = 'failed'",
+            params![id.0],
+        )?;
+        Ok(n > 0)
+    }
+
+    /// The account's setting for saving sent messages.
+    pub fn save_sent_copy(&self, account: AccountId) -> Result<Option<SaveSentCopy>, StoreError> {
+        let text: Option<String> = self
+            .conn
+            .query_row(
+                "SELECT save_sent_copy FROM accounts WHERE id = ?1",
+                params![account.0],
+                |r| r.get(0),
+            )
+            .optional()?;
+        text.map(|t| SaveSentCopy::parse(&t)).transpose()
+    }
+
+    /// Changes the account's setting. Returns whether the account exists.
+    pub fn set_save_sent_copy(
+        &self,
+        account: AccountId,
+        value: SaveSentCopy,
+    ) -> Result<bool, StoreError> {
+        let n = self.conn.execute(
+            "UPDATE accounts SET save_sent_copy = ?2 WHERE id = ?1",
+            params![account.0, value.as_str()],
+        )?;
+        Ok(n > 0)
     }
 
     /// Queued messages of the account that are due by `now`, oldest first.
@@ -245,9 +411,10 @@ impl Store {
         rejected: &[String],
         now: i64,
     ) -> Result<(), StoreError> {
+        // The copy for the Sent folder is due at once (M2-07).
         self.conn.execute(
-            "UPDATE outbox SET state = 'sent', rejected = ?2, sent_at = ?3, last_error = NULL \
-             WHERE id = ?1",
+            "UPDATE outbox SET state = 'sent', rejected = ?2, sent_at = ?3, last_error = NULL, \
+             sent_copy = 'pending', copy_next_attempt_at = ?3 WHERE id = ?1",
             params![id.0, lines(rejected), now],
         )?;
         Ok(())

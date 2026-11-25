@@ -1,7 +1,7 @@
 //! Per-account settings for the apps: the signature (M2-10).
 
 use mailcrane_core::compose::signature;
-use mailcrane_store::{AccountId, SignatureSetting, Store, MAX_SIGNATURE_BYTES};
+use mailcrane_store::{AccountId, SaveSentCopy, SignatureSetting, Store, MAX_SIGNATURE_BYTES};
 
 /// An account's signature, as the settings screen edits it.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
@@ -24,6 +24,53 @@ pub enum SettingsFailure {
     /// The local database failed.
     #[error("storage failure")]
     Storage,
+}
+
+/// Whether to save sent messages to the Sent folder.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum SaveSentSetting {
+    /// Yes, unless the server does it itself (Gmail, Microsoft).
+    Automatic,
+    /// Always.
+    On,
+    /// Never.
+    Off,
+}
+
+/// The account's "Save sent messages to the Sent folder" setting.
+#[uniffi::export]
+pub fn get_save_sent(db_path: String, account_id: i64) -> Result<SaveSentSetting, SettingsFailure> {
+    let value = open(&db_path)?
+        .save_sent_copy(AccountId(account_id))
+        .map_err(|_| SettingsFailure::Storage)?
+        .ok_or(SettingsFailure::NotFound)?;
+    Ok(match value {
+        SaveSentCopy::Auto => SaveSentSetting::Automatic,
+        SaveSentCopy::Always => SaveSentSetting::On,
+        SaveSentCopy::Never => SaveSentSetting::Off,
+    })
+}
+
+/// Changes the account's "Save sent messages to the Sent folder" setting.
+#[uniffi::export]
+pub fn set_save_sent(
+    db_path: String,
+    account_id: i64,
+    setting: SaveSentSetting,
+) -> Result<(), SettingsFailure> {
+    let value = match setting {
+        SaveSentSetting::Automatic => SaveSentCopy::Auto,
+        SaveSentSetting::On => SaveSentCopy::Always,
+        SaveSentSetting::Off => SaveSentCopy::Never,
+    };
+    if open(&db_path)?
+        .set_save_sent_copy(AccountId(account_id), value)
+        .map_err(|_| SettingsFailure::Storage)?
+    {
+        Ok(())
+    } else {
+        Err(SettingsFailure::NotFound)
+    }
 }
 
 /// What kind of draft a signature goes into.
@@ -196,6 +243,33 @@ mod tests {
                     enabled: true
                 }
             ),
+            Err(SettingsFailure::NotFound)
+        );
+    }
+
+    #[test]
+    fn save_sent_setting_round_trips() {
+        let dir = tempfile::tempdir().expect("dir");
+        let path = dir.path().join("s.db").to_string_lossy().into_owned();
+        let id = account(&path);
+        assert_eq!(
+            get_save_sent(path.clone(), id),
+            Ok(SaveSentSetting::Automatic)
+        );
+        for setting in [
+            SaveSentSetting::Off,
+            SaveSentSetting::On,
+            SaveSentSetting::Automatic,
+        ] {
+            assert_eq!(set_save_sent(path.clone(), id, setting), Ok(()));
+            assert_eq!(get_save_sent(path.clone(), id), Ok(setting));
+        }
+        assert_eq!(
+            get_save_sent(path.clone(), 99),
+            Err(SettingsFailure::NotFound)
+        );
+        assert_eq!(
+            set_save_sent(path, 99, SaveSentSetting::On),
             Err(SettingsFailure::NotFound)
         );
     }

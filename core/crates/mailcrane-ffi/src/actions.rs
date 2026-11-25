@@ -132,7 +132,8 @@ impl SyncEngine {
     }
 
     /// Carries the account's queued actions out on the server, oldest
-    /// first, then uploads its changed drafts. Ones that fail for now are
+    /// first, then uploads its changed drafts and copies of sent messages
+    /// for the Sent folder. Ones that fail for now are
     /// retried later with back-off (5 s up to 10 minutes, on the next call or
     /// sync after that); actions the server refuses for good are undone, with
     /// an `ActionFailed` event. Returns how many actions and drafts are still
@@ -143,7 +144,8 @@ impl SyncEngine {
         let storage = |_| crate::sync::failed(events::SyncErrorKind::Storage);
         let (ops, drafts) = {
             let store = self.open_store()?;
-            let ops = store.count_pending_ops(account).map_err(storage)?;
+            let ops = store.count_pending_ops(account).map_err(storage)?
+                + store.count_pending_sent_copies(account).map_err(storage)?;
             let drafts = store
                 .list_drafts(account)
                 .map_err(storage)?
@@ -165,7 +167,13 @@ impl SyncEngine {
                 } else {
                     uploaded.remaining
                 };
-                Ok(replayed.remaining.saturating_add(drafts_left))
+                let copies =
+                    mailcrane_core::outbox::save_sent_copies(store, session, account, now())
+                        .await?;
+                Ok(replayed
+                    .remaining
+                    .saturating_add(drafts_left)
+                    .saturating_add(copies.remaining))
             })
         })?;
         Ok(u32::try_from(remaining).unwrap_or(u32::MAX))
