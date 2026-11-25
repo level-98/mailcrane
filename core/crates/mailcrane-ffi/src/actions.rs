@@ -131,6 +131,14 @@ impl SyncEngine {
         Ok(applied.filter(|a| a.queued).map(|a| a.account.0))
     }
 
+    /// Undoes the newest action on `message_id` if it hasn't reached the
+    /// server yet (the snackbar's Undo). Returns false if it's too late.
+    pub fn undo_action(&self, message_id: i64) -> Result<bool, ActionFailure> {
+        let store = self.open_store().map_err(|_| ActionFailure::Storage)?;
+        let listener = ListenerAdapter(self.listener.clone());
+        Ok(actions::undo(&store, MessageId(message_id), &listener)?)
+    }
+
     /// Carries the account's queued actions out on the server, oldest
     /// first, then uploads its changed drafts and copies of sent messages
     /// for the Sent folder. Ones that fail for now are

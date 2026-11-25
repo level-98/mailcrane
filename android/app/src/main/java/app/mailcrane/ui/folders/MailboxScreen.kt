@@ -153,6 +153,7 @@ fun MailboxScreen(
                             }
                         },
                         onOpenFolders = { scope.launch { drawerState.open() } },
+                        folders = state.folders,
                         onCompose = onCompose,
                         composeFabModifier = composeFabModifier,
                         notice = notice,

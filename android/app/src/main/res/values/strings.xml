@@ -249,4 +249,18 @@
     <string name="settings_dynamic_color_summary">Take the app’s colours from your wallpaper</string>
     <string name="settings_dark_bodies">Dark message bodies</string>
     <string name="settings_dark_bodies_summary">In dark mode, darken HTML mail instead of showing it on a light page (Android 13 and later)</string>
+
+    <!-- Swipe actions (M4-04) -->
+    <string name="settings_swipe_right">Swipe right</string>
+    <string name="settings_swipe_left">Swipe left</string>
+    <string name="swipe_none">Nothing</string>
+    <string name="swipe_archive">Archive</string>
+    <string name="swipe_delete">Delete</string>
+    <string name="swipe_read_unread">Mark read or unread</string>
+    <string name="swipe_flag">Flag or unflag</string>
+    <string name="swipe_move">Move to…</string>
+    <string name="swipe_archived">Archived</string>
+    <string name="swipe_deleted">Deleted</string>
+    <string name="swipe_undo_too_late">Too late to undo: the change already reached the server</string>
+    <string name="message_mark_read">Mark as read</string>
 </resources>
