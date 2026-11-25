@@ -16,7 +16,10 @@ from urllib.request import Request, urlopen
 
 REPOSITORY = "level-98/mailcrane"
 API_URL = f"https://api.github.com/repos/{REPOSITORY}/issues"
-TASK_PATTERN = re.compile(r"^\[((?:M[0-7])|P)-(\d{2})\]\s+(.+)$", re.IGNORECASE)
+TASK_PATTERN = re.compile(r"^\[((?:M[0-8])|P)-(\d{2})\]\s+(.+)$", re.IGNORECASE)
+# Milestones list features only. A bug is an issue labelled `bug` and never
+# appears on the roadmap, even if its title carries a task ID.
+BUG_LABEL = "bug"
 MILESTONES = {
     "M0": {
         "title": "Foundations",
@@ -49,6 +52,10 @@ MILESTONES = {
     "M7": {
         "title": "iOS app",
         "description": "Bring the iOS app up to the Android release and ship it on the App Store.",
+    },
+    "M8": {
+        "title": "After 1.0",
+        "description": "Good ideas that wait until the Android 1.0 release is out.",
     },
     "P": {
         "title": "Before public launch",
@@ -102,6 +109,15 @@ def fetch_issues() -> list[dict]:
         page += 1
 
 
+def is_bug(issue: dict) -> bool:
+    """Whether the issue is labelled as a bug (bugs are not roadmap tasks)."""
+    labels = issue.get("labels") or []
+    return any(
+        (label.get("name") if isinstance(label, dict) else label) == BUG_LABEL
+        for label in labels
+    )
+
+
 def percentage(completed: int, total: int) -> int:
     return int(completed / total * 100 + 0.5) if total else 0
 
@@ -116,7 +132,7 @@ def build_snapshot(issues: list[dict]) -> dict:
         if not isinstance(title, str) or not isinstance(number, int):
             raise RuntimeError("GitHub API returned an issue without a title or number.")
         match = TASK_PATTERN.match(title)
-        if not match:
+        if not match or is_bug(issue):
             continue
         if state not in {"open", "closed"} or not isinstance(issue_url, str):
             raise RuntimeError(f"GitHub API returned invalid state or URL for issue #{number}.")
