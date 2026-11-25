@@ -8,6 +8,7 @@ mod folders;
 mod messages;
 mod outbox;
 mod pending_ops;
+mod rules;
 mod search;
 mod settings;
 mod snooze;
@@ -19,6 +20,7 @@ pub use outbox::{
     NewOutboxMessage, OutboxId, OutboxMessage, OutboxState, SaveSentCopy, ScheduleMode, SentCopy,
 };
 pub use pending_ops::{OpId, OpKind, OpMessage, PendingOp};
+pub use rules::{NewRule, Rule, RuleAction, RuleCondition, RuleId};
 pub use search::SearchFilter;
 pub use settings::{SignatureSetting, MAX_SIGNATURE_BYTES};
 pub use snooze::{KeywordedMessage, NewSnooze, Snooze, SnoozeId, SnoozeState};

@@ -16,6 +16,7 @@ pub mod folders;
 pub mod links;
 pub mod messages;
 pub mod outbox;
+pub mod rules;
 pub mod search;
 pub mod secrets;
 pub mod settings;

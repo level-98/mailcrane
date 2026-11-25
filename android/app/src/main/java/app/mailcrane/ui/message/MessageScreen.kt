@@ -96,6 +96,7 @@ fun MessageScreen(
     folders: List<FolderSummary> = emptyList(),
     onReply: (ReplyRequest) -> Unit = {},
     onComposeTo: (ComposePrefill) -> Unit = {},
+    onCreateRule: ((String) -> Unit)? = null,
     viewModel: MessageViewModel =
         hiltViewModel<MessageViewModel, MessageViewModel.Factory>(
             key = "message-$messageId",
@@ -162,6 +163,16 @@ fun MessageScreen(
                 onToggleFlag = viewModel::toggleFlag,
                 onMove = viewModel::moveTo,
                 onSnooze = { snoozing = true },
+                onCreateRule =
+                    onCreateRule?.let { create ->
+                        {
+                            (state as? MessageState.Ready)
+                                ?.message
+                                ?.from
+                                ?.email
+                                ?.let(create)
+                        }
+                    },
             ),
         onUnsubscribe = viewModel::unsubscribe,
         onRetry = viewModel::load,

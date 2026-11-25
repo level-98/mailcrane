@@ -80,6 +80,16 @@ interface MailboxCore {
      */
     suspend fun wakeDueSnoozes(): List<WokenMessage> = emptyList()
 
+    /**
+     * Runs a rule on the messages now in [folderId] of [accountId] and sends the changes to the server;
+     * returns how many messages it changed (M4-09). @throws RulesFailure
+     */
+    suspend fun runRuleOnExisting(
+        ruleId: Long,
+        folderId: Long,
+        accountId: Long,
+    ): Int = 0
+
     /** Conversations with messages in the folder, newest first (M4-02). */
     suspend fun listThreads(
         folderId: Long,
@@ -208,6 +218,16 @@ class UniffiMailboxCore(
     }
 
     override suspend fun nextSnoozeWake(): Long? = withContext(io) { engine.nextSnoozeWake() }
+
+    override suspend fun runRuleOnExisting(
+        ruleId: Long,
+        folderId: Long,
+        accountId: Long,
+    ): Int {
+        val changed = withContext(io) { engine.runRuleOnExisting(ruleId, folderId).toInt() }
+        if (changed > 0) replaySoon(accountId)
+        return changed
+    }
 
     override suspend fun listThreads(
         folderId: Long,
