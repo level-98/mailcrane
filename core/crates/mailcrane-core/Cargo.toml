@@ -15,6 +15,7 @@ http-body-util = "0.1.5"
 hyper = { version = "1.13.0", features = ["client", "http1"] }
 hyper-util = { version = "0.1.21", features = ["tokio"] }
 mailcrane-imap = { path = "../mailcrane-imap" }
+mailcrane-jmap = { path = "../mailcrane-jmap" }
 mailcrane-mime = { path = "../mailcrane-mime" }
 mailcrane-smtp = { path = "../mailcrane-smtp" }
 mailcrane-store = { path = "../mailcrane-store" }

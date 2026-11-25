@@ -172,7 +172,7 @@ fn check_port(port: u32, field: Field, errors: &mut Vec<FieldError>) {
     }
 }
 
-fn email_problem(email: &str) -> Option<FieldProblem> {
+pub(crate) fn email_problem(email: &str) -> Option<FieldProblem> {
     if email.is_empty() {
         return Some(FieldProblem::Empty);
     }
@@ -233,7 +233,7 @@ pub fn validate(config: &ManualAccountConfig) -> Result<(), Vec<FieldError>> {
     }
 }
 
-fn password_problem(password: &Secret) -> Option<FieldProblem> {
+pub(crate) fn password_problem(password: &Secret) -> Option<FieldProblem> {
     let bytes = password.expose();
     if bytes.is_empty() {
         Some(FieldProblem::Empty)

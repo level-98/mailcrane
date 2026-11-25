@@ -5,6 +5,7 @@ mod attachments;
 mod contacts;
 mod drafts;
 mod folders;
+mod jmap;
 mod messages;
 mod notify;
 mod outbox;
@@ -17,6 +18,7 @@ mod threads;
 
 pub use contacts::Correspondent;
 pub use drafts::{Draft, DraftFields, DraftId, ServerCopy};
+pub use jmap::{JmapRow, Protocol};
 pub use notify::NewMail;
 pub use outbox::{
     NewOutboxMessage, OutboxId, OutboxMessage, OutboxState, SaveSentCopy, ScheduleMode, SentCopy,

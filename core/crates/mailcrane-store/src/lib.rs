@@ -16,6 +16,7 @@ pub use repo::{
     SaveSentCopy, ScheduleMode, SearchFilter, SentCopy, ServerCopy, SignatureSetting,
     ThreadSummary, UnthreadedMessage, MAX_SIGNATURE_BYTES,
 };
+pub use repo::{JmapRow, Protocol};
 pub use repo::{KeywordedMessage, NewSnooze, Snooze, SnoozeId, SnoozeState};
 
 use rusqlite::Connection;

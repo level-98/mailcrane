@@ -18,6 +18,7 @@ pub(crate) const MIGRATIONS: &[&str] = &[
     include_str!("../migrations/0011_threading.sql"),
     include_str!("../migrations/0012_rules.sql"),
     include_str!("../migrations/0013_notifications.sql"),
+    include_str!("../migrations/0014_jmap.sql"),
 ];
 
 fn user_version(conn: &Connection) -> Result<i64, StoreError> {

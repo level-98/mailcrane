@@ -247,6 +247,69 @@ pub async fn add_account_manual(
     .unwrap_or(Err(AddAccountError::NotReady))
 }
 
+/// What the user typed for a JMAP account (M3-04).
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct JmapAccountSetup {
+    pub email: String,
+    pub display_name: String,
+    /// A domain, or the JMAP session URL.
+    pub server: String,
+    pub username: String,
+}
+
+impl From<JmapAccountSetup> for mailcrane_core::account::jmap::JmapAccountConfig {
+    fn from(c: JmapAccountSetup) -> Self {
+        Self {
+            email: c.email,
+            display_name: c.display_name,
+            server: c.server,
+            username: c.username,
+        }
+    }
+}
+
+/// Finds the JMAP session for the account (RFC 8620 §2.2) and logs in to
+/// check the details, then saves the account to the database at `db_path`
+/// and the password to secure storage. Returns the new account's id. On any
+/// failure nothing is saved. Errors use the same types as manual IMAP
+/// setup; `server` is always the incoming server.
+#[uniffi::export(async_runtime = "tokio")]
+pub async fn add_account_jmap(
+    db_path: String,
+    setup: JmapAccountSetup,
+    password: String,
+) -> Result<i64, AddAccountError> {
+    crate::worker::on_worker_thread(move || async move {
+        let secrets = secrets::secret_store().map_err(|_| AddAccountError::NotReady)?;
+        add_jmap_with(
+            &db_path,
+            secrets.as_ref(),
+            setup,
+            password,
+            &mailcrane_core::account::jmap::JmapSetupOptions::default(),
+        )
+        .await
+    })
+    .await
+    .unwrap_or(Err(AddAccountError::NotReady))
+}
+
+async fn add_jmap_with(
+    db_path: &str,
+    secrets: &dyn SecretStore,
+    setup: JmapAccountSetup,
+    password: String,
+    options: &mailcrane_core::account::jmap::JmapSetupOptions,
+) -> Result<i64, AddAccountError> {
+    use mailcrane_core::account::jmap;
+    let config: jmap::JmapAccountConfig = setup.into();
+    let password = Secret::from_string(password);
+    let session_url = jmap::check_jmap_account(&config, &password, options).await?;
+    let store = Store::open(db_path).map_err(|_| AddAccountError::SaveFailed)?;
+    let id = jmap::save_jmap_account(&store, secrets, &config, &session_url, &password)?;
+    Ok(id.0)
+}
+
 async fn add_with(
     db_path: &str,
     secrets: &dyn SecretStore,
@@ -335,6 +398,65 @@ mod tests {
             AddAccountError::from(core::AddAccountError::SaveFailed),
             AddAccountError::SaveFailed
         );
+    }
+
+    #[tokio::test]
+    async fn adds_a_jmap_account_end_to_end() {
+        use mailcrane_testkit::FakeJmap;
+        let server = FakeJmap::builder()
+            .user("ana@example.org", "app-password")
+            .start()
+            .await
+            .expect("fake jmap");
+        let secrets = mailcrane_testkit::MemorySecretStore::new();
+        let dir = tempfile::tempdir().expect("temp dir");
+        let db_path = dir.path().join("mailcrane.sqlite");
+        let db_path = db_path.to_str().expect("utf-8 path");
+        let options = mailcrane_core::account::jmap::JmapSetupOptions {
+            timeout: std::time::Duration::from_secs(10),
+            extra_roots: vec![server.root_cert_der().to_vec()],
+        };
+        let setup = JmapAccountSetup {
+            email: "ana@example.org".into(),
+            display_name: "Ana".into(),
+            server: server.base_url(),
+            username: "ana@example.org".into(),
+        };
+
+        let wrong = add_jmap_with(db_path, &secrets, setup.clone(), "nope".into(), &options).await;
+        assert_eq!(
+            wrong,
+            Err(AddAccountError::AuthFailed {
+                server: MailServer::Imap
+            })
+        );
+        let empty = add_jmap_with(
+            db_path,
+            &secrets,
+            JmapAccountSetup {
+                server: String::new(),
+                ..setup.clone()
+            },
+            "x".into(),
+            &options,
+        )
+        .await;
+        assert!(matches!(empty, Err(AddAccountError::Invalid { .. })));
+
+        let id = add_jmap_with(db_path, &secrets, setup, "app-password".into(), &options)
+            .await
+            .expect("account added");
+        let store = Store::open(db_path).expect("open");
+        assert_eq!(
+            store.list_accounts().expect("list").len(),
+            1,
+            "failed attempts saved nothing"
+        );
+        assert!(matches!(
+            store.account_protocol(mailcrane_store::AccountId(id)),
+            Ok(Some(mailcrane_store::Protocol::Jmap { .. }))
+        ));
+        assert_eq!(secrets.keys(), vec![format!("account/{id}/password")]);
     }
 
     #[tokio::test]
