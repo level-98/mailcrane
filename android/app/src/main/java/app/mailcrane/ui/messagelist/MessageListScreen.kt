@@ -408,6 +408,7 @@ private fun Messages(
                                     modifier = Modifier.selectable(message.id, state, selection, onOpenMessage),
                                     selecting = state.selecting,
                                     selected = message.id in state.selectedMessages,
+                                    onAvatarClick = { selection.onToggleMessage(message.id) },
                                 )
                             }
                             RowDivider()
@@ -449,6 +450,7 @@ private fun ThreadItem(
                 modifier = Modifier.selectable(single.id, state, selection, onOpenMessage),
                 selecting = state.selecting,
                 selected = single.id in state.selectedMessages,
+                onAvatarClick = { selection.onToggleMessage(single.id) },
             )
         }
     } else {
@@ -467,6 +469,7 @@ private fun ThreadItem(
             onLongClick = { selection.onToggleThread(thread.threadId) },
             selecting = state.selecting,
             selected = thread.threadId in state.selectedThreads,
+            onAvatarClick = { selection.onToggleThread(thread.threadId) },
         )
     }
     RowDivider()
