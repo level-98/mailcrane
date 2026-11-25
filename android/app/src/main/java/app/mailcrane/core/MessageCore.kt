@@ -56,6 +56,16 @@ interface MessageCore {
     suspend fun snoozeInfo(messageId: Long): SnoozeInfo?
 
     /**
+     * Writes attachment [partId] of the downloaded message into [destDir] under a safe name and returns
+     * the file's path (M2-04). @throws AttachmentFailure
+     */
+    suspend fun saveAttachment(
+        messageId: Long,
+        partId: String,
+        destDir: String,
+    ): String = throw AttachmentFailure.NotFound()
+
+    /**
      * The inline image with Content-ID [contentId] from this message's stored body, or null.
      * Blocking: called on the web view's background thread.
      */

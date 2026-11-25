@@ -7,6 +7,7 @@ import app.mailcrane.contacts.NoDeviceContacts
 import app.mailcrane.contacts.RecipientSuggestion
 import app.mailcrane.contacts.mergeSuggestions
 import app.mailcrane.core.AccountSummary
+import app.mailcrane.core.ComposeAttachment
 import app.mailcrane.core.ComposeCore
 import app.mailcrane.core.ComposeDraft
 import app.mailcrane.core.DraftKind
@@ -144,6 +145,10 @@ data class ComposeUiState(
     val askContacts: Boolean = false,
     /** The fields this screen was filled with, so rotation doesn't fill them again. */
     val prefilledWith: ComposePrefill? = null,
+    /** Files to attach (M2-04). */
+    val attachments: List<ComposeAttachment> = emptyList(),
+    /** A forward: the original message, whose attachments go along. */
+    val forwardAttachmentsOf: Long? = null,
 ) {
     fun field(which: RecipientField) =
         when (which) {
@@ -250,6 +255,7 @@ class ComposeViewModel
                         body = draft.bodyText,
                         inReplyTo = draft.inReplyTo,
                         references = draft.references,
+                        forwardAttachmentsOf = draft.forwardAttachmentsOf,
                     )
                 }
             }
@@ -298,6 +304,8 @@ class ComposeViewModel
                 bodyText = body,
                 inReplyTo = inReplyTo,
                 references = references,
+                attachments = attachments,
+                forwardAttachmentsOf = forwardAttachmentsOf,
             )
         }
 
@@ -340,6 +348,7 @@ class ComposeViewModel
                         signature = signature,
                         inReplyTo = draft.inReplyTo,
                         references = draft.references,
+                        forwardAttachmentsOf = draft.forwardAttachmentsOf,
                     )
                 }
             }
@@ -433,6 +442,16 @@ class ComposeViewModel
             clearSuggestions()
         }
 
+        /** Adds picked files to the message. */
+        fun addAttachments(files: List<ComposeAttachment>) {
+            if (files.isEmpty()) return
+            _state.update { it.copy(attachments = it.attachments + files) }
+        }
+
+        fun removeAttachment(index: Int) {
+            _state.update { s -> s.copy(attachments = s.attachments.filterIndexed { i, _ -> i != index }) }
+        }
+
         /** The contacts question was answered (either way); it isn't asked again. */
         fun contactsAnswered() {
             _state.update { it.copy(askContacts = false) }
@@ -517,6 +536,8 @@ class ComposeViewModel
                     bodyText = committed.body,
                     inReplyTo = committed.inReplyTo,
                     references = committed.references,
+                    attachments = committed.attachments,
+                    forwardAttachmentsOf = committed.forwardAttachmentsOf,
                 )
             viewModelScope.launch {
                 val delay = settings.undoSendSeconds.first()
@@ -570,6 +591,8 @@ class ComposeViewModel
                     bodyText = committed.body,
                     inReplyTo = committed.inReplyTo,
                     references = committed.references,
+                    attachments = committed.attachments,
+                    forwardAttachmentsOf = committed.forwardAttachmentsOf,
                 )
             viewModelScope.launch {
                 try {
@@ -763,3 +786,10 @@ internal fun SendFailure.toComposeError(): ComposeError =
 
 /** Most recipient suggestions shown at once. */
 private const val MAX_SUGGESTIONS = 8
+
+/** Many providers refuse messages over this size (M2-04). */
+const val ATTACHMENT_WARNING_BYTES = 25L * 1024 * 1024
+
+/** Whether the attached files add up to more than [ATTACHMENT_WARNING_BYTES]. */
+val ComposeUiState.attachmentsTooLarge: Boolean
+    get() = attachments.sumOf { it.bytes.size.toLong() } > ATTACHMENT_WARNING_BYTES

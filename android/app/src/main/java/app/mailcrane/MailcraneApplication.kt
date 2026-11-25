@@ -17,5 +17,10 @@ class MailcraneApplication : Application() {
         installSecretStore(KeystoreSecretStore(this))
         // Recovers sends interrupted by a stopped app, then sends what's queued.
         outbox.start()
+        // Attachments opened more than a day ago (M2-04).
+        Thread {
+            app.mailcrane.ui.message
+                .clearOldAttachments(this)
+        }.start()
     }
 }
