@@ -63,6 +63,11 @@
     <!-- Message list (M1-10) -->
     <string name="message_list_loading">Checking for mail…</string>
     <string name="message_list_retry">Try again</string>
+    <!-- Date headers in the message list (M4-19). -->
+    <string name="message_list_header_today">Today</string>
+    <string name="message_list_header_yesterday">Yesterday</string>
+    <string name="message_list_header_this_week">This week</string>
+    <string name="message_list_header_no_date">No date</string>
     <string name="message_no_subject">(No subject)</string>
     <string name="message_unknown_sender">Unknown sender</string>
     <!-- TalkBack reads one row as these parts joined by spaces, e.g. "Unread. From Ana. Subject: Lunch. 10:42. Has attachment." -->
