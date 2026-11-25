@@ -9,7 +9,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -59,6 +58,7 @@ import app.mailcrane.R
 import app.mailcrane.core.FolderSummary
 import app.mailcrane.core.MessageSummary
 import app.mailcrane.core.SyncErrorKind
+import app.mailcrane.core.ThreadSummary
 import app.mailcrane.core.UNDO_WINDOW_MS
 import app.mailcrane.settings.SwipeAction
 import app.mailcrane.ui.components.EmptyFolderState
@@ -67,6 +67,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import java.time.ZonedDateTime
+import java.util.Locale
 
 /**
  * The messages of folder [folderId], newest first. [onCompose] adds a compose button, which carries
@@ -282,57 +283,64 @@ private fun Messages(
         if (nearEnd) loadMore()
     }
     val byId = remember(state.messages) { state.messages.associateBy { it.id } }
+    val today = now.toLocalDate()
+    val showThreads = state.grouped && state.threads.isNotEmpty()
+    val weekStart = firstDayOfWeek(locale)
+    val threadEntries =
+        remember(state.threads, showThreads, today, now.zone, weekStart) {
+            if (showThreads) {
+                withDateHeaders(
+                    state.threads,
+                    { it.lastDate },
+                    today,
+                    now.zone,
+                    weekStart,
+                )
+            } else {
+                emptyList()
+            }
+        }
+    val messageEntries =
+        remember(state.messages, showThreads, today, now.zone, weekStart) {
+            if (showThreads) emptyList() else withDateHeaders(state.messages, { it.date }, today, now.zone, weekStart)
+        }
     LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
-        if (state.grouped && state.threads.isNotEmpty()) {
-            items(items = state.threads, key = { "t${it.threadId}" }, contentType = { "thread" }) { thread ->
-                val single = byId[thread.newestMessageId]?.takeIf { thread.messageCount <= 1u }
-                if (single != null) {
-                    SwipeableRow(single, swipe) {
-                        MessageRow(
-                            message = single,
-                            now = now,
-                            locale = locale,
-                            modifier = Modifier.clickable { onOpenMessage(single.id) },
-                        )
-                    }
-                } else {
-                    ThreadRow(thread, byId[thread.newestMessageId], now, locale) {
-                        if (thread.messageCount <=
-                            1u
-                        ) {
-                            onOpenMessage(thread.newestMessageId)
-                        } else {
-                            onOpenThread(thread.threadId, thread.subject)
+        if (showThreads) {
+            for (entry in threadEntries) {
+                when (entry) {
+                    is ListEntry.Header ->
+                        stickyHeader(key = entry.key, contentType = "header") {
+                            DateHeader(entry.group, today, locale)
+                        }
+                    is ListEntry.Row ->
+                        item(key = "t${entry.item.threadId}", contentType = "thread") {
+                            ThreadItem(entry.item, byId, now, locale, swipe, onOpenMessage, onOpenThread)
+                        }
+                }
+            }
+        } else {
+            for (entry in messageEntries) {
+                when (entry) {
+                    is ListEntry.Header ->
+                        stickyHeader(key = entry.key, contentType = "header") {
+                            DateHeader(entry.group, today, locale)
+                        }
+                    is ListEntry.Row -> {
+                        val message = entry.item
+                        item(key = message.id, contentType = "message") {
+                            SwipeableRow(message, swipe) {
+                                MessageRow(
+                                    message = message,
+                                    now = now,
+                                    locale = locale,
+                                    modifier = Modifier.clickable { onOpenMessage(message.id) },
+                                )
+                            }
+                            RowDivider()
                         }
                     }
                 }
-                HorizontalDivider(
-                    modifier = Modifier.padding(start = 24.dp),
-                    color = MaterialTheme.colorScheme.outlineVariant,
-                )
             }
-            if (state.isLoadingOlder) {
-                item(key = "loading-older", contentType = "progress") {
-                    Box(Modifier.fillMaxWidth().padding(16.dp), contentAlignment = Alignment.Center) {
-                        CircularProgressIndicator()
-                    }
-                }
-            }
-            return@LazyColumn
-        }
-        items(items = state.messages, key = { it.id }, contentType = { "message" }) { message ->
-            SwipeableRow(message, swipe) {
-                MessageRow(
-                    message = message,
-                    now = now,
-                    locale = locale,
-                    modifier = Modifier.clickable { onOpenMessage(message.id) },
-                )
-            }
-            HorizontalDivider(
-                modifier = Modifier.padding(start = 24.dp),
-                color = MaterialTheme.colorScheme.outlineVariant,
-            )
         }
         if (state.isLoadingOlder) {
             item(key = "loading-older", contentType = "progress") {
@@ -342,6 +350,47 @@ private fun Messages(
             }
         }
     }
+}
+
+/** One conversation: a plain message row when it holds one message, else a thread row (M4-02). */
+@Composable
+private fun ThreadItem(
+    thread: ThreadSummary,
+    byId: Map<Long, MessageSummary>,
+    now: ZonedDateTime,
+    locale: Locale,
+    swipe: SwipeHandlers,
+    onOpenMessage: (Long) -> Unit,
+    onOpenThread: (Long, String) -> Unit,
+) {
+    val single = byId[thread.newestMessageId]?.takeIf { thread.messageCount <= 1u }
+    if (single != null) {
+        SwipeableRow(single, swipe) {
+            MessageRow(
+                message = single,
+                now = now,
+                locale = locale,
+                modifier = Modifier.clickable { onOpenMessage(single.id) },
+            )
+        }
+    } else {
+        ThreadRow(thread, byId[thread.newestMessageId], now, locale) {
+            if (thread.messageCount <= 1u) {
+                onOpenMessage(thread.newestMessageId)
+            } else {
+                onOpenThread(thread.threadId, thread.subject)
+            }
+        }
+    }
+    RowDivider()
+}
+
+@Composable
+private fun RowDivider() {
+    HorizontalDivider(
+        modifier = Modifier.padding(start = 24.dp),
+        color = MaterialTheme.colorScheme.outlineVariant,
+    )
 }
 
 /** The current time, updated each minute so "today" and times stay right while the screen is open. */
