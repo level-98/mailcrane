@@ -75,7 +75,7 @@ Goal: add an IMAP account and read your inbox, online and offline.
 
 ## M4 — The features that make it good
 
-- [ ] **M4-01** Multiple accounts and a unified inbox 🤖
+- [x] **M4-01** Multiple accounts and a unified inbox 🤖
 - [x] **M4-02** Conversation threading (JWZ algorithm plus Gmail thread IDs) 🤖
 - [x] **M4-03** Offline full-text search (SQLite FTS5), plus server-side IMAP SEARCH 🤖
 - [x] **M4-04** Configurable swipe actions 🟢🤖
