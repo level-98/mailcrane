@@ -11,10 +11,14 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
+http-body-util = "0.1.5"
+hyper = { version = "1.13.0", features = ["client", "http1"] }
+hyper-util = { version = "0.1.21", features = ["tokio"] }
 mailcrane-imap = { path = "../mailcrane-imap" }
 mailcrane-mime = { path = "../mailcrane-mime" }
 mailcrane-smtp = { path = "../mailcrane-smtp" }
 mailcrane-store = { path = "../mailcrane-store" }
+quick-xml = "0.42.0"
 rustls = "0.23.46"
 rustls-platform-verifier = "0.7.1"
 thiserror = "2.0.21"
@@ -25,7 +29,7 @@ url = "2.5.9"
 zeroize = "1.9.2"
 
 [dev-dependencies]
-tokio = { version = "1.54.1", features = ["macros", "rt-multi-thread", "time"] }
+tokio = { version = "1.54.1", features = ["macros", "rt-multi-thread", "time", "test-util"] }
 mailcrane-testkit = { path = "../mailcrane-testkit" }
 proptest = "1"
 tempfile = "3.27.0"
