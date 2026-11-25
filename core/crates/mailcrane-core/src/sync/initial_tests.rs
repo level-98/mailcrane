@@ -1,6 +1,6 @@
 //! Initial sync against the testkit's fake IMAP server. Never a real mailbox.
 
-use super::{FolderSyncer, SyncConfig, SyncError};
+use super::{FailureLog, FolderSyncer, SyncConfig, SyncError};
 use crate::events::{CoreEvent, EventListener, SyncErrorKind};
 use mailcrane_imap::{ImapConfig, ImapSecurity, Secret, Session};
 use mailcrane_store::{
@@ -355,4 +355,55 @@ async fn unknown_folder_and_message_are_errors_not_panics() {
             .count(),
         2
     );
+}
+
+#[tokio::test]
+async fn a_refused_select_logs_the_command_and_error_but_no_server_text() {
+    // The fake answers SELECT of a folder it doesn't have with
+    // "NO [NONEXISTENT] no such folder".
+    let imap = fake(raws(1), &[]).await;
+    let (store, account, _) = setup();
+    let missing = store
+        .upsert_folder(&NewFolder {
+            account_id: account,
+            remote_name: "Private Stuff".into(),
+            display_name: "Private Stuff".into(),
+            delimiter: Some("/".into()),
+            role: None,
+            uidvalidity: None,
+            uidnext: None,
+            highestmodseq: None,
+            is_subscribed: true,
+        })
+        .expect("folder");
+    let events = Events::default();
+    let mut session = connect(&imap).await;
+    let error = FolderSyncer::new(
+        &store,
+        &mut session,
+        &events,
+        account,
+        SyncConfig::default(),
+    )
+    .sync_folder(missing)
+    .await
+    .expect_err("SELECT is refused");
+
+    // What report() logs for this failure.
+    let log = FailureLog::new("sync", &error, session.last_command());
+    assert_eq!(
+        log,
+        FailureLog {
+            stage: "sync",
+            kind: SyncErrorKind::Protocol,
+            error: "CommandFailed",
+            command: "SELECT",
+        }
+    );
+    // No server text, folder name, account or credential in it. (Every
+    // field is a `&'static str` or an enum, so none could get in.)
+    let text = format!("{log:?}");
+    for secret in ["no such folder", "NONEXISTENT", "Private", USER, PASSWORD] {
+        assert!(!text.contains(secret), "{text} holds {secret:?}");
+    }
 }
