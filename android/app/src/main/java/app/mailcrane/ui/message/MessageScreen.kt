@@ -9,6 +9,7 @@ import android.os.Build
 import android.text.format.Formatter
 import androidx.annotation.DrawableRes
 import androidx.annotation.StringRes
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -27,7 +28,9 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -38,8 +41,11 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalConfiguration
@@ -47,6 +53,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
@@ -68,6 +75,7 @@ import app.mailcrane.core.MessageAddress
 import app.mailcrane.core.MessageBody
 import app.mailcrane.core.MessageDetail
 import app.mailcrane.core.ReplyKind
+import app.mailcrane.core.TrackerInfo
 import app.mailcrane.ui.compose.ReplyRequest
 import app.mailcrane.ui.messagelist.errorText
 import app.mailcrane.ui.theme.LocalDarkMessageBodies
@@ -205,6 +213,8 @@ private fun Message(
     val message = state.message
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
         Headers(message)
+        val trackers = (message.body as? MessageBody.Html)?.trackers.orEmpty()
+        if (trackers.isNotEmpty()) TrackersIndicator(trackers)
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
         if (state.showRemoteBanner) RemoteImagesBanner(onLoadRemoteImages)
         when (val body = message.body) {
@@ -269,6 +279,70 @@ private fun Headers(message: MessageDetail) {
                 text = date,
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+/** "N trackers blocked" under the header; tapping lists them (M5-01). */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+internal fun TrackersIndicator(trackers: List<TrackerInfo>) {
+    var open by rememberSaveable { mutableStateOf(false) }
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .clickable { open = true }
+                .padding(horizontal = 16.dp, vertical = 8.dp)
+                .testTag("trackers-indicator"),
+    ) {
+        Icon(
+            painter = painterResource(R.drawable.ic_mc_shield),
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.size(18.dp),
+        )
+        Text(
+            text = pluralStringResource(R.plurals.message_trackers_blocked, trackers.size, trackers.size),
+            style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.primary,
+        )
+    }
+    if (open) {
+        ModalBottomSheet(onDismissRequest = { open = false }) {
+            TrackersSheet(trackers)
+        }
+    }
+}
+
+@Composable
+internal fun TrackersSheet(trackers: List<TrackerInfo>) {
+    Column(Modifier.navigationBarsPadding().padding(bottom = 16.dp).testTag("trackers-sheet")) {
+        Text(
+            text = stringResource(R.string.message_trackers_title),
+            style = MaterialTheme.typography.titleLarge,
+            modifier = Modifier.padding(horizontal = 24.dp).semantics { heading() },
+        )
+        Text(
+            text = stringResource(R.string.message_trackers_explain),
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(horizontal = 24.dp, vertical = 12.dp),
+        )
+        trackers.forEach { tracker ->
+            ListItem(
+                headlineContent = {
+                    Text(tracker.service ?: stringResource(R.string.message_trackers_unknown_service))
+                },
+                supportingContent = {
+                    Text(tracker.domain.ifEmpty { stringResource(R.string.message_trackers_no_domain) })
+                },
+                leadingContent = {
+                    Icon(painter = painterResource(R.drawable.ic_mc_shield), contentDescription = null)
+                },
             )
         }
     }
