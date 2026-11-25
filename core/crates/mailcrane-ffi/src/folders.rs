@@ -8,6 +8,7 @@ use std::collections::HashSet;
 use mailcrane_store::{AccountId, Folder, FolderRole as StoreRole, Store};
 
 use crate::messages::one_line;
+use mailcrane_core::folder_admin;
 use crate::sync::{SyncErrorKind, SyncFailure};
 
 /// Folders nested deeper than this are shown at this depth, so a hostile
@@ -78,6 +79,10 @@ pub struct FolderSummary {
     pub depth: u32,
     /// Messages in the folder that are not `\Seen`.
     pub unread_count: u32,
+    /// Whether it can be renamed, moved and deleted (M4-22): not a standard
+    /// folder or one holding one, and the account supports it.
+    #[uniffi(default = false)]
+    pub can_change: bool,
 }
 
 /// Lists the account's folders in display order: Inbox, Drafts, Sent,
@@ -95,6 +100,7 @@ pub fn list_folders(db_path: String, account_id: i64) -> Result<Vec<FolderSummar
     let folders = store
         .list_folders(AccountId(account_id))
         .map_err(|_| storage())?;
+    let manageable = folders_manageable(&store, AccountId(account_id)).map_err(|_| storage())?;
     let mut rows = Vec::with_capacity(folders.len());
     for (folder, place) in arrange(&folders) {
         let unread = store.count_unread(folder.id).map_err(|_| storage())?;
@@ -104,9 +110,74 @@ pub fn list_folders(db_path: String, account_id: i64) -> Result<Vec<FolderSummar
             role: folder.details.role.map(FolderRole::from),
             depth: place.depth,
             unread_count: u32::try_from(unread).unwrap_or(u32::MAX),
+            can_change: manageable && folder_admin::can_change(&folders, folder),
         });
     }
     Ok(rows)
+}
+
+/// Whether folders can be created, renamed, moved and deleted in this
+/// account (M4-22): IMAP and local-only accounts, not JMAP ones yet.
+fn folders_manageable(store: &Store, account: AccountId) -> Result<bool, mailcrane_store::StoreError> {
+    if store.get_account(account)?.is_none() {
+        return Ok(false);
+    }
+    if store.is_local_account(account)? {
+        return Ok(true);
+    }
+    Ok(!matches!(
+        store.account_protocol(account)?,
+        Some(mailcrane_store::Protocol::Jmap { .. })
+    ))
+}
+
+/// Whether the apps should offer "New folder" for this account (M4-22).
+#[uniffi::export]
+pub fn can_manage_folders(db_path: String, account_id: i64) -> Result<bool, SyncFailure> {
+    let store = Store::open(&db_path).map_err(|_| SyncFailure::Failed {
+        kind: SyncErrorKind::Storage,
+    })?;
+    folders_manageable(&store, AccountId(account_id)).map_err(|_| SyncFailure::Failed {
+        kind: SyncErrorKind::Storage,
+    })
+}
+
+/// Where a folder can be moved to (M4-22).
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct MoveTargets {
+    /// It can move to the top level.
+    pub to_top: bool,
+    /// The folders it can move under, in display order.
+    pub folders: Vec<FolderSummary>,
+}
+
+/// The places `folder_id` can move to, for the move picker. Places it is
+/// already in, itself and its subfolders are left out.
+#[uniffi::export]
+pub fn move_targets(db_path: String, folder_id: i64) -> Result<MoveTargets, SyncFailure> {
+    let storage = || SyncFailure::Failed {
+        kind: SyncErrorKind::Storage,
+    };
+    let store = Store::open(&db_path).map_err(|_| storage())?;
+    let Some(folder) = store
+        .get_folder(mailcrane_store::FolderId(folder_id))
+        .map_err(|_| storage())?
+    else {
+        return Err(SyncFailure::Failed {
+            kind: SyncErrorKind::NotFound,
+        });
+    };
+    let account = folder.details.account_id;
+    let all = list_folders(db_path, account.0)?;
+    let folders = store.list_folders(account).map_err(|_| storage())?;
+    let (to_top, under) = folder_admin::move_targets(&folders, folder.id);
+    Ok(MoveTargets {
+        to_top,
+        folders: all
+            .into_iter()
+            .filter(|f| under.contains(&mailcrane_store::FolderId(f.id)))
+            .collect(),
+    })
 }
 
 /// Where a folder sits in the list: its indent and the name to show there.
