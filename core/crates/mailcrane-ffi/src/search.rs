@@ -50,7 +50,8 @@ impl SyncEngine {
         let parsed = parse_query(&query);
         let account = self.folder_account(FolderId(folder_id))?;
         // On the reused connection (#294). It stores up to 200 headers, so
-        // it holds the writer lock like a sync does.
+        // it holds the writer lock like a sync does. Lock order: WriteLock,
+        // then the pooled connection.
         let lock = self.account_lock(account);
         let _guard = lock.lock();
         let config = self.config;

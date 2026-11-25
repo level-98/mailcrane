@@ -98,6 +98,7 @@ impl AccountGate {
     /// Takes the lock for a call the user waits for. Outside any runtime
     /// only (`blocking_lock`).
     pub(crate) fn lock(&self) -> tokio::sync::MutexGuard<'_, ()> {
+        super::pool::check_lock_order();
         let _waiting = self.announce();
         self.write_lock.blocking_lock()
     }
@@ -113,6 +114,7 @@ impl AccountGate {
     /// Takes the lock for background work, without counting as waiting.
     /// Outside any runtime only.
     fn lock_background(&self) -> tokio::sync::MutexGuard<'_, ()> {
+        super::pool::check_lock_order();
         self.write_lock.blocking_lock()
     }
 
@@ -422,6 +424,8 @@ fn download(prefetcher: &Prefetcher, job: &PrefetchJob) {
             std::thread::sleep(GIVE_WAY_POLL);
             continue;
         }
+        // Lock order: WriteLock here, then the pooled connection in
+        // `Link::batch`.
         let guard = job.gate.lock_background();
         if job.gate.foreground_waiting() {
             drop(guard);

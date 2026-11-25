@@ -173,6 +173,10 @@ impl ConnectionPool {
         let config = self.config();
         let slot = self.slot(account);
         let mut slot = slot.lock().unwrap_or_else(|p| p.into_inner());
+        // Lock order: the account's WriteLock, if needed, is taken before
+        // this point, never while the connection is held (see
+        // `check_lock_order`).
+        let _holding = Holding::start();
         let mut attempts = 0u8;
         loop {
             attempts = attempts.saturating_add(1);
@@ -289,6 +293,58 @@ impl ConnectionPool {
     pub(crate) fn shut_down(&self) {
         self.stopped.store(true, Ordering::SeqCst);
         self.close_all(CloseReason::NetworkChanged);
+    }
+}
+
+thread_local! {
+    /// How many pooled connections this thread holds right now (nested
+    /// `run` calls would count twice; there are none).
+    static HOLDING: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+}
+
+/// Marks the current thread as holding a pooled connection while it lives.
+struct Holding;
+
+impl Holding {
+    fn start() -> Self {
+        HOLDING.with(|h| h.set(h.get().saturating_add(1)));
+        Holding
+    }
+}
+
+impl Drop for Holding {
+    fn drop(&mut self) {
+        HOLDING.with(|h| h.set(h.get().saturating_sub(1)));
+    }
+}
+
+/// Whether the current thread holds a pooled connection: inside
+/// [`ConnectionPool::run`], including its job.
+pub(crate) fn holding_pooled_connection() -> bool {
+    HOLDING.with(|h| h.get() > 0)
+}
+
+/// The lock order is the account's WriteLock first, then its pooled
+/// connection. A call that held the connection and then waited for the
+/// WriteLock could wait forever for a sync or download that holds the
+/// WriteLock and waits for the connection. Called before every WriteLock
+/// acquisition: a breach fails tests at once and is logged in the app.
+pub(crate) fn check_lock_order() {
+    if holding_pooled_connection() {
+        // Test builds only: the app never panics, it logs (below).
+        #[cfg(test)]
+        #[allow(
+            clippy::panic,
+            reason = "compiled into tests only, to fail them at once"
+        )]
+        {
+            panic!("lock order: WriteLock taken while holding the pooled connection");
+        }
+        #[cfg(not(test))]
+        tracing::error!(
+            stage = "lock order",
+            "WriteLock taken while holding the pooled connection"
+        );
     }
 }
 

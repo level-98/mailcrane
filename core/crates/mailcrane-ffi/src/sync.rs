@@ -304,15 +304,19 @@ impl SyncEngine {
             return r;
         }
         // On the account's reused connection, without the sync's writer
-        // lock (issue #294): opening never waits for a sync. Its only write
-        // is the body's own short transaction, which IMMEDIATE transactions
-        // with busy retries (#301) serialise with the sync's batches.
+        // lock (issue #294): opening never waits for a sync. Its only writes
+        // are the body's own short transactions, marked urgent so they take
+        // the next turn for SQLite's write lock: a sync writing batch after
+        // batch would otherwise win every race and the save would end in
+        // SQLITE_BUSY.
         let config = self.config;
-        self.pooled(account, Retry::Idempotent, |store, session, listener| {
-            Box::pin(async move {
-                FolderSyncer::new(store, session, listener, account, config)
-                    .fetch_body(MessageId(message_id))
-                    .await
+        mailcrane_store::urgent_writes(|| {
+            self.pooled(account, Retry::Idempotent, |store, session, listener| {
+                Box::pin(async move {
+                    FolderSyncer::new(store, session, listener, account, config)
+                        .fetch_body(MessageId(message_id))
+                        .await
+                })
             })
         })
     }
@@ -805,6 +809,7 @@ impl SyncEngine {
         account: AccountId,
         job: impl for<'a> FnOnce(&'a Store, &'a mut Session, &'a dyn EventListener) -> SyncFuture<'a, T>,
     ) -> Result<T, SyncFailure> {
+        // Lock order: WriteLock, then the pooled connection (`pooled`).
         let lock = self.account_lock(account);
         let _guard = lock.lock();
         let mut job = Some(job);

@@ -256,3 +256,141 @@ fn opens_searches_and_syncs_together_leak_no_connections() {
         assert!(store.get_body(MessageId(id)).expect("read").is_some());
     }
 }
+
+#[test]
+fn taking_the_write_lock_while_holding_the_pooled_connection_is_caught() {
+    // Lock order is WriteLock, then the pooled connection; the reverse
+    // could deadlock against a sync or download. The guard fails tests.
+    let runtime = runtime_for_fakes();
+    let imap = fake(&runtime, 1);
+    let dir = tempfile::tempdir().expect("tempdir");
+    let (engine, path, folder) = imap_engine(&dir, &imap);
+    let account = account_of(&path, folder);
+    let store = Store::open(&path).expect("store");
+    let cert = engine.extra_root_cert();
+    let login = || imap_login(&store, account, cert.as_deref());
+    assert!(!super::pool::holding_pooled_connection());
+
+    let seen = std::sync::atomic::AtomicBool::new(false);
+    let ok = engine
+        .pool
+        .run(account, login, Retry::Never, &seen, |_session, seen| {
+            seen.store(super::pool::holding_pooled_connection(), Ordering::SeqCst);
+            Box::pin(async { Ok(()) })
+        });
+    assert!(ok.is_ok());
+    assert!(seen.load(Ordering::SeqCst), "flagged inside the job");
+    assert!(!super::pool::holding_pooled_connection(), "cleared after");
+
+    let gate = engine.account_lock(account);
+    let breach = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _ = engine
+            .pool
+            .run(account, login, Retry::Never, &gate, |_session, gate| {
+                let _guard = gate.lock();
+                Box::pin(async { Ok(()) })
+            });
+    }));
+    let message = breach
+        .err()
+        .and_then(|p| {
+            p.downcast_ref::<&str>()
+                .map(|s| (*s).to_owned())
+                .or_else(|| p.downcast_ref::<String>().cloned())
+        })
+        .expect("the breach panics in tests");
+    assert!(message.contains("lock order"), "{message}");
+    assert!(
+        !super::pool::holding_pooled_connection(),
+        "cleared on unwind"
+    );
+    // The right order works.
+    let _guard = gate.lock();
+}
+
+#[test]
+fn an_open_saves_its_body_while_a_sync_holds_the_lock_and_writes() {
+    // Opening takes no WriteLock (#294): its body writes rely on IMMEDIATE
+    // transactions with busy retries (#301) to slot in between the sync's.
+    let runtime = runtime_for_fakes();
+    let imap = fake(&runtime, 20);
+    let dir = tempfile::tempdir().expect("tempdir");
+    let collect = Arc::new(Collect::default());
+    let (engine, path, folder) = imap_engine_with(&dir, &imap, collect.clone());
+    assert_eq!(engine.sync_folder(folder.0), Ok(20));
+    let account = account_of(&path, folder);
+    let ids: Vec<MessageId> = messages(&path, folder).iter().map(|m| m.id).collect();
+    collect.0.lock().expect("lock").clear();
+
+    let gate = engine.account_lock(account);
+    let (started_tx, started) = std::sync::mpsc::channel();
+    let stop = std::sync::atomic::AtomicBool::new(false);
+    std::thread::scope(|scope| {
+        let writer = scope.spawn(|| {
+            // A "sync": holds the account's WriteLock and writes batches of
+            // 200 header rows, one transaction each, without pause.
+            let _syncing = gate.lock();
+            let store = Store::open(&path).expect("store");
+            let mut uid = 100_000u32;
+            let mut batches = 0usize;
+            let _ = started_tx.send(());
+            while !stop.load(Ordering::SeqCst) {
+                let rows: Vec<mailcrane_store::NewMessageHeader> = (0..200)
+                    .map(|i| {
+                        let n = uid + i;
+                        mailcrane_store::NewMessageHeader {
+                            folder_id: folder,
+                            uid: n,
+                            message_id_header: Some(format!("<{n}@example.org>")),
+                            in_reply_to: None,
+                            references_json: "[]".into(),
+                            thread_id: None,
+                            subject: "Busy".into(),
+                            from_name: None,
+                            from_addr: Some("bob@example.org".into()),
+                            to_json: "[]".into(),
+                            cc_json: "[]".into(),
+                            date: 1,
+                            internal_date: 1,
+                            size: 10,
+                            flags: mailcrane_store::Flags::default(),
+                            keywords_json: "[]".into(),
+                            has_attachments: false,
+                            snippet: String::new(),
+                        }
+                    })
+                    .collect();
+                store.upsert_message_headers(&rows).expect("sync writes");
+                uid += 200;
+                batches += 1;
+            }
+            batches
+        });
+        started.recv().expect("writer started");
+        let opened: Vec<_> = ids
+            .iter()
+            .map(|id| (Instant::now(), engine.fetch_body(id.0)))
+            .map(|(t, r)| (t.elapsed(), r))
+            .collect();
+        // Stop the writer before asserting, so a failure can't hang the test.
+        stop.store(true, Ordering::SeqCst);
+        let batches = writer.join().expect("writer");
+        assert!(batches > 0, "the sync wrote while the bodies were saved");
+        for (took, result) in &opened {
+            assert_eq!(result, &Ok(()), "after {took:?}");
+        }
+    });
+    let store = Store::open(&path).expect("store");
+    for id in ids {
+        assert!(store.get_body(id).expect("read").is_some(), "{id:?}");
+    }
+    let errors: Vec<CoreEvent> = collect
+        .0
+        .lock()
+        .expect("lock")
+        .iter()
+        .filter(|e| matches!(e, CoreEvent::SyncError { .. }))
+        .cloned()
+        .collect();
+    assert!(errors.is_empty(), "{errors:?}");
+}
