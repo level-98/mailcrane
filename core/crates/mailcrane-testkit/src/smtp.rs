@@ -13,6 +13,8 @@ pub struct SentMessage {
     pub envelope_from: Option<String>,
     pub envelope_to: Vec<String>,
     pub data: Vec<u8>,
+    /// Parameters after the address in `MAIL FROM`, e.g. `HOLDUNTIL=...`.
+    pub mail_params: Vec<String>,
 }
 
 pub struct FakeSmtpBuilder {
@@ -338,6 +340,7 @@ async fn smtp_connection(
                     envelope_from: from.take(),
                     envelope_to: recipients.clone(),
                     data,
+                    mail_params: Vec::new(),
                 });
                 recipients.clear();
                 stream
@@ -377,11 +380,13 @@ async fn smtp_plain_stream(
     stream: &mut (impl AsyncReadExt + AsyncWriteExt + Unpin),
     sent: Arc<RwLock<Vec<SentMessage>>>,
     faults: Arc<Vec<Fault>>,
-    _quirks: Arc<Vec<Quirk>>,
+    quirks: Arc<Vec<Quirk>>,
     from: &mut Option<String>,
     recipients: &mut Vec<String>,
     command_count: &AtomicUsize,
 ) -> Result<(), String> {
+    let mut params_store = Vec::new();
+    let mail_params = &mut params_store;
     loop {
         let mut line = Vec::new();
         let mut byte = [0u8; 1];
@@ -409,7 +414,11 @@ async fn smtp_plain_stream(
         }
         match command.as_str() {
             "EHLO" => stream
-                .write_all(b"250-mailcrane.test\r\n250 AUTH PLAIN LOGIN\r\n")
+                .write_all(if quirks.contains(&Quirk::FutureRelease) {
+                    &b"250-mailcrane.test\r\n250-FUTURERELEASE 604800 2099-01-01T00:00:00Z\r\n250 AUTH PLAIN LOGIN\r\n"[..]
+                } else {
+                    &b"250-mailcrane.test\r\n250 AUTH PLAIN LOGIN\r\n"[..]
+                })
                 .await
                 .map_err(|error| error.to_string())?,
             "AUTH" => stream
@@ -428,6 +437,11 @@ async fn smtp_plain_stream(
                     .flatten()
                     .map(|value| value.trim_start_matches('<').to_string());
                 *from = address;
+                *mail_params = text
+                    .find('>')
+                    .and_then(|end| text.get(end + 1..))
+                    .map(|rest| rest.split_whitespace().map(str::to_string).collect())
+                    .unwrap_or_default();
                 stream
                     .write_all(smtp_reply(
                         &faults,
@@ -492,6 +506,7 @@ async fn smtp_plain_stream(
                     envelope_from: from.take(),
                     envelope_to: recipients.clone(),
                     data,
+                    mail_params: std::mem::take(mail_params),
                 });
                 recipients.clear();
                 stream

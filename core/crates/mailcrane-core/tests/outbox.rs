@@ -11,7 +11,7 @@ use mailcrane_imap::{save_folders, ImapConfig, ImapSecurity};
 use mailcrane_store::{
     AccountId, NewAccount, OutboxId, OutboxMessage, OutboxState, Security, Store,
 };
-use mailcrane_testkit::{FakeImap, FakeSmtp, Fault, MemorySecretStore};
+use mailcrane_testkit::{FakeImap, FakeSmtp, Fault, MemorySecretStore, Quirk};
 use std::time::Duration;
 
 const NOW: i64 = 1_800_000_000;
@@ -26,9 +26,16 @@ struct Setup {
 }
 
 async fn setup_with(faults: &[Fault], store: Store) -> Setup {
+    setup_full(faults, &[], store).await
+}
+
+async fn setup_full(faults: &[Fault], quirks: &[Quirk], store: Store) -> Setup {
     let mut builder = FakeSmtp::builder();
     for fault in faults {
         builder = builder.fault(fault.clone());
+    }
+    for quirk in quirks {
+        builder = builder.quirk(*quirk);
     }
     let smtp = builder.start().await.expect("fake smtp");
     let account = store
@@ -384,4 +391,93 @@ async fn no_delay_sends_at_once() {
     let s = setup(&[]).await;
     enqueue(&s.store, &draft(&s, "Now"), 0, NOW).expect("queued");
     assert_eq!(send_due_at(&s, NOW).await.sent, 1);
+}
+
+// ---- Scheduled send (M4-07)
+
+#[tokio::test]
+async fn a_device_scheduled_message_waits_for_its_time_and_goes_once() {
+    let s = setup(&[]).await;
+    let id = schedule(&s.store, &draft(&s, "Later"), NOW + 3_600, NOW).expect("scheduled");
+    assert_eq!(send_due_at(&s, NOW).await.sent, 0);
+    assert_eq!(
+        state(&s, id).schedule_mode,
+        mailcrane_store::ScheduleMode::Device,
+        "no FUTURERELEASE: this device sends it"
+    );
+    assert_eq!(send_due_at(&s, NOW + 3_599).await.sent, 0);
+    assert!(s.smtp.sent().await.is_empty(), "not before its time");
+    assert_eq!(send_due_at(&s, NOW + 3_600).await.sent, 1);
+    send_due_at(&s, NOW + 7_200).await;
+    let sent = s.smtp.sent().await;
+    assert_eq!(sent.len(), 1, "sent once");
+    assert!(sent[0].mail_params.is_empty());
+}
+
+#[tokio::test]
+async fn with_futurerelease_the_server_holds_it_from_the_start() {
+    let s = setup_full(
+        &[],
+        &[Quirk::FutureRelease],
+        Store::open_in_memory().expect("store"),
+    )
+    .await;
+    let id = schedule(&s.store, &draft(&s, "Held"), NOW + 3_600, NOW).expect("scheduled");
+    send_due_at(&s, NOW).await;
+    let sent = s.smtp.sent().await;
+    assert_eq!(sent.len(), 1, "submitted at once");
+    // 1_800_003_600 is 2027-01-15T09:00:00Z.
+    assert_eq!(sent[0].mail_params, ["HOLDUNTIL=2027-01-15T09:00:00Z"]);
+    let m = state(&s, id);
+    assert_eq!(m.schedule_mode, mailcrane_store::ScheduleMode::Server);
+    assert_eq!(m.state, OutboxState::Sent);
+    // The server has it: it can't be cancelled or moved from here.
+    assert_eq!(cancel_pending(&s.store, id).expect("read"), None);
+    assert!(reschedule(&s.store, id, NOW + 60).is_err());
+    send_due_at(&s, NOW + 3_600).await;
+    assert_eq!(s.smtp.sent().await.len(), 1, "never sent a second time");
+}
+
+#[tokio::test]
+async fn too_far_ahead_for_the_server_the_device_sends_it() {
+    let s = setup_full(
+        &[],
+        &[Quirk::FutureRelease],
+        Store::open_in_memory().expect("store"),
+    )
+    .await;
+    // The fake holds up to 604800 s (a week).
+    let id = schedule(&s.store, &draft(&s, "Far"), NOW + 700_000, NOW).expect("scheduled");
+    send_due_at(&s, NOW).await;
+    assert!(s.smtp.sent().await.is_empty());
+    assert_eq!(
+        state(&s, id).schedule_mode,
+        mailcrane_store::ScheduleMode::Device
+    );
+}
+
+#[tokio::test]
+async fn a_scheduled_message_can_be_moved_or_cancelled_before_it_goes() {
+    let s = setup(&[]).await;
+    let id = schedule(&s.store, &draft(&s, "Move me"), NOW + 600, NOW).expect("scheduled");
+    reschedule(&s.store, id, NOW + 1_200).expect("moved");
+    assert_eq!(
+        send_due_at(&s, NOW + 600).await.sent,
+        0,
+        "not at the old time"
+    );
+    assert_eq!(
+        send_due_at(&s, NOW + 1_200).await.sent,
+        1,
+        "at the new time"
+    );
+
+    let other = schedule(&s.store, &draft(&s, "Cancel me"), NOW + 600, NOW).expect("scheduled");
+    let back = cancel_pending(&s.store, other)
+        .expect("read")
+        .expect("cancelled");
+    assert_eq!(back.subject, "Cancel me");
+    send_due_at(&s, NOW + 3_600).await;
+    assert_eq!(s.smtp.sent().await.len(), 1);
+    assert!(reschedule(&s.store, OutboxId(999), NOW).is_err());
 }

@@ -13,8 +13,10 @@
 //! copy); a lost message would be worse.
 
 mod save_sent;
+mod schedule;
 
 pub use save_sent::{save_sent_copies, SaveReport, SENT_FOLDER_NAME};
+pub use schedule::{decide_scheduled, reschedule, schedule};
 
 use mailcrane_imap::Session;
 use mailcrane_store::{
@@ -109,6 +111,7 @@ pub fn enqueue(
                     references: draft.references.clone(),
                 },
                 not_before,
+                scheduled: false,
             },
             now,
         )
@@ -244,6 +247,8 @@ pub async fn send_due(
     now: i64,
 ) -> Result<OutboxReport, StoreError> {
     let mut report = OutboxReport::default();
+    // Scheduled messages the server can hold go to it now (M4-07).
+    decide_scheduled(store, secrets, account, options, now).await?;
     for message in store.due_outbox(account, now)? {
         match send_one(store, secrets, message.id, options, now).await? {
             Some(SendOutcome::Sent { .. }) => report.sent += 1,

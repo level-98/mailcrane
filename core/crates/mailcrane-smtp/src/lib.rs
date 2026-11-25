@@ -15,7 +15,10 @@ mod data;
 mod envelope;
 mod error;
 
-pub use client::{check_login, send, SendReport, SmtpAuth, SmtpConfig, SmtpSecurity};
+pub use client::{
+    check_login, future_release_limit, send, send_with_hold, SendReport, SmtpAuth, SmtpConfig,
+    SmtpSecurity,
+};
 pub use envelope::Envelope;
 pub use error::SmtpError;
 
