@@ -4,7 +4,10 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import app.mailcrane.core.ActionFailure
 import app.mailcrane.core.InlinePart
+import app.mailcrane.core.LinkCheck
+import app.mailcrane.core.LinkChecker
 import app.mailcrane.core.LinkCleaner
+import app.mailcrane.core.LinkWarning
 import app.mailcrane.core.MessageAction
 import app.mailcrane.core.MessageBody
 import app.mailcrane.core.MessageCore
@@ -28,6 +31,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.getAndUpdate
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -52,11 +56,22 @@ sealed interface MessageEffect {
         val url: String,
     ) : MessageEffect
 
+    /** Open [url] (a link the user chose to open, or that needed no confirmation). */
+    data class OpenLink(
+        val url: String,
+    ) : MessageEffect
+
     /** The one-click unsubscribe request finished. */
     data class Unsubscribed(
         val success: Boolean,
     ) : MessageEffect
 }
+
+/** A tapped link waiting for the user to confirm it (M5-07). [url] is already cleaned. */
+data class LinkPreview(
+    val url: String,
+    val check: LinkCheck,
+)
 
 /** How "Unsubscribe" will work for a message, best first (M4-10). */
 enum class UnsubscribeMethod {
@@ -127,6 +142,7 @@ class MessageViewModel
         private val core: MessageCore,
         settings: AppSettings,
         private val linkCleaner: LinkCleaner,
+        private val linkChecker: LinkChecker,
         @Assisted private val messageId: Long,
     ) : ViewModel() {
         @AssistedFactory
@@ -139,6 +155,13 @@ class MessageViewModel
 
         // Until the setting is read, links are cleaned: the safe choice, and the default.
         private val cleanLinks = settings.cleanLinks.stateIn(viewModelScope, SharingStarted.Eagerly, true)
+
+        private val confirmLinks = settings.confirmLinks.stateIn(viewModelScope, SharingStarted.Eagerly, true)
+
+        private val _linkPreview = MutableStateFlow<LinkPreview?>(null)
+
+        /** The link waiting for the user's confirmation, if any. */
+        val linkPreview: StateFlow<LinkPreview?> = _linkPreview.asStateFlow()
 
         private val _effects = Channel<MessageEffect>(Channel.BUFFERED)
 
@@ -344,6 +367,46 @@ class MessageViewModel
         /** The link to open for a tapped [url]: without tracking parameters when the setting is on. */
         fun linkToOpen(url: String): String = if (cleanLinks.value) linkCleaner.clean(url) else url
 
+        /**
+         * The user tapped [url]. `mailto:` opens at once. A web link opens at once too, unless the
+         * core found a warning or the setting asks for confirmation (HTML messages only): then it
+         * waits in [linkPreview] until [openPreviewedLink]. Plain-text messages only stop for a
+         * link that hides its real host (IP address, user info, mixed script).
+         */
+        fun onLinkTapped(url: String) {
+            val scheme = url.substringBefore(':', "").lowercase()
+            if (scheme != "http" && scheme != "https") {
+                if (scheme == "mailto") _effects.trySend(MessageEffect.OpenLink(url))
+                return
+            }
+            val body = (_state.value as? MessageState.Ready)?.message?.body
+            val target = linkToOpen(url)
+            val check = linkChecker.check(url, target, (body as? MessageBody.Html)?.links.orEmpty())
+            val stop =
+                when (body) {
+                    is MessageBody.Html -> confirmLinks.value || check.warnings.isNotEmpty()
+                    else -> check.warnings.any { it.hidesHost() }
+                }
+            if (stop) {
+                _linkPreview.value = LinkPreview(target, check)
+            } else {
+                _effects.trySend(MessageEffect.OpenLink(target))
+            }
+        }
+
+        /** The user tapped Open in the preview. Unsupported links never open. */
+        fun openPreviewedLink() {
+            val preview = _linkPreview.getAndUpdate { null } ?: return
+            if (LinkWarning.UnsupportedScheme !in preview.check.warnings) {
+                _effects.trySend(MessageEffect.OpenLink(preview.url))
+            }
+        }
+
+        /** The user cancelled the preview, or copied the link. */
+        fun dismissLinkPreview() {
+            _linkPreview.value = null
+        }
+
         /** Serves `mailcrane-cid:` images. Called on the web view's background thread. */
         fun inlinePart(contentId: String): InlinePart? =
             try {
@@ -363,3 +426,9 @@ class MessageViewModel
             }
         }
     }
+
+private fun LinkWarning.hidesHost(): Boolean =
+    this == LinkWarning.IpAddress ||
+        this == LinkWarning.UserInfo ||
+        this == LinkWarning.MixedScript ||
+        this == LinkWarning.LookalikeHost

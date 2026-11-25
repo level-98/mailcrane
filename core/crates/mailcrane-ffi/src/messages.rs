@@ -225,9 +225,22 @@ pub enum MessageBody {
         /// The trackers removed, one per domain, for the "N trackers
         /// blocked" sheet (M5-01).
         trackers: Vec<TrackerInfo>,
+        /// Each link and the text shown for it, to compare in the link
+        /// preview (M5-07). At most 500.
+        #[uniffi(default = [])]
+        links: Vec<LinkText>,
     },
     /// The body has not been downloaded yet; call `SyncEngine::fetch_body`.
     NotDownloaded,
+}
+
+/// A link in the message and the text the reader sees for it.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct LinkText {
+    /// The `href`, exactly as the web view reports it when tapped.
+    pub href: String,
+    /// The visible text, whitespace collapsed; may be empty.
+    pub text: String,
 }
 
 /// A tracker removed from a message (M5-01).
@@ -435,6 +448,14 @@ pub fn get_message(
                         remote_blocked: clean.remote_resources_blocked,
                         trackers_removed: clean.trackers_removed,
                         trackers: clean.trackers.into_iter().map(TrackerInfo::from).collect(),
+                        links: clean
+                            .links
+                            .into_iter()
+                            .map(|l| LinkText {
+                                href: l.href,
+                                text: one_line(&l.text),
+                            })
+                            .collect(),
                     }
                 }
                 None => MessageBody::Plain {
@@ -764,6 +785,27 @@ mod tests {
         assert!(html.contains("src=\"https://example.com/a.png\""));
         assert!(html.contains("img-src mailcrane-cid: data: https:;"));
         assert!(!html.contains("<script"));
+    }
+
+    #[test]
+    fn links_come_with_their_text() {
+        let (_dir, path, folder) = setup();
+        let raw = html_message(
+            "<p><a href=\"https://example.net/login\">https://example.com/login</a>\
+             <a href=\"javascript:alert(1)\">bad</a></p>",
+        );
+        let id = with_body(&path, folder, 1, &raw);
+        let m = get_message(path, id, false).expect("message");
+        let MessageBody::Html { links, .. } = &m.body else {
+            panic!("expected HTML");
+        };
+        assert_eq!(
+            links,
+            &vec![LinkText {
+                href: "https://example.net/login".into(),
+                text: "https://example.com/login".into(),
+            }]
+        );
     }
 
     #[test]

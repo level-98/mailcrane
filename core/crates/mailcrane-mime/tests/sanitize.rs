@@ -521,3 +521,46 @@ fn sanitize_real_images_on_a_tracker_domain_are_kept() -> R {
     assert_eq!(blocked.trackers_removed, 1);
     Ok(())
 }
+
+#[test]
+fn sanitize_collects_link_text() -> R {
+    let html = read_fixture("link-mismatch.html")?;
+    let out = run(&html, false);
+    let find = |href: &str| {
+        out.links
+            .iter()
+            .find(|l| l.href == href)
+            .map(|l| l.text.as_str())
+    };
+    assert_eq!(out.links.len(), 7);
+    assert_eq!(
+        find("https://example.net/login"),
+        Some("https://example.com/login")
+    );
+    assert_eq!(
+        find("https://example.com@example.net/"),
+        Some("Open your account")
+    );
+    // Tags removed and whitespace collapsed.
+    assert_eq!(find("http://example.org/news"), Some("Read the news"));
+    Ok(())
+}
+
+#[test]
+fn sanitize_link_collection_is_capped_and_changes_nothing() {
+    let many = "<a href=\"https://example.org/\">x</a>".repeat(600);
+    let out = run(&many, false);
+    assert_eq!(out.links.len(), mailcrane_mime::MAX_LINKS);
+    let long = format!("<a href=\"https://example.org/\">{}</a>", "y".repeat(1000));
+    let out = run(&long, false);
+    assert_eq!(
+        out.links[0].text.chars().count(),
+        mailcrane_mime::MAX_LINK_TEXT_CHARS
+    );
+    // Unclosed and href-less anchors don't panic or leak into the list.
+    let odd = run(
+        "<a href=\"https://example.org/\">open<a>none</a><a href=\"mailto:a@example.org\">m",
+        false,
+    );
+    assert_eq!(odd.links.len(), 2);
+}

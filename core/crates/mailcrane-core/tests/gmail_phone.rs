@@ -230,6 +230,8 @@ async fn a_v15_database_with_partial_gmail_rows_syncs_with_v16_code() {
              UPDATE messages SET uid = uid + 100000 WHERE uid % 7 = 0;
              ALTER TABLE folders DROP COLUMN selectable;
              ALTER TABLE accounts DROP COLUMN local_only;
+             DROP TABLE server_rules_deployed;
+             DROP TABLE server_rules;
              PRAGMA user_version = 15;",
         )
         .expect("back to v15 with partial rows");
