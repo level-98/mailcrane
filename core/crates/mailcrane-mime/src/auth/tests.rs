@@ -189,3 +189,136 @@ fn an_aligned_dkim_pass_wins() {
     assert_eq!(s.dkim, AuthResult::Fail);
     assert!(!s.dkim_aligned);
 }
+
+fn rcv(s: &str) -> TraceHeader {
+    TraceHeader::Received(s.to_owned())
+}
+
+fn ar(s: &str) -> TraceHeader {
+    TraceHeader::AuthenticationResults(s.to_owned())
+}
+
+/// The provider's MX taking the message from outside.
+const HANDOFF: &str = "from out.example.net (out.example.net [192.0.2.1]) by mx2.example.org \
+                       (Postfix) with ESMTPS id 1; Wed, 25 Nov 2026 08:00:00 +0000";
+const PROVIDER_PASS: &str = "mx1.example.org; dmarc=pass header.from=example.net";
+const FORGED_PASS: &str = "mx.example.org; spf=pass; dkim=pass header.d=example.net; dmarc=pass";
+
+#[test]
+fn the_providers_header_above_the_handoff_is_trusted() {
+    let trace = [ar(PROVIDER_PASS), rcv(HANDOFF), ar(FORGED_PASS)];
+    assert_eq!(trusted_results(&trace), Some(PROVIDER_PASS));
+}
+
+#[test]
+fn a_forged_header_is_not_trusted_when_the_provider_adds_none() {
+    // The provider wrote only its Received header; the sender wrote an
+    // Authentication-Results header with the provider's authserv-id.
+    let trace = [rcv(HANDOFF), ar(FORGED_PASS)];
+    assert_eq!(trusted_results(&trace), None);
+    // Also with more hops the sender made up below.
+    let trace = [
+        rcv(HANDOFF),
+        ar(FORGED_PASS),
+        rcv("from mx1.example.org (localhost [127.0.0.1]) by mx9.example.org"),
+    ];
+    assert_eq!(trusted_results(&trace), None);
+}
+
+#[test]
+fn a_header_right_below_the_handoff_is_not_trusted() {
+    // Postfix puts milter headers below its own Received. That spot is
+    // where a sender connecting straight to the MX puts theirs, so it can't
+    // be trusted: no chip rather than a wrong one.
+    let trace = [rcv(HANDOFF), ar(PROVIDER_PASS)];
+    assert_eq!(trusted_results(&trace), None);
+}
+
+#[test]
+fn a_helo_name_alone_does_not_make_a_hop_internal() {
+    for handoff in [
+        // The client claims the provider's name; the provider's lookup says otherwise.
+        "from mx.example.org (out.example.net [192.0.2.1]) by mx2.example.org",
+        "from mx.example.org (unknown [192.0.2.1]) by mx2.example.org",
+        // No lookup comment at all.
+        "from mx.example.org by mx2.example.org",
+        // Exim style: an address and the HELO name in the comment.
+        "from [192.0.2.1] (helo=mx.example.org) by mx2.example.org with esmtp",
+        "from [127.0.0.1] (helo=mx.example.org) by mx2.example.org with esmtp",
+    ] {
+        let trace = [rcv(handoff), ar(FORGED_PASS)];
+        assert_eq!(trusted_results(&trace), None, "{handoff}");
+    }
+}
+
+#[test]
+fn internal_hops_above_the_handoff_are_walked_past() {
+    let trace = [
+        rcv("by mx2.example.org (Postfix, from userid 0) id 7"),
+        rcv("from localhost (localhost [127.0.0.1]) by mx2.example.org (amavis)"),
+        ar("mx.other.example; dmarc=pass"),
+        ar(PROVIDER_PASS),
+        rcv("from mx1.example.org (mx1.example.org [10.0.0.1]) by mx2.example.org"),
+        rcv("from out.example.net (out.example.net [192.0.2.1]) by mx1.example.org"),
+        ar(FORGED_PASS),
+    ];
+    assert_eq!(trusted_results(&trace), Some(PROVIDER_PASS));
+}
+
+#[test]
+fn with_every_hop_internal_only_headers_above_the_last_received_count() {
+    let trace = [
+        ar(PROVIDER_PASS),
+        rcv("from webmail.example.org (localhost [127.0.0.1]) by mx2.example.org"),
+        ar(FORGED_PASS),
+    ];
+    assert_eq!(trusted_results(&trace), Some(PROVIDER_PASS));
+    let trace = [
+        rcv("from webmail.example.org (localhost [127.0.0.1]) by mx2.example.org"),
+        ar(FORGED_PASS),
+    ];
+    assert_eq!(trusted_results(&trace), None);
+}
+
+#[test]
+fn a_hop_received_by_another_organisation_ends_the_walk() {
+    let trace = [
+        rcv("from mx1.example.org (mx1.example.org [10.0.0.1]) by mx2.example.org"),
+        rcv("from x.example.org (x.example.org [10.0.0.9]) by relay.example.com"),
+        ar(FORGED_PASS),
+    ];
+    assert_eq!(trusted_results(&trace), None);
+}
+
+#[test]
+fn no_usable_received_header_means_nothing_is_trusted() {
+    assert_eq!(trusted_results(&[]), None);
+    assert_eq!(trusted_results(&[ar(PROVIDER_PASS)]), None);
+    // The topmost Received names no host.
+    assert_eq!(
+        trusted_results(&[rcv("by 2002:a05:6a10::1 with SMTP id x"), ar(PROVIDER_PASS)]),
+        None
+    );
+    assert_eq!(trusted_results(&[ar(PROVIDER_PASS), rcv("garbage")]), None);
+}
+
+#[test]
+fn hostile_received_headers_never_panic() {
+    for r in [
+        "",
+        "from",
+        "from ",
+        "from (",
+        "from x (",
+        "from x ((((( by mx2.example.org",
+        "from x (a [b by mx2.example.org",
+        "from x (a ]] [[ ) by mx2.example.org",
+        "FROM é (ü [ö]) BY mx2.example.org",
+        "from\u{feff} by mx2.example.org",
+    ] {
+        let _ = trusted_results(&[rcv(r), ar(PROVIDER_PASS)]);
+        let _ = trusted_results(&[rcv(HANDOFF), rcv(r), ar(PROVIDER_PASS)]);
+    }
+    let long = format!("from {} by mx2.example.org", "(".repeat(70_000));
+    assert_eq!(trusted_results(&[rcv(&long), ar(FORGED_PASS)]), None);
+}

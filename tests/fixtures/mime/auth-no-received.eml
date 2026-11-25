@@ -2,7 +2,7 @@ Authentication-Results: mx1.example.org; spf=pass; dkim=pass header.d=example.ne
 From: Example Shop <shop@example.net>
 To: Bob <bob@example.org>
 Subject: Auth: no Received header
-Date: Wed, 25 Nov 2026 08:06:00 +0000
+Date: Wed, 25 Nov 2026 08:07:00 +0000
 Message-ID: <auth-no-received@example.net>
 
 There is no Received header, so no Authentication-Results header can be

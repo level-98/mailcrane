@@ -2,11 +2,12 @@
 //! when it checked who sent a message.
 //!
 //! Only the `Authentication-Results` header the provider added is read
-//! (RFC 8601 §5, the same rule one-click unsubscribe uses). Results the
-//! sender wrote into the message themselves are ignored. Nothing is looked
-//! up online.
+//! (RFC 8601 §5, the same rule one-click unsubscribe uses): it must name
+//! the provider and sit above the point where the message entered it.
+//! Results the sender wrote into the message themselves are ignored.
+//! Nothing is looked up online.
 
-use mailcrane_mime::auth::{provider_results, summarize, AuthSummary};
+use mailcrane_mime::auth::{summarize, trusted_results, AuthSummary};
 use mailcrane_mime::ParsedMessage;
 
 pub use mailcrane_mime::auth::AuthResult;
@@ -43,10 +44,7 @@ pub fn sender_check(parsed: &ParsedMessage) -> SenderCheck {
         .and_then(|a| a.email.rsplit_once('@'))
         .map(|(_, d)| d)
         .unwrap_or_default();
-    let trusted = provider_results(
-        &parsed.authentication_results,
-        parsed.received_by.as_deref(),
-    );
+    let trusted = trusted_results(&parsed.trace);
     let auth = summarize(trusted.unwrap_or_default(), from_domain);
     SenderCheck {
         trusted: trusted.is_some(),

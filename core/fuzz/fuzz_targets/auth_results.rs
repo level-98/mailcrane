@@ -13,4 +13,11 @@ fuzz_target!(|data: &[u8]| {
     let _ = auth::received_by(&text);
     let headers = [text.to_string()];
     let _ = auth::provider_results(&headers, Some("mx.example.org"));
+    // The same text as each kind of trace header, in both orders.
+    let (r, a) = (
+        auth::TraceHeader::Received(text.to_string()),
+        auth::TraceHeader::AuthenticationResults(text.to_string()),
+    );
+    let _ = auth::trusted_results(&[r.clone(), a.clone()]);
+    let _ = auth::trusted_results(&[a, r]);
 });

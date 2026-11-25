@@ -385,21 +385,152 @@ pub fn received_by(received: &str) -> Option<String> {
     None
 }
 
-/// The Authentication-Results header the user's provider added: the
-/// topmost one whose authserv-id is in the same organisation as the `by`
-/// host of the topmost Received header. Results the sender wrote
-/// themselves (lower down, or with another authserv-id) are never trusted.
+/// Of these Authentication-Results headers, the topmost whose authserv-id
+/// is in the same organisation as `received_by`. This checks only the
+/// authserv-id, which a sender can copy: use [`trusted_results`], which
+/// also checks where the header sits.
 pub fn provider_results<'a>(results: &'a [String], received_by: Option<&str>) -> Option<&'a str> {
     let provider = org_domain(received_by?);
     if !provider.contains('.') {
         return None;
     }
-    results.iter().map(String::as_str).find(|r| {
-        let id = strip_comments(r);
-        let id = id.split(';').next().unwrap_or_default();
-        let id = id.split_whitespace().next().unwrap_or_default();
-        !id.is_empty() && org_domain(id) == provider
-    })
+    results
+        .iter()
+        .map(String::as_str)
+        .find(|r| authserv_in(r, &provider))
+}
+
+/// Whether the authserv-id of an Authentication-Results value is in the
+/// organisation `provider`.
+fn authserv_in(results: &str, provider: &str) -> bool {
+    let id = strip_comments(results);
+    let id = id.split(';').next().unwrap_or_default();
+    let id = id.split_whitespace().next().unwrap_or_default();
+    !id.is_empty() && org_domain(id) == provider
+}
+
+/// A trace header, as [`crate::ParsedMessage::trace`] lists them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TraceHeader {
+    /// A `Received` header value (RFC 5321 §4.4).
+    Received(String),
+    /// An `Authentication-Results` header value (RFC 8601).
+    AuthenticationResults(String),
+}
+
+/// The Authentication-Results header the user's provider added, if any.
+///
+/// `trace` is the message's Received and Authentication-Results headers in
+/// their original order, topmost first. The provider is the organisation of
+/// the `by` host of the topmost Received header. A header is trusted only
+/// if its authserv-id is in that organisation **and** it sits above the
+/// first Received header for a hop from outside the provider, where the
+/// message entered it (RFC 8601 §5). Everything below that point, the
+/// sender could have written, whatever authserv-id it names. When every hop
+/// is inside the provider, only headers above the bottom-most Received
+/// count. Of the trusted headers, the topmost wins.
+pub fn trusted_results(trace: &[TraceHeader]) -> Option<&str> {
+    let provider_host = trace.iter().find_map(|h| match h {
+        TraceHeader::Received(r) => Some(r),
+        TraceHeader::AuthenticationResults(_) => None,
+    })?;
+    let provider = org_domain(&received_by(provider_host)?);
+    if !provider.contains('.') {
+        return None;
+    }
+    let mut found = None;
+    let mut confirmed = None;
+    for header in trace {
+        match header {
+            TraceHeader::AuthenticationResults(a) => {
+                if found.is_none() && authserv_in(a, &provider) {
+                    found = Some(a.as_str());
+                }
+            }
+            TraceHeader::Received(r) => {
+                confirmed = found;
+                if !internal_hop(r, &provider) {
+                    return confirmed;
+                }
+            }
+        }
+    }
+    confirmed
+}
+
+/// Whether a Received header records a hop between the provider's own
+/// servers. The `by` host must be in `provider`. Then either there is no
+/// `from` clause (a local hand-over), the connection came from a loopback
+/// address, or both the name the client gave (HELO) and the name the
+/// provider looked up for its address are in `provider`. The HELO name
+/// alone is chosen by the client, so it is never enough.
+fn internal_hop(received: &str, provider: &str) -> bool {
+    let in_org = |host: &str| {
+        let h = host
+            .trim_matches(|c| c == '[' || c == ']')
+            .trim_end_matches('.');
+        h.contains('.') && org_domain(h) == provider
+    };
+    if !received_by(received).is_some_and(|by| in_org(&by)) {
+        return false;
+    }
+    let Some((helo, info)) = from_clause(received) else {
+        return true;
+    };
+    let Some(info) = info else {
+        return false;
+    };
+    let ip = info
+        .split('[')
+        .nth(1)
+        .and_then(|rest| rest.split(']').next())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    if ip.starts_with("127.") || ip == "ipv6:::1" || ip == "::1" {
+        return true;
+    }
+    let name = info.split(['[', ' ']).next().unwrap_or_default();
+    in_org(&helo) && in_org(name)
+}
+
+/// The `from` clause of a Received header: the name the client gave, and
+/// the provider's comment after it (`(name [address])`), if any. `None`
+/// when there is no `from` clause before `by`.
+fn from_clause(received: &str) -> Option<(String, Option<String>)> {
+    let text = received.trim_start();
+    let rest = text
+        .get(..4)
+        .filter(|w| w.eq_ignore_ascii_case("from"))
+        .and_then(|_| text.get(4..))
+        .filter(|r| r.starts_with(char::is_whitespace))?
+        .trim_start();
+    let helo_end = rest
+        .find(|c: char| c.is_whitespace() || c == '(')
+        .unwrap_or(rest.len());
+    let helo = rest[..helo_end].to_ascii_lowercase();
+    if helo.is_empty() || helo.eq_ignore_ascii_case("by") {
+        return None;
+    }
+    let after = rest[helo_end..].trim_start();
+    let info = after.strip_prefix('(').map(|inner| {
+        let mut depth = 1u32;
+        let mut out = String::new();
+        for c in inner.chars() {
+            match c {
+                '(' => depth = depth.saturating_add(1),
+                ')' => {
+                    depth = depth.saturating_sub(1);
+                    if depth == 0 {
+                        break;
+                    }
+                }
+                _ => {}
+            }
+            out.push(c);
+        }
+        out.trim().to_owned()
+    });
+    Some((helo, info))
 }
 
 #[cfg(test)]

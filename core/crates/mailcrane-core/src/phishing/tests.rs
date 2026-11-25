@@ -4,14 +4,23 @@ use mailcrane_mime::parse_message;
 const RECEIVED: &str = "Received: from out.example.net (out.example.net [192.0.2.1]) \
     by mx2.example.org (Postfix) with ESMTPS id 1; Wed, 25 Nov 2026 08:00:00 +0000\r\n";
 
-/// A message with these Authentication-Results headers, topmost first, and
-/// the provider's Received header above them when `received`.
+/// A message with these Authentication-Results headers, topmost first,
+/// above the provider's Received header (when `received`), as a provider
+/// adds them.
 fn check(results: &[&str], received: bool) -> SenderCheck {
+    check_with(results, &[], received)
+}
+
+/// Like [`check`], plus headers the sender wrote, below the Received header.
+fn check_with(above: &[&str], below: &[&str], received: bool) -> SenderCheck {
     let mut m = String::new();
+    for r in above {
+        m.push_str(&format!("Authentication-Results: {r}\r\n"));
+    }
     if received {
         m.push_str(RECEIVED);
     }
-    for r in results {
+    for r in below {
         m.push_str(&format!("Authentication-Results: {r}\r\n"));
     }
     m.push_str(
@@ -76,17 +85,29 @@ fn verdict_rules() {
 
 #[test]
 fn a_forged_pass_below_the_providers_header_is_ignored() {
-    // The sender wrote the second header; the provider's (topmost) wins.
-    let c = check(
-        &[
-            "mx1.example.org; spf=fail; dkim=fail header.d=example.net; dmarc=fail",
-            "mx.example.org; spf=pass; dkim=pass header.d=example.net; dmarc=pass",
-        ],
+    // The sender wrote the second header, below the provider's Received.
+    let c = check_with(
+        &["mx1.example.org; spf=fail; dkim=fail header.d=example.net; dmarc=fail"],
+        &["mx.example.org; spf=pass; dkim=pass header.d=example.net; dmarc=pass"],
         true,
     );
     assert!(c.trusted);
     assert_eq!(c.verdict, Some(AuthVerdict::Failed));
     assert_eq!(c.auth.dmarc, AuthResult::Fail);
+}
+
+#[test]
+fn a_forged_pass_is_ignored_when_the_provider_adds_no_header() {
+    // The provider wrote only its Received header. The sender's header
+    // names the provider, but sits below the point where the message
+    // entered it.
+    let c = check_with(
+        &[],
+        &["mx1.example.org; spf=pass; dkim=pass header.d=example.net; dmarc=pass"],
+        true,
+    );
+    assert!(!c.trusted);
+    assert_eq!(c.verdict, None);
 }
 
 #[test]
@@ -143,6 +164,7 @@ fn fixtures_show_the_expected_chip() {
         ("auth-forged-below", Some(NotVerified)),
         ("auth-forged-foreign", Some(Failed)),
         ("auth-no-received", None),
+        ("auth-forged-no-provider", None),
         ("plain-ascii", None),
     ] {
         let path = format!(

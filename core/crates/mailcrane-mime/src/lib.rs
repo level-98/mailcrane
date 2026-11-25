@@ -186,23 +186,21 @@ pub fn parse_message(raw: &[u8]) -> Result<ParsedMessage, MimeError> {
         list_unsubscribe: raw_header("List-Unsubscribe"),
         list_unsubscribe_post: raw_header("List-Unsubscribe-Post"),
         list_id: raw_header("List-Id").and_then(|v| list_id_of(&v)),
-        authentication_results: hdrs
+        trace: hdrs
             .iter()
-            .filter(|h| {
-                h.name()
-                    .as_str()
-                    .eq_ignore_ascii_case("Authentication-Results")
+            .filter_map(|h| {
+                let name = h.name();
+                let kind = if name.as_str().eq_ignore_ascii_case("Received") {
+                    auth::TraceHeader::Received
+                } else if name.as_str().eq_ignore_ascii_case("Authentication-Results") {
+                    auth::TraceHeader::AuthenticationResults
+                } else {
+                    return None;
+                };
+                headers::raw_value(h.raw_value()).map(kind)
             })
-            .filter_map(|h| headers::raw_value(h.raw_value()))
-            .take(20)
+            .take(limits::MAX_TRACE_HEADERS)
             .collect(),
-        // The first Received header in the message is the topmost: the one
-        // the user's provider added last.
-        received_by: hdrs
-            .iter()
-            .find(|h| h.name().as_str().eq_ignore_ascii_case("Received"))
-            .and_then(|h| headers::raw_value(h.raw_value()))
-            .and_then(|r| auth::received_by(&r)),
         text_plain,
         text_html: html.map(UnsanitisedHtml::new),
         attachments,

@@ -884,23 +884,26 @@ mod tests {
     #[test]
     fn sender_check_reads_only_the_providers_header() {
         let (_dir, path, folder) = setup();
-        let raw = |results: &str| {
+        // `above`: what the provider added above its Received header;
+        // `below`: what the sender wrote.
+        let raw = |above: &str, below: &str| {
             format!(
-                "Received: from out.example.net by mx2.example.org with ESMTPS; \
-                 Wed, 25 Nov 2026 08:00:00 +0000\r\n{results}\
+                "{above}Received: from out.example.net by mx2.example.org with ESMTPS; \
+                 Wed, 25 Nov 2026 08:00:00 +0000\r\n{below}\
                  From: Ana <ana@example.net>\r\nTo: bob@example.org\r\n\
                  Subject: Hi\r\n\r\nHello\r\n"
             )
             .into_bytes()
         };
+        let forged = "Authentication-Results: mx.example.org; dmarc=pass\r\n";
         let id = with_body(
             &path,
             folder,
             1,
             &raw(
                 "Authentication-Results: mx1.example.org; spf=pass smtp.mailfrom=example.net; \
-                 dkim=fail header.d=example.net; dmarc=fail header.from=example.net\r\n\
-                 Authentication-Results: mx.example.org; dmarc=pass\r\n",
+                 dkim=fail header.d=example.net; dmarc=fail header.from=example.net\r\n",
+                forged,
             ),
         );
         let check = get_message(path.clone(), id, false)
@@ -920,7 +923,8 @@ mod tests {
                 dmarc_domain: Some("example.net".into()),
             }
         );
-        let id = with_body(&path, folder, 2, &raw(""));
+        // The provider added nothing: the sender's header is not trusted.
+        let id = with_body(&path, folder, 2, &raw("", forged));
         let check = get_message(path.clone(), id, false)
             .expect("message")
             .sender_check
