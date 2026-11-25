@@ -1,6 +1,6 @@
 //! Conversations for the apps (M4-02).
 
-use crate::messages::{one_line, MessageSummary};
+use crate::messages::{name_line, one_line, MessageSummary};
 use crate::sync::{failed, SyncFailure};
 use mailcrane_core::events;
 use mailcrane_core::threading;
@@ -50,7 +50,7 @@ pub fn list_threads(
         .map(|t| ThreadSummary {
             thread_id: t.thread_id.0,
             subject: one_line(&t.subject),
-            participants: t.participants.iter().map(|p| one_line(p)).collect(),
+            participants: t.participants.iter().map(|p| name_line(p)).collect(),
             message_count: t.message_count,
             unread_count: t.unread_count,
             last_date: t.last_date,

@@ -118,7 +118,7 @@ impl NewMailNotification {
             message_id: m.message_id.0,
             account_id: account.id.0,
             account_email: account.details.email.clone(),
-            sender,
+            sender: crate::messages::name_line(&sender),
             subject: m.subject,
             received_at: m.internal_date,
         }

@@ -9,6 +9,7 @@
 
 pub mod address;
 pub mod auth;
+pub mod bidi;
 pub mod build;
 mod headers;
 pub mod limits;

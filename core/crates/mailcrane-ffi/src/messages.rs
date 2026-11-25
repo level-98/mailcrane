@@ -90,13 +90,20 @@ pub(crate) fn one_line(text: &str) -> String {
         .collect()
 }
 
+/// A name or address as one safe line for display: [`one_line`], with
+/// bidi controls removed so it can't display in a different order than it
+/// is stored (#314).
+pub(crate) fn name_line(text: &str) -> String {
+    mailcrane_mime::bidi::strip_bidi_controls(&one_line(text))
+}
+
 impl From<MessageHeader> for MessageSummary {
     fn from(m: MessageHeader) -> Self {
         let d = m.details;
         Self {
             id: m.id.0,
-            from_name: one_line(d.from_name.as_deref().unwrap_or_default()),
-            from_addr: one_line(d.from_addr.as_deref().unwrap_or_default()),
+            from_name: name_line(d.from_name.as_deref().unwrap_or_default()),
+            from_addr: name_line(d.from_addr.as_deref().unwrap_or_default()),
             subject: one_line(&d.subject),
             snippet: one_line(&d.snippet),
             date: d.date,
@@ -457,8 +464,8 @@ fn html_document(body: &str, allow_remote: bool) -> String {
 
 fn address(a: mailcrane_mime::Address) -> MessageAddress {
     MessageAddress {
-        name: one_line(a.name.as_deref().unwrap_or_default()),
-        email: one_line(&a.email),
+        name: name_line(a.name.as_deref().unwrap_or_default()),
+        email: name_line(&a.email),
     }
 }
 
@@ -495,8 +502,8 @@ pub fn get_message(
         id: message_id,
         folder_id: d.folder_id.0,
         from: MessageAddress {
-            name: one_line(d.from_name.as_deref().unwrap_or_default()),
-            email: one_line(d.from_addr.as_deref().unwrap_or_default()),
+            name: name_line(d.from_name.as_deref().unwrap_or_default()),
+            email: name_line(d.from_addr.as_deref().unwrap_or_default()),
         },
         to: Vec::new(),
         cc: Vec::new(),
@@ -710,6 +717,38 @@ mod tests {
         assert_eq!(row.from_name, "");
         assert_eq!(row.from_addr, "");
         assert_eq!(row.date, 1_000);
+    }
+
+    #[test]
+    fn names_never_carry_bidi_controls() {
+        // "\u{202E}moc.elpmaxe@oec" would display as "ceo@example.com" (#314).
+        let (_dir, path, folder) = setup();
+        let store = Store::open(&path).expect("store");
+        let mut m = header(folder, 1, 1_000);
+        m.from_name = Some("\u{202E}moc.elpmaxe@oec".into());
+        m.from_addr = Some("x\u{2066}@example.net\u{2069}".into());
+        store.upsert_message_header(&m).expect("insert");
+        drop(store);
+        let rows = list_messages(path.clone(), folder.0, 0, 10).expect("list");
+        let row = rows.first().expect("one row");
+        assert_eq!(row.from_name, "moc.elpmaxe@oec");
+        assert_eq!(row.from_addr, "x@example.net");
+
+        // The header of the open message, To and Cc included.
+        let raw = "From: =?UTF-8?Q?=E2=80=AEmoc.elpmaxe@oec?= <x@example.net>\r\n\
+                   To: =?UTF-8?Q?=E2=80=ADBob=E2=81=A7?= <bob@example.org>\r\n\
+                   Cc: =?UTF-8?Q?=E2=81=A8Cy=E2=81=A9=E2=80=8F?= <cy@example.org>\r\n\
+                   Subject: Hi\r\n\r\nHello\r\n";
+        let id = with_body(&path, folder, 2, raw.as_bytes());
+        let m = get_message(path, id, false).expect("message");
+        assert_eq!(m.to[0].name, "Bob");
+        assert_eq!(m.cc[0].name, "Cy");
+        for text in [&m.from.name, &m.to[0].name, &m.cc[0].name] {
+            assert!(
+                !text.chars().any(mailcrane_mime::bidi::is_bidi_control),
+                "{text:?}"
+            );
+        }
     }
 
     #[test]
