@@ -682,6 +682,14 @@ async fn select_response(
         "* {count} EXISTS\r\n* OK [UIDVALIDITY {uidvalidity}]\r\n* OK [UIDNEXT {}]\r\n",
         mailbox.uidnext(folder).await
     );
+    // RFC 9051 §7.1: `\*` means new keywords can be stored permanently.
+    if quirks.contains(&Quirk::NoCustomKeywords) {
+        out.push_str("* OK [PERMANENTFLAGS (\\Seen \\Answered \\Flagged \\Deleted \\Draft)]\r\n");
+    } else {
+        out.push_str(
+            "* OK [PERMANENTFLAGS (\\Seen \\Answered \\Flagged \\Deleted \\Draft \\*)]\r\n",
+        );
+    }
     if quirks.contains(&Quirk::NoCondstore) {
         return out + &format!("{tag} OK {command} completed\r\n");
     }
@@ -856,6 +864,20 @@ fn subject_of(raw: &[u8]) -> String {
         .unwrap_or_else(|| "Test".to_string())
 }
 
+/// The message's own `Message-ID` header, or `<uid@example.org>` for
+/// fixtures without one, as a real server's ENVELOPE would report it.
+fn message_id_of(raw: &[u8], uid: u32) -> String {
+    String::from_utf8_lossy(raw)
+        .split("\r\n")
+        .take_while(|line| !line.is_empty())
+        .find_map(|line| {
+            let (name, value) = line.split_once(':')?;
+            name.eq_ignore_ascii_case("Message-ID")
+                .then(|| value.trim().to_string())
+        })
+        .unwrap_or_else(|| format!("<{uid}@example.org>"))
+}
+
 fn body_structure(raw: &[u8]) -> String {
     let text = String::from_utf8_lossy(raw);
     if text.contains("Content-Disposition: attachment") {
@@ -939,7 +961,7 @@ async fn handle_uid_command(
                     if message.corrupt_envelope {
                         line.push_str(" ENVELOPE (\"only\" \"two\")");
                     } else {
-                        line.push_str(&format!(" ENVELOPE (\"Wed, 24 Nov 2026 10:46:51 +0000\" \"{}\" ((\"Alice\" NIL \"alice\" \"example.org\")) ((\"Alice\" NIL \"alice\" \"example.org\")) ((\"Alice\" NIL \"alice\" \"example.org\")) ((\"Recipient\" NIL \"recipient\" \"example.net\")) NIL NIL NIL \"<{}@example.org>\")", quoted(&subject_of(&message.raw)), message.uid));
+                        line.push_str(&format!(" ENVELOPE (\"Wed, 24 Nov 2026 10:46:51 +0000\" \"{}\" ((\"Alice\" NIL \"alice\" \"example.org\")) ((\"Alice\" NIL \"alice\" \"example.org\")) ((\"Alice\" NIL \"alice\" \"example.org\")) ((\"Recipient\" NIL \"recipient\" \"example.net\")) NIL NIL NIL \"{}\")", quoted(&subject_of(&message.raw)), quoted(&message_id_of(&message.raw, message.uid))));
                     }
                 }
                 if items.contains("BODYSTRUCTURE") {

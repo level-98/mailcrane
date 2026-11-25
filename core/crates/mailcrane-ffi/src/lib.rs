@@ -18,6 +18,7 @@ pub mod outbox;
 pub mod search;
 pub mod secrets;
 pub mod settings;
+pub mod snooze;
 pub mod sync;
 
 /// The name of this crate.
