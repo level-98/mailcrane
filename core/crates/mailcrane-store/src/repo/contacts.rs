@@ -27,7 +27,7 @@ impl Store {
         recipients: &[(String, String)],
         at: i64,
     ) -> Result<(), StoreError> {
-        let tx = self.conn.unchecked_transaction()?;
+        let tx = self.write_tx()?;
         for (email, name) in recipients {
             let email = email.trim().to_lowercase();
             if !email.contains('@') {

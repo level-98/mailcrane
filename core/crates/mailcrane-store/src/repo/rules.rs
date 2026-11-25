@@ -139,7 +139,7 @@ impl Store {
 
     /// Saves a new rule at the end of the list.
     pub fn insert_rule(&self, rule: &NewRule) -> Result<RuleId, StoreError> {
-        let tx = self.conn.unchecked_transaction()?;
+        let tx = self.write_tx()?;
         tx.execute(
             "INSERT INTO rules (account_id, name, position, enabled, match_all, stop_processing) \
              VALUES (?1, ?2, (SELECT COALESCE(max(position), -1) + 1 FROM rules), ?3, ?4, ?5)",
@@ -160,7 +160,7 @@ impl Store {
     /// Replaces a rule's settings, keeping its place. Returns false if it
     /// doesn't exist.
     pub fn update_rule(&self, id: RuleId, rule: &NewRule) -> Result<bool, StoreError> {
-        let tx = self.conn.unchecked_transaction()?;
+        let tx = self.write_tx()?;
         let n = tx.execute(
             "UPDATE rules SET account_id = ?2, name = ?3, enabled = ?4, match_all = ?5, \
              stop_processing = ?6 WHERE id = ?1",
@@ -197,7 +197,7 @@ impl Store {
 
     /// Moves a rule to `index` in the list (0 = first), shifting the others.
     pub fn move_rule(&self, id: RuleId, index: u32) -> Result<(), StoreError> {
-        let tx = self.conn.unchecked_transaction()?;
+        let tx = self.write_tx()?;
         let mut ids: Vec<i64> = {
             let mut stmt = tx.prepare("SELECT id FROM rules ORDER BY position, id")?;
             let rows = stmt.query_map([], |r| r.get(0))?;
@@ -304,7 +304,7 @@ impl Store {
         folder: FolderId,
         ids: &[(u32, Option<String>)],
     ) -> Result<(), StoreError> {
-        let tx = self.conn.unchecked_transaction()?;
+        let tx = self.write_tx()?;
         for (uid, list_id) in ids {
             tx.execute(
                 "UPDATE messages SET list_id = ?3 WHERE folder_id = ?1 AND uid = ?2",
@@ -381,7 +381,7 @@ impl Store {
         message: MessageId,
         message_id_header: Option<&str>,
     ) -> Result<(), StoreError> {
-        let tx = self.conn.unchecked_transaction()?;
+        let tx = self.write_tx()?;
         tx.execute(
             "UPDATE messages SET rules_done = 1 WHERE id = ?1",
             params![message.0],

@@ -149,7 +149,7 @@ impl Store {
         email_id: &str,
         blob_id: &str,
     ) -> Result<MessageId, StoreError> {
-        let tx = self.conn.unchecked_transaction()?;
+        let tx = self.write_tx()?;
         let existing: Option<i64> = tx
             .query_row(
                 "SELECT m.id FROM messages m JOIN jmap_emails j ON j.message_id = m.id \
@@ -246,7 +246,7 @@ impl Store {
 
     /// Deletes message rows (with their bodies, by cascade). Returns how many.
     pub fn delete_message_rows(&self, ids: &[MessageId]) -> Result<usize, StoreError> {
-        let tx = self.conn.unchecked_transaction()?;
+        let tx = self.write_tx()?;
         let mut n = 0usize;
         for id in ids {
             n = n.saturating_add(tx.execute("DELETE FROM messages WHERE id = ?1", params![id.0])?);
@@ -269,7 +269,7 @@ impl Store {
     /// sync state, so the next sync starts over. For a JMAP server that
     /// can't say what changed (`cannotCalculateChanges`, RFC 8620 §5.2).
     pub fn forget_folder(&self, folder: FolderId) -> Result<(), StoreError> {
-        let tx = self.conn.unchecked_transaction()?;
+        let tx = self.write_tx()?;
         tx.execute(
             "DELETE FROM messages WHERE folder_id = ?1",
             params![folder.0],

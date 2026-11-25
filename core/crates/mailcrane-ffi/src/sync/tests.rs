@@ -287,6 +287,20 @@ fn live_updates_start_once_deliver_and_stop_through_the_ffi() {
     });
     assert!(took < std::time::Duration::from_secs(2), "{took:?}");
 
+    // One writer per account (issue #282): while an app sync holds the
+    // account's lock, new mail seen by IDLE waits instead of writing
+    // alongside it, and is stored once the lock is free.
+    let writing = engine.account_lock(account);
+    let guard = writing.blocking_lock();
+    runtime.block_on(
+        imap.mailbox()
+            .deliver("INBOX", b"Subject: Message 4\r\n\r\nBody 4\r\n".to_vec()),
+    );
+    std::thread::sleep(std::time::Duration::from_millis(500));
+    assert_eq!(uids(), 3, "live updates wrote while the account was locked");
+    drop(guard);
+    wait_for(std::time::Duration::from_secs(5), || uids() == 4);
+
     // Stop ends IDLE and logs out within 2 seconds.
     let started = std::time::Instant::now();
     engine.stop_live_updates(account.0);

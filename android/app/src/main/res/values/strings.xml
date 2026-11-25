@@ -137,6 +137,8 @@
     <string name="sync_error_storage">Couldn’t read or save mail on this device.</string>
     <string name="sync_error_not_found">This folder no longer exists.</string>
     <string name="sync_error_folder_reset">The folder changed on the server. Pull to refresh again.</string>
+    <!-- Normally never shown: another sync was saving mail at the same time. -->
+    <string name="sync_error_busy">Still saving mail. Try again in a moment.</string>
     <!-- Compose (M2-02) -->
     <string name="compose_fab">Compose</string>
     <string name="compose_title">New message</string>

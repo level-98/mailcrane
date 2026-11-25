@@ -71,6 +71,13 @@ impl StoreError {
         })
     }
 
+    /// Whether another connection held the database lock past the busy
+    /// timeout and the retries (`SQLITE_BUSY` or `SQLITE_LOCKED`). A local,
+    /// passing problem: trying again later works.
+    pub fn is_busy(&self) -> bool {
+        matches!(self, StoreError::Sqlite(e) if crate::is_busy(e))
+    }
+
     /// The SQLite extended result code as a number, for codes
     /// [`sqlite_code_name`] doesn't know.
     pub fn sqlite_code(&self) -> Option<i32> {

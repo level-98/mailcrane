@@ -85,6 +85,9 @@ impl SyncError {
     /// The kind reported in [`CoreEvent::SyncError`].
     pub fn kind(&self) -> SyncErrorKind {
         match self {
+            SyncError::Store(e) | SyncError::Imap(ImapError::Store(e)) if e.is_busy() => {
+                SyncErrorKind::Busy
+            }
             SyncError::Imap(e) => match e {
                 ImapError::CannotConnect | ImapError::ConnectionClosed | ImapError::ServerBye => {
                     SyncErrorKind::Network

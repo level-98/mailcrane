@@ -105,7 +105,7 @@ impl Store {
     /// one transaction. Snoozing a message that is already snoozed changes
     /// its wake time (the server keyword is updated on the next run).
     pub fn snooze_message(&self, s: &NewSnooze) -> Result<SnoozeId, StoreError> {
-        let tx = self.conn.unchecked_transaction()?;
+        let tx = self.write_tx()?;
         if let Some(message) = s.hide_message {
             tx.execute(
                 "UPDATE messages SET hidden = 1 WHERE id = ?1",
@@ -183,7 +183,7 @@ impl Store {
     /// Turns every snooze due at `now` from `Snoozed` into `ToWake` and
     /// returns them. Each is returned once.
     pub fn take_due_snoozes(&self, now: i64) -> Result<Vec<Snooze>, StoreError> {
-        let tx = self.conn.unchecked_transaction()?;
+        let tx = self.write_tx()?;
         let due = {
             let sql = format!(
                 "SELECT {COLS} FROM snoozes WHERE state = 'snoozed' AND wake_at <= ?1 \
@@ -210,7 +210,7 @@ impl Store {
         message_id_header: &str,
         now: i64,
     ) -> Result<bool, StoreError> {
-        let tx = self.conn.unchecked_transaction()?;
+        let tx = self.write_tx()?;
         let existing: Option<(String, Option<i64>)> = tx
             .query_row(
                 "SELECT state, local_message_id FROM snoozes \
@@ -246,7 +246,7 @@ impl Store {
     /// The server move to the Snoozed folder is done: the hidden local row
     /// is deleted (the next sync of the Snoozed folder brings it back).
     pub fn finish_snooze(&self, id: SnoozeId, on_server: bool) -> Result<(), StoreError> {
-        let tx = self.conn.unchecked_transaction()?;
+        let tx = self.write_tx()?;
         tx.execute(
             "DELETE FROM messages WHERE hidden = 1 AND id = \
              (SELECT local_message_id FROM snoozes WHERE id = ?1)",
@@ -264,7 +264,7 @@ impl Store {
     /// Drops a snooze. With `unhide`, its hidden local row is shown again
     /// (the server refused the move for good).
     pub fn delete_snooze(&self, id: SnoozeId, unhide: bool) -> Result<(), StoreError> {
-        let tx = self.conn.unchecked_transaction()?;
+        let tx = self.write_tx()?;
         if unhide {
             tx.execute(
                 "UPDATE messages SET hidden = 0 WHERE id = \
