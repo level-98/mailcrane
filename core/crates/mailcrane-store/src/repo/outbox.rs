@@ -55,7 +55,9 @@ pub enum SentCopy {
     Pending,
     /// In the Sent folder.
     Saved,
-    /// Not needed: the server saves it, or the account says never.
+    /// Not kept: the server saves it, the account says never, or the
+    /// account has nowhere to keep it (a JMAP account without a Sent
+    /// mailbox).
     Skipped,
     /// The upload was refused; the message was sent but isn't in Sent.
     Failed,
