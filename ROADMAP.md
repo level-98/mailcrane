@@ -85,7 +85,7 @@ Goal: add an IMAP account and read your inbox, online and offline.
 - [x] **M4-08** Undo send (short delay before sending) 🟢🤖
 - [x] **M4-09** Local rules and filters 🤖
 - [x] **M4-10** One-tap unsubscribe (`List-Unsubscribe`, RFC 8058) 🤖
-- [ ] **M4-11** Home-screen widgets (Android Glance) 🤖
+- [x] **M4-11** Home-screen widgets (Android Glance) 🤖
 - [x] **M4-12** Dark mode and dynamic colour (Material You) 🟢🤖
 - [x] **M4-13** Tablet layouts (list and detail side by side) 🤖
 
