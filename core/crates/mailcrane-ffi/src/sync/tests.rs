@@ -576,6 +576,7 @@ fn a_local_only_account_never_connects() {
             uidnext: Some(2),
             highestmodseq: None,
             is_subscribed: true,
+            selectable: true,
         })
         .expect("folder");
     let message = store
@@ -649,6 +650,107 @@ fn a_local_only_account_never_connects() {
         .filter(|e| matches!(e, CoreEvent::SyncError { .. }))
         .count();
     assert_eq!(errors, 0);
+    assert_eq!(imap.connections_accepted(), 0, "the server was contacted");
+    drop(store);
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn an_unreadable_local_marker_fails_loudly_and_never_connects() {
+    // An ordinary account aimed at a live server, whose local-only marker
+    // can't be read (the column is gone): calls must report a storage
+    // failure instead of quietly succeeding, and still never connect.
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(1)
+        .enable_all()
+        .build()
+        .expect("runtime");
+    let imap = runtime.block_on(async {
+        FakeImap::builder()
+            .user("bob@example.org", "pw")
+            .folder("INBOX", vec![b"Subject: x\r\n\r\ny\r\n".to_vec()])
+            .start()
+            .await
+            .expect("fake imap")
+    });
+
+    let path = std::env::temp_dir().join(format!("mailcrane-ffi-marker-{}.db", std::process::id()));
+    let _ = std::fs::remove_file(&path);
+    let store = Store::open(&path).expect("store");
+    let account = store
+        .insert_account(&NewAccount {
+            display_name: "Bob".into(),
+            email: "bob@example.org".into(),
+            imap_host: "localhost".into(),
+            imap_port: imap.addr().port(),
+            imap_security: Security::Tls,
+            smtp_host: "localhost".into(),
+            smtp_port: 587,
+            smtp_security: Security::Starttls,
+            username: "bob@example.org".into(),
+        })
+        .expect("account");
+    let folder = store
+        .upsert_folder(&NewFolder {
+            account_id: account,
+            remote_name: "INBOX".into(),
+            display_name: "Inbox".into(),
+            delimiter: Some("/".into()),
+            role: None,
+            uidvalidity: None,
+            uidnext: None,
+            highestmodseq: None,
+            is_subscribed: true,
+            selectable: true,
+        })
+        .expect("folder");
+    drop(store);
+    let conn = rusqlite::Connection::open(&path).expect("raw");
+    conn.execute_batch("ALTER TABLE accounts RENAME COLUMN local_only TO gone")
+        .expect("rename");
+    drop(conn);
+
+    let platform = Arc::new(Platform::default());
+    platform
+        .put(
+            SecretKey::account_password(account.0).as_str().to_owned(),
+            b"pw".to_vec(),
+        )
+        .expect("password");
+    install_secret_store(platform);
+    let collect = Arc::new(Collect::default());
+    let engine = SyncEngine::new(path.to_string_lossy().into_owned(), collect.clone());
+    *engine.extra_root_cert.lock().expect("lock") = Some(imap.root_cert_der().to_vec());
+
+    fn storage<T>() -> Result<T, SyncFailure> {
+        Err(SyncFailure::Failed {
+            kind: SyncErrorKind::Storage,
+        })
+    }
+    assert_eq!(engine.sync_folder(folder.0), storage());
+    assert_eq!(engine.load_older(folder.0, 10), storage());
+    assert_eq!(engine.refresh_folders(account.0), storage());
+    assert_eq!(engine.start_live_updates(account.0), storage());
+    assert_eq!(engine.replay_actions(account.0), storage());
+    assert!(engine.take_new_mail().is_err());
+    // Background sync skips the account without connecting and reports it;
+    // the notifications it gathers at the end fail the same way.
+    assert_eq!(engine.background_sync(5), storage());
+    let reported = collect.0.lock().expect("events").iter().any(|e| {
+        matches!(
+            e,
+            CoreEvent::SyncError {
+                kind: SyncErrorKind::Storage,
+                ..
+            }
+        )
+    });
+    assert!(reported, "the failure is reported");
+    let store = Store::open(&path).expect("store");
+    assert!(matches!(
+        imap_login(&store, account, None),
+        Err(events::SyncErrorKind::Storage)
+    ));
     assert_eq!(imap.connections_accepted(), 0, "the server was contacted");
     drop(store);
     let _ = std::fs::remove_file(&path);

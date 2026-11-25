@@ -47,4 +47,6 @@ rustls-platform-verifier = "0.7.1"
 [dev-dependencies]
 tokio = { version = "1.54.1", features = ["macros", "rt-multi-thread", "time"] }
 mailcrane-testkit = { path = "../mailcrane-testkit" }
+# Already in the tree (mailcrane-store); tests use it to damage a database.
+rusqlite = { version = "0.43.0", features = ["bundled"] }
 tempfile = "3.27.0"

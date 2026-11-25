@@ -152,7 +152,7 @@ impl SyncEngine {
         let storage = |_| crate::sync::failed(events::SyncErrorKind::Storage);
         // A local-only account (#289) has no server: its actions are already
         // done locally, so they are confirmed here instead of replayed.
-        if self.is_local(account) {
+        if self.is_local(account)? {
             let store = self.open_store()?;
             for op in store.pending_ops(account).map_err(storage)? {
                 store.complete_op(op.id, true).map_err(storage)?;

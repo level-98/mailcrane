@@ -337,8 +337,12 @@ pub(crate) fn smtp_settings(
         .ok_or(SendError::AccountNotFound)?
         .details;
     // A local-only account (#289) has no server and never connects; sending
-    // from it fails before the network, as if it had no credentials.
-    if store.is_local_account(account_id).unwrap_or(true) {
+    // from it fails before the network, as if it had no credentials. A marker
+    // that can't be read is a storage failure, also before the network.
+    if store
+        .is_local_account(account_id)
+        .map_err(|_| SendError::Storage)?
+    {
         return Err(SendError::MissingCredentials);
     }
     let password = secrets

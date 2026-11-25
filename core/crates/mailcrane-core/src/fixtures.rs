@@ -170,6 +170,7 @@ fn inbox_folder(account_id: AccountId, uidnext: i64) -> NewFolder {
         uidnext: synced.then_some(uidnext),
         highestmodseq: None,
         is_subscribed: true,
+        selectable: true,
     }
 }
 
