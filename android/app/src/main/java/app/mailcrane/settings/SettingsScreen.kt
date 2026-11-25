@@ -81,6 +81,13 @@ class SettingsViewModel
             viewModelScope.launch { settings.setDynamicColor(enabled) }
         }
 
+        val groupByConversation: StateFlow<Boolean> =
+            settings.groupByConversation.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), true)
+
+        fun setGroupByConversation(enabled: Boolean) {
+            viewModelScope.launch { settings.setGroupByConversation(enabled) }
+        }
+
         fun setDarkMessageBodies(enabled: Boolean) {
             viewModelScope.launch { settings.setDarkMessageBodies(enabled) }
         }
@@ -111,6 +118,7 @@ fun SettingsScreen(
     val themeMode by viewModel.themeMode.collectAsStateWithLifecycle()
     val dynamicColor by viewModel.dynamicColor.collectAsStateWithLifecycle()
     val darkBodies by viewModel.darkMessageBodies.collectAsStateWithLifecycle()
+    val grouped by viewModel.groupByConversation.collectAsStateWithLifecycle()
     val swipeRight by viewModel.swipeRight.collectAsStateWithLifecycle()
     val swipeLeft by viewModel.swipeLeft.collectAsStateWithLifecycle()
     SettingsContent(
@@ -124,6 +132,8 @@ fun SettingsScreen(
                 mode = themeMode,
                 dynamicColor = dynamicColor,
                 darkMessageBodies = darkBodies,
+                groupByConversation = grouped,
+                onGroupByConversationChange = viewModel::setGroupByConversation,
                 onModeChange = viewModel::setThemeMode,
                 onDynamicColorChange = viewModel::setDynamicColor,
                 onDarkMessageBodiesChange = viewModel::setDarkMessageBodies,
@@ -232,6 +242,8 @@ data class AppearanceSettings(
     val onModeChange: (ThemeMode) -> Unit = {},
     val onDynamicColorChange: (Boolean) -> Unit = {},
     val onDarkMessageBodiesChange: (Boolean) -> Unit = {},
+    val groupByConversation: Boolean = true,
+    val onGroupByConversationChange: (Boolean) -> Unit = {},
 )
 
 @Composable
@@ -271,6 +283,12 @@ private fun AppearanceSection(a: AppearanceSettings) {
         summary = R.string.settings_dark_bodies_summary,
         checked = a.darkMessageBodies,
         onChange = a.onDarkMessageBodiesChange,
+    )
+    SwitchRow(
+        title = R.string.settings_group_threads,
+        summary = R.string.settings_group_threads_summary,
+        checked = a.groupByConversation,
+        onChange = a.onGroupByConversationChange,
     )
 }
 

@@ -293,6 +293,13 @@
     <string name="settings_theme_dark">Dark</string>
     <string name="settings_dynamic_color">Use wallpaper colours</string>
     <string name="settings_dynamic_color_summary">Take the app’s colours from your wallpaper</string>
+    <string name="settings_group_threads">Group by conversation</string>
+    <string name="settings_group_threads_summary">Show replies together with the message they answer</string>
+    <string name="thread_back">Back</string>
+    <plurals name="thread_a11y_count">
+        <item quantity="one">%1$d message</item>
+        <item quantity="other">%1$d messages</item>
+    </plurals>
     <string name="settings_dark_bodies">Dark message bodies</string>
     <string name="settings_dark_bodies_summary">In dark mode, darken HTML mail instead of showing it on a light page (Android 13 and later)</string>
 

@@ -74,4 +74,11 @@ class FakeAppSettings(
     override suspend fun setContactsPromptAnswered() {
         contactsAnswered.value = true
     }
+
+    private val group = MutableStateFlow(true)
+    override val groupByConversation: StateFlow<Boolean> = group
+
+    override suspend fun setGroupByConversation(enabled: Boolean) {
+        group.value = enabled
+    }
 }

@@ -80,6 +80,16 @@ interface MailboxCore {
      */
     suspend fun wakeDueSnoozes(): List<WokenMessage> = emptyList()
 
+    /** Conversations with messages in the folder, newest first (M4-02). */
+    suspend fun listThreads(
+        folderId: Long,
+        offset: Int,
+        limit: Int,
+    ): List<ThreadSummary> = emptyList()
+
+    /** Every message of a conversation across folders, oldest first. */
+    suspend fun listThreadMessages(threadId: Long): List<MessageSummary> = emptyList()
+
     /** The next time a snoozed message wakes (Unix seconds), or null. @throws SnoozeFailure */
     suspend fun nextSnoozeWake(): Long? = null
 }
@@ -198,6 +208,18 @@ class UniffiMailboxCore(
     }
 
     override suspend fun nextSnoozeWake(): Long? = withContext(io) { engine.nextSnoozeWake() }
+
+    override suspend fun listThreads(
+        folderId: Long,
+        offset: Int,
+        limit: Int,
+    ): List<ThreadSummary> =
+        withContext(io) {
+            listThreads(dbPath, folderId, offset.coerceAtLeast(0).toUInt(), limit.coerceAtLeast(0).toUInt())
+        }
+
+    override suspend fun listThreadMessages(threadId: Long): List<MessageSummary> =
+        withContext(io) { listThreadMessages(dbPath, threadId) }
 
     override suspend fun searchMessages(
         accountId: Long,

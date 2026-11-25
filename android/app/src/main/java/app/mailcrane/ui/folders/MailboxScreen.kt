@@ -34,6 +34,7 @@ import app.mailcrane.ui.compose.LocalDraftsScreen
 import app.mailcrane.ui.compose.OutboxScreen
 import app.mailcrane.ui.compose.OutboxViewModel
 import app.mailcrane.ui.compose.ReplyRequest
+import app.mailcrane.ui.conversation.ConversationScreen
 import app.mailcrane.ui.message.MessageScreen
 import app.mailcrane.ui.messagelist.MessageListScreen
 import app.mailcrane.ui.messagelist.errorText
@@ -73,6 +74,8 @@ fun MailboxScreen(
             var showDrafts by rememberSaveable { mutableStateOf(false) }
             var showOutbox by rememberSaveable { mutableStateOf(false) }
             var showSearch by rememberSaveable { mutableStateOf(false) }
+            // An open conversation (M4-02): its thread id and title.
+            var openThread by rememberSaveable { mutableStateOf<Pair<Long, String>?>(null) }
             if (showOutbox) {
                 BackHandler { showOutbox = false }
                 OutboxScreen(
@@ -104,6 +107,17 @@ fun MailboxScreen(
                     folderId = selected.id,
                     onOpenMessage = { openMessage = it },
                     onBack = { showSearch = false },
+                )
+                return
+            }
+            val thread = openThread
+            if (thread != null && messageId == null) {
+                BackHandler { openThread = null }
+                ConversationScreen(
+                    threadId = thread.first,
+                    title = thread.second,
+                    onBack = { openThread = null },
+                    onOpenMessage = { openMessage = it },
                 )
                 return
             }
@@ -170,6 +184,7 @@ fun MailboxScreen(
                         onOpenFolders = { scope.launch { drawerState.open() } },
                         folders = state.folders,
                         onOpenSearch = { showSearch = true },
+                        onOpenThread = { id, title -> openThread = id to title },
                         onCompose = onCompose,
                         composeFabModifier = composeFabModifier,
                         notice = notice,

@@ -68,6 +68,11 @@ interface AppSettings {
 
     suspend fun clearRecentSearches()
 
+    /** Whether the message list groups messages into conversations (M4-02); on by default. */
+    val groupByConversation: Flow<Boolean>
+
+    suspend fun setGroupByConversation(enabled: Boolean)
+
     /** Whether the user was asked about suggestions from their contacts (M2-08); asked once. */
     val contactsPromptAnswered: Flow<Boolean>
 
@@ -104,6 +109,12 @@ class DataStoreAppSettings(
         dataStore.data.catch { e -> if (e is IOException) emit(emptyPreferences()) else throw e }
 
     override val cleanLinks: Flow<Boolean> = prefs.map { it[CLEAN_LINKS] ?: true }
+
+    override val groupByConversation: Flow<Boolean> = prefs.map { it[GROUP_THREADS] ?: true }
+
+    override suspend fun setGroupByConversation(enabled: Boolean) {
+        dataStore.edit { it[GROUP_THREADS] = enabled }
+    }
 
     override val contactsPromptAnswered: Flow<Boolean> = prefs.map { it[CONTACTS_PROMPT] ?: false }
 
@@ -184,6 +195,7 @@ class DataStoreAppSettings(
         val THEME = stringPreferencesKey("theme_mode")
         val DYNAMIC_COLOR = booleanPreferencesKey("dynamic_color")
         val DARK_BODIES = booleanPreferencesKey("dark_message_bodies")
+        val GROUP_THREADS = booleanPreferencesKey("group_by_conversation")
     }
 }
 
