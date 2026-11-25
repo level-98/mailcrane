@@ -1,0 +1,1 @@
+- Automatic account setup on Android: enter your address and password, check the settings Mailcrane found, or set up manually. DNS lookups use the system resolver on Android 10 and later (part of #31).
