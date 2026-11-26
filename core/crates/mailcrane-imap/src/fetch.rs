@@ -386,14 +386,35 @@ pub const PREFETCH_MAX_OCTETS: u32 = 1_048_576;
 /// is `PREFETCH_MAX_OCTETS + 1` (an `Arg::Raw` has to be a fixed string).
 const PREFETCH_ITEMS: &str = "(UID RFC822.SIZE BODY.PEEK[]<0.1048577>)";
 
+/// `text` as a number if it is `min` to `max` ASCII digits, with no sign.
+fn digits(text: &str, min: usize, max: usize) -> Option<i64> {
+    if !(min..=max).contains(&text.len()) || !text.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    text.parse().ok()
+}
+
+/// Days in `month` (1–12) of `year`, Gregorian.
+fn days_in_month(year: i64, month: i64) -> i64 {
+    match month {
+        2 if (year % 4 == 0 && year % 100 != 0) || year % 400 == 0 => 29,
+        2 => 28,
+        4 | 6 | 9 | 11 => 30,
+        _ => 31,
+    }
+}
+
 /// Parses `INTERNALDATE` (`24-Nov-2026 10:46:51 +0000`, RFC 9051 §9
-/// `date-time`) to Unix seconds, UTC.
+/// `date-time`) to Unix seconds, UTC. Anything that isn't a real date in
+/// that form gives `None`, and the caller falls back to the `Date` header.
 pub fn parse_internal_date(text: &str) -> Option<i64> {
     let text = text.trim();
     let (date, rest) = text.split_once(' ')?;
     let (time, zone) = rest.split_once(' ')?;
     let mut d = date.split('-');
-    let day: i64 = d.next()?.trim().parse().ok()?;
+    // RFC 9051 §9: date-day-fixed = (SP DIGIT) / 2DIGIT; the space is
+    // already trimmed.
+    let day = digits(d.next()?, 1, 2)?;
     let month = match d.next()?.to_ascii_lowercase().as_str() {
         "jan" => 1,
         "feb" => 2,
@@ -409,33 +430,42 @@ pub fn parse_internal_date(text: &str) -> Option<i64> {
         "dec" => 12,
         _ => return None,
     };
-    let year: i64 = d.next()?.parse().ok()?;
-    // RFC 9051 §9 `date-year` is 4DIGIT; anything else is a broken server.
-    // Bounding it before the arithmetic below keeps every step in range,
-    // as `search::query::parse_date` in the core does (#410).
-    if !(1..=9999).contains(&year) {
+    // RFC 9051 §9 `date-year` is 4DIGIT, so a sign, a fifth digit or a
+    // short year is a broken server. Bounding it before the arithmetic
+    // below keeps every step in range, as `search::query::parse_date` in
+    // the core does (#410).
+    let year = digits(d.next()?, 4, 4)?;
+    if d.next().is_some() || !(1..=9999).contains(&year) {
         return None;
     }
+    // time = 2DIGIT ":" 2DIGIT ":" 2DIGIT
     let mut t = time.split(':');
-    let (h, m, s): (i64, i64, i64) = (
-        t.next()?.parse().ok()?,
-        t.next()?.parse().ok()?,
-        t.next()?.parse().ok()?,
+    let (h, m, s) = (
+        digits(t.next()?, 2, 2)?,
+        digits(t.next()?, 2, 2)?,
+        digits(t.next()?, 2, 2)?,
     );
+    if t.next().is_some() {
+        return None;
+    }
+    // zone = ("+" / "-") 4DIGIT, hours then minutes.
     let zone = zone.trim();
     let sign = match zone.as_bytes().first()? {
         b'+' => 1,
         b'-' => -1,
         _ => return None,
     };
-    let digits = zone.get(1..)?;
-    if digits.len() != 4 || !digits.bytes().all(|b| b.is_ascii_digit()) {
+    let hhmm = zone.get(1..)?;
+    if hhmm.len() != 4 {
         return None;
     }
-    let offset = sign
-        * (digits.get(..2)?.parse::<i64>().ok()? * 3600
-            + digits.get(2..)?.parse::<i64>().ok()? * 60);
-    if !(1..=31).contains(&day)
+    let (zone_h, zone_m) = (digits(hhmm.get(..2)?, 2, 2)?, digits(hhmm.get(2..)?, 2, 2)?);
+    if zone_h > 23 || zone_m > 59 {
+        return None;
+    }
+    let offset = sign * (zone_h * 3600 + zone_m * 60);
+    // Seconds may be 60 for a leap second.
+    if !(1..=days_in_month(year, month)).contains(&day)
         || !(0..24).contains(&h)
         || !(0..60).contains(&m)
         || !(0..61).contains(&s)
@@ -510,6 +540,49 @@ mod tests {
             parse_internal_date("31-Dec-9999 23:59:59 +0000"),
             Some(253_402_300_799)
         );
+    }
+
+    /// #415 review: dates that aren't real, or aren't in the RFC 9051 §9
+    /// form, give `None` instead of a shifted date.
+    #[test]
+    fn internal_date_must_be_a_real_date_in_rfc_form() {
+        for text in [
+            // A day past the month's end used to roll into the next month.
+            "31-Feb-2026 00:00:00 +0000",
+            "29-Feb-2025 00:00:00 +0000",
+            "31-Apr-2026 00:00:00 +0000",
+            "29-Feb-1900 00:00:00 +0000",
+            // Zone hours over 23 or minutes over 59 used to be applied.
+            "01-Jan-2026 00:00:00 -9999",
+            "01-Jan-2026 00:00:00 +0060",
+            "01-Jan-2026 00:00:00 +2400",
+            "01-Jan-2026 00:00:00 +00:0",
+            // date-year is 4DIGIT; time fields are 2DIGIT.
+            "01-Jan-+2026 00:00:00 +0000",
+            "01-Jan-02026 00:00:00 +0000",
+            "01-Jan-7 00:00:00 +0000",
+            "01-Jan-2026 1:00:00 +0000",
+            "01-Jan-2026 +1:00:00 +0000",
+            "+1-Jan-2026 00:00:00 +0000",
+            "001-Jan-2026 00:00:00 +0000",
+            // Nothing may be left over.
+            "01-Jan-2026-05 00:00:00 +0000",
+            "01-Jan-2026 00:00:00:00 +0000",
+            "01-Jan-2026 00:00:00 +0000 x",
+        ] {
+            assert_eq!(parse_internal_date(text), None, "{text}");
+        }
+        // Real dates at the edges still parse.
+        assert_eq!(
+            parse_internal_date("29-Feb-2024 00:00:00 +0000"),
+            Some(1_709_164_800)
+        );
+        assert_eq!(
+            parse_internal_date("29-Feb-2000 00:00:00 +0000"),
+            Some(951_782_400)
+        );
+        assert_eq!(parse_internal_date("01-Jan-1970 23:59:00 +2358"), Some(60));
+        assert_eq!(parse_internal_date("31-Dec-1969 23:59:60 +0000"), Some(0));
     }
 
     fn code(name: &str, args: Option<&str>) -> Untagged {
