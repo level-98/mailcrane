@@ -99,6 +99,53 @@ fn cached(path: &str, folder: FolderId) -> usize {
         .count()
 }
 
+/// How long a wait may go without progress before the test calls it a hang.
+const STALLED: Duration = Duration::from_secs(60);
+/// A cap on any one wait however steady its progress: only a hang guard.
+const HANG_GUARD: Duration = Duration::from_secs(300);
+
+/// Polls `done` every `poll` until it holds. A loaded CI runner can be many
+/// times slower than a quiet machine (#388), so there is no tight deadline:
+/// the wait fails only when `progress` has not risen for [`STALLED`], or
+/// after [`HANG_GUARD`] in all. A fast run returns as soon as `done` holds.
+fn wait_while_progressing(
+    what: &str,
+    poll: Duration,
+    mut progress: impl FnMut() -> usize,
+    mut done: impl FnMut() -> bool,
+) {
+    let started = Instant::now();
+    let mut last = progress();
+    let mut last_rise = started;
+    while !done() {
+        let now = progress();
+        if now > last {
+            last = now;
+            last_rise = Instant::now();
+        }
+        assert!(
+            last_rise.elapsed() < STALLED,
+            "{what}: no progress for {STALLED:?} (stuck at {last})"
+        );
+        assert!(
+            started.elapsed() < HANG_GUARD,
+            "{what}: not done after {HANG_GUARD:?} (at {last})"
+        );
+        std::thread::sleep(poll);
+    }
+}
+
+/// Waits for every running download to finish, for as long as bodies keep
+/// arriving in `folder`.
+fn wait_for_downloads(engine: &SyncEngine, path: &str, folder: FolderId) {
+    wait_while_progressing(
+        "downloads",
+        Duration::from_millis(50),
+        || cached(path, folder),
+        || engine.prefetch.wait(Duration::ZERO),
+    );
+}
+
 #[test]
 fn a_sync_on_wifi_downloads_recent_bodies_so_opening_needs_no_network() {
     let runtime = runtime_for_fakes();
@@ -115,7 +162,7 @@ fn a_sync_on_wifi_downloads_recent_bodies_so_opening_needs_no_network() {
 
     // Until the app reports the conditions, nothing is downloaded.
     assert_eq!(engine.sync_folder(folder.0), Ok(30));
-    assert!(engine.prefetch.wait(Duration::from_secs(5)));
+    wait_for_downloads(&engine, &path, folder);
     assert_eq!(cached(&path, folder), 0);
     // Nor on mobile data with the default setting, nor with "Never".
     for conditions in [
@@ -130,13 +177,13 @@ fn a_sync_on_wifi_downloads_recent_bodies_so_opening_needs_no_network() {
     ] {
         engine.set_device_conditions(conditions);
         assert!(engine.sync_folder(folder.0).is_ok());
-        assert!(engine.prefetch.wait(Duration::from_secs(5)));
+        wait_for_downloads(&engine, &path, folder);
         assert_eq!(cached(&path, folder), 0);
     }
 
     engine.set_device_conditions(on_wifi());
     assert!(engine.sync_folder(folder.0).is_ok());
-    assert!(engine.prefetch.wait(Duration::from_secs(20)));
+    wait_for_downloads(&engine, &path, folder);
     assert_eq!(cached(&path, folder), 30);
     // Nothing became \Seen on the server.
     for uid in 1..=30 {
@@ -174,7 +221,9 @@ fn opening_a_message_during_a_slow_download_waits_for_at_most_one_batch() {
     let dir = tempfile::tempdir().expect("tempdir");
     let (engine, path, folder) = imap_engine(&dir, &imap);
     assert_eq!(engine.sync_folder(folder.0), Ok(200));
-    // The message the download would reach last.
+    // The message the download would reach last, and the account's gate:
+    // looked up now, so no store read after the download starts lets more
+    // batches run before the open.
     let store = Store::open(&path).expect("store");
     let last = mailcrane_core::sync::prefetch::candidates(
         &store,
@@ -186,40 +235,76 @@ fn opening_a_message_during_a_slow_download_waits_for_at_most_one_batch() {
     .expect("candidates")
     .pop()
     .expect("a candidate");
+    let account = store
+        .get_folder(folder)
+        .expect("read")
+        .expect("folder")
+        .details
+        .account_id;
     drop(store);
+    let gate = engine.account_lock(account);
 
-    let synced_fetches = runtime
-        .block_on(imap.received_commands())
-        .iter()
-        .filter(|c| c.as_str() == "UID FETCH")
-        .count();
-    engine.set_device_conditions(on_wifi());
-    engine.prefetch_after_sync(folder);
-    let started = Instant::now();
-    while cached(&path, folder) < 20 {
-        assert!(started.elapsed() < Duration::from_secs(20), "no batch done");
-        std::thread::sleep(Duration::from_millis(5));
-    }
     // Since the sync, every UID FETCH is a download batch, or the open's.
-    let fetches = || {
+    let uid_fetches = |imap: &FakeImap, runtime: &tokio::runtime::Handle| {
         runtime
             .block_on(imap.received_commands())
             .iter()
             .filter(|c| c.as_str() == "UID FETCH")
             .count()
     };
-    let before = fetches().saturating_sub(synced_fetches);
-    assert!(before < 10, "the download is still running");
+    let synced_fetches = uid_fetches(&imap, runtime.handle());
+    engine.set_device_conditions(on_wifi());
+    engine.prefetch_after_sync(folder);
+    // Polled often, so the open below comes soon after the first batch. The
+    // first batch is the first progress there is, so only the stall guard
+    // (connecting, logging in, one batch) applies here.
+    wait_while_progressing(
+        "the first batch",
+        Duration::from_millis(5),
+        || 0,
+        || cached(&path, folder) >= 20,
+    );
+
+    // Opening announces itself on the account's gate, and from then on the
+    // download starts no new batch. Count the batches at that very moment,
+    // from inside the announcement: on a loaded runner the open's local reads
+    // before it can take as long as several batches (#388), and an open that
+    // announced late, or not at all, must fail here.
+    let at_announce = Arc::new(std::sync::Mutex::new(None::<usize>));
+    {
+        let at_announce = at_announce.clone();
+        let imap = imap.clone();
+        let handle = runtime.handle().clone();
+        gate.set_on_announce(Some(Box::new(move || {
+            let count = uid_fetches(&imap, &handle);
+            at_announce
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .get_or_insert(count);
+        })));
+    }
     assert_eq!(engine.fetch_body(last.id.0), Ok(()));
+    gate.set_on_announce(None);
+    let before = at_announce
+        .lock()
+        .expect("lock")
+        .expect("opening didn't announce itself")
+        .saturating_sub(synced_fetches);
+    assert!(before < 10, "the download is still running");
     // At most the batch that had just been sent, then the open's own fetch.
-    let after = fetches().saturating_sub(synced_fetches);
+    let after = uid_fetches(&imap, runtime.handle()).saturating_sub(synced_fetches);
     assert!(
         after <= before + 2,
-        "{before} fetches before opening, {after} after"
+        "{before} fetches when opening announced itself, {after} after"
+    );
+    // The open's own fetch comes after its announcement.
+    assert!(
+        after > before,
+        "the open fetched before it announced itself"
     );
     assert!(cached(&path, folder) < 200);
     // The download then carries on to the end.
-    assert!(engine.prefetch.wait(Duration::from_secs(30)));
+    wait_for_downloads(&engine, &path, folder);
     assert_eq!(cached(&path, folder), 200);
 }
 
@@ -249,7 +334,7 @@ fn battery_saver_and_low_storage_stop_downloads() {
     ] {
         engine.set_device_conditions(conditions);
         engine.prefetch_after_sync(folder);
-        assert!(engine.prefetch.wait(Duration::from_secs(5)));
+        wait_for_downloads(&engine, &path, folder);
         assert_eq!(cached(&path, folder), 0);
     }
     // Messages older than the age limit are left too.
@@ -259,7 +344,7 @@ fn battery_saver_and_low_storage_stop_downloads() {
     });
     engine.set_device_conditions(on_wifi());
     engine.prefetch_after_sync(folder);
-    assert!(engine.prefetch.wait(Duration::from_secs(5)));
+    wait_for_downloads(&engine, &path, folder);
     assert_eq!(cached(&path, folder), 0);
 }
 
@@ -327,7 +412,7 @@ fn a_jmap_inbox_is_downloaded_too_without_setting_seen() {
         .expect("folders")
         .expect("an inbox");
     assert_eq!(engine.sync_folder(inbox), Ok(3));
-    assert!(engine.prefetch.wait(Duration::from_secs(20)));
+    wait_for_downloads(&engine, &path, FolderId(inbox));
     assert_eq!(cached(&path, FolderId(inbox)), 3);
     for n in 1..=3 {
         let keywords = server.email_keywords(&format!("m{n}")).expect("email");
@@ -372,7 +457,6 @@ fn live_updates_and_a_download_share_one_writer_and_never_hit_busy() {
         ));
         std::thread::sleep(Duration::from_millis(150));
     }
-    let started = Instant::now();
     let stored = || {
         Store::open(&path)
             .expect("store")
@@ -380,12 +464,14 @@ fn live_updates_and_a_download_share_one_writer_and_never_hit_busy() {
             .expect("uids")
             .len()
     };
-    while stored() < 205 || cached(&path, folder) < 200 || !engine.prefetch.wait(Duration::ZERO) {
-        assert!(started.elapsed() < Duration::from_secs(60), "not done");
-        std::thread::sleep(Duration::from_millis(50));
-    }
+    wait_while_progressing(
+        "live updates and downloads",
+        Duration::from_millis(50),
+        || stored() + cached(&path, folder),
+        || stored() >= 205 && cached(&path, folder) >= 200 && engine.prefetch.wait(Duration::ZERO),
+    );
     // Downloads started by the last live sync may still be running.
-    assert!(engine.prefetch.wait(Duration::from_secs(30)));
+    wait_for_downloads(&engine, &path, folder);
     engine.stop_live_updates(account.0);
 
     // The new messages were downloaded too (the window moves with them).
