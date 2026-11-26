@@ -56,11 +56,12 @@ fun ComposeContentTestRule.assertAccessible(
         val clickable = c.contains(SemanticsActions.OnClick) || c.contains(SemanticsActions.OnLongClick)
         if (clickable) {
             if (node.label() == null) problems += "unlabelled control: ${node.describe()}"
-            // The touch area: the layout size (unclipped, so a control scrolled out of view still
-            // counts) or the extended touch bounds, whichever is larger.
-            val t = node.touchBoundsInRoot
-            val w = maxOf(t.width, node.size.width.toFloat())
-            val h = maxOf(t.height, node.size.height.toFloat())
+            // The control's own size, unclipped (so one scrolled out of view still counts): its
+            // layout element's full size, which includes Material's minimum interactive size padding
+            // around a 40 dp IconButton. Not touchBoundsInRoot: Compose stretches every small pointer
+            // target's touch area to 48 dp, which would hide a genuinely small control.
+            val w = maxOf(node.size.width, node.layoutInfo.width).toFloat()
+            val h = maxOf(node.size.height, node.layoutInfo.height).toFloat()
             // Half a pixel of slack for rounding.
             if (w + 0.5f < minPx || h + 0.5f < minPx) {
                 problems += "touch target under 48dp (${w}x${h}px): ${node.describe()}"
