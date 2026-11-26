@@ -668,6 +668,21 @@
     <string name="settings_notifications_blocked">Notifications are turned off for Mailcrane in your phone’s settings</string>
     <string name="settings_always_on">Always-on sync</string>
     <string name="settings_always_on_summary">Notify within a minute of new mail by keeping a connection open. Uses more battery and shows a permanent notification. When off, Mailcrane checks about every 15 minutes.</string>
+    <!-- Battery optimisation and always-on sync (M4-05). -->
+    <string name="settings_battery_warning">Battery optimisation may delay notifications</string>
+    <string name="settings_battery_warning_summary">Tap to see why and how to turn it off for Mailcrane</string>
+    <string name="settings_battery_exempt">Battery optimisation is off for Mailcrane</string>
+    <string name="battery_explain_title">Let always-on sync keep running</string>
+    <string name="battery_explain_body">Android saves battery by pausing apps in the background. While Mailcrane is paused, its connection to your mail server can drop, and new mail notifications may come many minutes late.
+
+To get notified within a minute, turn off battery optimisation for Mailcrane: on the next screen, choose “All apps”, find Mailcrane and select “Don’t optimise” (the wording differs between phones).
+
+Some phones have a further setting of their own, often called “Allow background activity” or “Auto-launch”, in the app’s battery settings. Turn that on too if notifications still come late.
+
+Mailcrane uses the connection only to wait for new mail, so the extra battery use is small.</string>
+    <string name="battery_explain_open">Open battery settings</string>
+    <string name="battery_explain_later">Not now</string>
+    <string name="battery_explain_failed">Your phone has no battery optimisation screen Mailcrane can open. Look for Mailcrane under Settings → Apps → Battery.</string>
     <!-- JMAP accounts (M3-04) -->
     <string name="setup_section_type">Type of account</string>
     <string name="setup_type_imap">IMAP</string>

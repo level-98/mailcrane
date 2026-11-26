@@ -21,7 +21,11 @@ enum class BackgroundMode {
     /** About every 15 minutes, through WorkManager. */
     PERIODIC,
 
-    /** Always-on: live updates kept running by a foreground service. */
+    /**
+     * Always-on: live updates kept running by a foreground service. The periodic check stays
+     * scheduled as a watchdog: it does nothing while the service runs, and checks for mail if the
+     * phone stopped the service (some phones do, to save battery).
+     */
     ALWAYS_ON,
 }
 
@@ -66,7 +70,7 @@ class BackgroundMail
                     MailCheckWorker.schedule(context)
                 }
                 BackgroundMode.ALWAYS_ON -> {
-                    MailCheckWorker.cancel(context)
+                    MailCheckWorker.schedule(context)
                     AlwaysOnSyncService.start(context)
                 }
             }
