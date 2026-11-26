@@ -112,7 +112,7 @@ See [design/README.md](design/README.md) for where each file goes and how to reb
 
 ## Building
 
-**You need:** Rust (stable, via `rustup`). For the app, JDK 17+, the Android SDK and NDK, the Android Rust targets and `cargo-ndk` (details in [android/README.md](android/README.md)). Xcode 16+ on a Mac is only needed for the iOS shell, which is paused until after the Android release. No Docker or test accounts needed: tests use built-in fake mail servers.
+**You need:** Rust via `rustup` (`rust-toolchain.toml` picks the version). For the app, JDK 17+, the Android SDK and NDK, the Android Rust targets and `cargo-ndk` (details in [android/README.md](android/README.md)). Xcode 16+ on a Mac is only needed for the iOS shell, which is paused until after the Android release. No Docker or test accounts needed: tests use built-in fake mail servers.
 
 ```bash
 git clone https://github.com/level-98/mailcrane.git

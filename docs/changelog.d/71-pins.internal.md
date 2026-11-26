@@ -1,0 +1,1 @@
+Reproducible-build pins: `rust-toolchain.toml` fixes Rust at 1.100.0 for developers and CI, Gradle pins the Android NDK (30.0.16248370) and passes it to cargo-ndk, and CI installs cargo-ndk 4.1.2. docs/fdroid.md says where each pin lives and how to update it. `cargo xtask ci` now also runs the release-notes script tests.
