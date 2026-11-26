@@ -63,12 +63,13 @@ pub(crate) fn json_strings(items: &[String]) -> String {
     out
 }
 
+/// The address as `mailbox@host`, or `None` for an RFC 9051 §7.5.2 group
+/// marker: the start of a group has a NIL host (its mailbox is the group's
+/// name), the end has a NIL mailbox. Neither is an address (#433).
 fn address_email(a: &EnvelopeAddress) -> Option<String> {
     let mailbox = decode_text(a.mailbox.as_deref()?);
-    match a.host.as_deref() {
-        Some(host) => Some(format!("{mailbox}@{}", decode_text(host))),
-        None => Some(mailbox),
-    }
+    let host = decode_text(a.host.as_deref()?);
+    Some(format!("{mailbox}@{host}"))
 }
 
 /// `[{"name":..,"email":..}, ...]`; `name` is `null` if there is none.
@@ -76,7 +77,7 @@ fn json_addresses(list: &[EnvelopeAddress]) -> String {
     let mut out = String::from("[");
     let mut first = true;
     for a in list {
-        // Group markers have no mailbox; skip them.
+        // Group markers (start and end) aren't addresses; skip them.
         let Some(email) = address_email(a) else {
             continue;
         };
@@ -291,6 +292,73 @@ mod tests {
             )) => *data,
             other => panic!("not a FETCH: {other:?}"),
         }
+    }
+
+    /// A FETCH whose ENVELOPE has these From and To address lists (RFC
+    /// 9051 §7.5.2 syntax), parsed as a session would parse it.
+    fn fetched_addresses(from: &str, to: &str) -> FetchData {
+        let line = format!(
+            "* 1 FETCH (UID 7 ENVELOPE (\"Tue, 24 Nov 2026 10:46:51 +0000\" \"Hello\" \
+             {from} NIL NIL {to} NIL NIL NIL \"<m1@example.org>\"))\r\n"
+        );
+        match mailcrane_imap::parse_response(line.as_bytes()) {
+            Ok((
+                mailcrane_imap::parser::Response::Untagged(
+                    mailcrane_imap::parser::Untagged::Fetch(data),
+                ),
+                _,
+            )) => *data,
+            other => panic!("not a FETCH: {other:?}"),
+        }
+    }
+
+    const ANA: &str = "((\"Ana\" NIL \"ana\" \"example.org\"))";
+
+    /// #433: `To: undisclosed-recipients:;` arrives as a group-start marker
+    /// (mailbox set, host NIL) and an all-NIL end marker (RFC 9051 §7.5.2).
+    /// Neither is a recipient.
+    #[test]
+    fn an_empty_group_gives_no_recipients() {
+        let data = fetched_addresses(
+            ANA,
+            "((NIL NIL \"undisclosed-recipients\" NIL)(NIL NIL NIL NIL))",
+        );
+        let row = header_row(FolderId(1), &data).expect("row");
+        assert_eq!(row.to_json, "[]");
+    }
+
+    /// The members between the markers are kept, and only they.
+    #[test]
+    fn a_group_keeps_exactly_its_members() {
+        let data = fetched_addresses(
+            ANA,
+            "((NIL NIL \"team\" NIL)(\"Bo\" NIL \"bo\" \"example.net\")\
+             (NIL NIL \"carl\" \"example.com\")(NIL NIL NIL NIL))",
+        );
+        let row = header_row(FolderId(1), &data).expect("row");
+        assert_eq!(
+            row.to_json,
+            "[{\"name\":\"Bo\",\"email\":\"bo@example.net\"},\
+             {\"name\":null,\"email\":\"carl@example.com\"}]"
+        );
+    }
+
+    /// A From that is only a group has no sender (the app shows its usual
+    /// unknown sender), not the group's name as an address; a group with a
+    /// member gives that member.
+    #[test]
+    fn a_from_group_is_not_a_sender() {
+        let empty = fetched_addresses("((NIL NIL \"list\" NIL)(NIL NIL NIL NIL))", "NIL");
+        let row = header_row(FolderId(1), &empty).expect("row");
+        assert_eq!((row.from_name, row.from_addr), (None, None));
+
+        let member = fetched_addresses(
+            "((NIL NIL \"list\" NIL)(\"Ana\" NIL \"ana\" \"example.org\")(NIL NIL NIL NIL))",
+            "NIL",
+        );
+        let row = header_row(FolderId(1), &member).expect("row");
+        assert_eq!(row.from_addr.as_deref(), Some("ana@example.org"));
+        assert_eq!(row.from_name.as_deref(), Some("Ana"));
     }
 
     /// #410: an INTERNALDATE with an impossible year doesn't crash the sync
