@@ -548,6 +548,25 @@ class ComposeViewModelTest {
         val vm = ComposeViewModel(core, FakeAppSettings())
         vm.start(1, ReplyRequest(42, ReplyKind.REPLY, "Ana wrote:"))
         assertEquals("\n\n-- \nBea\n\n\nAna wrote:\n> Noon?\n", vm.state.value.body)
+        // A reply starts writing at the top, above the signature and quote.
+        assertFalse(vm.state.value.bodyCursorAtEnd)
+    }
+
+    @Test
+    fun aReopenedDraftCarriesOnAtItsEnd() {
+        // #419: the body field puts the cursor at the end of a saved draft, not at its start.
+        val core = FakeCore()
+        val vm = started(core)
+        assertFalse(vm.state.value.bodyCursorAtEnd)
+        vm.onBodyChange("Draft text")
+        vm.requestClose()
+        val id = core.drafts.keys.single()
+        val reopened = ComposeViewModel(core, FakeAppSettings()).apply { start(1, draft = DraftRequest(draftId = id)) }
+        assertEquals("Draft text", reopened.state.value.body)
+        assertTrue(reopened.state.value.bodyCursorAtEnd)
+        // A new message after that starts from scratch.
+        reopened.reset()
+        assertFalse(reopened.state.value.bodyCursorAtEnd)
     }
 
     @Test

@@ -118,6 +118,11 @@ data class ComposeUiState(
     val showCcBcc: Boolean = false,
     val subject: String = "",
     val body: String = "",
+    /**
+     * Where the cursor goes when [body] is loaded into an empty field: the end for a saved draft
+     * the user is coming back to, the start otherwise (a new message, reply or forward) (#419).
+     */
+    val bodyCursorAtEnd: Boolean = false,
     val sending: Boolean = false,
     val error: ComposeError? = null,
     /** Addresses named in [error], for "all recipients were refused". */
@@ -257,6 +262,8 @@ class ComposeViewModel
                         showCcBcc = it.showCcBcc || !cc.isEmpty || !bcc.isEmpty,
                         subject = draft.subject,
                         body = draft.bodyText,
+                        // Back to a saved draft: carry on writing at its end (#419).
+                        bodyCursorAtEnd = true,
                         inReplyTo = draft.inReplyTo,
                         references = draft.references,
                         forwardAttachmentsOf = draft.forwardAttachmentsOf,

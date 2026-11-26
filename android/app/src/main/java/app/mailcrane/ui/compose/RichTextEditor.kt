@@ -58,16 +58,45 @@ internal fun RichBodyField(
     enabled: Boolean,
     colors: androidx.compose.material3.TextFieldColors,
 ) {
-    var value by remember { mutableStateOf(TextFieldValue(state.body)) }
-    // Text set from outside (reply, draft, signature, list toggles) replaces the field's text.
+    var value by remember {
+        mutableStateOf(TextFieldValue(state.body, TextRange(if (state.bodyCursorAtEnd) state.body.length else 0)))
+    }
+    // Texts this field has sent with onBodyChange that haven't come back in state.body yet, oldest
+    // first (#419). Typing can outrun the view model: state.body then shows an older edit of this
+    // field's own, which must not be put back into it. Not state: changing it redraws nothing.
+    val inFlight = remember { ArrayDeque<String>() }
+    // The selection a list toggle asked for, applied once its new text arrives.
+    var selectionForNextText by remember { mutableStateOf<TextRange?>(null) }
     LaunchedEffect(state.body) {
-        if (value.text != state.body) {
-            value =
-                value.copy(
-                    text = state.body,
-                    selection = TextRange(value.selection.end.coerceAtMost(state.body.length)),
-                )
+        val incoming = state.body
+        val echo = inFlight.indexOf(incoming)
+        if (echo >= 0) {
+            // This field's own edit, back late: everything sent up to it has arrived.
+            repeat(echo + 1) { inFlight.removeFirst() }
+        } else {
+            // Text set from outside (reply, draft, signature, list toggles) replaces the field's
+            // text. Whatever was still in flight has been overtaken.
+            inFlight.clear()
+            if (value.text != incoming) {
+                val asked = selectionForNextText
+                val selection =
+                    when {
+                        asked != null -> asked
+                        value.text.isEmpty() && state.bodyCursorAtEnd -> TextRange(incoming.length)
+                        else -> value.selection
+                    }
+                value =
+                    value.copy(
+                        text = incoming,
+                        selection =
+                            TextRange(
+                                selection.start.coerceAtMost(incoming.length),
+                                selection.end.coerceAtMost(incoming.length),
+                            ),
+                    )
+            }
         }
+        selectionForNextText = null
     }
     var askingLink by remember { mutableStateOf(false) }
     val linkColor = MaterialTheme.colorScheme.primary
@@ -90,13 +119,15 @@ internal fun RichBodyField(
             ToolbarButton("I", R.string.rich_italic, enabled, italic = true) {
                 actions.onFormat(sel.min, sel.max, InlineFormat.ITALIC)
             }
+            // The new selection refers to the toggled text, which arrives through state.body; set
+            // now, it would be cut down to the old text's length.
             ToolbarButton("•", R.string.rich_bullets, enabled) {
                 val (s, e) = actions.onList(sel.min, sel.max, ListKind.BULLET)
-                value = value.copy(selection = TextRange(s, e))
+                selectionForNextText = TextRange(s, e)
             }
             ToolbarButton("1.", R.string.rich_numbers, enabled) {
                 val (s, e) = actions.onList(sel.min, sel.max, ListKind.NUMBERED)
-                value = value.copy(selection = TextRange(s, e))
+                selectionForNextText = TextRange(s, e)
             }
             ToolbarButton("🔗", R.string.rich_link, enabled && !sel.collapsed) { askingLink = true }
         }
@@ -112,6 +143,8 @@ internal fun RichBodyField(
     TextField(
         value = value,
         onValueChange = { new ->
+            // Typing after a list toggle that changed nothing: its selection is no longer wanted.
+            selectionForNextText = null
             // Enter at the end of a list line starts the next item.
             val continued = continueList(value.text, new.text, new.selection.end)
             value =
@@ -122,7 +155,12 @@ internal fun RichBodyField(
                 } else {
                     new
                 }
-            if (value.text != state.body) onBodyChange(value.text)
+            // Compared with the last text sent, not with state.body, which may be an older edit:
+            // deleting back to it while it is stale must still be sent.
+            if (value.text != (inFlight.lastOrNull() ?: state.body)) {
+                inFlight.addLast(value.text)
+                onBodyChange(value.text)
+            }
         },
         enabled = enabled,
         minLines = 8,
