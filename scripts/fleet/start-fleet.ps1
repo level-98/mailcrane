@@ -17,7 +17,9 @@ scripts/fleet/start-fleet.ps1
 .EXAMPLE
 scripts/fleet/start-fleet.ps1 -Seats lead,dev1
 #>
-[CmdletBinding()]
+# No positional binding: under 'powershell -File', '-Seats lead, dev1' would
+# otherwise bind the stray 'dev1' to -PermissionMode.
+[CmdletBinding(PositionalBinding = $false)]
 param(
     [string[]] $Seats = @('lead', 'dev1', 'dev2', 'review', 'qa'),
     [string] $PermissionMode = 'auto',
@@ -46,6 +48,13 @@ if (-not $root) { Stop-Fleet 'run this from inside the mailcrane repository.' }
 $root = $root -replace '/', '\'
 $common = (& git -C $root rev-parse --path-format=absolute --git-common-dir) -replace '/', '\'
 if ((Split-Path $common -Parent) -ne $root) { Stop-Fleet "run this from the main checkout ($((Split-Path $common -Parent))), not a worktree." }
+
+# 'powershell -File' passes '-Seats a,b' as one string; split it. Seat names
+# are the Synapse identity and window name, so use them lower-cased, once each:
+# 'Dev1' would be a different identity, and 'dev1,dev1' two windows sharing
+# one worktree.
+$Seats = @($Seats | ForEach-Object { $_ -split ',' } | ForEach-Object { $_.Trim().ToLowerInvariant() } | Where-Object { $_ } | Select-Object -Unique)
+if ($Seats.Count -eq 0) { Stop-Fleet "no seats given. Seats: $($roles.Keys -join ', ')." }
 
 foreach ($s in $Seats) {
     if (-not $roles.ContainsKey($s)) { Stop-Fleet "unknown seat '$s'. Seats: $($roles.Keys -join ', ')." }
@@ -92,19 +101,25 @@ foreach ($seat in $Seats) {
     $dir = if ($seat -eq 'lead') { $root } else { Initialize-Worktree $seat }
     $target = Join-Path $root ".worktrees\target-$seat"
 
+    # --dangerously-load-development-channels takes a list of values, so it
+    # would swallow the /loop prompt after it and claude would exit. It comes
+    # first, and an ordinary option always follows it to end the list.
     $claudeArgs = @(
+        '--dangerously-load-development-channels', 'server:synapse',
         '--agent', $roles[$seat],
         '-n', "mailbot.$seat",
-        '--permission-mode', $PermissionMode,
-        '--dangerously-load-development-channels', 'server:synapse'
+        '--permission-mode', $PermissionMode
     )
     if ($Model) { $claudeArgs += @('--model', $Model) }
     $argText = ($claudeArgs | ForEach-Object { "'" + ($_ -replace "'", "''") + "'" }) -join ' '
 
+    # Every value goes into the window's script single-quoted, so escape '.
+    $seatText = $seat -replace "'", "''"
+    $targetText = $target -replace "'", "''"
     $command = @"
-`$host.UI.RawUI.WindowTitle = 'mailbot.$seat'
-`$env:DEV_SYNC_SEAT = '$seat'
-`$env:CARGO_TARGET_DIR = '$target'
+`$host.UI.RawUI.WindowTitle = 'mailbot.$seatText'
+`$env:DEV_SYNC_SEAT = '$seatText'
+`$env:CARGO_TARGET_DIR = '$targetText'
 claude $argText '$($loop -replace "'", "''")'
 "@
     $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($command))
