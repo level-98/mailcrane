@@ -178,3 +178,35 @@ fn forward_includes_the_original_headers_and_text() {
         .contains("Cc: \"Carol, C.\" <carol@example.com>"));
     assert!(d.body_text.ends_with("\nHi all,\n\nnoon?\n"));
 }
+
+#[test]
+fn reply_and_forward_subjects_have_no_bidi_controls() {
+    // #333: the fixture's subject carries RLO, LRO, RLI, FSI and PDI.
+    let path = format!(
+        "{}/../../../tests/fixtures/mime/bidi-subject-attachment.eml",
+        env!("CARGO_MANIFEST_DIR")
+    );
+    let raw = std::fs::read(path).expect("fixture");
+    let o = mailcrane_mime::parse_message(&raw).expect("parse");
+    assert!(o
+        .subject
+        .as_deref()
+        .is_some_and(|s| s.chars().any(mailcrane_mime::is_bidi_control)));
+    let plain = "Invoice fdp.exe for March 2026 paid";
+    for (kind, want) in [
+        (ReplyKind::Reply, format!("Re: {plain}")),
+        (ReplyKind::ReplyAll, format!("Re: {plain}")),
+        (ReplyKind::Forward, format!("Fwd: {plain}")),
+    ] {
+        let d = draft(&o, kind);
+        assert_eq!(d.subject, want, "{kind:?}");
+        assert!(
+            !d.body_text.chars().any(mailcrane_mime::is_bidi_control),
+            "{kind:?} body"
+        );
+    }
+    // A prefix hidden behind an override is still recognised.
+    let mut o = original();
+    o.subject = Some("\u{202d}Re: Lunch\u{202c}".into());
+    assert_eq!(draft(&o, ReplyKind::Reply).subject, "Re: Lunch");
+}

@@ -112,7 +112,10 @@ fn draft_for(
     stored_date: i64,
 ) -> ComposeDraft {
     let (to, cc) = recipients(original, kind, own_email);
-    let subject = original.subject.as_deref().unwrap_or("").trim();
+    // Without bidi controls, so an override in the original can't reverse
+    // the compose field or go out in the reply's Subject (#333).
+    let subject = mailcrane_mime::strip_bidi(original.subject.as_deref().unwrap_or(""));
+    let subject = subject.trim();
     let text = original.text_plain.as_deref().unwrap_or("");
     let (in_reply_to, references, subject, body_text) = match kind {
         ReplyKind::Reply | ReplyKind::ReplyAll => (
@@ -285,7 +288,7 @@ fn forwarded(original: &ParsedMessage, text: &str, intro: &str, stored_date: i64
     ));
     out.push_str(&format!(
         "Subject: {}\n",
-        original.subject.as_deref().unwrap_or("")
+        mailcrane_mime::strip_bidi(original.subject.as_deref().unwrap_or(""))
     ));
     out.push_str(&format!("To: {}\n", list(&original.to)));
     if !original.cc.is_empty() {

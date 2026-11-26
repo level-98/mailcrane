@@ -134,7 +134,7 @@ pub fn list_drafts(db_path: String, account_id: i64) -> Result<Vec<DraftSummary>
         .map(|d| DraftSummary {
             id: d.id.0,
             to: one_line(&d.fields.to.join(", ")),
-            subject: one_line(&d.fields.subject),
+            subject: crate::messages::display_line(&d.fields.subject),
             snippet: one_line(&d.fields.body.chars().take(200).collect::<String>()),
             updated_at: d.updated_at,
             on_server: !d.dirty && d.server_uid.is_some(),
@@ -175,7 +175,7 @@ mod tests {
             to: vec!["Bob <bob@example.net>".into()],
             cc: vec![],
             bcc: vec!["carol@example.com".into()],
-            subject: "Plans\r\nX".into(),
+            subject: "Plans\r\n\u{202e}X".into(),
             body_text: body.into(),
             in_reply_to: Some("p@example.net".into()),
             references: vec!["p@example.net".into()],
@@ -199,7 +199,10 @@ mod tests {
         let list = list_drafts(path.clone(), account).expect("list");
         assert_eq!(list.len(), 1);
         assert_eq!(list[0].id, id);
-        assert_eq!(list[0].subject, "Plans  X", "one line");
+        assert_eq!(
+            list[0].subject, "Plans  X",
+            "one line, no bidi controls (#333)"
+        );
         assert_eq!(list[0].to, "Bob <bob@example.net>");
         assert!(!list[0].on_server && !list[0].is_conflict);
 
