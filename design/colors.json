@@ -9,8 +9,8 @@
     "surface": "#FFFFFF",
     "surfaceDim": "#F4F6FB",
     "outline": "#D5DBEA",
-    "error": "#D93B3B",
-    "success": "#1F9D63"
+    "error": "#C62828",
+    "success": "#157A4C"
   },
   "dark": {
     "surface": "#0F1424",
@@ -18,6 +18,8 @@
     "primary": "#8FA8FF",
     "ink": "#E8ECF8",
     "inkMuted": "#9AA3BF",
-    "outline": "#2A3350"
+    "outline": "#2A3350",
+    "error": "#F28B82",
+    "success": "#3DBE83"
   }
 }

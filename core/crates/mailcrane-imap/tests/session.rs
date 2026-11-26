@@ -500,3 +500,33 @@ async fn uid_search_newest_works_in_windows_that_fit_the_line_limit() {
         .expect("keyed search");
     assert_eq!(found, [top]);
 }
+
+#[tokio::test]
+async fn select_reusing_skips_a_repeat_select_and_noop_works() {
+    // Issue #294: a reused connection opening several messages in one folder
+    // selects it once.
+    let imap = FakeImap::builder()
+        .user(USER, PASSWORD)
+        .folder("INBOX", vec![b"Subject: a\r\n\r\nA\r\n".to_vec()])
+        .folder("Archive", Vec::new())
+        .start()
+        .await
+        .expect("fake imap starts");
+    let mut session = connect(&config(&imap, ImapSecurity::ImplicitTls), PASSWORD)
+        .await
+        .expect("connects");
+    let first = session.select_reusing("INBOX").await.expect("select");
+    let again = session.select_reusing("INBOX").await.expect("reuse");
+    assert_eq!(first, again);
+    assert_eq!(imap.selected_folders().await, ["INBOX"]);
+    // Another folder is selected for real, and so is INBOX after it.
+    session.select_reusing("Archive").await.expect("archive");
+    session.select_reusing("INBOX").await.expect("inbox again");
+    assert_eq!(imap.selected_folders().await, ["INBOX", "Archive", "INBOX"]);
+    // A plain select always asks the server.
+    session.select("INBOX").await.expect("select");
+    assert_eq!(imap.selected_folders().await.len(), 4);
+    session.noop().await.expect("noop");
+    assert!(imap.received_commands().await.iter().any(|c| c == "NOOP"));
+    session.logout().await;
+}

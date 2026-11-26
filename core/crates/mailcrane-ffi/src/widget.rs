@@ -1,7 +1,7 @@
 //! Data for the home-screen widget (M4-11): the Unified Inbox's unread count
 //! and newest messages, read-only and quick.
 
-use crate::messages::{marker_color, marker_colors, name_line, one_line};
+use crate::messages::{marker_color, marker_colors};
 use crate::sync::{failed, SyncFailure};
 use mailcrane_core::events;
 use mailcrane_store::Store;
@@ -57,8 +57,8 @@ pub fn widget_snapshot(db_path: String, limit: u32) -> Result<WidgetSnapshot, Sy
                 id: h.id.0,
                 account_id: account.0,
                 account_color: marker_color(&colors, account.0),
-                from_name: name_line(&from),
-                subject: one_line(&d.subject),
+                from_name: crate::messages::display_line(&from),
+                subject: crate::messages::display_line(&d.subject),
                 date: d.date,
                 is_seen: d.flags.seen,
             }

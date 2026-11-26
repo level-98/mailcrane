@@ -25,6 +25,7 @@ use mail_parser::{MessageParser, PartFlags, PartKind};
 pub use address::{
     parse_address_list, split_address_list, AddressEntry, AddressProblem, InvalidAddress, SplitList,
 };
+pub use bidi::{is_bidi_control, strip_bidi};
 pub use build::{
     build_message, format_date, new_message_id, AddressField, BuildError, OutgoingAttachment,
     OutgoingMessage, TransferEncoding, MAX_ATTACHMENT_BYTES,

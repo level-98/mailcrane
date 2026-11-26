@@ -71,7 +71,7 @@ pub fn unsubscribe_options(
     let store = Store::open(&db_path).map_err(|_| UnsubscribeFailure::Storage)?;
     let options = unsubscribe::unsubscribe_options(&store, MessageId(message_id))?;
     Ok(options.map(|o| UnsubscribeInfo {
-        sender: crate::messages::name_line(&o.sender),
+        sender: crate::messages::display_line(&o.sender),
         one_click: o.one_click.is_some(),
         mailto: o.mailto.map(|m| UnsubscribeMailto {
             address: m.address,

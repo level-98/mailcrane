@@ -80,6 +80,11 @@ pub struct RuleInput {
 pub struct RuleInfo {
     pub id: i64,
     pub rule: RuleInput,
+    /// The app turned this rule off because a folder it moved mail to was
+    /// removed (#323): that folder's name, to explain why. Cleared when the
+    /// rule is saved or turned back on.
+    #[uniffi(default = None)]
+    pub missing_folder: Option<String>,
 }
 
 impl From<&RuleConditionInfo> for RuleCondition {
@@ -192,6 +197,7 @@ pub fn list_rules(db_path: String) -> Result<Vec<RuleInfo>, RulesFailure> {
                     .map(RuleActionInfo::from)
                     .collect(),
             },
+            missing_folder: r.missing_folder.map(|n| crate::messages::one_line(&n)),
         })
         .collect())
 }
@@ -225,7 +231,11 @@ pub fn delete_rule(db_path: String, id: i64) -> Result<(), RulesFailure> {
 pub fn set_rule_enabled(db_path: String, id: i64, enabled: bool) -> Result<(), RulesFailure> {
     open(&db_path)?
         .set_rule_enabled(RuleId(id), enabled)
-        .map_err(|_| RulesFailure::Storage)
+        .map_err(|e| match e {
+            // A rule with no actions can't be turned on (#323).
+            mailcrane_store::StoreError::Invalid { .. } => RulesFailure::Invalid,
+            _ => RulesFailure::Storage,
+        })
 }
 
 /// Moves a rule to `index` in the list (0 = runs first).

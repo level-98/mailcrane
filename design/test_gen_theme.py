@@ -15,7 +15,18 @@ class ThemeGeneratorTests(unittest.TestCase):
         mapped = gen_theme.mapped_colours(self.data)
         self.assertEqual(mapped["dark"]["PrimaryContainer"], self.data["light"]["primaryDark"])
         self.assertEqual(mapped["dark"]["OnPrimaryContainer"], self.data["light"]["primaryContainer"])
-        self.assertEqual(mapped["dark"]["Success"], self.data["light"]["success"])
+        # Dark mode has its own error and success colours (M6-01), with dark
+        # text on the error colour.
+        self.assertEqual(mapped["dark"]["Success"], self.data["dark"]["success"])
+        self.assertEqual(mapped["dark"]["Error"], self.data["dark"]["error"])
+        self.assertEqual(mapped["dark"]["OnError"], self.data["dark"]["surface"])
+
+    def test_coloured_text_is_checked_on_every_background(self):
+        bad = json.loads(json.dumps(self.data))
+        bad["light"]["success"] = "#1F9D63"
+        failures = gen_theme.check_contrast(bad)
+        self.assertTrue(any("Success/Surface=" in failure for failure in failures))
+        self.assertTrue(any("Success/SurfaceDim=" in failure for failure in failures))
 
     def test_current_palette_passes_contrast(self):
         self.assertEqual(gen_theme.check_contrast(self.data), [])

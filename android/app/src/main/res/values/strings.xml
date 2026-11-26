@@ -147,6 +147,9 @@
     <string name="message_auth_result_unknown">Unknown result</string>
     <string name="message_auth_result_domain">%1$s (%2$s)</string>
     <string name="message_auth_footnote">These results come from your email provider. Mailcrane doesn’t look anything up online.</string>
+    <!-- Display-name warning banner (M5-07). %1$s is the address or domain the name shows, %2$s the real sender. -->
+    <string name="message_display_name_title">Check who sent this</string>
+    <string name="message_display_name_warning">The name says %1$s, but this message was sent from %2$s.</string>
     <string name="message_attachments">Attachments</string>
     <string name="message_attachment_unnamed">Unnamed file</string>
 
@@ -161,6 +164,43 @@
 
     <!-- Folder drawer (M1-13) -->
     <string name="folders_title">Folders</string>
+    <!-- Manage folders screen (M4-22). -->
+    <string name="folders_manage">Manage folders</string>
+    <string name="folders_manage_title">Manage folders</string>
+    <string name="folders_back">Back</string>
+    <string name="folders_cancel">Cancel</string>
+    <string name="folders_new">New folder</string>
+    <string name="folders_new_in">New folder in %1$s</string>
+    <string name="folders_new_subfolder">New subfolder</string>
+    <string name="folders_create">Create</string>
+    <string name="folders_name">Folder name</string>
+    <string name="folders_actions_for">Actions for %1$s</string>
+    <string name="folders_rename">Rename</string>
+    <string name="folders_rename_title">Rename %1$s</string>
+    <string name="folders_move">Move</string>
+    <string name="folders_move_title">Move %1$s to</string>
+    <string name="folders_top_level">Top level</string>
+    <string name="folders_move_nowhere">There’s nowhere else this folder can go.</string>
+    <string name="folders_loading">Loading…</string>
+    <string name="folders_delete">Delete</string>
+    <string name="folders_delete_title">Delete %1$s?</string>
+    <string name="folders_delete_explain">The folder and every message in it are deleted from the server too. This can’t be undone. Rules that move mail into it stop doing so.</string>
+    <string name="folders_error_empty">Enter a name.</string>
+    <string name="folders_error_too_long">The name is too long (at most 100 characters).</string>
+    <string name="folders_error_bad_character" formatted="false">The name can’t contain %, * or control characters.</string>
+    <string name="folders_error_separator">The name can’t contain “%1$s”: this server uses it to separate folder levels.</string>
+    <string name="folders_error_reserved">That name is reserved. Choose another.</string>
+    <string name="folders_error_system">Standard folders, and folders that contain them, can’t be changed.</string>
+    <string name="folders_error_has_subfolders">Delete or move its subfolders first.</string>
+    <string name="folders_error_has_messages">This server only deletes empty folders. Move or delete its messages first.</string>
+    <string name="folders_error_exists">A folder with that name is already there.</string>
+    <string name="folders_error_into_itself">A folder can’t go inside itself or one of its subfolders.</string>
+    <string name="folders_error_no_subfolders">This server doesn’t support subfolders.</string>
+    <string name="folders_error_not_found">The folder no longer exists.</string>
+    <string name="folders_error_refused">The server refused the change.</string>
+    <string name="folders_error_unsupported">Folders can’t be managed for this account yet.</string>
+    <string name="folders_error_offline">Couldn’t reach the server. Check your connection and try again.</string>
+    <string name="folders_error_storage">Something went wrong on this device. Try again.</string>
     <string name="folders_open">Open folders</string>
     <string name="folders_none">This account has no folders on the server.</string>
     <!-- Standard folders show these names instead of the server's -->
@@ -348,6 +388,8 @@
     <string name="rules_explain_server">Rules marked “On the server” run on your mail server, even while this phone is off. The others run on this device. All run in this order on new mail in your inbox.</string>
     <string name="rules_on_server">On the server</string>
     <string name="rules_on_device">On this device</string>
+    <string name="rules_missing_folder">Turned off: the folder “%1$s” it moved mail to was removed. Edit the rule to choose another.</string>
+    <string name="rules_enable_no_actions">This rule has nothing to do. Edit it and add an action first.</string>
     <string name="rules_other_script">Your server already runs another filter, “%1$s”, so these rules run on this device.</string>
     <string name="rules_switch">Use on server</string>
     <string name="rules_switch_pending">Switching to these rules on the server at the next sync.</string>
@@ -499,6 +541,14 @@
     <string name="settings_dynamic_color_summary">Take the app’s colours from your wallpaper</string>
     <string name="settings_group_threads">Group by conversation</string>
     <string name="settings_group_threads_summary">Show replies together with the message they answer</string>
+    <!-- Mailbox density and sender pictures (M4-24). -->
+    <string name="settings_density">Mailbox density</string>
+    <string name="settings_density_comfortable">Comfortable</string>
+    <string name="settings_density_comfortable_summary">Sender pictures, subject and a preview line</string>
+    <string name="settings_density_compact">Compact</string>
+    <string name="settings_density_compact_summary">No pictures and tighter rows, so more messages fit on screen</string>
+    <string name="settings_contact_photos">Use photos from your contacts</string>
+    <string name="settings_contact_photos_summary">Show a sender\'s contact photo in place of their initials. Photos are read on this device only and never sent anywhere.</string>
     <string name="thread_back">Back</string>
     <plurals name="thread_a11y_count">
         <item quantity="one">%1$d message</item>

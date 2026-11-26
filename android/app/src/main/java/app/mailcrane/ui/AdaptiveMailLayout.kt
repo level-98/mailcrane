@@ -1,5 +1,6 @@
 package app.mailcrane.ui
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -52,7 +53,9 @@ fun MailPanes(
         Box(Modifier.fillMaxSize().testTag("list-pane")) { list() }
         return
     }
-    Row(Modifier.fillMaxSize()) {
+    // The panes paint the theme's surface: the window behind them is the platform's dark
+    // Theme.Material, which showed through the empty reading pane in light mode (#335).
+    Row(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surface)) {
         Box(Modifier.weight(0.42f).fillMaxHeight().testTag("list-pane")) { list() }
         VerticalDivider(color = MaterialTheme.colorScheme.outlineVariant)
         Box(Modifier.weight(0.58f).fillMaxHeight().testTag("detail-pane")) { detail() }
@@ -62,7 +65,10 @@ fun MailPanes(
 /** The detail pane before a message is chosen. */
 @Composable
 fun NoMessageSelected() {
-    Box(Modifier.fillMaxSize().testTag("no-message"), contentAlignment = Alignment.Center) {
+    Box(
+        Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surface).testTag("no-message"),
+        contentAlignment = Alignment.Center,
+    ) {
         Text(
             text = stringResource(R.string.no_message_selected),
             style = MaterialTheme.typography.bodyLarge,

@@ -9,6 +9,9 @@ use mailcrane_store::{AccountId, FolderId, FolderRole, NewFolder, Store};
 use std::collections::HashMap;
 use std::time::Duration;
 
+/// The longest personal namespace prefix kept.
+const MAX_NAMESPACE_PREFIX: usize = 200;
+
 /// How the connection is protected. There is no plain-text option.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ImapSecurity {
@@ -86,6 +89,11 @@ pub struct Session {
     pub(crate) qresync_enabled: bool,
     /// The last command sent, as a fixed label (see [`command_label`]).
     pub(crate) last_command: Option<&'static str>,
+    /// The folder selected by the last successful [`Session::select`], with
+    /// what it reported. Cleared by any command that may change or end the
+    /// selection (SELECT, EXAMINE, CLOSE, UNSELECT, LOGOUT), so it is never
+    /// stale about which folder is selected (RFC 9051 §6.3.2).
+    pub(crate) selected: Option<(String, crate::fetch::SelectInfo)>,
 }
 
 impl std::fmt::Debug for Session {
@@ -162,6 +170,7 @@ impl Session {
             host: config.host.clone(),
             qresync_enabled: false,
             last_command: None,
+            selected: None,
         };
         let (condition, greeting_text) = greeting;
         // RFC 9051 §6.2.1: after STARTTLS, forget anything learned before;
@@ -190,6 +199,7 @@ impl Session {
             host: "test.example.org".into(),
             qresync_enabled: false,
             last_command: None,
+            selected: None,
         }
     }
 
@@ -207,6 +217,12 @@ impl Session {
     /// timeout.
     async fn run(&mut self, name: &str, args: &[Arg<'_>]) -> Result<Done, ImapError> {
         self.last_command = Some(command_label(name, args));
+        if ["SELECT", "EXAMINE", "CLOSE", "UNSELECT", "LOGOUT"]
+            .iter()
+            .any(|c| name.eq_ignore_ascii_case(c))
+        {
+            self.selected = None;
+        }
         let cmd = command::build(self.tags.next(), name, args)?;
         let limit = self.command_timeout;
         within(limit, exchange(&mut self.conn, cmd.tag, cmd.segments)).await?
@@ -279,6 +295,28 @@ impl Session {
         let response = format!("{}\r\n", b64::encode(&payload)).into_bytes();
         let limit = self.command_timeout;
         within(limit, exchange(&mut self.conn, tag, vec![start, response])).await?
+    }
+
+    /// The personal namespace prefix (RFC 2342), such as `INBOX.`, when the
+    /// server advertises `NAMESPACE` (or IMAP4rev2, which includes it) and
+    /// has one; `None` otherwise, and for an empty prefix. Personal folders
+    /// are created under it. A prefix that isn't UTF-8, is too long or
+    /// contains control characters is ignored.
+    pub async fn personal_namespace(&mut self) -> Result<Option<String>, ImapError> {
+        if !has_cap(&self.caps, "NAMESPACE") && !has_cap(&self.caps, "IMAP4rev2") {
+            return Ok(None);
+        }
+        let done = self.run("NAMESPACE", &[]).await?;
+        expect_ok(&done)?;
+        let prefix = done.untagged.into_iter().find_map(|u| match u {
+            Untagged::Namespace { personal } => personal,
+            _ => None,
+        });
+        Ok(prefix
+            .and_then(|(raw, _)| String::from_utf8(raw).ok())
+            .filter(|p| {
+                !p.is_empty() && p.len() <= MAX_NAMESPACE_PREFIX && !p.chars().any(char::is_control)
+            }))
     }
 
     /// Lists every folder (`LIST "" "*"`, RFC 9051 §6.3.9), asking for
@@ -364,20 +402,84 @@ impl Session {
     }
 }
 
+/// What [`save_folder_list`] did.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SavedFolders {
+    /// The ids of the listed folders, in the order they were listed.
+    pub ids: Vec<FolderId>,
+    /// Folders the server no longer has, now removed with their messages.
+    pub removed: Vec<FolderId>,
+}
+
 /// Saves listed folders to the store in one transaction, keyed by their
 /// raw names. Sync state already stored (UIDVALIDITY, UIDNEXT,
 /// HIGHESTMODSEQ, subscription) is kept. Returns the folder ids in the same
-/// order as `folders`. On error nothing is saved.
+/// order as `folders`. On error nothing is saved. Folders the server no
+/// longer lists are removed (see [`save_folder_list`]).
 pub fn save_folders(
     store: &Store,
     account: AccountId,
     folders: &[ImapFolder],
 ) -> Result<Vec<FolderId>, ImapError> {
-    let existing: HashMap<String, NewFolder> = store
-        .list_folders(account)?
-        .into_iter()
-        .map(|f| (f.details.remote_name.clone(), f.details))
+    Ok(save_folder_list(store, account, folders)?.ids)
+}
+
+/// [`save_folders`], also saying which folders were removed (#323).
+///
+/// `folders` must be a complete, successful `LIST`. Stored folders it
+/// doesn't contain are gone from the server (deleted or renamed by another
+/// client) and are removed with their messages and queued changes; rules
+/// that moved mail to them are turned off with a note. Two exceptions: a
+/// standard folder (a role from SPECIAL-USE or its name) that is gone under
+/// its old name but whose role now belongs to a newly listed folder is
+/// renamed to it instead, keeping its row; and the Inbox is never removed.
+/// An empty list removes nothing: a server always has an Inbox, so an empty
+/// answer can't be trusted.
+pub fn save_folder_list(
+    store: &Store,
+    account: AccountId,
+    folders: &[ImapFolder],
+) -> Result<SavedFolders, ImapError> {
+    let stored = store.list_folders(account)?;
+    let listed: std::collections::HashSet<&str> =
+        folders.iter().map(|f| f.raw_name.as_str()).collect();
+    let mut existing: HashMap<String, NewFolder> = stored
+        .iter()
+        .map(|f| (f.details.remote_name.clone(), f.details.clone()))
         .collect();
+    let gone: Vec<&mailcrane_store::Folder> = if folders.is_empty() {
+        Vec::new()
+    } else {
+        stored
+            .iter()
+            .filter(|f| !listed.contains(f.details.remote_name.as_str()))
+            .filter(|f| !f.details.remote_name.eq_ignore_ascii_case("INBOX"))
+            .collect()
+    };
+    // A standard folder gone under its old name, whose role a newly listed
+    // folder now has: the same folder, renamed elsewhere.
+    let mut renames = Vec::new();
+    let mut removed = Vec::new();
+    for f in gone {
+        let found = f.details.role.and_then(|role| {
+            folders.iter().find(|l| {
+                l.role == Some(role)
+                    && !existing.contains_key(&l.raw_name)
+                    && !renames
+                        .iter()
+                        .any(|(_, r, _): &(FolderId, String, String)| *r == l.raw_name)
+            })
+        });
+        match found {
+            Some(l) => {
+                if let Some(old) = existing.remove(&f.details.remote_name) {
+                    existing.insert(l.raw_name.clone(), old);
+                }
+                renames.push((f.id, l.raw_name.clone(), l.name.clone()));
+            }
+            None => removed.push(f.id),
+        }
+    }
     let rows: Vec<NewFolder> = folders
         .iter()
         .map(|f| {
@@ -399,7 +501,8 @@ pub fn save_folders(
             }
         })
         .collect();
-    Ok(store.upsert_folders(&rows)?)
+    let ids = store.apply_folder_list(&renames, &rows, &removed)?;
+    Ok(SavedFolders { ids, removed })
 }
 
 /// A fixed label for a command, safe to log: the command name, and for `UID`

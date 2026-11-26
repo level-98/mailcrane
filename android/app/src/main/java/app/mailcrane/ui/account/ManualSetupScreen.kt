@@ -66,7 +66,10 @@ fun ManualSetupScreen(
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     state.addedAccountId?.let { id ->
-        LaunchedEffect(id) { onAccountAdded(id) }
+        LaunchedEffect(id) {
+            onAccountAdded(id)
+            viewModel.accountHandled()
+        }
     }
     ManualSetupContent(
         state = state,

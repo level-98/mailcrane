@@ -18,7 +18,10 @@ import dagger.hilt.InstallIn
 import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.components.SingletonComponent
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import java.io.IOException
 import javax.inject.Singleton
@@ -130,6 +133,25 @@ interface AppSettings {
     val backgroundDownload: Flow<BackgroundDownloadSetting>
 
     suspend fun setBackgroundDownload(setting: BackgroundDownloadSetting)
+
+    /** "Mailbox density" (M4-24): Comfortable, with sender pictures, by default. */
+    val mailboxDensity: Flow<MailboxDensity>
+
+    suspend fun setMailboxDensity(density: MailboxDensity)
+
+    /** "Use photos from your contacts" (M4-24): off by default; needs the contacts permission. */
+    val contactPhotos: Flow<Boolean>
+
+    suspend fun setContactPhotos(enabled: Boolean)
+}
+
+/** How tightly the message list packs its rows (M4-24). */
+enum class MailboxDensity {
+    /** Sender picture, sender, subject and preview. */
+    COMFORTABLE,
+
+    /** No picture, subject and preview on one line, tighter padding: more rows on screen. */
+    COMPACT,
 }
 
 /** When recent messages are downloaded in the background so they open at once (M4-25). */
@@ -259,11 +281,39 @@ class DataStoreAppSettings(
         dataStore.edit { it[UNDO_SEND] = seconds }
     }
 
+    override val mailboxDensity: Flow<MailboxDensity> =
+        prefs.map { p -> MailboxDensity.entries.firstOrNull { it.name == p[DENSITY] } ?: MailboxDensity.COMFORTABLE }
+
+    override suspend fun setMailboxDensity(density: MailboxDensity) {
+        dataStore.edit { it[DENSITY] = density.name }
+    }
+
+    override val contactPhotos: Flow<Boolean> = prefs.map { it[CONTACT_PHOTOS] ?: false }
+
+    override suspend fun setContactPhotos(enabled: Boolean) {
+        dataStore.edit { it[CONTACT_PHOTOS] = enabled }
+    }
+
+    /**
+     * The theme just chosen, shown before the settings file has been written: the app used to wait for the
+     * write, so the switch lagged behind the tap (#339). Cleared once the file holds it.
+     */
+    private val pendingTheme = MutableStateFlow<ThemeMode?>(null)
+
     override val themeMode: Flow<ThemeMode> =
-        prefs.map { p -> ThemeMode.entries.firstOrNull { it.name == p[THEME] } ?: ThemeMode.SYSTEM }
+        combine(
+            prefs.map { p -> ThemeMode.entries.firstOrNull { it.name == p[THEME] } ?: ThemeMode.SYSTEM },
+            pendingTheme,
+        ) { stored, pending -> pending ?: stored }.distinctUntilChanged()
 
     override suspend fun setThemeMode(mode: ThemeMode) {
-        dataStore.edit { it[THEME] = mode.name }
+        pendingTheme.value = mode
+        try {
+            dataStore.edit { it[THEME] = mode.name }
+        } finally {
+            // Saved, or the write failed and the stored choice stands.
+            pendingTheme.compareAndSet(mode, null)
+        }
     }
 
     override val dynamicColor: Flow<Boolean> = prefs.map { it[DYNAMIC_COLOR] ?: true }
@@ -318,6 +368,8 @@ class DataStoreAppSettings(
         val CONTACTS_PROMPT = booleanPreferencesKey("contacts_prompt_answered")
         val UNDO_SEND = intPreferencesKey("undo_send_seconds")
         val THEME = stringPreferencesKey("theme_mode")
+        val DENSITY = stringPreferencesKey("mailbox_density")
+        val CONTACT_PHOTOS = booleanPreferencesKey("contact_photos")
         val DYNAMIC_COLOR = booleanPreferencesKey("dynamic_color")
         val DARK_BODIES = booleanPreferencesKey("dark_message_bodies")
         val LAST_ACCOUNT = longPreferencesKey("last_account_id")

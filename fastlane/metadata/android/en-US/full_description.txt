@@ -1,0 +1,28 @@
+Mailcrane is a free, open-source email app. It works with your existing email account, keeps your mail on your phone, and never sends your mail or your data to anyone else.
+
+Works with your provider
+• IMAP and SMTP for almost every provider, set up automatically from your address in most cases, or by hand.
+• JMAP for providers that offer it, such as Fastmail and Stalwart.
+• Several accounts, each in its own colour, and one inbox for all of them.
+
+Private by default
+• No ads, no analytics, no tracking, and no servers of ours: the app talks only to your own mail provider.
+• Remote images and tracking pixels are blocked until you allow them, and the app tells you which trackers it removed.
+• Tracking parameters are removed from links before they open.
+• Before a link opens, you see where it really goes, with a warning when the text names a different site, the address mixes alphabets, or it isn't secure.
+• A "Verified" or "Failed" mark shows what your provider found when it checked who sent a message.
+• App lock with your fingerprint, face or PIN.
+
+Everything you need
+• Conversations, full-text search that works offline, and search filters.
+• Reply, reply all, forward, attachments, rich text and signatures.
+• Drafts saved as you type, an outbox that sends when you're back online, scheduled send and undo send.
+• Snooze, swipe actions, bulk actions, rules (also run by your server where it supports ManageSieve), and one-tap unsubscribe.
+• Create, rename, move and delete folders.
+• Recent messages downloaded in the background, so they open at once, even offline.
+• New-mail notifications, a home-screen widget, dark mode with dynamic colour, and layouts for tablets.
+
+Free software
+Mailcrane is licensed under the MPL-2.0 and built in the open. Its engine is written in Rust and shared with the iOS app to come.
+
+Mailcrane is still young: please report problems on the project's issue tracker.

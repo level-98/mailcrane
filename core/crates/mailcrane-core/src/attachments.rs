@@ -52,15 +52,8 @@ pub fn sanitize_filename(name: &str) -> String {
         .chars()
         .filter(|c| {
             !c.is_control()
-                && !matches!(
-                    c,
-                    '\u{202a}'..='\u{202e}'
-                        | '\u{2066}'..='\u{2069}'
-                        | '\u{200e}'
-                        | '\u{200f}'
-                        | '\u{061c}'
-                        | '\u{feff}'
-                )
+                && !mailcrane_mime::is_bidi_control(*c)
+                && *c != '\u{feff}'
                 && !matches!(c, '<' | '>' | ':' | '"' | '|' | '?' | '*')
         })
         .collect();

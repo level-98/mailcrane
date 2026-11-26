@@ -461,6 +461,17 @@ fn new_mail_is_notified_once_through_background_sync() {
     // Never again, even after another sync.
     assert_eq!(engine.background_sync(60), Ok(vec![]));
     assert_eq!(engine.take_new_mail(), Ok(vec![]));
+
+    // #315: a bidi override in the subject ("Pay <RLO>fdp.exe<PDF> now")
+    // never reaches the notification, so it can't reverse what it shows.
+    let disguised = "Subject: =?utf-8?B?UGF5IOKArmZkcC5leGXigKwgbm93?=\r\nFrom: Carol <carol@example.net>\r\nMessage-ID: <bidi@example.net>\r\n\r\nPay\r\n";
+    runtime.block_on(
+        imap.mailbox()
+            .deliver("INBOX", disguised.as_bytes().to_vec()),
+    );
+    let got = engine.background_sync(60).expect("sync");
+    assert_eq!(got.len(), 1, "{got:?}");
+    assert_eq!(got[0].subject, "Pay fdp.exe now");
     let _ = std::fs::remove_file(&path);
 }
 
@@ -768,4 +779,248 @@ fn an_unreadable_local_marker_fails_loudly_and_never_connects() {
     assert_eq!(imap.connections_accepted(), 0, "the server was contacted");
     drop(store);
     let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn the_servers_namespace_is_used_for_top_level_folders() {
+    // #325: the server says INBOX. is the personal namespace. A folder
+    // outside it ("Shared") means the folder list alone wouldn't suggest
+    // it, so INBOX.Receipts can only come from NAMESPACE.
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(1)
+        .enable_all()
+        .build()
+        .expect("runtime");
+    let imap = runtime.block_on(async {
+        FakeImap::builder()
+            .user("ns@example.org", "pw")
+            .namespace("INBOX.", '.')
+            .folder("INBOX", Vec::new())
+            .folder("INBOX.Projects", Vec::new())
+            .folder("Shared", Vec::new())
+            .start()
+            .await
+            .expect("fake imap")
+    });
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("ns.db");
+    let store = Store::open(&path).expect("store");
+    let account = store
+        .insert_account(&NewAccount {
+            display_name: "Ns".into(),
+            email: "ns@example.org".into(),
+            imap_host: "localhost".into(),
+            imap_port: imap.addr().port(),
+            imap_security: Security::Tls,
+            smtp_host: "localhost".into(),
+            smtp_port: 587,
+            smtp_security: Security::Starttls,
+            username: "ns@example.org".into(),
+        })
+        .expect("account");
+    drop(store);
+    let platform = Arc::new(Platform::default());
+    platform
+        .put(
+            SecretKey::account_password(account.0).as_str().to_owned(),
+            b"pw".to_vec(),
+        )
+        .expect("password");
+    install_secret_store(platform);
+    let engine = SyncEngine::new(
+        path.to_string_lossy().into_owned(),
+        Arc::new(Collect::default()),
+    );
+    *engine.extra_root_cert.lock().expect("lock") = Some(imap.root_cert_der().to_vec());
+    engine.refresh_folders(account.0).expect("refresh");
+
+    let id = engine
+        .create_folder(account.0, None, "Receipts".into())
+        .expect("create");
+    let store = Store::open(&path).expect("store");
+    let remote = |id: i64| {
+        store
+            .get_folder(FolderId(id))
+            .expect("get")
+            .expect("folder")
+            .details
+            .remote_name
+    };
+    assert_eq!(remote(id), "INBOX.Receipts");
+    // "Shared" moved to the top lands in the namespace too.
+    let shared = store
+        .list_folders(account)
+        .expect("list")
+        .into_iter()
+        .find(|f| f.details.remote_name == "Shared")
+        .expect("shared")
+        .id;
+    engine.move_folder(shared.0, None).expect("move");
+    assert_eq!(remote(shared.0), "INBOX.Shared");
+    let mut names = runtime.block_on(imap.mailbox().folder_names());
+    names.sort();
+    assert_eq!(
+        names,
+        ["INBOX", "INBOX.Projects", "INBOX.Receipts", "INBOX.Shared"]
+    );
+}
+
+#[test]
+fn a_jmap_account_manages_folders_through_mailbox_set() {
+    // M4-26: create, rename, move and delete on a JMAP account, each made
+    // on the server first, with the same rules as IMAP.
+    use crate::folders::{can_manage_folders, list_folders};
+    use crate::sync::folder_admin::{FolderFailure, FolderNameProblem};
+    use mailcrane_testkit::{FakeEmail, FakeJmap};
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(1)
+        .enable_all()
+        .build()
+        .expect("runtime");
+    let server = runtime.block_on(async {
+        FakeJmap::builder()
+            .user("jo@example.org", "pw")
+            .mailbox("mb-inbox", "Inbox", Some("inbox"), None)
+            .mailbox("mb-trash", "Trash", Some("trash"), None)
+            .mailbox("mb-projects", "Projects", None, None)
+            .mailbox("mb-mail", "Mail", None, None)
+            .email(FakeEmail {
+                id: "m1".into(),
+                mailbox_id: "mb-mail".into(),
+                received_at: "2026-11-25T08:00:00Z".into(),
+                subject: "Kept".into(),
+                from: "bob@example.net".into(),
+                seen: true,
+                raw: "From: bob@example.net\r\nSubject: Kept\r\n\r\nHi\r\n".into(),
+            })
+            .start()
+            .await
+            .expect("fake jmap")
+    });
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("jmap-folders.db");
+    let store = Store::open(&path).expect("store");
+    let account = store
+        .insert_jmap_account(
+            &NewAccount {
+                display_name: "Jo".into(),
+                email: "jo@example.org".into(),
+                imap_host: String::new(),
+                imap_port: 0,
+                imap_security: Security::Tls,
+                smtp_host: String::new(),
+                smtp_port: 0,
+                smtp_security: Security::Tls,
+                username: "jo@example.org".into(),
+            },
+            &server.base_url(),
+        )
+        .expect("account");
+    drop(store);
+    let platform = Arc::new(Platform::default());
+    platform
+        .put(
+            SecretKey::account_password(account.0).as_str().to_owned(),
+            b"pw".to_vec(),
+        )
+        .expect("password");
+    install_secret_store(platform);
+    let db = path.to_string_lossy().into_owned();
+    let engine = SyncEngine::new(db.clone(), Arc::new(Collect::default()));
+    *engine.extra_root_cert.lock().expect("lock") = Some(server.root_cert_der().to_vec());
+    engine.refresh_folders(account.0).expect("folders");
+
+    assert_eq!(can_manage_folders(db.clone(), account.0), Ok(true));
+    let id_of = |remote: &str| {
+        Store::open(&path)
+            .expect("store")
+            .list_folders(account)
+            .expect("list")
+            .into_iter()
+            .find(|f| f.details.remote_name == remote)
+            .map(|f| f.id.0)
+    };
+    let changeable = |remote: &str| {
+        let id = id_of(remote).expect("folder");
+        list_folders(db.clone(), account.0)
+            .expect("list")
+            .into_iter()
+            .find(|f| f.id == id)
+            .map(|f| f.can_change)
+    };
+    assert_eq!(changeable("Inbox"), Some(false));
+    assert_eq!(changeable("Projects"), Some(true));
+    let server_parent = |name: &str| {
+        server
+            .mailboxes()
+            .into_iter()
+            .find(|m| m.name == name)
+            .map(|m| m.parent_id)
+    };
+
+    // Create at the top and under a folder.
+    let receipts = engine
+        .create_folder(account.0, None, "Receipts".into())
+        .expect("create");
+    assert_eq!(server_parent("Receipts"), Some(None));
+    let projects = id_of("Projects").expect("projects");
+    engine
+        .create_folder(account.0, Some(projects), "2026".into())
+        .expect("create");
+    assert_eq!(server_parent("2026"), Some(Some("mb-projects".into())));
+    assert!(id_of("Projects/2026").is_some());
+
+    // Rename: the subfolder's path follows; the server keeps the parent.
+    engine
+        .rename_folder(projects, "Work".into())
+        .expect("rename");
+    assert!(server_parent("Work").is_some() && server_parent("Projects").is_none());
+    assert_eq!(id_of("Work"), Some(projects));
+    assert!(id_of("Work/2026").is_some());
+
+    // Move under Work.
+    engine.move_folder(receipts, Some(projects)).expect("move");
+    assert_eq!(server_parent("Receipts"), Some(Some("mb-projects".into())));
+    assert_eq!(id_of("Work/Receipts"), Some(receipts));
+
+    // Refused before contacting the server.
+    assert_eq!(
+        engine.create_folder(account.0, None, "a/b".into()),
+        Err(FolderFailure::InvalidName {
+            problem: FolderNameProblem::Separator {
+                separator: "/".into()
+            }
+        })
+    );
+    let inbox = id_of("Inbox").expect("inbox");
+    assert_eq!(
+        engine.rename_folder(inbox, "Post".into()),
+        Err(FolderFailure::SystemFolder)
+    );
+    assert_eq!(
+        engine.delete_folder(projects),
+        Err(FolderFailure::HasSubfolders)
+    );
+
+    // The server refuses a folder that still holds mail: nothing changes here.
+    let mail = id_of("Mail").expect("mail");
+    let before = Store::open(&path)
+        .expect("store")
+        .list_folders(account)
+        .expect("list");
+    assert_eq!(engine.delete_folder(mail), Err(FolderFailure::HasMessages));
+    assert_eq!(
+        Store::open(&path)
+            .expect("store")
+            .list_folders(account)
+            .expect("list"),
+        before
+    );
+    assert!(server_parent("Mail").is_some());
+
+    // An empty folder goes, on the server and here.
+    let year = id_of("Work/2026").expect("2026");
+    engine.delete_folder(year).expect("delete");
+    assert!(server_parent("2026").is_none());
+    assert!(id_of("Work/2026").is_none());
 }

@@ -18,6 +18,9 @@ struct Shared {
     special_use: Vec<(String, String)>,
     /// Folders listed as `\Noselect` parents (RFC 9051 §7.3.1).
     noselect: Vec<String>,
+    /// The personal namespace (RFC 2342) and its delimiter, if any. Without
+    /// one, the delimiter is `/`.
+    namespace: Option<(String, char)>,
     received: Arc<Mutex<Vec<String>>>,
     /// The folder names SELECT and EXAMINE asked for, in order.
     selected: Arc<Mutex<Vec<String>>>,
@@ -60,6 +63,7 @@ pub struct FakeImapBuilder {
     quirks: Vec<Quirk>,
     special_use: Vec<(String, String)>,
     noselect: Vec<String>,
+    namespace: Option<(String, char)>,
     mailbox: Option<Mailbox>,
 }
 
@@ -74,6 +78,14 @@ impl FakeImapBuilder {
 
     /// Marks folder `name` with a SPECIAL-USE attribute such as `\Sent`
     /// (RFC 6154). Not sent when [`Quirk::NoSpecialUse`] is set.
+    /// Advertises `NAMESPACE` with this personal namespace (RFC 2342), such
+    /// as `("INBOX.", '.')`, and uses its delimiter in `LIST` and `RENAME`.
+    /// Folder names are still given in full (`INBOX.Projects`).
+    pub fn namespace(mut self, prefix: impl Into<String>, delimiter: char) -> Self {
+        self.namespace = Some((prefix.into(), delimiter));
+        self
+    }
+
     pub fn special_use(mut self, name: impl Into<String>, attribute: impl Into<String>) -> Self {
         self.special_use.push((name.into(), attribute.into()));
         self
@@ -164,6 +176,7 @@ impl FakeImapBuilder {
             user,
             special_use: self.special_use,
             noselect: self.noselect,
+            namespace: self.namespace,
             received: received.clone(),
             selected: selected.clone(),
         });
@@ -214,6 +227,7 @@ impl FakeImap {
             quirks: Vec::new(),
             special_use: Vec::new(),
             noselect: Vec::new(),
+            namespace: None,
             mailbox: None,
         }
     }
@@ -430,7 +444,9 @@ async fn handle_connection(
                     }
                     line.pop();
                     line.extend_from_slice(b"{LITERAL}");
-                    if tls_stream.write_all(b"+ go ahead\r\n").await.is_err() {
+                    if tls_stream.write_all(b"+ go ahead\r\n").await.is_err()
+                        || tls_stream.flush().await.is_err()
+                    {
                         return Ok(());
                     }
                     let mut literal = vec![0u8; size];
@@ -493,6 +509,7 @@ async fn handle_imap_command(
             .write_all(b"\xFF\xFEgarbage\r\n")
             .await
             .map_err(|error| error.to_string())?;
+        stream.flush().await.map_err(|error| error.to_string())?;
         return Ok(());
     }
     let response = match command.as_str() {
@@ -524,6 +541,9 @@ async fn handle_imap_command(
             }
             if !quirks.contains(&Quirk::NoSpecialUse) {
                 caps.push_str(" SPECIAL-USE");
+            }
+            if shared.namespace.is_some() {
+                caps.push_str(" NAMESPACE");
             }
             if !quirks.contains(&Quirk::NoUidplus) {
                 caps.push_str(" UIDPLUS");
@@ -558,6 +578,7 @@ async fn handle_imap_command(
                     .write_all(b"+ \r\n")
                     .await
                     .map_err(|error| error.to_string())?;
+                stream.flush().await.map_err(|error| error.to_string())?;
                 let mut response = [0u8; 1024];
                 let read = stream
                     .read(&mut response)
@@ -589,14 +610,15 @@ async fn handle_imap_command(
                     .filter(|name| name != "INBOX"),
             );
             let mut output = String::new();
+            let delim = shared.namespace.as_ref().map_or('/', |(_, d)| *d);
             for name in &shared.noselect {
                 let quoted = name.replace('\\', "\\\\").replace('"', "\\\"");
                 output.push_str(&format!(
-                    "* LIST (\\HasChildren \\Noselect) \"/\" \"{quoted}\"\r\n"
+                    "* LIST (\\HasChildren \\Noselect) \"{delim}\" \"{quoted}\"\r\n"
                 ));
             }
             for name in &listed {
-                let prefix = format!("{name}/");
+                let prefix = format!("{name}{delim}");
                 let mut attributes = if listed.iter().any(|other| other.starts_with(&prefix)) {
                     "\\HasChildren".to_string()
                 } else {
@@ -611,7 +633,9 @@ async fn handle_imap_command(
                     }
                 }
                 let quoted = name.replace('\\', "\\\\").replace('"', "\\\"");
-                output.push_str(&format!("* LIST ({attributes}) \"/\" \"{quoted}\"\r\n"));
+                output.push_str(&format!(
+                    "* LIST ({attributes}) \"{delim}\" \"{quoted}\"\r\n"
+                ));
             }
             if quirks.contains(&Quirk::GmailLabels)
                 && !listed.iter().any(|n| n == "[Gmail]/All Mail")
@@ -697,6 +721,44 @@ async fn handle_imap_command(
                 )
             }
         }
+        "RENAME" => {
+            // RFC 9051 §6.3.6: children move with it; INBOX and an existing
+            // target are refused.
+            let old = parts.get(2).copied().unwrap_or("").trim_matches('"');
+            let new = parts.get(3).copied().unwrap_or("").trim_matches('"');
+            let names = mailbox.folder_names().await;
+            if old.is_empty() || new.is_empty() {
+                format!("{tag} BAD RENAME needs two names\r\n")
+            } else if old.eq_ignore_ascii_case("INBOX") || !names.iter().any(|n| n == old) {
+                format!("{tag} NO [NONEXISTENT] no such folder\r\n")
+            } else if new.eq_ignore_ascii_case("INBOX") || names.iter().any(|n| n == new) {
+                format!("{tag} NO [ALREADYEXISTS] folder exists\r\n")
+            } else {
+                let delim = shared.namespace.as_ref().map_or('/', |(_, d)| *d);
+                mailbox.rename_folder_with(old, new, delim).await;
+                format!("{tag} OK RENAME completed\r\n")
+            }
+        }
+        "DELETE" => {
+            // RFC 9051 §6.3.5.
+            let name = parts.get(2).copied().unwrap_or("").trim_matches('"');
+            if name.eq_ignore_ascii_case("INBOX") {
+                format!("{tag} NO [CANNOT] the inbox can't be deleted\r\n")
+            } else if !mailbox.folder_names().await.iter().any(|n| n == name) {
+                format!("{tag} NO [NONEXISTENT] no such folder\r\n")
+            } else {
+                mailbox.delete_folder(name).await;
+                format!("{tag} OK DELETE completed\r\n")
+            }
+        }
+        "NAMESPACE" => {
+            // RFC 2342 §5: only a personal namespace, if one was set.
+            let personal = match &shared.namespace {
+                Some((prefix, delim)) => format!("((\"{prefix}\" \"{delim}\"))"),
+                None => "NIL".to_string(),
+            };
+            format!("* NAMESPACE {personal} NIL NIL\r\n{tag} OK NAMESPACE completed\r\n")
+        }
         "NOOP" => "* 0 RECENT\r\n".to_string() + &format!("{tag} OK NOOP completed\r\n"),
         "LOGOUT" => format!("{tag} OK LOGOUT completed\r\n"),
         "APPEND" => {
@@ -759,12 +821,14 @@ async fn handle_imap_command(
             .write_all(format!("{tag} NO temporary failure\r\n").as_bytes())
             .await
             .map_err(|error| error.to_string())?;
+        stream.flush().await.map_err(|error| error.to_string())?;
         return Ok(());
     }
     stream
         .write_all(response.as_bytes())
         .await
-        .map_err(|error| error.to_string())
+        .map_err(|error| error.to_string())?;
+    stream.flush().await.map_err(|error| error.to_string())
 }
 
 /// `IDLE` (RFC 2177): answers `+`, then reports deliveries (`EXISTS`),
@@ -783,6 +847,7 @@ async fn idle(
         .write_all(b"+ idling\r\n")
         .await
         .map_err(|error| error.to_string())?;
+    stream.flush().await.map_err(|error| error.to_string())?;
     // What the client knows: UIDs in sequence order, with mod-sequences.
     let mut known = match view.take() {
         Some(known) => known,
@@ -833,6 +898,7 @@ async fn idle(
                 .write_all(out.as_bytes())
                 .await
                 .map_err(|error| error.to_string())?;
+            stream.flush().await.map_err(|error| error.to_string())?;
         }
         let mut byte = [0u8; 1];
         tokio::select! {

@@ -47,8 +47,10 @@ pub use fetch::{
 };
 pub use idle::IdleOutcome;
 pub use parser::{parse_response, Envelope, EnvelopeAddress, FetchData, Limits};
-pub use quirks::{detect as detect_quirks, ServerQuirk};
-pub use session::{save_folders, ImapConfig, ImapFolder, ImapSecurity, Session};
+pub use quirks::{detect as detect_quirks, FolderCommandError, ServerQuirk};
+pub use session::{
+    save_folder_list, save_folders, ImapConfig, ImapFolder, ImapSecurity, SavedFolders, Session,
+};
 pub use store_cmds::{ChangeError, SystemFlag};
 
 use std::fmt;

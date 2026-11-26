@@ -48,6 +48,7 @@ internal fun ThreadRow(
     onLongClick: (() -> Unit)? = null,
     selecting: Boolean = false,
     selected: Boolean = false,
+    onAvatarClick: (() -> Unit)? = null,
     onClick: () -> Unit,
 ) {
     val count = thread.messageCount.toInt()
@@ -69,6 +70,9 @@ internal fun ThreadRow(
             modifier = Modifier.weight(1f),
             selecting = selecting,
             selected = selected,
+            onAvatarClick = onAvatarClick,
+            // The picture shows the newest sender, not every participant.
+            avatarName = newest?.fromName ?: thread.participants.firstOrNull().orEmpty(),
         )
         Text(
             text = count.toString(),

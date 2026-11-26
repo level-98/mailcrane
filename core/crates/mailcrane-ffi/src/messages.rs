@@ -90,11 +90,12 @@ pub(crate) fn one_line(text: &str) -> String {
         .collect()
 }
 
-/// A name or address as one safe line for display: [`one_line`], with
-/// bidi controls removed so it can't display in a different order than it
-/// is stored (#314).
-pub(crate) fn name_line(text: &str) -> String {
-    mailcrane_mime::bidi::strip_bidi_controls(&one_line(text))
+/// [`one_line`] for text the app shows as a line of its own: subjects,
+/// attachment names, and names and addresses (#314). Bidi controls are removed too, so an override can't
+/// reverse what's shown (`invoice\u{202E}fdp.exe` showing as
+/// `invoiceexe.pdf`, #315).
+pub(crate) fn display_line(text: &str) -> String {
+    one_line(&mailcrane_mime::strip_bidi(text))
 }
 
 impl From<MessageHeader> for MessageSummary {
@@ -102,9 +103,9 @@ impl From<MessageHeader> for MessageSummary {
         let d = m.details;
         Self {
             id: m.id.0,
-            from_name: name_line(d.from_name.as_deref().unwrap_or_default()),
-            from_addr: name_line(d.from_addr.as_deref().unwrap_or_default()),
-            subject: one_line(&d.subject),
+            from_name: display_line(d.from_name.as_deref().unwrap_or_default()),
+            from_addr: display_line(d.from_addr.as_deref().unwrap_or_default()),
+            subject: display_line(&d.subject),
             snippet: one_line(&d.snippet),
             date: d.date,
             is_seen: d.flags.seen,
@@ -370,6 +371,21 @@ pub struct SenderCheck {
     pub dmarc: AuthResult,
     /// The From domain DMARC checked.
     pub dmarc_domain: Option<String>,
+    /// The From name shows an address or domain from another organisation
+    /// than the real From address; show a warning banner above the body.
+    /// Set whether or not `trusted` is.
+    #[uniffi(default = None)]
+    pub display_name_warning: Option<DisplayNameWarning>,
+}
+
+/// A From name that claims to be someone the message isn't from, such as
+/// `"ceo@example.com" <x@example.net>`.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct DisplayNameWarning {
+    /// The address or domain the name shows (lowercase, tricks removed).
+    pub claimed: String,
+    /// The address the message is really from.
+    pub actual: String,
 }
 
 impl From<phishing::SenderCheck> for SenderCheck {
@@ -388,6 +404,10 @@ impl From<phishing::SenderCheck> for SenderCheck {
             dkim_domain: domain(c.auth.dkim_domain),
             dmarc: c.auth.dmarc.into(),
             dmarc_domain: domain(c.auth.dmarc_domain),
+            display_name_warning: c.display_name_warning.map(|w| DisplayNameWarning {
+                claimed: one_line(&w.claimed),
+                actual: one_line(&w.actual),
+            }),
         }
     }
 }
@@ -447,6 +467,11 @@ fn cid_url(content_id: &str) -> String {
 /// Wraps sanitised HTML in a document whose Content-Security-Policy allows
 /// nothing but inline styles, `cid:` and `data:` images, and, only when
 /// `allow_remote`, `https:` images. No referrer is ever sent.
+///
+/// The viewport is the device width with no `initial-scale`, so the app's
+/// web view can zoom a fixed-width (often 600 px) newsletter out to fit the
+/// screen; `initial-scale=1` kept it at full size, cut off on the right
+/// (#342).
 fn html_document(body: &str, allow_remote: bool) -> String {
     let remote = if allow_remote { " https:" } else { "" };
     format!(
@@ -455,7 +480,7 @@ fn html_document(body: &str, allow_remote: bool) -> String {
          <meta name=\"referrer\" content=\"no-referrer\">\
          <meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; \
          img-src {CID_SCHEME}: data:{remote}; style-src 'unsafe-inline'\">\
-         <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\
+         <meta name=\"viewport\" content=\"width=device-width\">\
          <style>body{{margin:16px;overflow-wrap:break-word}}\
          img{{max-width:100%;height:auto}}</style>\
          </head><body>{body}</body></html>"
@@ -464,8 +489,8 @@ fn html_document(body: &str, allow_remote: bool) -> String {
 
 fn address(a: mailcrane_mime::Address) -> MessageAddress {
     MessageAddress {
-        name: name_line(a.name.as_deref().unwrap_or_default()),
-        email: name_line(&a.email),
+        name: display_line(a.name.as_deref().unwrap_or_default()),
+        email: display_line(&a.email),
     }
 }
 
@@ -502,13 +527,13 @@ pub fn get_message(
         id: message_id,
         folder_id: d.folder_id.0,
         from: MessageAddress {
-            name: name_line(d.from_name.as_deref().unwrap_or_default()),
-            email: name_line(d.from_addr.as_deref().unwrap_or_default()),
+            name: display_line(d.from_name.as_deref().unwrap_or_default()),
+            email: display_line(d.from_addr.as_deref().unwrap_or_default()),
         },
         to: Vec::new(),
         cc: Vec::new(),
         date: d.date,
-        subject: one_line(&d.subject),
+        subject: display_line(&d.subject),
         is_seen: d.flags.seen,
         is_flagged: d.flags.flagged,
         body: MessageBody::NotDownloaded,
@@ -526,7 +551,7 @@ pub fn get_message(
         // Inline images are shown in the body, not listed.
         .filter(|a| !(a.is_inline && a.content_id.is_some() && a.mime_type.starts_with("image/")))
         .map(|a| AttachmentInfo {
-            name: one_line(a.filename.as_deref().unwrap_or_default()),
+            name: display_line(a.filename.as_deref().unwrap_or_default()),
             mime_type: one_line(&a.mime_type),
             size: u64::try_from(a.size).unwrap_or(0),
             part_id: a.part_id,
@@ -745,7 +770,7 @@ mod tests {
         assert_eq!(m.cc[0].name, "Cy");
         for text in [&m.from.name, &m.to[0].name, &m.cc[0].name] {
             assert!(
-                !text.chars().any(mailcrane_mime::bidi::is_bidi_control),
+                !text.chars().any(mailcrane_mime::is_bidi_control),
                 "{text:?}"
             );
         }
@@ -804,10 +829,13 @@ mod tests {
     /// Stores `raw` as the body of a new message in `folder`, with the
     /// attachment metadata `parse_message` finds, as `fetch_body` does.
     fn with_body(path: &str, folder: FolderId, uid: u32, raw: &[u8]) -> i64 {
+        with_header_and_body(path, &header(folder, uid, 1_000), raw)
+    }
+
+    /// [`with_body`] with a header row of the caller's.
+    fn with_header_and_body(path: &str, row: &NewMessageHeader, raw: &[u8]) -> i64 {
         let store = Store::open(path).expect("store");
-        let id = store
-            .upsert_message_header(&header(folder, uid, 1_000))
-            .expect("insert");
+        let id = store.upsert_message_header(row).expect("insert");
         let attachments: Vec<NewAttachment> = parse_message(raw)
             .map(|p| p.attachments)
             .unwrap_or_default()
@@ -905,6 +933,9 @@ mod tests {
         );
         assert_eq!(blocked, 1);
         assert!(html.contains("<meta name=\"referrer\" content=\"no-referrer\">"));
+        // #342: no initial-scale, so wide mail can be zoomed out to fit.
+        assert!(html.contains("<meta name=\"viewport\" content=\"width=device-width\">"));
+        assert!(!html.contains("initial-scale"));
         assert!(html.contains(
             "content=\"default-src 'none'; img-src mailcrane-cid: data:; \
              style-src 'unsafe-inline'\""
@@ -960,6 +991,7 @@ mod tests {
                 dkim_domain: Some("example.net".into()),
                 dmarc: AuthResult::Fail,
                 dmarc_domain: Some("example.net".into()),
+                display_name_warning: None,
             }
         );
         // The provider added nothing: the sender's header is not trusted.
@@ -970,6 +1002,27 @@ mod tests {
             .expect("checked");
         assert!(!check.trusted);
         assert_eq!(check.verdict, None);
+    }
+
+    #[test]
+    fn display_name_warning_reaches_the_apps() {
+        let (_dir, path, folder) = setup();
+        let raw = b"From: \"ceo@example.com\" <attacker@example.net>\r\nTo: bob@example.org\r\n\
+                    Subject: Hi\r\n\r\nHello\r\n";
+        let id = with_body(&path, folder, 1, raw);
+        let check = get_message(path, id, false)
+            .expect("message")
+            .sender_check
+            .expect("checked");
+        // No Authentication-Results: no chip, but the name is still checked.
+        assert_eq!(check.verdict, None);
+        assert_eq!(
+            check.display_name_warning,
+            Some(DisplayNameWarning {
+                claimed: "ceo@example.com".into(),
+                actual: "attacker@example.net".into(),
+            })
+        );
     }
 
     #[test]
@@ -1123,6 +1176,38 @@ mod tests {
         assert_eq!(a.mime_type, "application/pdf");
         assert!(a.name.ends_with(".pdf"));
         assert!(a.size > 0);
+    }
+
+    #[test]
+    fn display_line_removes_bidi_controls() {
+        assert_eq!(display_line("invoice\u{202e}fdp.exe"), "invoicefdp.exe");
+        assert_eq!(display_line("a\u{2067}b\u{2069}\r\nc"), "ab  c");
+        assert_eq!(display_line("שלום"), "שלום", "right-to-left letters stay");
+    }
+
+    #[test]
+    fn bidi_controls_never_reach_the_subject_or_attachment_name() {
+        // #315: an RLO in the subject or file name would reverse what the
+        // list row, the message header and notifications show.
+        let (_dir, path, folder) = setup();
+        let raw = fixture("mime", "bidi-subject-attachment.eml");
+        let parsed = parse_message(&raw).expect("parse");
+        let subject = parsed.subject.expect("subject");
+        assert!(
+            subject.chars().any(mailcrane_mime::is_bidi_control),
+            "stored as sent"
+        );
+        let mut row = header(folder, 1, 1_000);
+        row.subject = subject;
+        let id = with_header_and_body(&path, &row, &raw);
+
+        let want = "Invoice fdp.exe for March 2026 paid";
+        let m = get_message(path.clone(), id, false).expect("message");
+        assert_eq!(m.subject, want);
+        assert_eq!(m.attachments.len(), 1);
+        assert_eq!(m.attachments[0].name, "invoicefdp.exe");
+        let list = list_messages(path, folder.0, 0, 10).expect("list");
+        assert_eq!(list[0].subject, want);
     }
 
     #[test]

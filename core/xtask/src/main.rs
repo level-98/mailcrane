@@ -4,6 +4,7 @@
 //! failed step, never an unwind.
 #![forbid(unsafe_code)]
 
+mod apk;
 mod ispdb;
 
 use std::env;
@@ -69,13 +70,15 @@ Usage: cargo xtask <command> [--strict] [--only <step>]... [--skip <step>]...
 
 Commands:
   ci        every step below except bindings, then a summary table
-  design    generated theme check and unit tests
+  design    generated theme check, its unit tests, and scripts/test_release_notes.py
   fmt       cargo fmt --all --check
   lint      release guard (#289), cargo clippy --workspace --all-targets -- -D warnings,
             and clippy on mailcrane-ffi with --features debug-fixtures
   test      cargo test --workspace, then the fixture loader tests (#289)
   deny      cargo deny check
-  android   ktlintCheck, lintDebug, testDebugUnitTest and assembleDebug through Gradle
+  android   ktlintCheck, lintDebug, testDebugUnitTest, assembleDebug and checkFreeDependencies
+            through Gradle; then assembleRelease and assembleDebug, and a check that
+            each APK packages its own core (the debug one has the fixture loader)
   ios       XCFramework, xcodegen, swiftlint and xcodebuild test (macOS only)
   bindings  generate Kotlin and Swift bindings into core/target/bindings/
   fuzz <target> [--seconds N]
@@ -302,8 +305,19 @@ fn design(ctx: &Ctx) -> Result<Outcome, Error> {
         ));
     }
     let tests: Vec<&str> = [prefix, &["-m", "unittest", "design/test_gen_theme.py"]].concat();
-    let ok = run(&ctx.root, python, &tests)?;
-    Ok(outcome(ok, "python -m unittest design/test_gen_theme.py"))
+    if !run(&ctx.root, python, &tests)? {
+        return Ok(Outcome::Failed(
+            "`python -m unittest design/test_gen_theme.py` failed".into(),
+        ));
+    }
+    // The release tooling's tests run here too: this is CI's Python step.
+    let scripts: Vec<&str> =
+        [prefix, &["-m", "unittest", "scripts/test_release_notes.py"]].concat();
+    let ok = run(&ctx.root, python, &scripts)?;
+    Ok(outcome(
+        ok,
+        "python -m unittest scripts/test_release_notes.py",
+    ))
 }
 
 fn fmt(ctx: &Ctx) -> Result<Outcome, Error> {
@@ -520,17 +534,61 @@ fn android(ctx: &Ctx) -> Result<Outcome, Error> {
     };
     // assembleDebug cross-compiles the core for both ABIs (the buildRust task)
     // and proves the app really builds, not only that it lints and tests.
+    // checkFreeDependencies (M6-04): the release build is free software
+    // only, as F-Droid requires.
     let args = [
         "ktlintCheck",
         "lintDebug",
         "testDebugUnitTest",
         "assembleDebug",
+        "checkFreeDependencies",
     ];
-    let ok = run(&dir, &wrapper.display().to_string(), &args)?;
-    Ok(outcome(
-        ok,
-        "./gradlew ktlintCheck lintDebug testDebugUnitTest assembleDebug",
-    ))
+    let wrapper = wrapper.display().to_string();
+    if !run(&dir, &wrapper, &args)? {
+        return Ok(Outcome::Failed(
+            "`./gradlew ktlintCheck lintDebug testDebugUnitTest assembleDebug checkFreeDependencies` failed"
+                .into(),
+        ));
+    }
+    // Each APK must package its own core: a debug APK built after a release
+    // build once shipped the release core and crashed at launch (#71 review).
+    // Release, then debug again, in that order, so the debug APK CI uploads
+    // is the one checked.
+    for task in ["assembleRelease", "assembleDebug"] {
+        if !run(&dir, &wrapper, &[task])? {
+            return Ok(Outcome::Failed(format!("`./gradlew {task}` failed")));
+        }
+    }
+    let outputs = dir.join("app/build/outputs/apk");
+    for (apk, debug) in [
+        ("release/app-release-unsigned.apk", false),
+        ("debug/app-debug.apk", true),
+    ] {
+        if let Err(e) = check_apk_core(&outputs.join(apk), debug) {
+            return Ok(Outcome::Failed(e));
+        }
+    }
+    Ok(Outcome::Passed)
+}
+
+/// Checks that the APK at `path` packages the debug core (with the fixture
+/// loader, #289) if `debug`, and the release core (without it) otherwise.
+fn check_apk_core(path: &Path, debug: bool) -> Result<(), Error> {
+    let bytes = std::fs::read(path).map_err(|e| format!("can't read {}: {e}", path.display()))?;
+    let core = apk::stored_entry(&bytes, apk::CORE_ENTRY)
+        .map_err(|e| format!("{}: {e}", path.display()))?;
+    let has_loader = apk::contains(core, apk::DEBUG_ONLY_SYMBOL);
+    match (debug, has_loader) {
+        (true, false) => Err(format!(
+            "{} packages a release core (no fixture loader): it would crash at launch",
+            path.display()
+        )),
+        (false, true) => Err(format!(
+            "{} packages a debug core with the fixture loader (#289)",
+            path.display()
+        )),
+        _ => Ok(()),
+    }
 }
 
 fn ios(ctx: &Ctx) -> Result<Outcome, Error> {

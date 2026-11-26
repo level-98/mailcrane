@@ -53,6 +53,76 @@ impl Session {
     }
 }
 
+/// Why `RENAME` or `DELETE` didn't work.
+#[derive(Debug, thiserror::Error)]
+pub enum FolderCommandError {
+    /// The server says the target name is taken (`ALREADYEXISTS`).
+    #[error("a folder with that name exists")]
+    AlreadyExists,
+    /// The server refused for another reason. `transient` as in
+    /// [`ChangeError::Refused`].
+    #[error("the server refused the change")]
+    Refused {
+        /// Worth trying again later.
+        transient: bool,
+    },
+    /// The connection or protocol failed; whether the change happened is
+    /// unknown.
+    #[error(transparent)]
+    Imap(#[from] crate::ImapError),
+}
+
+impl From<ChangeError> for FolderCommandError {
+    fn from(e: ChangeError) -> Self {
+        match e {
+            ChangeError::Refused { transient } => Self::Refused { transient },
+            ChangeError::Imap(e) => Self::Imap(e),
+        }
+    }
+}
+
+fn folder_result(done: &crate::session::Done) -> Result<(), FolderCommandError> {
+    if done.status == StatusKind::Ok {
+        return Ok(());
+    }
+    match &done.text.code {
+        Some(Code::Other { name, .. }) if name.eq_ignore_ascii_case("ALREADYEXISTS") => {
+            Err(FolderCommandError::AlreadyExists)
+        }
+        Some(Code::Other { name, .. })
+            if ["UNAVAILABLE", "INUSE", "LIMIT", "SERVERBUG"]
+                .iter()
+                .any(|t| name.eq_ignore_ascii_case(t)) =>
+        {
+            Err(FolderCommandError::Refused { transient: true })
+        }
+        _ => Err(FolderCommandError::Refused { transient: false }),
+    }
+}
+
+impl Session {
+    /// `RENAME <old> <new>` (RFC 9051 §6.3.6). The server renames the
+    /// folders under `old` too.
+    pub async fn rename_folder(&mut self, old: &str, new: &str) -> Result<(), FolderCommandError> {
+        let done = self
+            .run_command(
+                "RENAME",
+                &[Arg::Str(old.as_bytes()), Arg::Str(new.as_bytes())],
+            )
+            .await?;
+        folder_result(&done)
+    }
+
+    /// `DELETE <name>` (RFC 9051 §6.3.5). The folder's messages are gone
+    /// with it.
+    pub async fn delete_folder(&mut self, name: &str) -> Result<(), FolderCommandError> {
+        let done = self
+            .run_command("DELETE", &[Arg::Str(name.as_bytes())])
+            .await?;
+        folder_result(&done)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
