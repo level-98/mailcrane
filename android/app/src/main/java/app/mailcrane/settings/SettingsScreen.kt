@@ -225,6 +225,7 @@ fun SettingsScreen(
         if (onAddAccount != null) {
             AccountsSection(accounts, onAddAccount, onRemoveAccount)
         }
+        if (accounts.isNotEmpty()) StartViewSection(accounts)
         NotificationsSection()
         AppLockSection()
         SwitchRow(

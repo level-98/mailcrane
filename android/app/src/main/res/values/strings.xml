@@ -336,6 +336,11 @@
     <!-- Accounts (M4-01) -->
     <string name="accounts_title">Accounts</string>
     <string name="all_inboxes">All inboxes</string>
+    <!-- Settings: which view the app opens on (M4-16) -->
+    <string name="settings_start_view">Open the app on</string>
+    <!-- %1$s: an account's email address -->
+    <string name="start_view_account">%1$s inbox</string>
+    <string name="start_view_last">Last used</string>
     <string name="accounts_add">Add account</string>
     <string name="accounts_remove">Remove</string>
     <string name="accounts_cancel">Cancel</string>

@@ -5,7 +5,9 @@ import androidx.lifecycle.viewModelScope
 import app.mailcrane.core.AccountSummary
 import app.mailcrane.core.MailcraneCore
 import app.mailcrane.core.RemoveAccountFailure
+import app.mailcrane.core.UNIFIED_FOLDER_ID
 import app.mailcrane.settings.AppSettings
+import app.mailcrane.settings.StartView
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -22,11 +24,41 @@ data class AccountsState(
     val currentId: Long? = null,
     /** Removing an account failed. */
     val removeFailed: Boolean = false,
+    /** Open the Unified Inbox first (M4-16); cleared by [AccountsViewModel.startShown]. */
+    val startInUnified: Boolean = false,
 )
 
+/** Where the app opens (M4-16): an account, whether in the Unified Inbox, and whether the setting must reset. */
+data class StartChoice(
+    val accountId: Long?,
+    val unified: Boolean,
+    /** The chosen account is gone: the setting goes back to "Last used". */
+    val resetToLast: Boolean = false,
+)
+
+/** Picks the start view from "Open the app on", the accounts [ids], and what was shown last. */
+fun startChoice(
+    view: StartView,
+    ids: List<Long>,
+    lastAccountId: Long,
+    lastFolderId: Long,
+): StartChoice {
+    val last = lastAccountId.takeIf { it in ids } ?: ids.firstOrNull()
+    return when (view) {
+        StartView.Unified -> StartChoice(last, unified = last != null)
+        StartView.Last -> StartChoice(last, unified = last != null && lastFolderId == UNIFIED_FOLDER_ID)
+        is StartView.Account ->
+            if (view.accountId in ids) {
+                StartChoice(view.accountId, unified = false)
+            } else {
+                StartChoice(ids.firstOrNull(), unified = false, resetToLast = true)
+            }
+    }
+}
+
 /**
- * The saved accounts and which one is shown (M4-01). The choice is remembered, so the app opens on the
- * same account after a restart.
+ * The saved accounts and which one is shown (M4-01). Opens where "Open the app on" says (M4-16): by default
+ * the account and inbox shown last.
  */
 @HiltViewModel
 class AccountsViewModel
@@ -39,11 +71,26 @@ class AccountsViewModel
         val state: StateFlow<AccountsState> = _state.asStateFlow()
 
         init {
-            viewModelScope.launch { reload(preferred = settings.lastAccountId.first()) }
+            viewModelScope.launch {
+                val accounts = core.listAccounts()
+                val choice =
+                    startChoice(
+                        settings.startView.first(),
+                        accounts.map { it.id },
+                        settings.lastAccountId.first(),
+                        settings.lastFolderId.first(),
+                    )
+                if (choice.resetToLast) settings.setStartView(StartView.Last)
+                reload(preferred = choice.accountId, listed = accounts)
+                _state.update { it.copy(startInUnified = choice.unified) }
+            }
         }
 
-        private suspend fun reload(preferred: Long?) {
-            val accounts = core.listAccounts()
+        private suspend fun reload(
+            preferred: Long?,
+            listed: List<AccountSummary>? = null,
+        ) {
+            val accounts = listed ?: core.listAccounts()
             val current =
                 accounts.firstOrNull { it.id == preferred }?.id
                     ?: accounts.firstOrNull { it.id == _state.value.currentId }?.id
@@ -57,6 +104,16 @@ class AccountsViewModel
             if (_state.value.accounts?.any { it.id == id } != true) return
             _state.update { it.copy(currentId = id) }
             viewModelScope.launch { settings.setLastAccountId(id) }
+        }
+
+        /** The start view was shown: switching accounts later opens their inbox as usual. */
+        fun startShown() {
+            _state.update { it.copy(startInUnified = false) }
+        }
+
+        /** Folder [id] is shown ([UNIFIED_FOLDER_ID] for the Unified Inbox), for "Last used" (M4-16). */
+        fun folderShown(id: Long) {
+            viewModelScope.launch { settings.setLastFolderId(id) }
         }
 
         /** Something about the accounts changed, such as a colour (M4-20): load them again. */
@@ -75,6 +132,8 @@ class AccountsViewModel
                 try {
                     core.removeAccount(id)
                     _state.update { it.copy(removeFailed = false) }
+                    // The account the app opened on is gone: "Last used" from now on.
+                    if (settings.startView.first() == StartView.Account(id)) settings.setStartView(StartView.Last)
                 } catch (_: RemoveAccountFailure) {
                     _state.update { it.copy(removeFailed = true) }
                 }

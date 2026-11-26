@@ -17,6 +17,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
@@ -67,6 +68,11 @@ fun MailboxScreen(
     /** A message to open now (from a widget, M4-11). */
     openMessageId: Long? = null,
     onMessageOpened: () -> Unit = {},
+    /** Open the Unified Inbox first (M4-16); [onStartShown] once it is. */
+    startInUnified: Boolean = false,
+    onStartShown: () -> Unit = {},
+    /** The folder shown changed ([UNIFIED_FOLDER_ID] for the Unified Inbox), for "Last used" (M4-16). */
+    onFolderShown: (Long) -> Unit = {},
     onCompose: (() -> Unit)? = null,
     composeFabModifier: Modifier = Modifier,
     notice: String? = null,
@@ -81,6 +87,15 @@ fun MailboxScreen(
         ),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
+    // "Open the app on" (M4-16): the Unified Inbox at start, once.
+    LaunchedEffect(Unit) {
+        if (startInUnified) {
+            viewModel.select(UNIFIED_FOLDER_ID)
+            onStartShown()
+        }
+    }
+    val folderShown by rememberUpdatedState(onFolderShown)
+    LaunchedEffect(state.selectedFolderId) { state.selectedFolderId?.let { folderShown(it) } }
     val selected = state.selected
     val loadError = state.loadError
     when {
