@@ -347,7 +347,7 @@ pub fn list_outbox(db_path: String, account_id: i64) -> Result<Vec<OutboxEntry>,
                         .collect::<Vec<_>>()
                         .join(", "),
                 ),
-                subject: one_line(&m.fields.subject),
+                subject: crate::messages::display_line(&m.fields.subject),
                 state,
                 last_error: m.last_error,
                 attempts: m.attempts,
