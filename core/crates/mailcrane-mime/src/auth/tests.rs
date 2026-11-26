@@ -533,9 +533,33 @@ fn gmail_internal_ipv6_hops_are_skipped_to_find_the_provider() {
         trusted_results_with(&two, Some("mx.google.com")),
         Some(GMAIL_PASS)
     );
-    // A provider header above the entry hop counts without the setting.
+    // A provider header above the entry hop counts once the setting
+    // anchors the skip; without the setting there is no provider.
     let above = [rcv(GMAIL_INTERNAL), ar(GMAIL_PASS), rcv(GMAIL_ENTRY)];
-    assert_eq!(trusted_results(&above), Some(GMAIL_PASS));
+    assert_eq!(
+        trusted_results_with(&above, Some("mx.google.com")),
+        Some(GMAIL_PASS)
+    );
+    assert_eq!(trusted_results(&above), None);
+}
+
+/// #442 review (security): a self-hosted server writes its top hop with a
+/// literal `by`. The first named hop below it is the sender's forged one;
+/// it must never become the provider, with no setting or an unrelated one.
+#[test]
+fn a_literal_top_hop_never_makes_the_senders_hop_the_provider() {
+    let forged_ar =
+        "mx.bank.example; dkim=pass header.d=bank.example; dmarc=pass header.from=bank.example";
+    let trace = [
+        rcv("from relay.example.org by [192.168.1.2]; Thu, 26 Nov 2026 14:30:00 +0000"),
+        ar(forged_ar),
+        rcv("from x.bank.example by mx.bank.example; Thu, 26 Nov 2026 14:29:00 +0000"),
+        ar(forged_ar),
+    ];
+    assert_eq!(trusted_results(&trace), None);
+    assert_eq!(trusted_results_with(&trace, Some("mail.example.org")), None);
+    assert_eq!(trusted_results_with(&trace, Some("mx.google.com")), None);
+    assert_eq!(trusted_results_with(&trace, Some("localhost")), None);
 }
 
 /// Skipping literal hops loosens nothing else: forged or foreign headers

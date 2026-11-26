@@ -454,11 +454,11 @@ pub enum TraceHeader {
 ///
 /// `trace` is the message's Received and Authentication-Results headers in
 /// their original order, topmost first. The provider is the organisation of
-/// the `by` host of the topmost Received header, after any leading hops
-/// whose `by` is an address literal (at most [`MAX_LITERAL_HOPS`]): the
-/// topmost Received headers are always the receiving provider's own, since
-/// anything a sender forges sits below them, and Gmail writes its internal
-/// hops as `by 2001:db8::…` (#398). A header is trusted only
+/// the `by` host of the topmost Received header. Leading hops whose `by` is
+/// an address literal (at most [`MAX_LITERAL_HOPS`], as Gmail writes its
+/// internal hops, #398) are skipped only in [`trusted_results_with`], when
+/// the user's provider authserv-id names the first named hop's
+/// organisation. A header is trusted only
 /// if its authserv-id is in that organisation **and** it sits above the
 /// first Received header for a hop from outside the provider, where the
 /// message entered it (RFC 8601 §5). Everything below that point, the
@@ -502,6 +502,18 @@ pub fn trusted_results_with<'a>(
     let provider = org_domain(&received_by(provider_host?)?);
     if !provider.contains('.') {
         return None;
+    }
+    // Skipping is anchored to the user's setting (lead's decision on the
+    // #442 review): if the user's own server writes every hop with a literal
+    // `by`, the first named hop would be the sender's forged one, and the
+    // sender's own header would be trusted. So literal hops count only when
+    // the provider authserv-id is set and the first named hop is in its
+    // organisation (mx.google.com for the setting mx.google.com).
+    if leading_literal > 0 {
+        let configured = provider_authserv_id?.trim_end_matches('.');
+        if !configured.contains('.') || org_domain(configured) != provider {
+            return None;
+        }
     }
     let mut found = None;
     let mut confirmed = None;
