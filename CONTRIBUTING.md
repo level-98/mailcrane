@@ -23,7 +23,7 @@ That's it. There's no sign-up, CLA or coordination thread.
 - Comment `/claim` on an unassigned issue. The first claim stands.
 - A claim lapses after **14 days** with no comment, commit or draft PR. A bot unassigns it automatically, and anyone can claim it again.
 - Changed your mind? Comment `/unclaim`.
-- Hold at most **2 claims** at once.
+- Hold at most **2 claims** at once. Maintainers (and so the agent fleet) have no limit.
 - An open PR holds its issue. If a review asks for changes and there's no reply within 14 days, the issue becomes free again.
 
 ### Found a bug and already fixed it?
@@ -60,8 +60,9 @@ Mailcrane may have only one maintainer, so review is set up not to block:
 
 | Change | What's needed to merge |
 |---|---|
-| Docs, tests, UI, most code | CI green + one maintainer approval. A maintainer may merge their own PR once CI is green and it has been open 24 hours. |
-| Labelled `security` (sign-in, OAuth, credential storage, TLS, the HTML sanitiser, encryption) | CI green + a maintainer's review. If there is a second maintainer, they must approve too. Never self-merged in under 72 hours. |
+| Docs, tests, UI, most code | CI green + one maintainer approval. A maintainer may merge their own PR once CI is green. |
+| Labelled `security` (sign-in, OAuth, credential storage, TLS, the HTML sanitiser, encryption) | CI green + a maintainer's review. If there is a second maintainer, they must approve too. |
+| Opened by the maintainer's agent fleet (labelled `fleet`) | The fleet lead merges on the maintainer's behalf when CI is green on the exact commit, its review seat's findings are resolved, and QA has checked UI changes. There is no waiting period. See [docs/fleet.md](docs/fleet.md#merging). |
 
 ## Decisions that only maintainers make
 
@@ -82,6 +83,8 @@ AI-written contributions are welcome on the same terms as any other.
 - Say in the PR that it was AI-assisted, and which tool and model.
 - Read the diff yourself before marking it ready.
 - Please don't open lots of low-effort PRs at once. Maintainers may close them without review.
+
+A maintainer may also run the local agent fleet (five Claude Code sessions coordinated over Synapse, acting through the maintainer's account): see [docs/fleet.md](docs/fleet.md). Its PRs carry the `fleet` label.
 
 Maintainers can also hand an `agent-ready` issue straight to the project's own agent by adding the `agent-go` label. It opens a draft PR for a human to review.
 
