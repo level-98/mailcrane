@@ -6,6 +6,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
+import androidx.activity.compose.BackHandler
 import androidx.annotation.StringRes
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
@@ -23,7 +24,11 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
@@ -94,7 +99,18 @@ internal fun openInBrowser(
 fun AboutScreen(onBack: () -> Unit) {
     val context = LocalContext.current
     val version = remember { appVersion(context) }
-    AboutContent(version = version, onBack = onBack, onOpen = { openInBrowser(context, it) })
+    var showLicences by rememberSaveable { mutableStateOf(false) }
+    if (showLicences) {
+        BackHandler { showLicences = false }
+        LicencesScreen(onBack = { showLicences = false })
+        return
+    }
+    AboutContent(
+        version = version,
+        onBack = onBack,
+        onOpen = { openInBrowser(context, it) },
+        onOpenLicences = { showLicences = true },
+    )
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -103,6 +119,7 @@ internal fun AboutContent(
     version: AppVersion,
     onBack: () -> Unit,
     onOpen: (String) -> Unit,
+    onOpenLicences: () -> Unit = {},
 ) {
     Scaffold(
         topBar = {
@@ -142,6 +159,11 @@ internal fun AboutContent(
             LinkRow(R.string.about_privacy, R.string.about_privacy_summary, AboutLinks.PRIVACY, onOpen)
             LinkRow(R.string.about_source, R.string.about_source_summary, AboutLinks.SOURCE, onOpen)
             LinkRow(R.string.about_licence, R.string.about_licence_summary, AboutLinks.LICENCE, onOpen)
+            ListItem(
+                headlineContent = { Text(stringResource(R.string.about_licences)) },
+                supportingContent = { Text(stringResource(R.string.about_licences_summary)) },
+                modifier = Modifier.clickable(role = Role.Button, onClick = onOpenLicences),
+            )
             Text(
                 stringResource(R.string.about_links_note),
                 style = MaterialTheme.typography.bodySmall,
