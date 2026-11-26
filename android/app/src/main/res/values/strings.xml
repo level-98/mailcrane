@@ -674,4 +674,19 @@
     <string name="setup_section_jmap">JMAP server</string>
     <string name="setup_jmap_server">Server</string>
     <string name="setup_jmap_server_hint">Your provider’s domain (such as example.org) or its JMAP session URL. Use an app password if your provider has them.</string>
+    <!-- Push wake-ups (UnifiedPush, M4-05). -->
+    <string name="push_title">Push wake-ups (UnifiedPush)</string>
+    <string name="push_summary">Let a UnifiedPush distributor app wake Mailcrane to check for mail, without a permanent connection. Your mail server doesn’t send these itself: it needs a push gateway on your side that watches your mailbox and sends to the address below.</string>
+    <string name="push_no_distributor">Needs a UnifiedPush distributor app on this phone</string>
+    <string name="push_registering">Asking the distributor for an address…</string>
+    <string name="push_ready">Ready. Give this address to your push gateway:</string>
+    <string name="push_temporary">The distributor’s own server is unavailable; this stand-in address may change.</string>
+    <string name="push_copy">Copy address</string>
+    <string name="push_failed_network">No network. Turn this off and on again once you’re online.</string>
+    <string name="push_failed_action">The distributor app needs your attention (for example to sign in). Open it, then turn this off and on again.</string>
+    <string name="push_failed_vapid">This distributor only accepts servers that identify themselves, and Mailcrane has no server key to give it. Choose another distributor.</string>
+    <string name="push_failed_other">The distributor couldn’t register Mailcrane. Turn this off and on again to retry.</string>
+    <string name="push_failed_unregistered">The distributor ended the registration. Turn this off and on again to register anew.</string>
+    <string name="push_check_channel">Push checks</string>
+    <string name="push_check_notification">Checking for new mail</string>
 </resources>
