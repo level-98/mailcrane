@@ -88,3 +88,27 @@ fn a_new_wake_starts_at_step_zero_but_a_wake_under_way_keeps_its_step() -> R {
     );
     Ok(())
 }
+
+#[test]
+fn a_rollback_keeps_its_start_time_and_unsnooze_shows_the_message() -> R {
+    let store = Store::open_in_memory()?;
+    let a = account(&store)?;
+    let id = store.snooze_message(&new(a))?;
+    store.start_snooze_rollback(id, 100)?;
+    store.start_snooze_rollback(id, 200)?;
+    let s = store.get_snooze_by_id(id)?.ok_or("snooze")?;
+    assert_eq!(
+        (s.step, s.rollback_since),
+        (4, Some(100)),
+        "first refusal kept"
+    );
+    store.defer_snooze(id, 9_999)?;
+    assert!(store.request_unsnooze(a, "m1@example.org", 300)?);
+    let s = store.get_snooze_by_id(id)?.ok_or("kept for the rollback")?;
+    assert_eq!(
+        (s.step, s.attempts, s.next_attempt_at),
+        (4, 0, 0),
+        "no back-off wait"
+    );
+    Ok(())
+}

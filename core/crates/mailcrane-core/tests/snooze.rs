@@ -577,3 +577,107 @@ async fn without_move_a_refused_store_on_wake_removes_the_copy() {
         "still snoozed on the server"
     );
 }
+
+// --- #432 review -----------------------------------------------------------
+
+/// A new wake time picked while a move is under way applies once the move
+/// finishes: the copy ends up with the new keyword, not the old one.
+#[tokio::test]
+async fn a_new_wake_time_mid_move_ends_up_on_the_copy() {
+    let imap = no_move(vec![Fault::DropAfterCommandOnce("UID COPY".into())], &[]).await;
+    let store = Store::open_in_memory().expect("store");
+    let account = setup(&imap, &store).await;
+    let inbox = folder(&store, account, "INBOX");
+    let message = visible(&store, inbox);
+    snooze(&store, &message, WAKE, &Quiet).expect("snooze");
+    assert_eq!(run_sync(&imap, &store, account, NOW).await.remaining, 1);
+
+    let later_wake = NOW + 48 * 3600;
+    snooze(&store, &message, later_wake, &Quiet).expect("new time");
+    let report = run_sync(&imap, &store, account, LATER).await;
+    assert_eq!(report.snoozed, 1, "{report:?}");
+    let parked = imap.mailbox().messages("Snoozed").await;
+    assert_eq!(parked.len(), 1);
+    let new_keyword = format_keyword(later_wake).expect("keyword");
+    let old_keyword = format_keyword(WAKE).expect("keyword");
+    assert!(
+        parked[0].flags.contains(&new_keyword),
+        "{:?}",
+        parked[0].flags
+    );
+    assert!(
+        !parked[0].flags.contains(&old_keyword),
+        "{:?}",
+        parked[0].flags
+    );
+}
+
+/// A rollback that keeps failing is given up after 5 failed syncs and 24
+/// hours: the message is shown again, never left hidden for good.
+#[tokio::test]
+async fn a_rollback_that_never_works_is_given_up_and_the_message_shown() {
+    let refuse_all = Fault::RefuseCommand {
+        folder: None,
+        text: "\\Deleted".into(),
+    };
+    let imap = no_move(vec![refuse_all], &[]).await;
+    let store = Store::open_in_memory().expect("store");
+    let account = snooze_lunch(&imap, &store).await;
+    let inbox = folder(&store, account, "INBOX");
+
+    // Four failed syncs over a few hours: kept for repair, still hidden.
+    for hour in 0..4 {
+        let report = run_sync(&imap, &store, account, NOW + hour * 3600).await;
+        assert_eq!(report.remaining, 1, "hour {hour}: {report:?}");
+    }
+    assert_eq!(list_snoozed(&store, Some(account)).expect("list").len(), 1);
+    assert!(visible(&store, inbox).is_empty());
+    // Five failures, but not yet 24 hours: still kept.
+    assert_eq!(
+        run_sync(&imap, &store, account, NOW + 5 * 3600)
+            .await
+            .remaining,
+        1
+    );
+
+    // A day on: given up, and the message is back where the server has it.
+    let report = run_sync(&imap, &store, account, NOW + 25 * 3600).await;
+    assert_eq!(report.failed, 1, "{report:?}");
+    assert!(list_snoozed(&store, Some(account))
+        .expect("list")
+        .is_empty());
+    assert_eq!(visible(&store, inbox).len(), 1, "shown again");
+    assert_eq!(live(&imap, "INBOX").await, 1);
+}
+
+/// Refused at step 3 (the original already flagged \Deleted): the move is
+/// carried forward, not undone, so the server isn't left half-moved.
+#[tokio::test]
+async fn a_refusal_after_flagging_carries_the_move_forward() {
+    let imap = no_move(vec![Fault::DropAfterCommandOnce("UID EXPUNGE".into())], &[]).await;
+    let store = Store::open_in_memory().expect("store");
+    let account = snooze_lunch(&imap, &store).await;
+    assert_eq!(run_sync(&imap, &store, account, NOW).await.remaining, 1);
+    assert_eq!(
+        list_snoozed(&store, Some(account)).expect("list")[0].step,
+        3
+    );
+
+    // The retry is refused before it reaches the expunge.
+    let refusing = same_mailbox(
+        &imap,
+        vec![Fault::RefuseCommand {
+            folder: None,
+            text: "SELECT".into(),
+        }],
+    )
+    .await;
+    let report = run_sync(&refusing, &store, account, LATER).await;
+    assert_eq!(report.snoozed, 1, "{report:?}");
+    assert_eq!(
+        list_snoozed(&store, Some(account)).expect("list")[0].state,
+        SnoozeState::Snoozed
+    );
+    assert_eq!(live(&imap, "Snoozed").await, 1);
+    assert_eq!(live(&imap, "INBOX").await, 0, "not shown twice");
+}

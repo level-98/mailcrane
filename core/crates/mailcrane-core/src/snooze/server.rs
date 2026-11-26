@@ -21,6 +21,13 @@ const STEP_FLAGGED_DELETED: u8 = 3;
 /// the snooze undone. Retried on every sync until it works, never dropped.
 const STEP_ROLLBACK: u8 = 4;
 
+/// A rollback that keeps failing is given up after this many failed syncs
+/// and this long, whichever comes later (lead's decision on #432): the
+/// message is shown again where the server has it, since a duplicate there
+/// is a lesser harm than a message that stays hidden for good.
+const ROLLBACK_GIVE_UP_FAILURES: u32 = 5;
+const ROLLBACK_GIVE_UP_SECS: i64 = 24 * 3600;
+
 /// What [`sync_snoozes`] did.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct SnoozeReport {
@@ -72,9 +79,14 @@ pub async fn sync_snoozes(
                 let step = store
                     .get_snooze_by_id(s.id)?
                     .map_or(STEP_NONE, |fresh| fresh.step);
-                if matches!(step, STEP_COPY_STARTED | STEP_COPIED | STEP_ROLLBACK) {
+                if step == STEP_FLAGGED_DELETED {
+                    // The copy is in the target and the original flagged
+                    // \Deleted: carry the move forward, don't undo it.
+                    tracing::warn!(snooze = s.id.0, state = ?s.state, "refused after the original was flagged: finishing the move");
+                    carry_forward(store, s).map(Some)
+                } else if matches!(step, STEP_COPY_STARTED | STEP_COPIED | STEP_ROLLBACK) {
                     tracing::warn!(snooze = s.id.0, state = ?s.state, step, "refused after the copy: rolling back");
-                    store.set_snooze_step(s.id, STEP_ROLLBACK, None)?;
+                    store.start_snooze_rollback(s.id, now)?;
                     let fresh = store.get_snooze_by_id(s.id)?.unwrap_or_else(|| s.clone());
                     roll_back(store, session, &fresh).await.map(|()| None)
                 } else {
@@ -104,19 +116,36 @@ pub async fn sync_snoozes(
                     let attempts = later.attempts.saturating_add(1);
                     store.defer_snooze(later.id, now.saturating_add(backoff_secs(attempts)))?;
                 }
-                report.remaining = work.len().saturating_sub(index);
+                report.remaining = report
+                    .remaining
+                    .saturating_add(work.len().saturating_sub(index));
                 break;
             }
             Err(_) if store.get_snooze_by_id(s.id)?.map(|f| f.step) == Some(STEP_ROLLBACK) => {
-                // Even the rollback was refused: keep the row for the next
-                // sync rather than leave a copy behind silently.
-                tracing::warn!(
-                    snooze = s.id.0,
-                    "rollback refused: retried on the next sync"
-                );
-                let attempts = s.attempts.saturating_add(1);
-                store.defer_snooze(s.id, now.saturating_add(backoff_secs(attempts)))?;
-                report.remaining = report.remaining.saturating_add(1);
+                let fresh = store.get_snooze_by_id(s.id)?.unwrap_or_else(|| s.clone());
+                let failures = fresh.attempts.saturating_add(1);
+                let since = fresh.rollback_since.unwrap_or(now);
+                if failures >= ROLLBACK_GIVE_UP_FAILURES
+                    && now.saturating_sub(since) >= ROLLBACK_GIVE_UP_SECS
+                {
+                    tracing::warn!(
+                        snooze = s.id.0,
+                        failures,
+                        "rollback given up: the message is shown again"
+                    );
+                    undo(store, s, listener)?;
+                    report.failed += 1;
+                } else {
+                    // Keep the row for the next sync rather than leave a
+                    // copy behind silently.
+                    tracing::warn!(
+                        snooze = s.id.0,
+                        failures,
+                        "rollback refused: retried on the next sync"
+                    );
+                    store.defer_snooze(s.id, now.saturating_add(backoff_secs(failures)))?;
+                    report.remaining = report.remaining.saturating_add(1);
+                }
             }
             Err(_) => {
                 tracing::warn!(snooze = s.id.0, state = ?s.state, "snooze refused by the server");
@@ -130,6 +159,34 @@ pub async fn sync_snoozes(
 
 fn store_err(e: StoreError) -> ChangeError {
     ChangeError::Imap(ImapError::Store(e))
+}
+
+/// Refused at step 3: the copy is in the target and the original is flagged
+/// `\Deleted`, so the move is done in all but the expunge. Record it as
+/// done, as the end of `snooze_one` / `wake_one` would.
+fn carry_forward(store: &Store, s: &Snooze) -> Result<Vec<FolderId>, ChangeError> {
+    let snoozed = snoozed_folder(store, s.account_id).map_err(store_err)?;
+    match s.state {
+        SnoozeState::ToWake => {
+            if let Some(folder) = &snoozed {
+                if let Some(id) = store
+                    .find_message_by_header(folder.id, &s.message_id_header)
+                    .map_err(store_err)?
+                {
+                    store.delete_message_row(id).map_err(store_err)?;
+                }
+            }
+            store.delete_snooze(s.id, false).map_err(store_err)?;
+        }
+        // Whether the wake keyword reached the server isn't known here, so
+        // the wake time is kept on this device.
+        _ => store.finish_snooze(s.id, false).map_err(store_err)?,
+    }
+    Ok(snoozed
+        .map(|f| f.id)
+        .into_iter()
+        .chain(s.original_folder_id)
+        .collect())
 }
 
 /// The server refused for good: show the message again where it is.
@@ -221,7 +278,9 @@ async fn move_uids(
     from: &str,
     to: &str,
 ) -> Result<(), ChangeError> {
-    if session.supports_move() {
+    // MOVE only for a fresh move: one the COPY fallback started (on a node
+    // without MOVE) must be resumed, or the earlier copy would stay.
+    if session.supports_move() && s.step == STEP_NONE {
         return session.uid_move(uids, to).await;
     }
     if s.step < STEP_COPIED {
@@ -246,9 +305,45 @@ async fn move_uids(
         match session.uid_expunge(uids).await {
             Ok(()) => {}
             Err(e) if e.is_transient() => return Err(e),
-            // The original is already flagged \Deleted, which clients hide;
-            // without UIDPLUS that's where every move ends anyway.
+            // The copy is in the target and the original flagged \Deleted,
+            // so the move is carried forward (as at step 3, lead's decision
+            // on #432): clients hide \Deleted, and without UIDPLUS that's
+            // where every move ends anyway. Expunging it ourselves later
+            // would need a plain EXPUNGE, which removes other clients'
+            // \Deleted mail too.
             Err(_) => tracing::warn!(snooze = s.id.0, "UID EXPUNGE refused after the move"),
+        }
+    }
+    Ok(())
+}
+
+/// On the copy in `snoozed`: removes every snooze keyword but `new`, and
+/// adds `new`. Only copies made by this move are touched (`find_copies`).
+async fn fix_copy_keyword(
+    session: &mut Session,
+    s: &Snooze,
+    snoozed: &Folder,
+    new: Option<&str>,
+) -> Result<(), ChangeError> {
+    session.select(&snoozed.details.remote_name).await?;
+    for uid in find_copies(session, s).await? {
+        let fetched = session.uid_fetch_flags(uid, uid, None).await?;
+        let flags: Vec<String> = fetched
+            .updates
+            .into_iter()
+            .filter(|u| u.uid == uid)
+            .flat_map(|u| u.flags)
+            .collect();
+        for k in flags
+            .iter()
+            .filter(|k| k.starts_with(KEYWORD_PREFIX) && Some(k.as_str()) != new)
+        {
+            session.uid_store_keyword(&[uid], k, false).await?;
+        }
+        if let Some(k) = new {
+            if !flags.iter().any(|f| f == k) {
+                session.uid_store_keyword(&[uid], k, true).await?;
+            }
         }
     }
     Ok(())
@@ -285,7 +380,14 @@ async fn roll_back(store: &Store, session: &mut Session, s: &Snooze) -> Result<(
             None => return Ok(()),
         },
     };
-    session.select(&target.details.remote_name).await?;
+    match session.select(&target.details.remote_name).await {
+        // The target folder is gone (deleted on another device): the copy
+        // went with it.
+        Err(ImapError::CommandFailed) => return Ok(()),
+        other => {
+            other?;
+        }
+    }
     let copies = find_copies(session, s).await?;
     if !copies.is_empty() {
         session
@@ -382,6 +484,12 @@ async fn snooze_one(
             &snoozed.details.remote_name,
         )
         .await?;
+        if s.step != STEP_NONE && info.custom_keywords {
+            // A resumed move: the wake time may have changed since the
+            // keyword went on before the COPY (#432). Put the current one
+            // on the copy.
+            fix_copy_keyword(session, s, &snoozed, new.as_deref()).await?;
+        }
     }
     store
         .finish_snooze(s.id, info.custom_keywords && new.is_some())
