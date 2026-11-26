@@ -104,7 +104,8 @@
                 <category android:name="android.intent.category.BROWSABLE" />
                 <!-- The scheme only: a private-use redirect has no host (RFC 8252 §7.1), and
                      a path filter needs one. OAuthSignIn.isRedirect checks the path. -->
-                <data android:scheme="app.mailcrane" />
+                <!-- app.mailcrane in release; app.mailcrane.debug in debug builds (#405). -->
+                <data android:scheme="${oauthScheme}" />
             </intent-filter>
         </activity>
     </application>

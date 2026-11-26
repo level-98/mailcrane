@@ -65,7 +65,17 @@ android {
     }
 
     buildTypes {
+        // Debug builds are a separate app, app.mailcrane.debug (#405), so they
+        // install beside the release app on a real phone instead of replacing it
+        // and its accounts. They also get their own OAuth redirect scheme, so they
+        // can never catch the release app's sign-in; Google sign-in therefore
+        // doesn't complete in debug builds.
+        debug {
+            applicationIdSuffix = ".debug"
+            manifestPlaceholders["oauthScheme"] = "$mailcraneApplicationId.debug"
+        }
         release {
+            manifestPlaceholders["oauthScheme"] = mailcraneApplicationId
             isMinifyEnabled = false
             // No git commit in the APK, so builds from any checkout match (F-Droid
             // reproducible builds, M6-04).
