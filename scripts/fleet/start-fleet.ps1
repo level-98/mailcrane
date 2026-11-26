@@ -92,11 +92,14 @@ foreach ($seat in $Seats) {
     $dir = if ($seat -eq 'lead') { $root } else { Initialize-Worktree $seat }
     $target = Join-Path $root ".worktrees\target-$seat"
 
+    # --dangerously-load-development-channels takes a list of values, so it
+    # would swallow the /loop prompt after it and claude would exit. It comes
+    # first, and an ordinary option always follows it to end the list.
     $claudeArgs = @(
+        '--dangerously-load-development-channels', 'server:synapse',
         '--agent', $roles[$seat],
         '-n', "mailbot.$seat",
-        '--permission-mode', $PermissionMode,
-        '--dangerously-load-development-channels', 'server:synapse'
+        '--permission-mode', $PermissionMode
     )
     if ($Model) { $claudeArgs += @('--model', $Model) }
     $argText = ($claudeArgs | ForEach-Object { "'" + ($_ -replace "'", "''") + "'" }) -join ' '
