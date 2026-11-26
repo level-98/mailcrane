@@ -10,7 +10,9 @@ plugins {
 val mailcraneApplicationId = "app.mailcrane"
 
 val coreDir = rootProject.layout.projectDirectory.dir("../core")
-val rustJniLibsDir = layout.buildDirectory.dir("rustJniLibs")
+// The core for each build type has its own folder (rustJniLibs/debug and
+// rustJniLibs/release), packaged only by that build type.
+val rustJniLibsRoot = layout.buildDirectory.dir("rustJniLibs")
 val uniffiDir = layout.buildDirectory.dir("generated/uniffi")
 val rustRelease = gradle.startParameter.taskNames.any { it.contains("Release", ignoreCase = true) }
 
@@ -65,8 +67,20 @@ android {
     }
 
     sourceSets.getByName("main") {
-        jniLibs.directories.add(rustJniLibsDir.get().asFile.path)
         kotlin.directories.add(uniffiDir.get().asFile.path)
+    }
+    // Each build type packages only the core built for it. With one shared
+    // folder, a debug APK built after a release build shipped the release
+    // core, which lacks the debug-only functions, and crashed at launch.
+    for (buildType in listOf("debug", "release")) {
+        sourceSets.getByName(buildType) {
+            jniLibs.directories.add(
+                rustJniLibsRoot
+                    .get()
+                    .dir(buildType)
+                    .asFile.path,
+            )
+        }
     }
 }
 
@@ -88,6 +102,11 @@ val rustProfile = if (rustRelease) "release" else "debug"
 // checks that this stays the only line that turns it on.
 val rustFeatures = if (rustRelease) emptyList() else listOf("--features", "debug-fixtures")
 
+// This run's core, and a marker naming the profile it was built with. The
+// guards below read the marker before a variant packages the folder.
+val rustJniLibsDir = rustJniLibsRoot.map { it.dir(rustProfile) }
+val rustProfileMarker = rustJniLibsRoot.map { it.file("$rustProfile.profile") }
+
 // Where Cargo puts its output: CARGO_TARGET_DIR if set (relative to core/, as
 // Cargo treats it), otherwise core/target.
 val cargoTargetDir: File =
@@ -106,6 +125,7 @@ val cargoNdkBuild by tasks.registering(Exec::class) {
     inputs.property("rustProfile", rustProfile)
     inputs.property("rustFeatures", rustFeatures)
     outputs.dir(rustJniLibsDir)
+    outputs.file(rustProfileMarker)
     // Set here, not left to the shell: Gradle's daemon is shared and keeps the
     // environment it started with, so a worker's CARGO_* settings may not
     // reach this task. Incremental caches and full debug info filled the
@@ -140,27 +160,62 @@ val cargoNdkBuild by tasks.registering(Exec::class) {
             "mailcrane-ffi",
         ) + rustFeatures + if (rustRelease) listOf("--release") else emptyList(),
     )
+    val marker = rustProfileMarker
+    val profile = rustProfile
+    doLast { marker.get().asFile.writeText("$profile\n") }
 }
 
 // The core is built once per Gradle run, for debug or release according to
-// the task names asked for (`rustRelease`). A run that would package a release
-// variant without naming it (`assemble`, `build`) would put the debug core,
-// with the fixture loader (#289), into the release APK: refuse it.
-val checkNoDebugCoreInRelease by tasks.registering {
+// the task names asked for (`rustRelease`), into that profile's folder. A
+// variant may package its folder only when this run built it and the marker
+// says so. Otherwise a run that packages a release variant without naming it
+// (`assemble`, `build`) would leave the release folder stale or put a debug
+// core, with the fixture loader (#289), in it; and a debug variant packaged in
+// a release run would get a stale core that may not match its bindings.
+fun Task.checkCoreProfile(
+    buildType: String,
+    hint: String,
+) {
+    val built = rustProfile
+    val marker = rustJniLibsRoot.map { it.file("$buildType.profile") }
     group = "verification"
-    description = "Fails when a release variant would be packaged with a core built for debug."
-    val release = rustRelease
+    description = "Fails when a $buildType variant would be packaged with a core not built for $buildType."
+    dependsOn(cargoNdkBuild)
     doLast {
-        if (!release) {
+        if (built != buildType) {
             throw GradleException(
-                "A release variant needs a release core: name the release task (assembleRelease, bundleRelease).",
+                "A $buildType variant needs a $buildType core, but this run builds the $built core: $hint",
+            )
+        }
+        val found =
+            marker
+                .get()
+                .asFile
+                .takeIf { it.isFile }
+                ?.readText()
+                ?.trim()
+        if (found != buildType) {
+            throw GradleException(
+                "rustJniLibs/$buildType holds a ${found ?: "unmarked"} core; delete app/build/rustJniLibs and build again.",
             )
         }
     }
 }
 
+val checkNoDebugCoreInRelease by tasks.registering {
+    checkCoreProfile("release", "name the release task (assembleRelease, bundleRelease).")
+}
+
+val checkNoReleaseCoreInDebug by tasks.registering {
+    checkCoreProfile("debug", "build debug and release variants in separate Gradle runs.")
+}
+
 tasks.matching { it.name == "mergeReleaseNativeLibs" || it.name == "mergeReleaseJniLibFolders" }.configureEach {
     dependsOn(checkNoDebugCoreInRelease)
+}
+
+tasks.matching { it.name == "mergeDebugNativeLibs" || it.name == "mergeDebugJniLibFolders" }.configureEach {
+    dependsOn(checkNoReleaseCoreInDebug)
 }
 
 // F-Droid (M6-04, #71): the release build must contain only free software and
