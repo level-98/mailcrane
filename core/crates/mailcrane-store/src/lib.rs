@@ -10,6 +10,7 @@ mod repo;
 pub use error::StoreError;
 pub use model::*;
 pub use repo::NewMail;
+pub use repo::PushSubscriptionRow;
 pub use repo::{is_valid_authserv_id, MAX_AUTHSERV_ID_LEN};
 pub use repo::{
     CancelReport, Correspondent, Draft, DraftFields, DraftId, NewOp, NewOutboxMessage, NewRule,

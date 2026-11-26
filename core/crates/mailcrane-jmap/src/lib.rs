@@ -13,6 +13,7 @@ pub mod email;
 mod error;
 mod http;
 pub mod mailbox;
+pub mod push;
 pub mod request;
 pub mod session;
 pub mod submission;
@@ -27,6 +28,10 @@ pub use http::{Auth, ClientConfig, MAX_RESPONSE_BYTES};
 pub use mailbox::{
     create_mailbox, destroy_mailbox, get_mailboxes, update_mailbox, JmapMailbox, MailboxRole,
     MailboxSetError,
+};
+pub use push::{
+    create_push_subscription, destroy_push_subscription, parse_push, refresh_push_subscription,
+    verify_push_subscription, CreatedPush, PushKeys, PushObject,
 };
 pub use request::{call, parse_response, MethodCall, MethodResponse};
 pub use session::{discover, Session};

@@ -87,7 +87,7 @@ impl SyncEngine {
 
 /// HTTP Basic with the account's username and its password (an app
 /// password at most providers) from secure storage.
-pub(super) fn jmap_auth(store: &Store, account: AccountId) -> Result<Auth, events::SyncErrorKind> {
+pub(crate) fn jmap_auth(store: &Store, account: AccountId) -> Result<Auth, events::SyncErrorKind> {
     let row = store
         .get_account(account)
         .map_err(|_| events::SyncErrorKind::Storage)?
