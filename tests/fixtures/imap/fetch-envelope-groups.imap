@@ -1,0 +1,4 @@
+* 1 FETCH (UID 11 ENVELOPE ("Thu, 26 Nov 2026 09:00:00 +0000" "Empty group" (("Ana" NIL "ana" "example.org")) NIL NIL ((NIL NIL "undisclosed-recipients" NIL)(NIL NIL NIL NIL)) NIL NIL NIL "<g1@example.org>"))
+* 2 FETCH (UID 12 ENVELOPE ("Thu, 26 Nov 2026 09:01:00 +0000" "Group with members" (("Ana" NIL "ana" "example.org")) NIL NIL ((NIL NIL "team" NIL)("Bo" NIL "bo" "example.net")(NIL NIL "carl" "example.com")(NIL NIL NIL NIL)) NIL NIL NIL "<g2@example.org>"))
+* 3 FETCH (UID 13 ENVELOPE ("Thu, 26 Nov 2026 09:02:00 +0000" "Undelivered" ((NIL NIL "MAILER-DAEMON" NIL)) NIL NIL ((NIL NIL "root" NIL)("Bo" NIL "bo" "example.net")) NIL NIL NIL "<g3@example.org>"))
+a5 OK FETCH completed
