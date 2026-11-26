@@ -4,9 +4,9 @@ This is the plan. **The live to-do list is the GitHub issues**: `scripts/roadmap
 
 **Markers:** 🟢 good first issue · 🤖 agent-ready (clear spec, easy to test) · 🔒 security-sensitive · 🧑 needs a human (real devices, accounts or judgement)
 
-**Android first, iOS after release.** Mailcrane ships on Android first. Until the Android 1.0 release (M6), app work in M1–M6 means the Android app. The iOS app stays at its M0 shell and catches up in **M7**, after release (see [decision 0002](docs/decisions/0002-android-first-ios-after-release.md)). The Rust core is still shared, so mail logic built now will already be there for iOS.
+**Android only before 1.0.** Mailcrane is an Android app. No iOS app is planned before 1.0 ([decision 0005](docs/decisions/0005-no-ios-before-1-0.md)); the Rust core stays platform-neutral so one could follow later.
 
-Task IDs never change when a task moves milestone: `M1-11` keeps its ID (and its issue) now that it sits under M7.
+Task IDs never change when a task moves milestone.
 
 **Product principles.** Check new features against these:
 
@@ -22,7 +22,7 @@ Task IDs never change when a task moves milestone: `M1-11` keeps its ID (and its
 
 ## M0 — Foundations
 
-Goal: anyone can clone, build an empty Android app and run CI. (The iOS shell from M0-07 also builds, on a Mac.)
+Goal: anyone can clone, build an empty Android app and run CI.
 
 - [x] **M0-01** Add LICENSE (MPL-2.0), CODE_OF_CONDUCT.md (Contributor Covenant 2.1), branch protection on `main` 🧑
 - [x] **M0-02** Run `scripts/roadmap_to_issues.py` to create the labels and one issue per task; enable Discussions 🧑
@@ -30,8 +30,8 @@ Goal: anyone can clone, build an empty Android app and run CI. (The iOS shell fr
 - [x] **M0-04** Rust workspace skeleton in `core/` with empty crates: `mailcrane-core`, `-imap`, `-smtp`, `-jmap`, `-mime`, `-store`, `-ffi`, `-testkit`; `#![forbid(unsafe_code)]` and the no-panic clippy lints 🤖
 - [x] **M0-05** UniFFI setup: expose a `hello()` function, generate Kotlin and Swift bindings 🤖
 - [x] **M0-06** Android app shell: Compose + Material 3, Hilt, calls `hello()` through the bindings, ktlint 🤖
-- [x] **M0-07** iOS app shell: SwiftUI, XCFramework build of the core, calls `hello()`, SwiftLint 🤖
-- [x] **M0-08** `cargo xtask ci`: one command for fmt, clippy, tests, cargo-deny, and Android/iOS checks when installed; CI (GitHub Actions) just runs it 🤖
+- [x] **M0-07** iOS app shell: SwiftUI, XCFramework build of the core, calls `hello()`, SwiftLint (removed by decision 0005; kept at the tag `archive/ios-shell`) 🤖
+- [x] **M0-08** `cargo xtask ci`: one command for fmt, clippy, tests, cargo-deny, and the Android checks; CI (GitHub Actions) just runs it 🤖
 - [x] **M0-09** `cargo deny` config allowing only MPL-2.0-compatible licences 🟢🤖
 - [x] **M0-10** Generate the Compose theme and SwiftUI colour assets from `design/colors.json` (the brand pack itself is already in `design/`) 🤖
 - [x] **M0-11** `mailcrane-testkit`: in-process fake IMAP, SMTP and JMAP servers that can misbehave on purpose (drop connections, malformed replies, Gmail-style quirks) 🤖
@@ -39,14 +39,14 @@ Goal: anyone can clone, build an empty Android app and run CI. (The iOS shell fr
 - [x] **M0-13** Dependabot or Renovate for Cargo, Gradle and Swift packages 🟢🤖
 - [x] **M0-14** Fuzz targets (`cargo fuzz`) for the MIME and IMAP parsers, run nightly in CI 🤖
 - [x] **M0-15** Release script that gathers `docs/changelog.d/` fragments into release notes 🟢🤖
-- [x] **M0-17** Cross-platform CI on every PR: Android on Linux and the core on Windows (iOS on macOS comes back in M7-02) 🤖
+- [x] **M0-17** Cross-platform CI on every PR: Android on Linux and the core on Windows 🤖
 
 ## M1 — Read mail
 
 Goal: add an IMAP account and read your inbox, online and offline.
 
 - [x] **M1-01** Store schema v1: accounts, folders, messages, threads, attachments metadata, with migrations 🤖
-- [x] **M1-02** Secure credential storage: Android Keystore and iOS Keychain, behind one FFI interface 🔒
+- [x] **M1-02** Secure credential storage: Android Keystore, behind one FFI interface 🔒
 - [x] **M1-03** Manual account setup: IMAP/SMTP host, port, security, username, password 🤖
 - [x] **M1-04** IMAP connection, login and folder list (TLS via rustls) 🔒🤖
 - [x] **M1-05** Initial sync: fetch headers for recent messages, paginate older ones on demand 🤖
@@ -76,7 +76,7 @@ Goal: add an IMAP account and read your inbox, online and offline.
 
 ## M3 — Providers and sign-in
 
-- [x] **M3-01** OAuth 2.0 framework with PKCE, using the system browser (AppAuth on Android; iOS sign-in is M7-09) 🔒
+- [x] **M3-01** OAuth 2.0 framework with PKCE, using the system browser (AppAuth on Android) 🔒
 - [ ] **M3-02** Gmail: OAuth, XOAUTH2, and labels mapped to folders 🔒🧑 (needs Google app verification)
   - Start verification early and budget for the yearly CASA security assessment: other open-source clients have been shown "App blocked" while waiting. Keep the app-password IMAP route working as a fallback.
 - [ ] **M3-03** Microsoft 365 and Outlook.com: OAuth and XOAUTH2 🔒🧑
@@ -90,7 +90,7 @@ Goal: add an IMAP account and read your inbox, online and offline.
 - [x] **M4-02** Conversation threading (JWZ algorithm plus Gmail thread IDs) 🤖
 - [x] **M4-03** Offline full-text search (SQLite FTS5), plus server-side IMAP SEARCH 🤖
 - [x] **M4-04** Configurable swipe actions 🟢🤖
-- [ ] **M4-05** Push notifications on Android: foreground IDLE service and UnifiedPush (iOS is M7-10) 🧑
+- [ ] **M4-05** Push notifications on Android: foreground IDLE service and UnifiedPush 🧑
   - Notification settings per account and per folder. Folders that rules move mail into notify by default.
   - Quiet hours per account, which can also pause syncing (e.g. work account at weekends).
   - The user picks the notification actions (mark as read, archive, delete, reply).
@@ -142,28 +142,7 @@ Goal: Mailcrane 1.0 on Android, through F-Droid and Google Play.
 - [x] **M6-07** Website and user docs (mailcrane.app) 🤖
 - [ ] **M6-08** Privacy policy (short and honest: we collect nothing) 🧑
 
-## M7 — iOS app
-
-Goal: bring the iOS app up to the Android 1.0 feature set and ship it on the App Store. Starts after M6. The mail logic is already in the shared core, so this is mostly SwiftUI screens and Apple platform features. Day-to-day iOS work needs macOS (Xcode and the simulator), on a Mac, a rented cloud Mac or CI.
-
-- [ ] **M7-01** Decide how iOS gets built and tested (own Mac, cloud Mac, or CI only) and record it as an ADR 🧑
-- [ ] **M7-02** Turn the iOS check back on for every PR (`.github/workflows/ios.yml`) and bring the iOS shell up to date with the core: bindings, SwiftLint, tests 🤖
-- [ ] **M0-16** TestFlight internal builds from CI (macOS runner), so iOS can be tested on real devices without a Mac 🔒🧑
-- [ ] **M1-11** Message list screen, iOS 🤖
-- [ ] **M7-03** Message view screen with "load remote images" button, iOS 🤖
-- [ ] **M7-04** Folder sidebar, iOS 🟢🤖
-- [ ] **M7-05** Account setup screens, iOS: manual and automatic (the iOS side of M1-03 and M1-15) 🤖
-- [ ] **M7-06** Compose screens, iOS: compose, reply and forward, attachments, drafts, rich text and signatures (the iOS side of M2) 🤖
-- [ ] **M7-07** Everyday features, iOS: multiple accounts, threading, search, swipe actions, snooze, scheduled and undo send, rules, unsubscribe and empty states (the iOS side of M1 and M4) 🤖
-- [ ] **M7-08** Privacy features, iOS: trackers-blocked indicator, link cleaning, OpenPGP and S/MIME screens (the iOS side of M5) 🤖
-- [ ] **M7-09** OAuth sign-in on iOS with ASWebAuthenticationSession, using the M3-01 framework (Gmail and Microsoft) 🔒
-- [ ] **M7-10** Push notifications on iOS: background fetch. Write an ADR on whether iOS needs a self-hostable push relay first 🧑
-- [ ] **M7-11** App lock with Face ID, Touch ID or passcode, iOS 🔒
-- [ ] **M7-12** Home-screen widgets (WidgetKit) 🤖
-- [ ] **M7-13** iPad layout (list and detail side by side) 🤖
-- [ ] **M7-14** Accessibility pass on iOS: VoiceOver, Dynamic Type, contrast 🧑
-- [ ] **M7-15** iOS release builds and signing in CI 🔒🧑
-- [ ] **M6-06** TestFlight beta and App Store release 🧑
+## M7 — iOS: not planned before 1.0 ([decision 0005](docs/decisions/0005-no-ios-before-1-0.md))
 
 ## M8 — After 1.0
 

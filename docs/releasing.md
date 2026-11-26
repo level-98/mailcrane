@@ -1,12 +1,12 @@
 # Releasing the Android app
 
-How a maintainer makes a signed release (M6-03, issue #70). The workflow is [.github/workflows/release.yml](../.github/workflows/release.yml). Google Play upload and the iOS app come later (#72, M7) and aren't covered yet.
+How a maintainer makes a signed release (M6-03, issue #70). The workflow is [.github/workflows/release.yml](../.github/workflows/release.yml). Google Play upload comes later (#72) and isn't covered yet.
 
 ## What happens on a tag
 
 Pushing a tag such as `v0.1.0` runs two jobs:
 
-1. **build** (no secrets): checks that the tag is on `main` and matches the version in Gradle (`cargo xtask release-check`), runs `cargo xtask ci --strict --skip ios`, builds the unsigned release APK and AAB (with `checkFreeDependencies`, so nothing non-free gets in) and the release notes from `docs/changelog.d/`.
+1. **build** (no secrets): checks that the tag is on `main` and matches the version in Gradle (`cargo xtask release-check`), runs `cargo xtask ci --strict`, builds the unsigned release APK and AAB (with `checkFreeDependencies`, so nothing non-free gets in) and the release notes from `docs/changelog.d/`.
 2. **sign** (the `release` environment): waits for a maintainer to approve it, signs the APK (`apksigner`) and AAB (`jarsigner`), writes `SHA256SUMS`, and makes a **draft** GitHub Release with the APK, AAB, checksums and notes. You read the draft and press Publish.
 
 The signing key is only ever on the runner of the sign job, which builds nothing, so no build script or library code runs next to it. The keystore is written to a temporary file and deleted at the end, even if signing fails. GitHub masks the secrets in logs, and the workflow never prints them.
