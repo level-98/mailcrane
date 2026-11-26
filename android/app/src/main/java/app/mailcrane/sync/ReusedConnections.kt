@@ -25,14 +25,21 @@ const val BACKGROUND_CLOSE_DELAY_MS = 60_000L
  * Decides when the core's reused mail connections (one per account, issue #294) are closed: at
  * once when the default network changes or is lost, and after [backgroundDelayMs] in the
  * background, unless the app comes back first. [close] runs on [scope]; it may block.
+ *
+ * It also tells live updates (IMAP IDLE, M4-05) to [reconnect] whenever a default network arrives
+ * that isn't the one they connected on: a different one, or one after none. Without that, an
+ * IDLE connection left on the old network would go unnoticed until it is re-issued, and after an
+ * outage the next try could be minutes away.
  */
 class ConnectionCloser(
     private val scope: CoroutineScope,
     private val backgroundDelayMs: Long = BACKGROUND_CLOSE_DELAY_MS,
+    private val reconnect: () -> Unit = {},
     private val close: (CloseReason) -> Unit,
 ) {
     // Touched only from the callbacks, which Android delivers one at a time.
     private var network: Long? = null
+    private var hadNetwork = false
     private var pending: Job? = null
 
     /** The default network is now [id]: a different one than before closes the connections. */
@@ -40,6 +47,9 @@ class ConnectionCloser(
         val previous = network
         network = id
         if (previous != null && previous != id) closeNow()
+        // The first network seen is the one live updates started on.
+        if (hadNetwork && previous != id) scope.launch { reconnect() }
+        hadNetwork = true
     }
 
     /** The default network [id] went away. */
@@ -80,7 +90,8 @@ class ReusedConnections
         private val core: UniffiMailboxCore,
     ) {
         private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-        private val closer = ConnectionCloser(scope) { core.closeConnections(it) }
+        private val closer =
+            ConnectionCloser(scope, reconnect = core::reconnectLiveUpdates) { core.closeConnections(it) }
 
         /** Call once from the Application, on the main thread. */
         fun start() {

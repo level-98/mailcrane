@@ -59,11 +59,14 @@
             android:name=".notify.NotificationActionReceiver"
             android:exported="false" />
 
+        <!-- Starts always-on sync again after a reboot or an app update (M4-05). -->
         <receiver
             android:name=".sync.BootReceiver"
             android:exported="false">
             <intent-filter>
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <!-- An app update stops the running service; this starts it again. -->
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
             </intent-filter>
         </receiver>
 
