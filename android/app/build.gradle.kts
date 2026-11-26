@@ -56,6 +56,9 @@ android {
         // commit gives the same value on any machine, so release builds stay
         // reproducible (docs/fdroid.md); without git it is "unknown".
         buildConfigField("String", "GIT_COMMIT", "\"$gitCommit\"")
+        // Sign in with Google (M3-02), on only where the redirect can reach this
+        // app: see the release build type and CheckOAuthRedirect below.
+        buildConfigField("boolean", "GOOGLE_SIGN_IN", "false")
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         // Only the ABIs the Rust core is built for (cargoNdkBuild). Without this,
         // libraries such as JNA bring armeabi-v7a, armeabi and mips folders, and
@@ -67,15 +70,16 @@ android {
     buildTypes {
         // Debug builds are a separate app, app.mailcrane.debug (#405), so they
         // install beside the release app on a real phone instead of replacing it
-        // and its accounts. They also get their own OAuth redirect scheme, so they
-        // can never catch the release app's sign-in; Google sign-in therefore
-        // doesn't complete in debug builds.
+        // and its accounts. Google redirects sign-in only to app.mailcrane:, the
+        // package its client is registered for, so debug builds have no OAuth
+        // redirect activity (src/debug/AndroidManifest.xml) and no Sign in with
+        // Google: a debug sign-in could otherwise hand its authorization code to
+        // the release app. Password sign-in still works.
         debug {
             applicationIdSuffix = ".debug"
-            manifestPlaceholders["oauthScheme"] = "$mailcraneApplicationId.debug"
         }
         release {
-            manifestPlaceholders["oauthScheme"] = mailcraneApplicationId
+            buildConfigField("boolean", "GOOGLE_SIGN_IN", "true")
             isMinifyEnabled = false
             // No git commit in the APK, so builds from any checkout match (F-Droid
             // reproducible builds, M6-04).
@@ -335,6 +339,98 @@ val checkFreeDependencies by tasks.registering {
 }
 
 tasks.named("check") { dependsOn(checkFreeDependencies) }
+
+// OAuth redirect (#405): Google sends the authorization code to
+// OAuthSignIn.REDIRECT_URI, the same literal as the core's providers/google.rs,
+// and its scheme is the release package. The debug app installs beside the
+// release app, so exactly one of them may route that scheme: the release app,
+// to OAuthRedirectActivity. Checked on each variant's merged manifest before
+// it is assembled.
+abstract class CheckOAuthRedirect : DefaultTask() {
+    @get:InputFile
+    @get:PathSensitive(PathSensitivity.NONE)
+    abstract val mergedManifest: RegularFileProperty
+
+    @get:InputFile
+    @get:PathSensitive(PathSensitivity.NONE)
+    abstract val signInSource: RegularFileProperty
+
+    @get:InputFile
+    @get:PathSensitive(PathSensitivity.NONE)
+    abstract val coreProvider: RegularFileProperty
+
+    /** Whether this variant receives the redirect (release) or must not (debug). */
+    @get:Input
+    abstract val receivesRedirect: Property<Boolean>
+
+    @get:OutputFile
+    abstract val report: RegularFileProperty
+
+    private fun literal(
+        file: RegularFileProperty,
+        pattern: Regex,
+    ): String {
+        val f = file.get().asFile
+        return pattern.find(f.readText())?.groupValues?.get(1)
+            ?: throw GradleException("OAuth redirect check: no REDIRECT_URI literal in ${f.name}")
+    }
+
+    @TaskAction
+    fun check() {
+        val app = literal(signInSource, Regex("const val REDIRECT_URI = \"([^\"]+)\""))
+        val core = literal(coreProvider, Regex("pub const REDIRECT_URI: &str = \"([^\"]+)\";"))
+        if (app != core) {
+            throw GradleException("OAuth redirect check: OAuthSignIn.REDIRECT_URI is $app but the core sends $core")
+        }
+        val scheme = app.substringBefore(':')
+        val androidNs = "http://schemas.android.com/apk/res/android"
+        val doc =
+            javax.xml.parsers.DocumentBuilderFactory
+                .newInstance()
+                .apply { isNamespaceAware = true }
+                .newDocumentBuilder()
+                .parse(mergedManifest.get().asFile)
+        // Every component with an intent filter for the redirect scheme.
+        val receivers =
+            listOf("activity", "activity-alias", "receiver", "service").flatMap { tag ->
+                val components = doc.getElementsByTagName(tag)
+                (0 until components.length).mapNotNull { i ->
+                    val component = components.item(i) as org.w3c.dom.Element
+                    val data = component.getElementsByTagName("data")
+                    val routes =
+                        (0 until data.length).any { j ->
+                            (data.item(j) as org.w3c.dom.Element).getAttributeNS(androidNs, "scheme") == scheme
+                        }
+                    if (routes) component.getAttributeNS(androidNs, "name") else null
+                }
+            }
+        val expected =
+            if (receivesRedirect.get()) listOf("app.mailcrane.oauth.OAuthRedirectActivity") else emptyList()
+        if (receivers != expected) {
+            throw GradleException(
+                "OAuth redirect check: $name found scheme $scheme: routed to $receivers, expected $expected (#405).",
+            )
+        }
+        report.get().asFile.writeText("$scheme: routed to $receivers\n")
+    }
+}
+
+androidComponents {
+    onVariants { variant ->
+        val variantName = variant.name.replaceFirstChar { it.uppercase() }
+        val check =
+            tasks.register<CheckOAuthRedirect>("check${variantName}OAuthRedirect") {
+                group = "verification"
+                description = "Checks which component of the ${variant.name} build routes the OAuth redirect scheme."
+                mergedManifest.set(variant.artifacts.get(com.android.build.api.artifact.SingleArtifact.MERGED_MANIFEST))
+                signInSource.set(layout.projectDirectory.file("src/main/java/app/mailcrane/oauth/OAuthSignIn.kt"))
+                coreProvider.set(coreDir.file("crates/mailcrane-core/src/oauth/providers/google.rs"))
+                receivesRedirect.set(variant.buildType == "release")
+                report.set(layout.buildDirectory.file("reports/oauthRedirect/${variant.name}.txt"))
+            }
+        tasks.matching { it.name == "assemble$variantName" }.configureEach { dependsOn(check) }
+    }
+}
 
 // Debug builds carry tests/fixtures (`.eml` and `.html`) as assets under
 // `fixtures/`, for "Load test mail" (#289). Release builds don't.

@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <application>
+        <!-- No OAuth redirect in debug builds (#405). Google sends sign-in only to
+             app.mailcrane:, the release package. A debug build installed beside the
+             release app must neither receive the release app's code nor start a
+             sign-in whose code would go to the release app, so Sign in with Google
+             is hidden too (BuildConfig.GOOGLE_SIGN_IN). -->
+        <activity
+            android:name="app.mailcrane.oauth.OAuthRedirectActivity"
+            tools:node="remove" />
+    </application>
+</manifest>

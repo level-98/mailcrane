@@ -16,6 +16,7 @@ import app.mailcrane.core.OAuthFailure
 import app.mailcrane.core.OAuthProviderConfig
 import app.mailcrane.core.ServerConfig
 import app.mailcrane.oauth.OAuthResult
+import app.mailcrane.oauth.OAuthSignIn
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -98,10 +99,17 @@ data class ManualSetupUiState(
 
 @HiltViewModel
 class ManualSetupViewModel
-    @Inject
-    constructor(
+    internal constructor(
         private val core: MailcraneCore,
+        /**
+         * Whether Sign in with Google is offered ([OAuthSignIn.AVAILABLE]: release builds only,
+         * #405). Without it a Gmail address takes the password path, with an app password.
+         */
+        private val googleSignIn: Boolean,
     ) : ViewModel() {
+        @Inject
+        constructor(core: MailcraneCore) : this(core, OAuthSignIn.AVAILABLE)
+
         private val _state = MutableStateFlow(emptyForm())
         val state: StateFlow<ManualSetupUiState> = _state.asStateFlow()
 
@@ -121,7 +129,7 @@ class ManualSetupViewModel
         }
 
         fun onEmailChange(value: String) =
-            edit(Field.EMAIL) { copy(email = value, gmail = core.isGmailAddress(value.trim())) }
+            edit(Field.EMAIL) { copy(email = value, gmail = googleSignIn && core.isGmailAddress(value.trim())) }
 
         fun onDisplayNameChange(value: String) = edit(Field.DISPLAY_NAME) { copy(displayName = value) }
 
@@ -227,7 +235,7 @@ class ManualSetupViewModel
          */
         fun startGoogleSignIn(): Pair<OAuthProviderConfig, String>? {
             val current = _state.value
-            if (current.checking) return null
+            if (!googleSignIn || current.checking) return null
             val email = current.email.trim()
             if (!email.contains('@')) {
                 _state.update { it.copy(fieldErrors = mapOf(Field.EMAIL to FieldProblem.MALFORMED_EMAIL)) }
