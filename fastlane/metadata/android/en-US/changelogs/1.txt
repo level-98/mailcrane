@@ -1,0 +1,5 @@
+First release of Mailcrane: free, private email for IMAP and JMAP accounts.
+• Several accounts and one inbox for all of them, conversations and offline search.
+• Remote images and trackers blocked, tracking removed from links, and a look at where a link goes before it opens.
+• Drafts, an offline outbox, scheduled and undo send, snooze, rules and folders you can manage.
+Mailcrane is still young: please report problems on the issue tracker.

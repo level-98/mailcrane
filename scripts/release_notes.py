@@ -4,10 +4,14 @@
 Usage:
     python scripts/release_notes.py <version> [--date YYYY-MM-DD] [--apply]
                                     [--include-internal]
+                                    [--fastlane <versionCode>]
 
 Default is a dry run that prints the Markdown section. With --apply the
 section is put at the top of CHANGELOG.md and the used fragments are deleted
-(with `git rm` inside a git repo). Standard library only.
+(with `git rm` inside a git repo). With --fastlane the user-facing notes are
+also written as plain text to
+fastlane/metadata/android/en-US/changelogs/<versionCode>.txt, which F-Droid
+and Google Play show (at most 500 characters). Standard library only.
 """
 
 import argparse
@@ -82,6 +86,53 @@ def render(entries, version, date, include_internal):
     return "\n".join(lines) + "\n"
 
 
+# F-Droid and Google Play show at most this many characters per release.
+FASTLANE_LIMIT = 500
+FASTLANE_MORE = "And more: see CHANGELOG.md."
+
+
+def render_fastlane(entries, limit=FASTLANE_LIMIT):
+    """Plain-text notes for a store listing: no internal entries, no issue
+    numbers, one "• " line each, in the usual group order. Whole lines are
+    dropped from the end to stay within `limit`, with a pointer to the full
+    changelog."""
+    lines = [
+        f"• {text}"
+        for frag_type, _ in GROUPS
+        if frag_type != "internal"
+        for _, _, t, text in entries
+        if t == frag_type
+    ]
+    if not lines:
+        return ""
+    text = "\n".join(lines)
+    if len(text) <= limit:
+        return text + "\n"
+    kept = []
+    for line in lines:
+        candidate = "\n".join(kept + [line, FASTLANE_MORE])
+        if len(candidate) > limit:
+            break
+        kept.append(line)
+    if not kept:
+        # One entry alone is too long: cut it at a word.
+        room = limit - len(FASTLANE_MORE) - 2
+        cut = lines[0][:room].rsplit(" ", 1)[0]
+        kept = [cut + "…"]
+    return "\n".join(kept + [FASTLANE_MORE]) + "\n"
+
+
+def write_fastlane(root, version_code, text):
+    path = (
+        Path(root) / "fastlane" / "metadata" / "android" / "en-US" / "changelogs"
+        / f"{version_code}.txt"
+    )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8", newline="\n") as f:
+        f.write(text)
+    return path
+
+
 def prepend_changelog(changelog, section):
     heading = "# Changelog"
     existing = ""
@@ -125,6 +176,12 @@ def main(argv=None, root=None):
     parser.add_argument("--date", default=None, help="YYYY-MM-DD (default: today)")
     parser.add_argument("--apply", action="store_true")
     parser.add_argument("--include-internal", action="store_true")
+    parser.add_argument(
+        "--fastlane",
+        metavar="VERSION_CODE",
+        default=None,
+        help="also write fastlane/metadata/android/en-US/changelogs/<VERSION_CODE>.txt",
+    )
     args = parser.parse_args(argv)
 
     try:
@@ -136,7 +193,21 @@ def main(argv=None, root=None):
         fragment_dir = root / "docs" / "changelog.d"
         entries = collect(fragment_dir)
         section = render(entries, args.version, date, args.include_internal)
+        if args.fastlane is not None:
+            if not args.fastlane.isdigit() or int(args.fastlane) < 1:
+                raise ReleaseNotesError(
+                    f"Bad versionCode '{args.fastlane}': use a positive whole number"
+                )
+            notes = render_fastlane(entries)
+            if not notes:
+                raise ReleaseNotesError("No user-facing fragments for the store notes")
+            path = write_fastlane(root, int(args.fastlane), notes)
+            print(f"wrote {path.relative_to(root)}", file=sys.stderr)
         if not args.apply:
+            # UTF-8 even where the console's code page can't show every
+            # character (Windows), instead of failing half-way.
+            if hasattr(sys.stdout, "reconfigure"):
+                sys.stdout.reconfigure(encoding="utf-8")
             sys.stdout.write(section)
             return 0
         prepend_changelog(root / "CHANGELOG.md", section)
