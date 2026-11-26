@@ -750,6 +750,8 @@ pub fn remove_account(db_path: String, account_id: i64) -> Result<(), RemoveAcco
     let secrets = crate::secrets::secret_store().map_err(|_| RemoveAccountFailure::Storage)?;
     mailcrane_core::secrets::delete_account_secrets(secrets.as_ref(), account_id)
         .map_err(|_| RemoveAccountFailure::Storage)?;
+    // An OAuth account's access token (M3-02) goes from memory too.
+    mailcrane_core::oauth::token_cache().forget(account_id);
     match store.delete_account(id) {
         Ok(true) => Ok(()),
         Ok(false) => Err(RemoveAccountFailure::NotFound),
