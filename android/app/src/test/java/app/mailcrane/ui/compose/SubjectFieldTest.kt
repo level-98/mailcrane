@@ -126,6 +126,25 @@ class SubjectFieldTest {
     }
 
     @Test
+    fun aLoadThatReplacesTypedTextPutsTheCursorAtItsEnd() {
+        // Review of #443: "ab" typed while a reply loads; the reply's subject replaces it, and the view model
+        // answers the stale keystrokes by moving the revision on again. The next key goes after the subject, not
+        // into the middle of it ("Rec: Lunch").
+        show()
+        field().performTextInput("a")
+        field().performTextInput("b")
+        assertEquals(TextRange(2), selection())
+        outside("Re: Lunch")
+        assertEquals("Re: Lunch", text())
+        assertEquals(TextRange(9), selection())
+        // The view model drops "ab" (typed against revision 0) and moves the revision on.
+        outside("Re: Lunch")
+        field().performTextInput("!")
+        assertEquals("Re: Lunch!", text())
+        assertEquals("Re: Lunch!" to state.subjectRevision, sent.last())
+    }
+
+    @Test
     fun onlyTheNewestRevisionIsApplied() {
         show()
         live = state.copy(subject = "Fwd: Plans", subjectRevision = 2)

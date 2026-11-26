@@ -119,7 +119,8 @@ data class ComposeUiState(
     val subject: String = "",
     /**
      * Counts changes to [subject] from outside the subject field (prefill, draft, reply, reset), never the
-     * field's own typing (#429): the field takes [subject] over its own text only when this moves.
+     * field's own typing (#429): the field takes [subject] over its own text only when this moves. An edit typed
+     * against an older revision also moves it, so the field takes the current subject back.
      */
     val subjectRevision: Long = 0,
     val body: String = "",

@@ -25,7 +25,9 @@ import app.mailcrane.R
  * The subject, with a text of its own (#429). `state.subject` moves on with every edit the field sends, but often a
  * frame or two behind the typing; fed straight back into a `String` field, an older subject reset the text and the
  * cursor, and characters were lost. Only a new [ComposeUiState.subjectRevision] (a prefill, draft, reply or reset)
- * replaces the field's text, the same approach as the body field (#419).
+ * replaces the field's text, as in the body field (#419). Unlike the body, an edit typed against an older revision
+ * isn't merged into the new subject: the subject's outside changes are all loads, and typing during a load is
+ * #435's to prevent.
  */
 @Composable
 internal fun SubjectField(
@@ -46,17 +48,9 @@ internal fun SubjectField(
         if (now.subjectRevision <= appliedRevision) return@LaunchedEffect
         appliedRevision = now.subjectRevision
         val incoming = now.subject
-        // A subject loaded into an empty field puts the cursor at its end; otherwise it keeps its place.
-        val selection = if (value.text.isEmpty()) TextRange(incoming.length) else value.selection
-        value =
-            TextFieldValue(
-                text = incoming,
-                selection =
-                    TextRange(
-                        selection.start.coerceIn(0, incoming.length),
-                        selection.end.coerceIn(0, incoming.length),
-                    ),
-            )
+        // Every outside change replaces the whole subject (a load or a reset), so the cursor goes to its end: an
+        // offset from the old text would land in the middle of the new one ("Re|: Lunch").
+        value = TextFieldValue(text = incoming, selection = TextRange(incoming.length))
     }
     TextField(
         value = value,
