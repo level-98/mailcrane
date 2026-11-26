@@ -10,6 +10,11 @@ use mailcrane_jmap::{
 use mailcrane_testkit::{FakeEmail, FakeJmap};
 use std::time::Duration;
 
+/// Each request's limit (connect to last byte). Only a hang guard: a busy
+/// machine can stall a request against the fake for seconds, and a 5 s
+/// limit is the likely reason all four actions tests failed at once (#362).
+const HANG_GUARD: Duration = Duration::from_secs(60);
+
 fn email(id: &str, mailbox: &str, at: &str, seen: bool) -> FakeEmail {
     FakeEmail {
         id: id.into(),
@@ -32,7 +37,7 @@ async fn setup() -> (FakeJmap, ClientConfig, Auth, Session) {
         .await
         .expect("server");
     let cfg = ClientConfig {
-        timeout: Duration::from_secs(5),
+        timeout: HANG_GUARD,
         extra_roots: vec![server.root_cert_der().to_vec()],
     };
     let auth = Auth::Bearer("token".into());
