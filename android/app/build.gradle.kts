@@ -424,6 +424,8 @@ dependencies {
     implementation(libs.androidx.lifecycle.runtime.compose)
     implementation(libs.androidx.lifecycle.process)
     implementation(libs.hilt.android)
+    // Optional push wake-ups through a UnifiedPush distributor (M4-05). Free; no FCM.
+    implementation(libs.unifiedpush.connector)
     implementation(libs.hilt.navigation.compose)
     ksp(libs.hilt.compiler)
     implementation("${libs.jna.get()}@aar")

@@ -30,6 +30,8 @@ fn every_table_and_index_exists() -> R {
             // JMAP (M3-04).
             "jmap_emails",
             "jmap_mailboxes",
+            // JMAP push subscriptions (M4-27).
+            "jmap_push_subscriptions",
             "jmap_state",
             "message_bodies",
             "messages",

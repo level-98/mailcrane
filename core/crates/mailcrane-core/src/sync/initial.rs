@@ -56,6 +56,13 @@ pub enum SyncError {
     /// Sync the folder again.
     #[error("the folder was renumbered by the server")]
     FolderReset,
+    /// A push verification names a subscription this app doesn't have
+    /// (M4-27).
+    #[error("unknown push subscription")]
+    UnknownPushSubscription,
+    /// The system's random number source failed.
+    #[error("no random numbers")]
+    Random,
 }
 
 impl SyncError {
@@ -71,6 +78,8 @@ impl SyncError {
             SyncError::UnknownMessage => "UnknownMessage",
             SyncError::MessageGone => "MessageGone",
             SyncError::FolderReset => "FolderReset",
+            SyncError::UnknownPushSubscription => "UnknownPushSubscription",
+            SyncError::Random => "Random",
         }
     }
 
@@ -113,6 +122,8 @@ impl SyncError {
                 SyncErrorKind::NotFound
             }
             SyncError::FolderReset => SyncErrorKind::FolderReset,
+            SyncError::UnknownPushSubscription => SyncErrorKind::NotFound,
+            SyncError::Random => SyncErrorKind::Protocol,
         }
     }
 }

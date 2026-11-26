@@ -1055,9 +1055,12 @@ mod folder_admin;
 mod jmap;
 mod pool;
 mod prefetch;
+mod push;
 
+pub(crate) use jmap::jmap_auth;
 pub use pool::CloseReason;
 pub(crate) use pool::{ConnectionPool, Retry};
+pub use push::{classify_push, PushBody};
 
 /// Passes events on, except `SyncError`: inside a pooled job a failure may
 /// still be retried, and the final one is reported by the caller.
@@ -1078,5 +1081,7 @@ pub use prefetch::{BackgroundDownload, DeviceConditions};
 mod pool_tests;
 #[cfg(test)]
 mod prefetch_tests;
+#[cfg(test)]
+mod push_tests;
 #[cfg(test)]
 mod tests;
