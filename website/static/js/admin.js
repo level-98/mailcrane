@@ -51,8 +51,13 @@
   // ---------- Storage (may be blocked: private browsing, strict settings) ----------
 
   const memory = new Map();
+  // Set once a write fails (storage full or blocked). From then on this tab
+  // trusts its own copy first: storage still returns the old values, which
+  // would freeze the request budget and let the ticker fire nonstop.
+  let writeFailed = false;
 
   function load(key, fallback) {
+    if (writeFailed && memory.has(key)) return memory.get(key);
     try {
       const raw = localStorage.getItem(PREFIX + key);
       return raw === null ? fallback : JSON.parse(raw);
@@ -67,6 +72,7 @@
       localStorage.setItem(PREFIX + key, JSON.stringify(value));
     } catch (error) {
       // Full or blocked: this tab keeps going on the in-memory copy.
+      writeFailed = true;
     }
   }
 
