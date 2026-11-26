@@ -1,1 +1,1 @@
-The fleet launcher no longer exits straight away in every window (the development-channels flag was swallowing the start prompt).
+The fleet launcher no longer exits straight away in every window (the development-channels flag was swallowing the start prompt). `-Seats lead,dev1` now also works under `powershell -File`, and the seat list is checked: an empty list or a stray argument stops with an error, a repeated seat opens one window, names are lower-cased, and a checkout path with an apostrophe no longer breaks the windows.
