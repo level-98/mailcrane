@@ -1,51 +1,44 @@
 [
   {
-    "number": "01",
-    "image": "welcome-add-account.png",
-    "alt": "Welcome screen with privacy promises and email provider choices",
-    "title": "Welcome & account setup",
-    "description": "Start with privacy, then choose a provider."
+    "file": "inbox-light.png",
+    "theme": "light",
+    "caption": "Unified inbox",
+    "alt": "Mailcrane's unified inbox in light mode: messages from two accounts under date headers, each with the sender's initials on a coloured circle, a preview line and the time"
   },
   {
-    "number": "02",
-    "image": "unified-inbox-android.png",
-    "alt": "Android unified inbox with filters, message list, and compose button",
-    "title": "Unified inbox · Android",
-    "description": "See all your accounts in one calm inbox."
+    "file": "message-light.png",
+    "theme": "light",
+    "caption": "Trackers blocked",
+    "alt": "An open newsletter with remote images hidden, a “Load remote images” button and a note saying three trackers were blocked"
   },
   {
-    "number": "03",
-    "image": "message-view-privacy-first.png",
-    "alt": "Message view showing removed trackers and blocked remote images",
-    "title": "Privacy-first message",
-    "description": "Blocked remote content stays your choice."
+    "file": "phishing-light.png",
+    "theme": "light",
+    "caption": "Phishing warnings",
+    "alt": "A message showing a “Failed” sender check chip and a warning that the sender's name looks like a different email address"
   },
   {
-    "number": "04",
-    "image": "compose-schedule-send.png",
-    "alt": "Compose screen with schedule-send options and formatting controls",
-    "title": "Compose & schedule",
-    "description": "Drafts, attachments, and send-later options."
+    "file": "compose-light.png",
+    "theme": "light",
+    "caption": "Compose and schedule",
+    "alt": "The New message screen with To, Subject and a formatted message body, and the formatting toolbar above the keyboard"
   },
   {
-    "number": "05",
-    "image": "accounts-and-folders.png",
-    "alt": "Accounts drawer with unified inbox and email folders",
-    "title": "Accounts & folders",
-    "description": "Move between inboxes and familiar folders."
+    "file": "folders-light.png",
+    "theme": "light",
+    "caption": "Accounts and folders",
+    "alt": "The folder drawer with All inboxes at the top, two accounts with coloured dots, and folders such as Inbox, Drafts, Sent and Archive with unread counts"
   },
   {
-    "number": "06",
-    "image": "snooze-sheet.png",
-    "alt": "Snooze sheet with suggested times and date picker",
-    "title": "Snooze",
-    "description": "Bring a message back when you need it."
+    "file": "inbox-dark.png",
+    "theme": "dark",
+    "caption": "Dark mode",
+    "alt": "The same inbox in dark mode, with light text on a deep navy background"
   },
   {
-    "number": "07",
-    "image": "inbox-dark-mode.png",
-    "alt": "Dark mode inbox with message previews and compose button",
-    "title": "Dark inbox",
-    "description": "Low-glare surfaces with clear, readable mail."
+    "file": "settings-dark.png",
+    "theme": "dark",
+    "caption": "Settings",
+    "alt": "Settings in dark mode, listing accounts, appearance, notifications, privacy and app lock"
   }
 ]

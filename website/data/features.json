@@ -1,0 +1,220 @@
+{
+  "_comment": "Features merged on main. Claim only what is merged; set \"soon\": true for work in progress. \"highlight\": true puts a card on the home page (keep six to eight).",
+  "groups": [
+    {
+      "id": "privacy",
+      "icon": "shield",
+      "title": "Privacy and safety",
+      "intro": "Mailcrane treats every message as untrusted and keeps what you read to yourself.",
+      "items": [
+        {
+          "title": "Trackers blocked",
+          "text": "Tracking pixels and images from 37 known email-tracking services are removed, even when you load images. Each message says how many were blocked and who sent them.",
+          "highlight": true
+        },
+        {
+          "title": "Remote images off by default",
+          "text": "Pictures stored on the sender's server stay hidden until you tap “Load remote images” for that message. They then load without cookies or a referrer."
+        },
+        {
+          "title": "See where a link really goes",
+          "text": "Tapping a link shows its real destination first, and warns when the link text names a different site, uses an IP address, mixes alphabets or isn't secure. Tracking tags such as utm_source are removed before it opens."
+        },
+        {
+          "title": "Phishing warnings",
+          "text": "A chip shows whether your provider could confirm the sender (SPF, DKIM and DMARC, in plain words), and a warning appears when a sender's name pretends to be a different address.",
+          "highlight": true
+        },
+        {
+          "title": "Safe HTML",
+          "text": "Scripts, forms, frames and risky styles are stripped before a message is shown, and hidden text-direction tricks are removed from names, subjects and file names."
+        },
+        {
+          "title": "App lock",
+          "text": "Ask for your fingerprint, face or screen lock before your mail shows. While it's on, screenshots and the recent-apps preview are blocked."
+        },
+        {
+          "title": "No analytics, no ads",
+          "text": "No tracking, no ads and no Mailcrane servers. Your mail goes only between your phone and your mail server, and passwords stay in Android's secure storage."
+        }
+      ]
+    },
+    {
+      "id": "accounts",
+      "icon": "at",
+      "title": "Accounts",
+      "intro": "Bring the email address you already have.",
+      "items": [
+        {
+          "title": "IMAP and SMTP",
+          "text": "Works with almost any provider. Connections always use TLS with certificate checks, and Mailcrane tests both servers before it saves anything."
+        },
+        {
+          "title": "JMAP",
+          "text": "Full support for the modern JMAP protocol used by Fastmail, Stalwart and others: read, act on and send mail like any other account."
+        },
+        {
+          "title": "Automatic setup",
+          "text": "Type your address and password and Mailcrane finds the server settings from your provider's own configuration, DNS records or a built-in provider list. Your address is never sent anywhere else.",
+          "highlight": true
+        },
+        {
+          "title": "Several accounts",
+          "text": "Add as many accounts as you like, each with its own colour and signature. The same account can't be added twice by mistake."
+        },
+        {
+          "title": "Gmail sign-in",
+          "text": "Sign in to Gmail with your Google account in the system browser, without an app password.",
+          "soon": true
+        }
+      ]
+    },
+    {
+      "id": "inbox",
+      "icon": "inbox",
+      "title": "Inbox",
+      "intro": "A fast, calm inbox that works offline.",
+      "items": [
+        {
+          "title": "Unified inbox",
+          "text": "See every account's inbox together, with a coloured dot for each account, or switch to one account from the drawer.",
+          "highlight": true
+        },
+        {
+          "title": "Conversations",
+          "text": "Replies are grouped with the message they answer, including your own from the Sent folder. Turn it off if you prefer single messages."
+        },
+        {
+          "title": "Instant search, even offline",
+          "text": "Search subjects, people and message text on your phone, accents ignored, with chips for sender, attachments, unread, flagged, date and account.",
+          "highlight": true
+        },
+        {
+          "title": "Select several",
+          "text": "Long-press to select messages, then mark read, flag, archive, delete or move them all at once, with undo."
+        },
+        {
+          "title": "Swipe actions",
+          "text": "Swipe left or right to archive, delete, mark read, flag or move: you choose which."
+        },
+        {
+          "title": "Snooze",
+          "text": "Send a message away until later today, tomorrow, the weekend or a time you pick. It comes back unread, with a notification."
+        },
+        {
+          "title": "Sender pictures and density",
+          "text": "Initials on a steady colour, or your contacts' photos if you allow it, never images from the internet. Prefer more on screen? Pick Compact."
+        },
+        {
+          "title": "Date headers",
+          "text": "Mail is grouped under Today, Yesterday, This week and then by month, in your language."
+        },
+        {
+          "title": "Ready offline",
+          "text": "Recent mail downloads in the background (on Wi-Fi by default) so it opens at once, and anything you do offline is sent when you're back."
+        },
+        {
+          "title": "Tablets, foldables and widgets",
+          "text": "The list and the message sit side by side on big screens, with keyboard shortcuts, and a home-screen widget shows what's unread."
+        }
+      ]
+    },
+    {
+      "id": "write",
+      "icon": "pen",
+      "title": "Write",
+      "intro": "Sending just works, even without a signal.",
+      "items": [
+        {
+          "title": "Scheduled send and undo send",
+          "text": "Pick when a message goes out, or take it back in the seconds after you tap Send.",
+          "highlight": true
+        },
+        {
+          "title": "Outbox that never loses mail",
+          "text": "Messages wait in the Outbox while you're offline and are sent as soon as the network is back."
+        },
+        {
+          "title": "Formatting, attachments and signatures",
+          "text": "Bold, italic, lists and links, files of any kind, and a signature per account. Drafts save as you type and sync to your other devices."
+        },
+        {
+          "title": "Smart recipients",
+          "text": "Suggestions from people you write to, and from your contacts if you allow it."
+        }
+      ]
+    },
+    {
+      "id": "organise",
+      "icon": "folder",
+      "title": "Organise",
+      "intro": "Keep mail sorted the way you like.",
+      "items": [
+        {
+          "title": "Folders",
+          "text": "Create, rename, move and delete folders from your phone, on IMAP and JMAP accounts. Every change is made on your server too."
+        },
+        {
+          "title": "Rules",
+          "text": "Move, archive, flag or mark mail read by sender, recipient, subject, attachment or mailing list."
+        },
+        {
+          "title": "Rules on your server",
+          "text": "If your provider supports ManageSieve, rules run on the server, so mail is sorted even while your phone is off. Your other filters are left alone.",
+          "highlight": true
+        },
+        {
+          "title": "One-tap unsubscribe",
+          "text": "Newsletters get an Unsubscribe button. Mailcrane tells you how it will unsubscribe before it does."
+        }
+      ]
+    },
+    {
+      "id": "notifications",
+      "icon": "bell",
+      "title": "Notifications",
+      "intro": "New mail without Google services.",
+      "items": [
+        {
+          "title": "New-mail notifications",
+          "text": "One notification per message, with Archive and Mark read buttons. Sender and subject can be hidden with “Hide message content outside the app”."
+        },
+        {
+          "title": "Always-on sync",
+          "text": "Optional: new mail arrives within a minute. It reconnects after network changes, reboots and updates by itself."
+        },
+        {
+          "title": "UnifiedPush",
+          "text": "Optional wake-ups through a UnifiedPush distributor app, for people who run a push gateway. No Google services needed."
+        },
+        {
+          "title": "JMAP push",
+          "text": "Instant new mail from JMAP servers through UnifiedPush, without a separate gateway.",
+          "soon": true
+        }
+      ]
+    },
+    {
+      "id": "look",
+      "icon": "palette",
+      "title": "Look and feel",
+      "intro": "Comfortable to read, day and night.",
+      "items": [
+        {
+          "title": "Dark mode and Material You",
+          "text": "Light, dark or follow the system, with colours from your wallpaper on Android 12 and later. HTML mail stays readable in dark mode.",
+          "highlight": true
+        },
+        {
+          "title": "Accessible",
+          "text": "Built for TalkBack and large text, with colour contrast that meets WCAG AA. A full accessibility review is under way before 1.0."
+        },
+        {
+          "title": "In your language",
+          "text": "Translations through Weblate, so anyone can help.",
+          "soon": true
+        }
+      ]
+    }
+  ]
+}

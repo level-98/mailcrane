@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% import "macros.html" as m %}
+{% block content %}
+{% set roadmap = load_data(path="data/roadmap.json") %}
+{% set stages = config.extra.roadmap %}
+<main class="page-wrap section-wrap page-wide" id="main">
+  <p class="eyebrow">Roadmap</p>
+  <h1 class="page-title">What’s <span>coming.</span></h1>
+  <div class="page-intro">{{ page.content | safe }}</div>
+
+  <div class="progress-overview">
+    <p class="overview-copy"><strong>{{ roadmap.completed }} of {{ roadmap.total }} tasks done</strong> <span>Snapshot from {{ roadmap.generated_at | date(format="%-d %B %Y") }}</span></p>
+    <div class="progress-bar" role="progressbar" aria-label="Overall roadmap progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="{{ roadmap.percent }}" aria-valuetext="{{ roadmap.percent }}% complete">
+      <span style="width: {{ roadmap.percent }}%"></span>
+    </div>
+  </div>
+
+  <nav class="chip-nav" aria-label="Roadmap stages">
+    <a class="chip" href="#now">Now</a>
+    <a class="chip" href="#next">Next</a>
+    <a class="chip" href="#later">After 1.0</a>
+    <a class="chip" href="#done">Already built</a>
+  </nav>
+
+  {{ m::roadmap_stage(stage_id="now", label="Now", blurb="Being built for the first release.", cls="stage-now", ids=stages.now, groups=roadmap.groups) }}
+  {{ m::roadmap_stage(stage_id="next", label="Next", blurb="More everyday tools, once the release work is done.", cls="stage-next", ids=stages.next, groups=roadmap.groups) }}
+  {{ m::roadmap_stage(stage_id="later", label="After 1.0", blurb="Good ideas that wait until the first release is out.", cls="stage-later", ids=stages.later, groups=roadmap.groups) }}
+
+  <section class="roadmap-stage" id="done" aria-labelledby="done-title">
+    <h2 id="done-title"><span class="stage-tag stage-done">Done</span> Already built</h2>
+    <div class="milestone-grid">
+      {% for id in stages.done %}
+      {% for group in roadmap.groups %}
+      {% if group.id == id %}
+      <article class="milestone-card is-done">
+        <div class="milestone-top">
+          <h3>{{ m::icon(name="check") }} {{ group.title }}</h3>
+          <span class="milestone-count">{{ group.completed }}/{{ group.total }} done</span>
+        </div>
+        <p class="milestone-description">{{ group.description }}</p>
+        <details class="milestone-details">
+          <summary>Show the {{ group.total }} tasks</summary>
+          <ul class="task-list">
+            {% for task in group.tasks %}
+            <li>{% if task.state == "closed" %}{{ m::icon(name="check") }}{% else %}{{ m::icon(name="clock") }}{% endif %} <a href="{{ task.url }}">{{ task.title }}</a></li>
+            {% endfor %}
+          </ul>
+        </details>
+      </article>
+      {% endif %}
+      {% endfor %}
+      {% endfor %}
+    </div>
+  </section>
+
+  <p class="roadmap-footer">Closed issues count as done. Bugs aren’t listed here; <a href="{{ config.extra.github_url }}/issues">browse every issue on GitHub</a>.</p>
+</main>
+{% endblock content %}
