@@ -513,6 +513,21 @@ impl SyncEngine {
         }
     }
 
+    /// Tells every running live update to drop its connection and connect
+    /// again now, skipping any back-off wait (M4-05). Call it when the
+    /// device's default network changes or comes back: an IDLE connection
+    /// on the old network would otherwise sit unnoticed until it is
+    /// re-issued. Returns at once; does nothing for accounts without live
+    /// updates or ones being stopped.
+    pub fn reconnect_live_updates(&self) {
+        let live = self.live.lock().unwrap_or_else(|p| p.into_inner());
+        for running in live.values() {
+            if !running.stopping && !running.thread.is_finished() {
+                running.stop.reconnect();
+            }
+        }
+    }
+
     /// New mail to notify about (M4-05), from what is stored now; no network.
     /// Each message is returned at most once, ever: the store remembers it,
     /// also across resyncs. The first call for an account returns nothing

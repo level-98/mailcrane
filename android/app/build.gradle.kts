@@ -65,6 +65,21 @@ android {
         compose = true
     }
 
+    // Per-app language (Android 13+, M6-02): AGP lists every values-<locale>
+    // folder in a generated locale config, so a language added through
+    // Weblate shows up in the system settings without editing a file.
+    // res/resources.properties names the language of values/ (English).
+    androidResources {
+        generateLocaleConfig = true
+    }
+
+    // A language half-done in Weblate falls back to English for the rest;
+    // that mustn't fail the build. `cargo xtask ci` still checks that the
+    // translated strings keep their placeholders.
+    lint {
+        warning += "MissingTranslation"
+    }
+
     // Robolectric (Compose UI tests on the JVM) needs the app's resources.
     testOptions {
         unitTests.isIncludeAndroidResources = true

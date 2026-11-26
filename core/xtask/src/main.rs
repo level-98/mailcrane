@@ -6,6 +6,8 @@
 
 mod apk;
 mod ispdb;
+mod release;
+mod strings;
 
 use std::env;
 use std::ffi::OsStr;
@@ -72,7 +74,8 @@ Commands:
   ci        every step below except bindings, then a summary table
   design    generated theme check, its unit tests, and scripts/test_release_notes.py
   fmt       cargo fmt --all --check
-  lint      release guard (#289), cargo clippy --workspace --all-targets -- -D warnings,
+  lint      release guard (#289), translated strings keep their placeholders (#69),
+            cargo clippy --workspace --all-targets -- -D warnings,
             and clippy on mailcrane-ffi with --features debug-fixtures
   test      cargo test --workspace, then the fixture loader tests (#289)
   deny      cargo deny check
@@ -84,6 +87,9 @@ Commands:
   fuzz <target> [--seconds N]
             run a fuzz target (default 60 s); needs nightly and cargo-fuzz.
             Not part of ci. Targets: mime_parse, imap_response, html_sanitize, address_list, sieve_response
+  release-check <tag>
+            check that a release tag (vMAJOR.MINOR.PATCH[-pre]) matches versionName and
+            versionCode in android/app/build.gradle.kts (docs/releasing.md). Not part of ci.
   ispdb <checkout>
             import the ISPDB snapshot from a thunderbird/autoconfig checkout into
             mailcrane-core/data/ispdb/ and regenerate its index (ADR 0003). Not part of ci.
@@ -135,6 +141,10 @@ fn real_main() -> Result<ExitCode, Error> {
     }
     if command == "fuzz" {
         return fuzz(&context()?, args);
+    }
+    if command == "release-check" {
+        release::run(&context()?, args)?;
+        return Ok(ExitCode::SUCCESS);
     }
     if command == "ispdb" {
         ispdb::import(&context()?, args)?;
@@ -328,6 +338,13 @@ fn fmt(ctx: &Ctx) -> Result<Outcome, Error> {
 fn lint(ctx: &Ctx) -> Result<Outcome, Error> {
     if let Err(problem) = release_guard(ctx) {
         return Ok(Outcome::Failed(format!("release guard: {problem}")));
+    }
+    // Translations from Weblate keep the English placeholders (#69).
+    match strings::check_dir(&ctx.root.join("android/app/src/main/res")) {
+        Ok(n) => say(format_args!(
+            "strings: {n} translation(s) keep their placeholders"
+        )),
+        Err(problem) => return Ok(Outcome::Failed(format!("strings: {problem}"))),
     }
     let args = [
         "clippy",

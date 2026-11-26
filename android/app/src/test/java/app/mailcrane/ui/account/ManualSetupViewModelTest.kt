@@ -82,6 +82,7 @@ class ManualSetupViewModelTest {
                 ) to SetupError(SetupFailure.AUTH_FAILED, MailServer.SMTP),
                 AddAccountException.Timeout(MailServer.IMAP) to SetupError(SetupFailure.TIMEOUT, MailServer.IMAP),
                 AddAccountException.SaveFailed() to SetupError(SetupFailure.SAVE_FAILED),
+                AddAccountException.AlreadyAdded() to SetupError(SetupFailure.ALREADY_ADDED),
                 IllegalStateException("boom") to SetupError(SetupFailure.UNEXPECTED),
             )
         for ((thrown, expected) in cases) {
@@ -177,5 +178,14 @@ class ManualSetupViewModelTest {
         vm.onGoogleResult(app.mailcrane.oauth.OAuthResult.Failed(null))
         assertEquals(SetupError(SetupFailure.GOOGLE_SIGN_IN_FAILED), vm.state.value.error)
         assertEquals(app.mailcrane.R.string.setup_error_google, SetupError(SetupFailure.GOOGLE_SIGN_IN_FAILED).message())
+    }
+
+    @Test
+    fun aDuplicateAccountIsSaidPlainly() {
+        // #346: the core refuses a second copy of an account; the screen says why.
+        assertEquals(
+            app.mailcrane.R.string.setup_error_already_added,
+            SetupError(SetupFailure.ALREADY_ADDED).message(),
+        )
     }
 }

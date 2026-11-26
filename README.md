@@ -135,6 +135,8 @@ Fixed a bug already? Just open the report and the PR together. More in **[CONTRI
 
 We'd especially like Rust developers (sync and storage), Android developers (and iOS developers once M7 starts), people who can test with lots of email providers, designers, translators and accessibility testers.
 
+Translators: Mailcrane is translated on Weblate. See [docs/translations.md](docs/translations.md).
+
 ## Privacy
 
 Mailcrane collects nothing and has no servers of its own: your mail goes only to the mail servers you add. The details, including every other connection the app can make, are in the [privacy policy](docs/privacy.md) (a draft until the first release).

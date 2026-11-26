@@ -34,6 +34,9 @@ enum class SetupFailure {
     TIMEOUT,
     SAVE_FAILED,
 
+    /** The same account is already in the app (#346). */
+    ALREADY_ADDED,
+
     /** Sign in with Google didn't finish (M3-02): refused, no browser, or the sign-in expired. */
     GOOGLE_SIGN_IN_FAILED,
 
@@ -378,5 +381,6 @@ internal fun Throwable.toSetupError(): SetupError =
         is AddAccountException.AuthFailed -> SetupError(SetupFailure.AUTH_FAILED, server)
         is AddAccountException.Timeout -> SetupError(SetupFailure.TIMEOUT, server)
         is AddAccountException.SaveFailed -> SetupError(SetupFailure.SAVE_FAILED)
+        is AddAccountException.AlreadyAdded -> SetupError(SetupFailure.ALREADY_ADDED)
         else -> SetupError(SetupFailure.UNEXPECTED)
     }

@@ -129,6 +129,70 @@ pub enum AddAccountError {
     /// not be saved. Anything partly saved was removed again.
     #[error("the account could not be saved")]
     SaveFailed,
+    /// An account for the same mailbox (incoming server and username or
+    /// address) is already in the app (#346). Nothing was saved.
+    #[error("this account is already added")]
+    AlreadyAdded,
+}
+
+/// The server an account reads its mail from, as stored.
+#[derive(Debug, Clone, Copy)]
+pub enum IncomingServer<'a> {
+    /// An IMAP host name.
+    Imap(&'a str),
+    /// A JMAP session URL.
+    Jmap(&'a str),
+}
+
+/// Host names and URLs compared ignoring case and a trailing dot.
+fn same_server(a: &str, b: &str) -> bool {
+    let norm = |s: &str| s.trim().trim_end_matches('.').to_lowercase();
+    norm(a) == norm(b)
+}
+
+/// Fails with [`AddAccountError::AlreadyAdded`] if `store` already has an
+/// account for this mailbox: the same incoming server and the same username
+/// or address, ignoring case (#346). Local-only accounts don't count.
+pub fn ensure_not_added(
+    store: &Store,
+    server: IncomingServer<'_>,
+    username: &str,
+    email: &str,
+) -> Result<(), AddAccountError> {
+    let same = |a: &str, b: &str| {
+        !a.trim().is_empty() && a.trim().to_lowercase() == b.trim().to_lowercase()
+    };
+    let accounts = store
+        .list_accounts()
+        .map_err(|_| AddAccountError::SaveFailed)?;
+    for account in accounts {
+        let d = &account.details;
+        if !(same(&d.username, username) || same(&d.email, email)) {
+            continue;
+        }
+        if store
+            .is_local_account(account.id)
+            .map_err(|_| AddAccountError::SaveFailed)?
+        {
+            continue;
+        }
+        let protocol = store
+            .account_protocol(account.id)
+            .map_err(|_| AddAccountError::SaveFailed)?;
+        let matches = match (server, protocol) {
+            (IncomingServer::Imap(host), Some(mailcrane_store::Protocol::Imap)) => {
+                same_server(&d.imap_host, host)
+            }
+            (IncomingServer::Jmap(url), Some(mailcrane_store::Protocol::Jmap { session_url })) => {
+                same_server(&session_url, url)
+            }
+            _ => false,
+        };
+        if matches {
+            return Err(AddAccountError::AlreadyAdded);
+        }
+    }
+    Ok(())
 }
 
 /// The usual port for a protocol and security choice: IMAP 993 (TLS) or 143
@@ -510,6 +574,13 @@ pub fn save_account(
         smtp_security: store_security(config.smtp.security),
         username: config.username.clone(),
     };
+    // Checked again here, right before saving, whichever way the caller came.
+    ensure_not_added(
+        store,
+        IncomingServer::Imap(&account.imap_host),
+        &account.username,
+        &account.email,
+    )?;
     let id = store
         .insert_account(&account)
         .map_err(|_| AddAccountError::SaveFailed)?;
@@ -552,6 +623,13 @@ pub async fn add_account_manual_with(
     password: Secret,
     options: &SetupOptions,
 ) -> Result<AccountId, AddAccountError> {
+    // Before any login, so a duplicate is refused without contacting a server.
+    ensure_not_added(
+        store,
+        IncomingServer::Imap(config.imap.host.trim()),
+        config.username.trim(),
+        config.email.trim(),
+    )?;
     check_account(config, &password, options).await?;
     save_account(store, secrets, config, &password)
 }

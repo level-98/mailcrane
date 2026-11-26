@@ -223,6 +223,14 @@ class UniffiMailboxCore(
         engine.closeConnections(reason)
     }
 
+    /**
+     * Makes every running live update (IMAP IDLE) reconnect now, skipping its back-off (M4-05):
+     * the default network changed or came back. Returns at once; any thread.
+     */
+    fun reconnectLiveUpdates() {
+        engine.reconnectLiveUpdates()
+    }
+
     /** Reports the device conditions for background downloads (M4-25). Cheap; any thread. */
     fun setDeviceConditions(conditions: DeviceConditions) {
         engine.setDeviceConditions(conditions)
