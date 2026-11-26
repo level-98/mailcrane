@@ -313,10 +313,24 @@ mod suite {
         if !has_ipv6_loopback().await {
             return;
         }
-        let squatter = tokio::net::TcpListener::bind((std::net::Ipv6Addr::LOCALHOST, 0))
-            .await
-            .expect("squatter");
-        let port = squatter.local_addr().expect("addr").port();
+        // A port free on 127.0.0.1, held by someone else on [::1], so the
+        // only thing that can go wrong is the [::1] bind.
+        let mut squatted = None;
+        for _ in 0..16 {
+            let v4 = tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
+                .await
+                .expect("v4");
+            let port = v4.local_addr().expect("addr").port();
+            if let Ok(squatter) =
+                tokio::net::TcpListener::bind((std::net::Ipv6Addr::LOCALHOST, port)).await
+            {
+                squatted = Some((port, squatter));
+                break;
+            }
+        }
+        let Some((port, _squatter)) = squatted else {
+            panic!("no port free on both loopback addresses");
+        };
         let Ok(spare) = tokio::net::TcpListener::bind((std::net::Ipv6Addr::LOCALHOST, 0)).await
         else {
             return;

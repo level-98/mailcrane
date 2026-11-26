@@ -91,9 +91,9 @@ Commands:
             check that a release tag (vMAJOR.MINOR.PATCH[-pre]) matches versionName and
             versionCode in android/app/build.gradle.kts (docs/releasing.md). Not part of ci.
   dev-mail [--new-mail-every <seconds>]
-            run a fake IMAP and SMTP server for the Android emulator at 10.0.2.2, seeded with
-            tests/fixtures, and copy its CA certificate to running emulators (docs/dev-mail.md).
-            Not part of ci.
+            run a fake IMAP and SMTP server for the Android emulator, seeded with tests/fixtures;
+            copy its CA certificate to running emulators and forward its ports with adb reverse,
+            so the app reaches it at 127.0.0.1 (docs/dev-mail.md). Not part of ci.
   ispdb <checkout>
             import the ISPDB snapshot from a thunderbird/autoconfig checkout into
             mailcrane-core/data/ispdb/ and regenerate its index (ADR 0003). Not part of ci.

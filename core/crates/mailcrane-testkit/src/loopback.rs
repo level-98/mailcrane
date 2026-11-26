@@ -66,7 +66,14 @@ impl Loopback {
         let addr = v4.local_addr().map_err(|error| error.to_string())?;
         let v6 = match TcpListener::bind((Ipv6Addr::LOCALHOST, port)).await {
             Ok(listener) => Some(listener),
-            Err(error) if error.kind() == io::ErrorKind::AddrInUse => {
+            // Taken, or held exclusively (Windows says PermissionDenied), as
+            // in `bind` above.
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    io::ErrorKind::AddrInUse | io::ErrorKind::PermissionDenied
+                ) =>
+            {
                 return Err(format!("[::1]:{port}: {error}"));
             }
             Err(_) => None,

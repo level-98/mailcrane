@@ -58,16 +58,20 @@ fn parse_args() -> Result<Args, String> {
     let mut fixtures = None;
     let mut new_mail_every = None;
     let mut certs_only = false;
-    let mut args = std::env::args().skip(1);
+    // `args_os`, not `args`: a folder name that isn't valid Unicode would
+    // make `args` panic.
+    let mut args = std::env::args_os().skip(1);
     while let Some(arg) = args.next() {
-        let mut value = || args.next().ok_or(format!("{arg} needs a value"));
-        match arg.as_str() {
+        let name = arg.to_string_lossy().into_owned();
+        let mut value = || args.next().ok_or(format!("{name} needs a value"));
+        match name.as_str() {
             "--state" => state = Some(PathBuf::from(value()?)),
             "--fixtures" => fixtures = Some(PathBuf::from(value()?)),
             "--new-mail-every" => {
                 let seconds: u64 = value()?
-                    .parse()
-                    .map_err(|_| "--new-mail-every takes a whole number of seconds".to_string())?;
+                    .to_str()
+                    .and_then(|s| s.parse().ok())
+                    .ok_or("--new-mail-every takes a whole number of seconds")?;
                 if seconds == 0 {
                     return Err("--new-mail-every must be at least 1".into());
                 }
@@ -220,11 +224,14 @@ fn new_message(run: u64, n: u64, now: u64) -> Vec<u8> {
 async fn run(args: Args) -> Result<(), String> {
     let (dev, new) = certificates(&args.state)?;
     if args.certs_only {
+        let ca = args.state.join(CA_FILE);
         if new {
             println!(
                 "dev-mail: made a NEW dev CA at {}; install it on each emulator (docs/dev-mail.md).",
-                args.state.join(CA_FILE).display()
+                ca.display()
             );
+        } else {
+            println!("dev-mail: dev CA at {} (unchanged).", ca.display());
         }
         return Ok(());
     }

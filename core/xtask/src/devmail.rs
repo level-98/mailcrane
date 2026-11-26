@@ -3,6 +3,7 @@
 //! `dev-mail` binary; this finds the paths, copies the CA certificate to any
 //! running emulator, and starts it.
 
+use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
@@ -34,8 +35,10 @@ pub fn run_server(ctx: &Ctx, args: impl Iterator<Item = String>) -> Result<ExitC
 
     let state = ctx.root.join(".dev-mail");
     let fixtures = ctx.root.join("tests").join("fixtures");
-    let state_arg = state.display().to_string();
-    let bin = [
+    let ca = state.join("mailcrane-dev-ca.crt");
+    // Paths go through as `OsStr`, so a folder name that isn't valid
+    // Unicode still works.
+    let bin: Vec<&OsStr> = [
         "run",
         "--quiet",
         "-p",
@@ -44,22 +47,30 @@ pub fn run_server(ctx: &Ctx, args: impl Iterator<Item = String>) -> Result<ExitC
         "dev-mail",
         "--",
         "--state",
-        state_arg.as_str(),
-    ];
+    ]
+    .into_iter()
+    .map(OsStr::new)
+    .chain([state.as_os_str()])
+    .collect();
 
     // Make the certificates first, so the CA can be copied before serving.
-    let mut certs = bin.to_vec();
-    certs.push("--certs-only");
+    let before = std::fs::read(&ca).ok();
+    let mut certs = bin.clone();
+    certs.push(OsStr::new("--certs-only"));
     if !run(&ctx.core, &cargo(), &certs)? {
         return Err("could not make the dev mail certificates".into());
     }
-    prepare_emulators(&state.join("mailcrane-dev-ca.crt"));
+    // The server's own banner can't tell that this step just made the CA,
+    // so say it here, before the emulator steps.
+    if std::fs::read(&ca).ok() != before {
+        say("dev-mail: this is a NEW CA. Install it on each emulator again (docs/dev-mail.md).");
+    }
+    prepare_emulators(&ca);
 
-    let fixtures_arg = fixtures.display().to_string();
-    let mut serve: Vec<&str> = bin.to_vec();
-    serve.push("--fixtures");
-    serve.push(fixtures_arg.as_str());
-    serve.extend(extra.iter().map(String::as_str));
+    let mut serve = bin;
+    serve.push(OsStr::new("--fixtures"));
+    serve.push(fixtures.as_os_str());
+    serve.extend(extra.iter().map(OsStr::new));
     Ok(if run(&ctx.core, &cargo(), &serve)? {
         ExitCode::SUCCESS
     } else {
@@ -94,7 +105,7 @@ fn prepare_emulators(ca: &Path) {
     let adb = adb();
     let Ok(out) = Command::new(&adb).arg("devices").output() else {
         say("dev-mail: adb not found. Copy the CA to the emulator yourself, and run:");
-        say_reverse_commands();
+        say_reverse_commands(UNKNOWN_SERIAL);
         return;
     };
     if !out.status.success() {
@@ -103,7 +114,7 @@ fn prepare_emulators(ca: &Path) {
              and run:",
             String::from_utf8_lossy(&out.stderr).trim()
         ));
-        say_reverse_commands();
+        say_reverse_commands(UNKNOWN_SERIAL);
         return;
     }
     let listing = String::from_utf8_lossy(&out.stdout);
@@ -165,17 +176,26 @@ fn reverse_ports(adb: &Path, serial: &str) {
         say(format_args!(
             "dev-mail: adb reverse failed on {serial} for port(s) {failed:?}; run:"
         ));
-        say_reverse_commands();
+        say_reverse_commands(serial);
     }
 }
 
-/// Prints the `adb reverse` commands for setting an emulator up by hand.
-fn say_reverse_commands() {
-    for port in PORTS {
-        say(format_args!(
-            "    adb -s emulator-5554 reverse tcp:{port} tcp:{port}"
-        ));
+/// Stands in for the serial when adb couldn't list the emulators.
+const UNKNOWN_SERIAL: &str = "emulator-NNNN";
+
+/// Prints the `adb reverse` commands for setting up emulator `serial` by
+/// hand.
+fn say_reverse_commands(serial: &str) {
+    for line in reverse_commands(serial) {
+        say(format_args!("    {line}"));
     }
+}
+
+fn reverse_commands(serial: &str) -> Vec<String> {
+    PORTS
+        .iter()
+        .map(|port| format!("adb -s {serial} reverse tcp:{port} tcp:{port}"))
+        .collect()
 }
 
 fn port_list() -> String {
@@ -232,6 +252,19 @@ mod tests {
             ]
         );
         assert_eq!(emulators("List of devices attached\n\n"), (vec![], vec![]));
+    }
+
+    #[test]
+    fn the_fallback_commands_name_the_emulator_that_failed() {
+        assert_eq!(
+            reverse_commands("emulator-5556"),
+            [
+                "adb -s emulator-5556 reverse tcp:1993 tcp:1993",
+                "adb -s emulator-5556 reverse tcp:1143 tcp:1143",
+                "adb -s emulator-5556 reverse tcp:1465 tcp:1465",
+                "adb -s emulator-5556 reverse tcp:1587 tcp:1587",
+            ]
+        );
     }
 
     #[test]
