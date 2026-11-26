@@ -6,6 +6,7 @@
 
 mod apk;
 mod ispdb;
+mod release;
 
 use std::env;
 use std::ffi::OsStr;
@@ -84,6 +85,9 @@ Commands:
   fuzz <target> [--seconds N]
             run a fuzz target (default 60 s); needs nightly and cargo-fuzz.
             Not part of ci. Targets: mime_parse, imap_response, html_sanitize, address_list, sieve_response
+  release-check <tag>
+            check that a release tag (vMAJOR.MINOR.PATCH[-pre]) matches versionName and
+            versionCode in android/app/build.gradle.kts (docs/releasing.md). Not part of ci.
   ispdb <checkout>
             import the ISPDB snapshot from a thunderbird/autoconfig checkout into
             mailcrane-core/data/ispdb/ and regenerate its index (ADR 0003). Not part of ci.
@@ -135,6 +139,10 @@ fn real_main() -> Result<ExitCode, Error> {
     }
     if command == "fuzz" {
         return fuzz(&context()?, args);
+    }
+    if command == "release-check" {
+        release::run(&context()?, args)?;
+        return Ok(ExitCode::SUCCESS);
     }
     if command == "ispdb" {
         ispdb::import(&context()?, args)?;

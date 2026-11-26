@@ -9,7 +9,7 @@ Mailcrane is meant to be on F-Droid, built from source by F-Droid with no propri
 - **No Google signing block.** `dependenciesInfo` is off, so AGP doesn't add its encrypted dependency-metadata block, which F-Droid's scanner flags.
 - **No git data in the APK.** `vcsInfo` is off for release builds.
 - **Only the ABIs the core is built for.** `abiFilters` limits the APK to arm64-v8a and x86_64, the targets `cargo-ndk` builds. Before, JNA added armeabi-v7a, armeabi and mips folders, so the app would have installed on 32-bit phones and crashed there.
-- **Unsigned release builds work.** `./gradlew assembleRelease` needs no signing secrets: the release build type has no signing config, so it produces an unsigned APK for F-Droid to sign, or to compare with ours.
+- **Unsigned release builds work.** `./gradlew assembleRelease` needs no signing secrets: the release build type has no signing config, so it produces an unsigned APK for F-Droid to sign, or to compare with ours. Our signed builds are signed outside Gradle, by the release workflow ([docs/releasing.md](releasing.md)), so this stays true.
 - **No anti-features.** No tracking, no ads, no non-free network services: the app talks only to the user's own mail servers. The OAuth sign-in planned in M3 will use the providers' own servers, which F-Droid's NonFreeNet rule doesn't cover for a user's own account.
 
 ## Reproducible builds
