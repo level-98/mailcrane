@@ -27,31 +27,88 @@ pub fn display_name_warning(name: &str, email: &str) -> Option<DisplayNameWarnin
     if real_org.is_empty() {
         return None;
     }
-    let name = normalise(name);
-    let warn = |claimed: String| DisplayNameWarning {
+    // The name as stored and, when a right-to-left override reverses part of
+    // it, as it displays: `"\u{202E}moc.elpmaxe@oec"` shows as
+    // `ceo@example.com` (#314). Bidi controls themselves are dropped by
+    // `normalise`, so a claimed address never carries one.
+    let shown = displayed_order(name);
+    let claimed = claimed_elsewhere(&normalise(name), &real_org)
+        .or_else(|| shown.and_then(|shown| claimed_elsewhere(&normalise(&shown), &real_org)))?;
+    Some(DisplayNameWarning {
         claimed: claimed.chars().take(MAX_SHOWN_CHARS).collect(),
         actual: email.chars().take(MAX_SHOWN_CHARS).collect(),
-    };
-    for (local, domain) in address_tokens(&name) {
+    })
+}
+
+/// The address or bare domain from outside `real_org` that the normalised
+/// `name` shows, if any.
+fn claimed_elsewhere(name: &str, real_org: &str) -> Option<String> {
+    for (local, domain) in address_tokens(name) {
         if org_domain(&ascii_domain(&domain)) != real_org {
-            return Some(warn(format!("{local}@{domain}")));
+            return Some(format!("{local}@{domain}"));
         }
     }
     let bare = name
         .trim()
         .trim_matches(|c| matches!(c, '"' | '\'' | '<' | '>' | '(' | ')' | '[' | ']'));
     if is_bare_domain(bare) && org_domain(&ascii_domain(bare)) != real_org {
-        return Some(warn(bare.to_owned()));
+        return Some(bare.to_owned());
     }
     None
 }
 
-/// NFKC-lite (rule C5): lowercase, zero-width characters removed, and the
-/// fullwidth and small forms of `@` and `.` mapped to ASCII.
+/// `name` in the order it displays when it has a right-to-left override
+/// (U+202E, RLO): the text under it is shown reversed, up to the matching
+/// PDF (U+202C) or the end. Bidi controls are left out. `None` without an
+/// override. Isolates and embeddings don't reverse Latin text, so they only
+/// need removing (which `normalise` does).
+fn displayed_order(name: &str) -> Option<String> {
+    const RLO: char = '\u{202E}';
+    const LRO: char = '\u{202D}';
+    const PDF: char = '\u{202C}';
+    if !name.contains(RLO) {
+        return None;
+    }
+    let mut out = String::new();
+    let mut run = String::new();
+    // The overrides in force, innermost last: true for right-to-left.
+    let mut overrides: Vec<bool> = Vec::new();
+    let flush = |run: &mut String, out: &mut String, rtl: bool| {
+        if rtl {
+            out.extend(run.chars().rev());
+        } else {
+            out.push_str(run);
+        }
+        run.clear();
+    };
+    for c in name.chars().take(MAX_NAME_CHARS) {
+        let rtl = overrides.last() == Some(&true);
+        match c {
+            RLO | LRO => {
+                flush(&mut run, &mut out, rtl);
+                overrides.push(c == RLO);
+            }
+            PDF => {
+                flush(&mut run, &mut out, rtl);
+                overrides.pop();
+            }
+            c if mailcrane_mime::is_bidi_control(c) => {}
+            c => run.push(c),
+        }
+    }
+    let rtl = overrides.last() == Some(&true);
+    flush(&mut run, &mut out, rtl);
+    Some(out)
+}
+
+/// NFKC-lite (rule C5): lowercase, zero-width and bidi control characters
+/// removed (#314), and the fullwidth and small forms of `@` and `.` mapped
+/// to ASCII.
 fn normalise(name: &str) -> String {
     name.chars()
         .take(MAX_NAME_CHARS)
         .filter(|c| !matches!(c, '\u{200B}'..='\u{200D}' | '\u{2060}' | '\u{FEFF}'))
+        .filter(|c| !mailcrane_mime::is_bidi_control(*c))
         .map(|c| match c {
             '\u{FF20}' | '\u{FE6B}' => '@',
             '\u{FF0E}' | '\u{FE52}' | '\u{3002}' => '.',

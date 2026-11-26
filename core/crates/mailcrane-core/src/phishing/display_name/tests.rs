@@ -62,6 +62,45 @@ fn fullwidth_and_zero_width_tricks_still_warn() {
 }
 
 #[test]
+fn bidi_controls_cannot_hide_an_address() {
+    // #314. RLO: stored reversed, shown as "ceo@example.com".
+    assert_eq!(
+        claimed("\u{202E}moc.elpmaxe@oec", "x@example.net").as_deref(),
+        Some("ceo@example.com")
+    );
+    // RLO up to a PDF, with ordinary text after it.
+    assert_eq!(
+        claimed("\u{202E}moc.elpmaxe@oec\u{202C} (Billing)", "x@example.net").as_deref(),
+        Some("ceo@example.com")
+    );
+    // LRO, RLI, FSI and PDI don't reverse Latin text: they're dropped.
+    for name in [
+        "\u{202D}ceo@example.com\u{202C}",
+        "ceo@\u{2067}example.com\u{2069}",
+        "\u{2068}ceo@example.com\u{2069}",
+        "ceo\u{2069}@example.com",
+    ] {
+        assert_eq!(
+            claimed(name, "x@example.net").as_deref(),
+            Some("ceo@example.com"),
+            "{name:?}"
+        );
+    }
+    // The claimed address never carries a control.
+    let w = display_name_warning("\u{202E}moc.elpmaxe@oec", "x@example.net").expect("warns");
+    assert!(!w.claimed.chars().any(mailcrane_mime::is_bidi_control));
+    // The same organisation, reversed or not, doesn't warn; nor does a plain name.
+    assert_eq!(
+        claimed("\u{202E}moc.elpmaxe@nna", "ann@mail.example.com"),
+        None
+    );
+    assert_eq!(
+        claimed("Ann\u{2069} \u{202E}Example", "ann@example.org"),
+        None
+    );
+}
+
+#[test]
 fn any_tld_and_international_domains() {
     assert_eq!(
         claimed("ceo@example.photography", "x@example.net").as_deref(),

@@ -1,0 +1,10 @@
+From: =?UTF-8?Q?=E2=80=AEmoc.elpmaxe@oec?= <x@example.net>
+To: Bob <bob@example.com>
+Subject: Urgent payment
+Date: Mon, 02 Mar 2026 10:00:00 +0000
+Message-ID: <display-name-bidi@example.net>
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+The From name is stored as "moc.elpmaxe@oec" behind a right-to-left override,
+so it displays as ceo@example.com.
