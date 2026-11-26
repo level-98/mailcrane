@@ -47,6 +47,9 @@ $root = $root -replace '/', '\'
 $common = (& git -C $root rev-parse --path-format=absolute --git-common-dir) -replace '/', '\'
 if ((Split-Path $common -Parent) -ne $root) { Stop-Fleet "run this from the main checkout ($((Split-Path $common -Parent))), not a worktree." }
 
+# 'powershell -File' passes '-Seats a,b' as one string; split it.
+$Seats = @($Seats | ForEach-Object { $_ -split ',' } | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+
 foreach ($s in $Seats) {
     if (-not $roles.ContainsKey($s)) { Stop-Fleet "unknown seat '$s'. Seats: $($roles.Keys -join ', ')." }
 }
