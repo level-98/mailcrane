@@ -135,6 +135,8 @@ Fixed a bug already? Just open the report and the PR together. More in **[CONTRI
 
 We'd especially like Rust developers (sync and storage), Android developers (and iOS developers once M7 starts), people who can test with lots of email providers, designers, translators and accessibility testers.
 
+Translators: Mailcrane is translated on Weblate. See [docs/translations.md](docs/translations.md).
+
 ## Security
 
 Please don't report security problems in public issues. See [SECURITY.md](SECURITY.md).

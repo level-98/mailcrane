@@ -6,6 +6,7 @@
 
 mod apk;
 mod ispdb;
+mod strings;
 
 use std::env;
 use std::ffi::OsStr;
@@ -72,7 +73,8 @@ Commands:
   ci        every step below except bindings, then a summary table
   design    generated theme check, its unit tests, and scripts/test_release_notes.py
   fmt       cargo fmt --all --check
-  lint      release guard (#289), cargo clippy --workspace --all-targets -- -D warnings,
+  lint      release guard (#289), translated strings keep their placeholders (#69),
+            cargo clippy --workspace --all-targets -- -D warnings,
             and clippy on mailcrane-ffi with --features debug-fixtures
   test      cargo test --workspace, then the fixture loader tests (#289)
   deny      cargo deny check
@@ -328,6 +330,13 @@ fn fmt(ctx: &Ctx) -> Result<Outcome, Error> {
 fn lint(ctx: &Ctx) -> Result<Outcome, Error> {
     if let Err(problem) = release_guard(ctx) {
         return Ok(Outcome::Failed(format!("release guard: {problem}")));
+    }
+    // Translations from Weblate keep the English placeholders (#69).
+    match strings::check_dir(&ctx.root.join("android/app/src/main/res")) {
+        Ok(n) => say(format_args!(
+            "strings: {n} translation(s) keep their placeholders"
+        )),
+        Err(problem) => return Ok(Outcome::Failed(format!("strings: {problem}"))),
     }
     let args = [
         "clippy",
