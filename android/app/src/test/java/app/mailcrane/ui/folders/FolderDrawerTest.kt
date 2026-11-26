@@ -1,11 +1,20 @@
 package app.mailcrane.ui.folders
 
 import android.app.Application
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.size
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsSelected
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollToNode
+import androidx.compose.ui.unit.dp
+import app.mailcrane.core.AccountSummary
 import app.mailcrane.core.FolderRole
 import app.mailcrane.core.FolderSummary
 import app.mailcrane.ui.theme.MailcraneTheme
@@ -74,5 +83,43 @@ class FolderDrawerTest {
         show { chosen = it }
         compose.onNodeWithContentDescription("Work, 1 unread").performClick()
         assertEquals(3L, chosen)
+    }
+
+    /**
+     * #336: the permanent pane beside the list (landscape, expanded width) with several accounts and
+     * every action, in a landscape phone's height. Inbox shows under "Folders", and the rows after
+     * the folders are a scroll away rather than squeezing the folders out.
+     */
+    @Test
+    fun permanentPaneListsFoldersInALandscapeHeight() {
+        val accounts = (1L..3L).map { AccountSummary(it, "user$it@example.org", "User $it") }
+        compose.setContent {
+            MailcraneTheme {
+                // A Medium Phone in landscape: 915 x 411 dp, less the status bar.
+                Row(Modifier.size(915.dp, 380.dp)) {
+                    FolderDrawer(
+                        folders = folders,
+                        selectedFolderId = 1,
+                        onSelect = {},
+                        onOpenSettings = {},
+                        onOpenLocalDrafts = {},
+                        outboxCount = 2,
+                        onOpenOutbox = {},
+                        onManageFolders = {},
+                        accounts = accounts,
+                        currentAccountId = 1,
+                        permanent = true,
+                    )
+                }
+            }
+        }
+        val header = compose.onNodeWithText("Folders").fetchSemanticsNode().boundsInRoot
+        val inbox = compose.onNodeWithContentDescription("Inbox, 3 unread")
+        inbox.assertIsDisplayed().assertIsSelected()
+        val inboxBounds = inbox.fetchSemanticsNode().boundsInRoot
+        assert(inboxBounds.top >= header.bottom) { "Inbox is under the Folders header" }
+        assert(inboxBounds.height > 0f) { "Inbox has room" }
+        compose.onNodeWithTag("drawer-list").performScrollToNode(hasText("Settings"))
+        compose.onNodeWithText("Settings").assertIsDisplayed()
     }
 }

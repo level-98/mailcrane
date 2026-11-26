@@ -102,7 +102,10 @@ pub fn list_folders(db_path: String, account_id: i64) -> Result<Vec<FolderSummar
         .map_err(|_| storage())?;
     let manageable = folders_manageable(&store, AccountId(account_id)).map_err(|_| storage())?;
     let mut rows = Vec::with_capacity(folders.len());
-    for (folder, place) in arrange(&folders) {
+    // Shown without the personal namespace prefix (#325), as the folder
+    // list suggests it; nothing is asked of the server here.
+    let namespace = imap_namespace(&store, &folders);
+    for (folder, place) in arrange(&folders, namespace.as_deref()) {
         let unread = store.count_unread(folder.id).map_err(|_| storage())?;
         rows.push(FolderSummary {
             id: folder.id.0,
@@ -128,10 +131,8 @@ fn folders_manageable(
     if store.is_local_account(account)? {
         return Ok(true);
     }
-    Ok(!matches!(
-        store.account_protocol(account)?,
-        Some(mailcrane_store::Protocol::Jmap { .. })
-    ))
+    // IMAP, and JMAP through Mailbox/set (M4-26).
+    Ok(true)
 }
 
 /// Whether the apps should offer "New folder" for this account (M4-22).
@@ -173,7 +174,8 @@ pub fn move_targets(db_path: String, folder_id: i64) -> Result<MoveTargets, Sync
     let account = folder.details.account_id;
     let all = list_folders(db_path, account.0)?;
     let folders = store.list_folders(account).map_err(|_| storage())?;
-    let (to_top, under) = folder_admin::move_targets(&folders, folder.id);
+    let namespace = imap_namespace(&store, &folders);
+    let (to_top, under) = folder_admin::move_targets_in(&folders, folder.id, namespace.as_deref());
     Ok(MoveTargets {
         to_top,
         folders: all
@@ -181,6 +183,22 @@ pub fn move_targets(db_path: String, folder_id: i64) -> Result<MoveTargets, Sync
             .filter(|f| under.contains(&mailcrane_store::FolderId(f.id)))
             .collect(),
     })
+}
+
+/// How many leading path segments of `f` are the namespace prefix: 1 for
+/// `INBOX.Projects` under `INBOX.`, 0 when it isn't under the prefix (or
+/// would be nothing but the prefix).
+fn namespace_levels(f: &Folder, namespace: Option<&str>) -> usize {
+    let (Some(prefix), Some(d)) = (namespace, f.details.delimiter.as_deref()) else {
+        return 0;
+    };
+    let remote = f.details.remote_name.as_str();
+    match remote.strip_prefix(prefix) {
+        Some(rest) if !rest.is_empty() && !d.is_empty() => {
+            prefix.trim_end_matches(d).split(d).count()
+        }
+        _ => 0,
+    }
 }
 
 /// Where a folder sits in the list: its indent and the name to show there.
@@ -205,7 +223,9 @@ fn segments(folder: &Folder) -> Vec<&str> {
 }
 
 /// Sorts the folders into display order and works out each one's place.
-fn arrange(folders: &[Folder]) -> Vec<(&Folder, Place)> {
+/// `namespace` is the account's personal namespace prefix (#325, such as
+/// `INBOX.`): folders under it are labelled without it.
+fn arrange<'a>(folders: &'a [Folder], namespace: Option<&str>) -> Vec<(&'a Folder, Place)> {
     let (mut standard, mut other): (Vec<&Folder>, Vec<&Folder>) =
         folders.iter().partition(|f| f.details.role.is_some());
 
@@ -242,8 +262,13 @@ fn arrange(folders: &[Folder]) -> Vec<(&Folder, Place)> {
             .unwrap_or(u32::MAX)
             .min(MAX_DEPTH);
         // Shown relative to the nearest listed ancestor; if folders in
-        // between are missing, their names stay in the label.
-        let start = ancestors.last().copied().unwrap_or(0);
+        // between are missing, their names stay in the label. The personal
+        // namespace's own levels (`INBOX` in `INBOX.Projects`) never do.
+        let start = ancestors
+            .last()
+            .copied()
+            .unwrap_or(0)
+            .max(namespace_levels(f, namespace));
         let delimiter = f.details.delimiter.as_deref().unwrap_or_default();
         let name = path.get(start..).map(|rest| rest.join(delimiter));
         let name = name
@@ -262,6 +287,16 @@ fn by_path(a: &Folder, b: &Folder) -> Ordering {
     key(a)
         .cmp(&key(b))
         .then_with(|| a.details.remote_name.cmp(&b.details.remote_name))
+}
+
+/// The personal namespace the folder list suggests (#325), for IMAP and
+/// local accounts. JMAP has none (its Inbox is stored as `Inbox`).
+fn imap_namespace(store: &Store, folders: &[Folder]) -> Option<String> {
+    let account = folders.first()?.details.account_id;
+    match store.account_protocol(account) {
+        Ok(Some(mailcrane_store::Protocol::Jmap { .. })) => None,
+        _ => folder_admin::derive_namespace(folders),
+    }
 }
 
 #[cfg(test)]

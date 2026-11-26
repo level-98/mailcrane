@@ -182,6 +182,7 @@ internal fun message(failure: FolderFailure): FolderMessage =
             }
         is FolderFailure.SystemFolder -> FolderMessage(R.string.folders_error_system)
         is FolderFailure.HasSubfolders -> FolderMessage(R.string.folders_error_has_subfolders)
+        is FolderFailure.HasMessages -> FolderMessage(R.string.folders_error_has_messages)
         is FolderFailure.AlreadyExists -> FolderMessage(R.string.folders_error_exists)
         is FolderFailure.IntoItself -> FolderMessage(R.string.folders_error_into_itself)
         is FolderFailure.NoSubfolders -> FolderMessage(R.string.folders_error_no_subfolders)

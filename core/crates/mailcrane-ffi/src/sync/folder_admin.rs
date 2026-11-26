@@ -42,6 +42,10 @@ pub enum FolderFailure {
     /// Delete the subfolders first.
     #[error("folder has subfolders")]
     HasSubfolders,
+    /// The server won't delete a folder that still has messages (JMAP):
+    /// move or delete them first.
+    #[error("folder has messages")]
+    HasMessages,
     /// A folder with that name is already there.
     #[error("folder exists")]
     AlreadyExists,
@@ -57,7 +61,7 @@ pub enum FolderFailure {
     /// The server refused the change.
     #[error("server refused")]
     Refused,
-    /// Not available for this account (JMAP, for now).
+    /// Not available for this account.
     #[error("not supported")]
     Unsupported,
     /// Connecting or talking to the server failed.
@@ -87,12 +91,20 @@ impl From<FolderAdminError> for FolderFailure {
             },
             FolderAdminError::SystemFolder => Self::SystemFolder,
             FolderAdminError::HasSubfolders => Self::HasSubfolders,
+            FolderAdminError::HasMessages => Self::HasMessages,
             FolderAdminError::AlreadyExists => Self::AlreadyExists,
             FolderAdminError::IntoItself => Self::IntoItself,
             FolderAdminError::NoSubfolders => Self::NoSubfolders,
             FolderAdminError::NotFound => Self::NotFound,
             FolderAdminError::Refused { .. } => Self::Refused,
             FolderAdminError::Imap(e) => {
+                let e = CoreSyncError::from(e);
+                log_failure("folder change", &e, None);
+                Self::Sync {
+                    kind: e.kind().into(),
+                }
+            }
+            FolderAdminError::Jmap(e) => {
                 let e = CoreSyncError::from(e);
                 log_failure("folder change", &e, None);
                 Self::Sync {
@@ -110,12 +122,15 @@ const LOCAL_SEPARATOR: char = '/';
 enum Kind {
     Local,
     Imap,
+    /// M4-26: through `Mailbox/set`.
+    Jmap,
 }
 
 #[uniffi::export]
 impl SyncEngine {
     /// Creates a folder `name` under `parent_id`, or at the top with `None`,
-    /// and returns its id.
+    /// and returns its id. On a server with a personal namespace (such as
+    /// `INBOX.`, #325), a top-level folder goes under it.
     pub fn create_folder(
         &self,
         account_id: i64,
@@ -125,35 +140,54 @@ impl SyncEngine {
         let account = AccountId(account_id);
         let (store, kind) = self.admin_open(account)?;
         let folders = list(&store, account)?;
-        let plan = admin::plan_create(
-            &folders,
-            account,
-            parent_id.map(FolderId),
-            &name,
-            Some(LOCAL_SEPARATOR),
-        )?;
-        if let Kind::Imap = kind {
-            let target = plan.clone();
-            self.on_server(&store, account, |s| {
-                Box::pin(async move { admin::create_on_server(s, &target).await })
-            })?;
-        }
-        let id = admin::save_created(&store, &plan)?;
+        let derived = derived_namespace(&kind, &folders);
+        let plan_with = |namespace: Option<&str>| {
+            admin::plan_create_in(
+                &folders,
+                account,
+                parent_id.map(FolderId),
+                &name,
+                Some(LOCAL_SEPARATOR),
+                namespace,
+            )
+        };
+        // Bad names, unknown parents and taken names are refused before
+        // connecting.
+        let mut plan = plan_with(derived.as_deref())?;
+        let id = match kind {
+            Kind::Jmap => {
+                let (target, parent) = (plan.clone(), parent_id.map(FolderId));
+                self.jmap_admin(account, move |s| {
+                    Box::pin(async move { Ok(s.create_folder(&target, parent).await) })
+                })?
+            }
+            Kind::Imap => {
+                plan = self.on_server(&store, account, async |s| {
+                    let namespace = server_namespace(s).await.or(derived.clone());
+                    let plan = plan_with(namespace.as_deref())?;
+                    admin::create_on_server(s, &plan).await?;
+                    Ok(plan)
+                })?;
+                admin::save_created(&store, &plan)?
+            }
+            Kind::Local => admin::save_created(&store, &plan)?,
+        };
         self.folder_changed(id);
         Ok(id.0)
     }
 
     /// Renames the folder, keeping its place. Its subfolders follow.
     pub fn rename_folder(&self, folder_id: i64, name: String) -> Result<(), FolderFailure> {
-        self.change(folder_id, |folders, id| {
+        self.change(folder_id, |folders, id, _| {
             admin::plan_rename(folders, id, &name)
         })
     }
 
-    /// Moves the folder under `parent_id`, or to the top with `None`.
+    /// Moves the folder under `parent_id`, or to the top with `None` (under
+    /// the personal namespace, if the server has one).
     pub fn move_folder(&self, folder_id: i64, parent_id: Option<i64>) -> Result<(), FolderFailure> {
-        self.change(folder_id, |folders, id| {
-            admin::plan_move(folders, id, parent_id.map(FolderId))
+        self.change(folder_id, |folders, id, namespace| {
+            admin::plan_move_in(folders, id, parent_id.map(FolderId), namespace)
         })
     }
 
@@ -163,48 +197,89 @@ impl SyncEngine {
         let (store, account, kind) = self.admin_folder(folder_id)?;
         let folders = list(&store, account)?;
         let folder = admin::plan_delete(&folders, FolderId(folder_id))?;
-        if let Kind::Imap = kind {
-            let target = folder.clone();
-            self.on_server(&store, account, |s| {
-                Box::pin(async move { admin::delete_on_server(s, &target).await })
-            })?;
+        match kind {
+            Kind::Jmap => {
+                let target = folder.clone();
+                self.jmap_admin(account, move |s| {
+                    Box::pin(async move { Ok(s.delete_folder(&target).await) })
+                })?;
+            }
+            Kind::Imap => {
+                self.on_server(&store, account, async |s| {
+                    admin::delete_on_server(s, &folder).await
+                })?;
+                admin::save_deleted(&store, &folder)?;
+            }
+            Kind::Local => admin::save_deleted(&store, &folder)?,
         }
-        admin::save_deleted(&store, &folder)?;
         self.folder_changed(folder.id);
         Ok(())
     }
 }
 
-type AdminFuture<'a> =
-    std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), FolderAdminError>> + 'a>>;
-
 impl SyncEngine {
-    /// A rename or move.
+    /// A rename or move. `plan` gets the personal namespace prefix: the
+    /// server's (NAMESPACE, on the connection that makes the change) when it
+    /// has one, otherwise the one the folder list suggests.
     fn change(
         &self,
         folder_id: i64,
         plan: impl Fn(
             &[mailcrane_store::Folder],
             FolderId,
+            Option<&str>,
         ) -> Result<admin::RenamePlan, FolderAdminError>,
     ) -> Result<(), FolderFailure> {
         let (store, account, kind) = self.admin_folder(folder_id)?;
         let folders = list(&store, account)?;
-        let p = plan(&folders, FolderId(folder_id))?;
-        if p.is_noop() {
-            return Ok(());
+        let derived = derived_namespace(&kind, &folders);
+        let id = FolderId(folder_id);
+        // Refused moves and renames fail before connecting.
+        let mut p = plan(&folders, id, derived.as_deref())?;
+        match kind {
+            // On IMAP the server's namespace may make a move that looks like
+            // a no-op here a real one (#325): plan again on the connection.
+            Kind::Jmap | Kind::Local if p.is_noop() => return Ok(()),
+            Kind::Jmap => {
+                let target = p.clone();
+                self.jmap_admin(account, move |s| {
+                    Box::pin(async move { Ok(s.rename_folder(id, &target).await) })
+                })?;
+            }
+            Kind::Imap => {
+                p = self.on_server(&store, account, async |s| {
+                    let namespace = server_namespace(s).await.or(derived.clone());
+                    let p = plan(&folders, id, namespace.as_deref())?;
+                    admin::rename_on_server(s, &p).await?;
+                    Ok(p)
+                })?;
+                if p.is_noop() {
+                    return Ok(());
+                }
+                admin::save_renamed(&store, &p)?;
+            }
+            Kind::Local => admin::save_renamed(&store, &p)?,
         }
-        if let Kind::Imap = kind {
-            let target = p.clone();
-            self.on_server(&store, account, |s| {
-                Box::pin(async move { admin::rename_on_server(s, &target).await })
-            })?;
-        }
-        admin::save_renamed(&store, &p)?;
         for (id, ..) in &p.rows {
             self.folder_changed(*id);
         }
         Ok(())
+    }
+
+    /// Runs a folder change on a JMAP account (M4-26) through the sync
+    /// engine's JMAP session. The job stores what it changed.
+    fn jmap_admin<T>(
+        &self,
+        account: AccountId,
+        job: impl for<'a> FnOnce(
+            &'a mut mailcrane_core::sync::JmapSyncer<'_>,
+        ) -> SyncFuture<'a, Result<T, FolderAdminError>>,
+    ) -> Result<T, FolderFailure> {
+        match self.run_jmap(account, job) {
+            Some(Ok(result)) => Ok(result?),
+            Some(Err(SyncFailure::Failed { kind })) => Err(FolderFailure::Sync { kind }),
+            None => Err(FolderFailure::Unsupported),
+        }
     }
 
     /// Tells the apps the folder list changed, so they re-read it.
@@ -229,7 +304,7 @@ impl SyncEngine {
             return Ok((store, Kind::Local));
         }
         match store.account_protocol(account) {
-            Ok(Some(Protocol::Jmap { .. })) => Err(FolderFailure::Unsupported),
+            Ok(Some(Protocol::Jmap { .. })) => Ok((store, Kind::Jmap)),
             Ok(_) => Ok((store, Kind::Imap)),
             Err(_) => Err(FolderFailure::Storage),
         }
@@ -250,12 +325,12 @@ impl SyncEngine {
 
     /// Connects, runs `job`, logs out. Holds the account's lock so no sync
     /// runs at the same time.
-    fn on_server(
+    fn on_server<T>(
         &self,
         store: &Store,
         account: AccountId,
-        job: impl for<'a> FnOnce(&'a mut Session) -> AdminFuture<'a>,
-    ) -> Result<(), FolderFailure> {
+        job: impl AsyncFnOnce(&mut Session) -> Result<T, FolderAdminError>,
+    ) -> Result<T, FolderFailure> {
         let lock = self.account_lock(account);
         let _guard = lock.lock();
         let sync = |kind: events::SyncErrorKind| FolderFailure::Sync { kind: kind.into() };
@@ -267,6 +342,22 @@ impl SyncEngine {
             Ok(result?)
         })
     }
+}
+
+/// The personal namespace the folder list suggests (#325). JMAP has no
+/// namespaces, and its Inbox is stored as `Inbox`, so it gets none.
+fn derived_namespace(kind: &Kind, folders: &[mailcrane_store::Folder]) -> Option<String> {
+    match kind {
+        Kind::Jmap => None,
+        Kind::Imap | Kind::Local => admin::derive_namespace(folders),
+    }
+}
+
+/// The server's personal namespace prefix (#325), asked on this
+/// connection. `None` without NAMESPACE, without a personal namespace, or
+/// if asking failed (the change itself then reports a broken connection).
+async fn server_namespace(session: &mut Session) -> Option<String> {
+    session.personal_namespace().await.ok().flatten()
 }
 
 fn list(store: &Store, account: AccountId) -> Result<Vec<mailcrane_store::Folder>, FolderFailure> {

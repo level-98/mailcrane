@@ -111,9 +111,154 @@ pub async fn get_mailboxes(
     parse_mailboxes(&take(responses, "m0")?)
 }
 
+/// Why a `Mailbox/set` change was refused (RFC 8621 §2.5, RFC 8620 §5.3).
+#[derive(Debug, thiserror::Error)]
+pub enum MailboxSetError {
+    /// A mailbox with that name is already under that parent.
+    #[error("a mailbox with that name exists")]
+    AlreadyExists,
+    /// The mailbox still holds emails (`mailboxHasEmail`).
+    #[error("the mailbox has emails")]
+    HasEmail,
+    /// The mailbox has child mailboxes (`mailboxHasChild`).
+    #[error("the mailbox has children")]
+    HasChild,
+    /// No such mailbox (`notFound`).
+    #[error("no such mailbox")]
+    NotFound,
+    /// Any other set error, such as `forbidden` or `invalidProperties`.
+    #[error("refused: {0}")]
+    Refused(String),
+    /// The request itself failed.
+    #[error(transparent)]
+    Jmap(#[from] JmapError),
+}
+
+impl MailboxSetError {
+    fn from_set_error(e: &Value) -> Self {
+        let kind = e.get("type").and_then(Value::as_str).unwrap_or("unknown");
+        match kind {
+            "alreadyExists" => Self::AlreadyExists,
+            "mailboxHasEmail" => Self::HasEmail,
+            "mailboxHasChild" => Self::HasChild,
+            "notFound" => Self::NotFound,
+            other => Self::Refused(other.chars().take(64).collect()),
+        }
+    }
+}
+
+/// Runs one `Mailbox/set` with `args` (account id added) and returns the
+/// response arguments.
+async fn mailbox_set(
+    session: &Session,
+    auth: &Auth,
+    config: &ClientConfig,
+    mut args: serde_json::Map<String, Value>,
+) -> Result<Value, MailboxSetError> {
+    args.insert("accountId".into(), json!(session.mail_account_id));
+    let calls = [MethodCall {
+        name: "Mailbox/set".into(),
+        args: Value::Object(args),
+        id: "b0".into(),
+    }];
+    Ok(take(call(session, auth, config, &calls).await?, "b0")?)
+}
+
+/// Creates mailbox `name` under `parent_id` (top level with `None`) and
+/// returns its id.
+pub async fn create_mailbox(
+    session: &Session,
+    auth: &Auth,
+    config: &ClientConfig,
+    name: &str,
+    parent_id: Option<&str>,
+) -> Result<String, MailboxSetError> {
+    let mut args = serde_json::Map::new();
+    args.insert(
+        "create".into(),
+        json!({"new": {"name": name, "parentId": parent_id}}),
+    );
+    let res = mailbox_set(session, auth, config, args).await?;
+    if let Some(e) = res.pointer("/notCreated/new") {
+        return Err(MailboxSetError::from_set_error(e));
+    }
+    res.pointer("/created/new/id")
+        .and_then(Value::as_str)
+        .filter(|id| !id.is_empty() && id.len() <= 255)
+        .map(str::to_owned)
+        .ok_or(MailboxSetError::Jmap(JmapError::Malformed))
+}
+
+/// Gives mailbox `id` the name `name` under `parent_id` (top level with
+/// `None`): a rename, a move, or both.
+pub async fn update_mailbox(
+    session: &Session,
+    auth: &Auth,
+    config: &ClientConfig,
+    id: &str,
+    name: &str,
+    parent_id: Option<&str>,
+) -> Result<(), MailboxSetError> {
+    let mut args = serde_json::Map::new();
+    let mut patch = serde_json::Map::new();
+    patch.insert(id.to_owned(), json!({"name": name, "parentId": parent_id}));
+    args.insert("update".into(), Value::Object(patch));
+    let res = mailbox_set(session, auth, config, args).await?;
+    if let Some(e) = res.get("notUpdated").and_then(|n| n.get(id)) {
+        return Err(MailboxSetError::from_set_error(e));
+    }
+    if res.get("updated").and_then(|u| u.get(id)).is_some() {
+        Ok(())
+    } else {
+        Err(MailboxSetError::Jmap(JmapError::Malformed))
+    }
+}
+
+/// Destroys mailbox `id`, refusing if it still holds emails
+/// (`onDestroyRemoveEmails: false`, RFC 8621 §2.5).
+pub async fn destroy_mailbox(
+    session: &Session,
+    auth: &Auth,
+    config: &ClientConfig,
+    id: &str,
+) -> Result<(), MailboxSetError> {
+    let mut args = serde_json::Map::new();
+    args.insert("destroy".into(), json!([id]));
+    args.insert("onDestroyRemoveEmails".into(), json!(false));
+    let res = mailbox_set(session, auth, config, args).await?;
+    if let Some(e) = res.get("notDestroyed").and_then(|n| n.get(id)) {
+        return Err(MailboxSetError::from_set_error(e));
+    }
+    let destroyed = res
+        .get("destroyed")
+        .and_then(Value::as_array)
+        .is_some_and(|d| d.iter().any(|x| x.as_str() == Some(id)));
+    if destroyed {
+        Ok(())
+    } else {
+        Err(MailboxSetError::Jmap(JmapError::Malformed))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mailbox_set_errors_map() {
+        let e = |kind: &str| MailboxSetError::from_set_error(&json!({"type": kind}));
+        assert!(matches!(e("alreadyExists"), MailboxSetError::AlreadyExists));
+        assert!(matches!(e("mailboxHasEmail"), MailboxSetError::HasEmail));
+        assert!(matches!(e("mailboxHasChild"), MailboxSetError::HasChild));
+        assert!(matches!(e("notFound"), MailboxSetError::NotFound));
+        assert!(matches!(e("forbidden"), MailboxSetError::Refused(k) if k == "forbidden"));
+        let long = "x".repeat(500);
+        assert!(matches!(e(&long), MailboxSetError::Refused(k) if k.len() == 64));
+        assert!(matches!(
+            MailboxSetError::from_set_error(&json!({})),
+            MailboxSetError::Refused(k) if k == "unknown"
+        ));
+    }
 
     #[test]
     fn mailboxes_parse_with_roles() {

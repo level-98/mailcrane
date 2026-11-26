@@ -89,14 +89,23 @@ class ManualSetupViewModel
     constructor(
         private val core: MailcraneCore,
     ) : ViewModel() {
-        private val _state =
-            MutableStateFlow(
-                ManualSetupUiState(
-                    imapPort = port(MailServer.IMAP, ConnectionSecurity.TLS),
-                    smtpPort = port(MailServer.SMTP, ConnectionSecurity.TLS),
-                ),
-            )
+        private val _state = MutableStateFlow(emptyForm())
         val state: StateFlow<ManualSetupUiState> = _state.asStateFlow()
+
+        private fun emptyForm() =
+            ManualSetupUiState(
+                imapPort = port(MailServer.IMAP, ConnectionSecurity.TLS),
+                smtpPort = port(MailServer.SMTP, ConnectionSecurity.TLS),
+            )
+
+        /**
+         * The screen has handed the new account on: back to an empty form. Without a navigation graph
+         * this view model belongs to the activity and is reused, so a kept `addedAccountId` closed the
+         * next "Add account" at once, until the app restarted (#343).
+         */
+        fun accountHandled() {
+            _state.value = emptyForm()
+        }
 
         fun onEmailChange(value: String) = edit(Field.EMAIL) { copy(email = value) }
 

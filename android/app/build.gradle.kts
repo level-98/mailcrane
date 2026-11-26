@@ -10,12 +10,18 @@ plugins {
 val mailcraneApplicationId = "app.mailcrane"
 
 val coreDir = rootProject.layout.projectDirectory.dir("../core")
-val rustJniLibsDir = layout.buildDirectory.dir("rustJniLibs")
+// The core for each build type has its own folder (rustJniLibs/debug and
+// rustJniLibs/release), packaged only by that build type.
+val rustJniLibsRoot = layout.buildDirectory.dir("rustJniLibs")
 val uniffiDir = layout.buildDirectory.dir("generated/uniffi")
 val rustRelease = gradle.startParameter.taskNames.any { it.contains("Release", ignoreCase = true) }
 
 android {
     namespace = mailcraneApplicationId
+    // Pinned so release builds are reproducible (docs/fdroid.md): the NDK's
+    // linker and libc++ end up in the APK. cargoNdkBuild uses the same NDK.
+    // To update, change it here and NDK_VERSION in .github/workflows/ci.yml.
+    ndkVersion = "30.0.16248370"
     compileSdk {
         version = release(37) { minorApiLevel = 2 }
     }
@@ -27,12 +33,27 @@ android {
         versionCode = 1
         versionName = "0.0.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        // Only the ABIs the Rust core is built for (cargoNdkBuild). Without this,
+        // libraries such as JNA bring armeabi-v7a, armeabi and mips folders, and
+        // Android would install the app on 32-bit phones, where it can't load the
+        // core and crashes at once (found while preparing F-Droid, M6-04).
+        ndk { abiFilters += listOf("arm64-v8a", "x86_64") }
     }
 
     buildTypes {
         release {
             isMinifyEnabled = false
+            // No git commit in the APK, so builds from any checkout match (F-Droid
+            // reproducible builds, M6-04).
+            vcsInfo { include = false }
         }
+    }
+
+    // AGP otherwise adds a dependency-metadata block encrypted with a Google key;
+    // F-Droid flags it as a non-free blob (M6-04).
+    dependenciesInfo {
+        includeInApk = false
+        includeInBundle = false
     }
 
     compileOptions {
@@ -50,8 +71,20 @@ android {
     }
 
     sourceSets.getByName("main") {
-        jniLibs.directories.add(rustJniLibsDir.get().asFile.path)
         kotlin.directories.add(uniffiDir.get().asFile.path)
+    }
+    // Each build type packages only the core built for it. With one shared
+    // folder, a debug APK built after a release build shipped the release
+    // core, which lacks the debug-only functions, and crashed at launch.
+    for (buildType in listOf("debug", "release")) {
+        sourceSets.getByName(buildType) {
+            jniLibs.directories.add(
+                rustJniLibsRoot
+                    .get()
+                    .dir(buildType)
+                    .asFile.path,
+            )
+        }
     }
 }
 
@@ -73,12 +106,19 @@ val rustProfile = if (rustRelease) "release" else "debug"
 // checks that this stays the only line that turns it on.
 val rustFeatures = if (rustRelease) emptyList() else listOf("--features", "debug-fixtures")
 
+// This run's core, and a marker naming the profile it was built with. The
+// guards below read the marker before a variant packages the folder.
+val rustJniLibsDir = rustJniLibsRoot.map { it.dir(rustProfile) }
+val rustProfileMarker = rustJniLibsRoot.map { it.file("$rustProfile.profile") }
+
 // Where Cargo puts its output: CARGO_TARGET_DIR if set (relative to core/, as
 // Cargo treats it), otherwise core/target.
 val cargoTargetDir: File =
     System.getenv("CARGO_TARGET_DIR")?.let { File(it) }?.let {
         if (it.isAbsolute) it else coreDir.file(it.path).asFile
     } ?: coreDir.dir("target").asFile
+
+val ndkDir = androidComponents.sdkComponents.ndkDirectory
 
 val cargoNdkBuild by tasks.registering(Exec::class) {
     group = "build"
@@ -91,12 +131,28 @@ val cargoNdkBuild by tasks.registering(Exec::class) {
     inputs.property("rustProfile", rustProfile)
     inputs.property("rustFeatures", rustFeatures)
     outputs.dir(rustJniLibsDir)
+    outputs.file(rustProfileMarker)
     // Set here, not left to the shell: Gradle's daemon is shared and keeps the
     // environment it started with, so a worker's CARGO_* settings may not
     // reach this task. Incremental caches and full debug info filled the
     // disk with several builds running at once.
     environment("CARGO_INCREMENTAL", "0")
     environment("CARGO_PROFILE_DEV_DEBUG", "line-tables-only")
+    // The pinned NDK (ndkVersion), not whichever one cargo-ndk would find first.
+    doFirst { (this as Exec).environment("ANDROID_NDK_HOME", ndkDir.get().asFile.path) }
+    // Release builds don't embed this machine's paths (the checkout and the
+    // cargo registry), so the same source builds the same library anywhere
+    // (F-Droid reproducible builds, M6-04; docs/fdroid.md). Debug builds are
+    // left alone: a changed RUSTFLAGS would rebuild every shared build folder.
+    if (rustRelease) {
+        val cargoHome = System.getenv("CARGO_HOME") ?: "${System.getProperty("user.home")}/.cargo"
+        val remap =
+            listOf(
+                "--remap-path-prefix=${coreDir.asFile.path}=/mailcrane/core",
+                "--remap-path-prefix=$cargoHome=/cargo",
+            )
+        environment("RUSTFLAGS", (listOfNotNull(System.getenv("RUSTFLAGS")) + remap).joinToString(" "))
+    }
     commandLine(
         listOf(
             "cargo",
@@ -112,28 +168,122 @@ val cargoNdkBuild by tasks.registering(Exec::class) {
             "mailcrane-ffi",
         ) + rustFeatures + if (rustRelease) listOf("--release") else emptyList(),
     )
+    val marker = rustProfileMarker
+    val profile = rustProfile
+    doLast { marker.get().asFile.writeText("$profile\n") }
 }
 
 // The core is built once per Gradle run, for debug or release according to
-// the task names asked for (`rustRelease`). A run that would package a release
-// variant without naming it (`assemble`, `build`) would put the debug core,
-// with the fixture loader (#289), into the release APK: refuse it.
-val checkNoDebugCoreInRelease by tasks.registering {
+// the task names asked for (`rustRelease`), into that profile's folder. A
+// variant may package its folder only when this run built it and the marker
+// says so. Otherwise a run that packages a release variant without naming it
+// (`assemble`, `build`) would leave the release folder stale or put a debug
+// core, with the fixture loader (#289), in it; and a debug variant packaged in
+// a release run would get a stale core that may not match its bindings.
+fun Task.checkCoreProfile(
+    buildType: String,
+    hint: String,
+) {
+    val built = rustProfile
+    val marker = rustJniLibsRoot.map { it.file("$buildType.profile") }
     group = "verification"
-    description = "Fails when a release variant would be packaged with a core built for debug."
-    val release = rustRelease
+    description = "Fails when a $buildType variant would be packaged with a core not built for $buildType."
+    dependsOn(cargoNdkBuild)
     doLast {
-        if (!release) {
+        if (built != buildType) {
             throw GradleException(
-                "A release variant needs a release core: name the release task (assembleRelease, bundleRelease).",
+                "A $buildType variant needs a $buildType core, but this run builds the $built core: $hint",
+            )
+        }
+        val found =
+            marker
+                .get()
+                .asFile
+                .takeIf { it.isFile }
+                ?.readText()
+                ?.trim()
+        if (found != buildType) {
+            throw GradleException(
+                "rustJniLibs/$buildType holds a ${found ?: "unmarked"} core; delete app/build/rustJniLibs and build again.",
             )
         }
     }
 }
 
+val checkNoDebugCoreInRelease by tasks.registering {
+    checkCoreProfile("release", "name the release task (assembleRelease, bundleRelease).")
+}
+
+val checkNoReleaseCoreInDebug by tasks.registering {
+    checkCoreProfile("debug", "build debug and release variants in separate Gradle runs.")
+}
+
 tasks.matching { it.name == "mergeReleaseNativeLibs" || it.name == "mergeReleaseJniLibFolders" }.configureEach {
     dependsOn(checkNoDebugCoreInRelease)
 }
+
+tasks.matching { it.name == "mergeDebugNativeLibs" || it.name == "mergeDebugJniLibFolders" }.configureEach {
+    dependsOn(checkNoReleaseCoreInDebug)
+}
+
+// F-Droid (M6-04, #71): the release build must contain only free software and
+// talk to no proprietary service. These groups are Google Play Services,
+// Firebase, ML Kit, Play Core and billing, and common closed analytics or
+// crash SDKs. The check reads the resolved release classpath, so a banned
+// library pulled in by another one is caught too.
+val nonFreeGroups =
+    listOf(
+        "com.google.android.gms",
+        "com.google.firebase",
+        "com.google.mlkit",
+        "com.google.android.play",
+        "com.android.billingclient",
+        "com.google.android.datatransport",
+        "com.google.android.libraries.places",
+        "com.google.ads",
+        "com.crashlytics",
+        "io.fabric",
+        "com.huawei.hms",
+        "com.facebook",
+        "com.appsflyer",
+        "io.sentry",
+        "com.amplitude",
+        "com.mixpanel",
+    )
+
+val checkFreeDependencies by tasks.registering {
+    group = "verification"
+    description =
+        "Fails when the release build depends on non-free libraries or ships prebuilt binaries in the sources."
+    val classpath = configurations.named("releaseRuntimeClasspath")
+    val sources = layout.projectDirectory.dir("src")
+    val banned = nonFreeGroups
+    doLast {
+        val modules =
+            classpath
+                .get()
+                .incoming.resolutionResult.allComponents
+                .mapNotNull { it.moduleVersion }
+        val found =
+            modules.filter { m -> banned.any { m.group == it || m.group.startsWith("$it.") } }
+        // Binaries in the sources would be blobs F-Droid can't build. Native
+        // code comes only from the Rust core (built by cargoNdkBuild into
+        // build/), and Java libraries only from Maven.
+        val blobs =
+            sources.asFileTree
+                .matching { include("**/*.jar", "**/*.aar", "**/*.so", "**/*.dex", "**/*.apk") }
+                .files
+        val problems =
+            found.map { "non-free dependency: ${it.group}:${it.name}:${it.version}" } +
+                blobs.map { "prebuilt binary in the sources: ${it.relativeTo(sources.asFile)}" }
+        if (problems.isNotEmpty()) {
+            throw GradleException("F-Droid check failed:\n" + problems.joinToString("\n") { "  $it" })
+        }
+        logger.lifecycle("F-Droid check: ${modules.size} release dependencies, all free; no prebuilt binaries.")
+    }
+}
+
+tasks.named("check") { dependsOn(checkFreeDependencies) }
 
 // Debug builds carry tests/fixtures (`.eml` and `.html`) as assets under
 // `fixtures/`, for "Load test mail" (#289). Release builds don't.

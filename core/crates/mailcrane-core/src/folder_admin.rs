@@ -52,6 +52,10 @@ pub enum FolderAdminError {
     /// Delete its subfolders first.
     #[error("the folder has subfolders")]
     HasSubfolders,
+    /// The server won't delete a folder that still holds messages (JMAP,
+    /// M4-26): move or delete them first.
+    #[error("the folder has messages")]
+    HasMessages,
     /// A folder with that name is already there.
     #[error("a folder with that name exists")]
     AlreadyExists,
@@ -73,6 +77,9 @@ pub enum FolderAdminError {
     /// The connection failed; whether the change happened is unknown.
     #[error(transparent)]
     Imap(#[from] mailcrane_imap::ImapError),
+    /// The JMAP request failed; whether the change happened is unknown.
+    #[error(transparent)]
+    Jmap(#[from] mailcrane_jmap::JmapError),
     /// The local database failed.
     #[error(transparent)]
     Store(#[from] StoreError),
@@ -83,6 +90,20 @@ impl From<ChangeError> for FolderAdminError {
         match e {
             ChangeError::Refused { transient } => Self::Refused { transient },
             ChangeError::Imap(e) => Self::Imap(e),
+        }
+    }
+}
+
+impl From<mailcrane_jmap::MailboxSetError> for FolderAdminError {
+    fn from(e: mailcrane_jmap::MailboxSetError) -> Self {
+        use mailcrane_jmap::MailboxSetError as M;
+        match e {
+            M::AlreadyExists => Self::AlreadyExists,
+            M::HasEmail => Self::HasMessages,
+            M::HasChild => Self::HasSubfolders,
+            M::NotFound => Self::NotFound,
+            M::Refused(_) => Self::Refused { transient: false },
+            M::Jmap(e) => Self::Jmap(e),
         }
     }
 }
@@ -242,16 +263,33 @@ pub fn plan_create(
     name: &str,
     local_default: Option<char>,
 ) -> Result<CreatePlan, FolderAdminError> {
+    plan_create_in(folders, account, parent, name, local_default, None)
+}
+
+/// [`plan_create`] for an account whose personal namespace prefix is
+/// `namespace` (RFC 2342, such as `INBOX.`, #325): a top-level folder is
+/// created under it.
+pub fn plan_create_in(
+    folders: &[Folder],
+    account: AccountId,
+    parent: Option<FolderId>,
+    name: &str,
+    local_default: Option<char>,
+    namespace: Option<&str>,
+) -> Result<CreatePlan, FolderAdminError> {
     let parent = parent.map(|p| find(folders, p)).transpose()?;
     let delimiter = parent
         .and_then(delimiter_of)
         .or_else(|| account_delimiter(folders, local_default));
     let name = clean_folder_name(name, delimiter).map_err(FolderAdminError::InvalidName)?;
-    let remote = join(
-        parent.map(|p| p.details.remote_name.as_str()),
-        &name,
-        delimiter,
-    )?;
+    let remote = match (parent, namespace) {
+        (None, Some(prefix)) => format!("{prefix}{}", mutf7::encode(&name)),
+        _ => join(
+            parent.map(|p| p.details.remote_name.as_str()),
+            &name,
+            delimiter,
+        )?,
+    };
     if taken(folders, &remote, None) {
         return Err(FolderAdminError::AlreadyExists);
     }
@@ -323,6 +361,17 @@ pub fn plan_move(
     folder: FolderId,
     parent: Option<FolderId>,
 ) -> Result<RenamePlan, FolderAdminError> {
+    plan_move_in(folders, folder, parent, None)
+}
+
+/// [`plan_move`] for an account with personal namespace prefix `namespace`
+/// (#325): "to the top" means directly under the prefix.
+pub fn plan_move_in(
+    folders: &[Folder],
+    folder: FolderId,
+    parent: Option<FolderId>,
+    namespace: Option<&str>,
+) -> Result<RenamePlan, FolderAdminError> {
     let f = find(folders, folder)?;
     if !can_change(folders, f) {
         return Err(FolderAdminError::SystemFolder);
@@ -331,7 +380,7 @@ pub fn plan_move(
     let remote = &f.details.remote_name;
     let leaf = last_segment(remote, d);
     let new_remote = match parent {
-        None => leaf.to_owned(),
+        None => format!("{}{leaf}", namespace.unwrap_or_default()),
         Some(p) => {
             let p = find(folders, p)?;
             let pr = &p.details.remote_name;
@@ -351,15 +400,57 @@ pub fn plan_move(
 /// and under which folders. A place it already is, or one a move would be
 /// refused for, is left out. Empty when the folder can't be moved at all.
 pub fn move_targets(folders: &[Folder], folder: FolderId) -> (bool, Vec<FolderId>) {
+    move_targets_in(folders, folder, None)
+}
+
+/// [`move_targets`] with a personal namespace prefix (#325). The folder the
+/// namespace hangs under (`INBOX` for `INBOX.`) is the top level, so it's
+/// offered as "to the top", not as a folder of its own.
+pub fn move_targets_in(
+    folders: &[Folder],
+    folder: FolderId,
+    namespace: Option<&str>,
+) -> (bool, Vec<FolderId>) {
     let ok = |parent: Option<FolderId>| {
-        plan_move(folders, folder, parent).is_ok_and(|plan| !plan.is_noop())
+        plan_move_in(folders, folder, parent, namespace).is_ok_and(|plan| !plan.is_noop())
     };
+    let root = namespace.and_then(|n| namespace_root(folders, n));
     let under = folders
         .iter()
         .map(|f| f.id)
-        .filter(|id| ok(Some(*id)))
+        .filter(|id| Some(*id) != root && ok(Some(*id)))
         .collect();
     (ok(None), under)
+}
+
+/// The personal namespace prefix the folder list suggests, for servers
+/// that don't answer NAMESPACE and for showing the list without connecting
+/// (#325): `INBOX` plus its delimiter when the Inbox has one and every other
+/// folder is under it, as on Courier-style servers. `None` otherwise,
+/// including when the Inbox is the only folder.
+pub fn derive_namespace(folders: &[Folder]) -> Option<String> {
+    let inbox = folders
+        .iter()
+        .find(|f| f.details.remote_name.eq_ignore_ascii_case("INBOX"))?;
+    let d = delimiter_of(inbox)?;
+    let prefix = format!("{}{d}", inbox.details.remote_name);
+    let mut others = folders.iter().filter(|f| f.id != inbox.id).peekable();
+    others.peek()?;
+    others
+        .all(|f| f.details.remote_name.starts_with(&prefix))
+        .then_some(prefix)
+}
+
+/// The folder a namespace prefix hangs under: `INBOX` for `INBOX.`, if it's
+/// stored. `None` for a prefix with no such folder.
+pub fn namespace_root(folders: &[Folder], namespace: &str) -> Option<FolderId> {
+    folders
+        .iter()
+        .find(|f| {
+            delimiter_of(f)
+                .is_some_and(|d| namespace.strip_suffix(d) == Some(f.details.remote_name.as_str()))
+        })
+        .map(|f| f.id)
 }
 
 /// Checks that `folder` may be deleted and returns it.

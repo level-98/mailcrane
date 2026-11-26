@@ -58,7 +58,7 @@ pub fn widget_snapshot(db_path: String, limit: u32) -> Result<WidgetSnapshot, Sy
                 account_id: account.0,
                 account_color: marker_color(&colors, account.0),
                 from_name: one_line(&from),
-                subject: one_line(&d.subject),
+                subject: crate::messages::display_line(&d.subject),
                 date: d.date,
                 is_seen: d.flags.seen,
             }

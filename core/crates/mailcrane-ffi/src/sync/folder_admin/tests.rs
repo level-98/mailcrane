@@ -136,31 +136,58 @@ fn a_local_account_creates_renames_moves_and_deletes_folders() {
 }
 
 #[test]
-fn jmap_accounts_are_not_supported_yet() {
-    let dir = tempfile::tempdir().expect("tempdir");
-    let path = dir.path().join("j.db").to_string_lossy().into_owned();
+fn an_inbox_namespace_is_the_top_level() {
+    // #325: every personal folder under INBOX., "." as delimiter.
+    let (_dir, path, account) = local_account();
     let store = Store::open(&path).expect("store");
-    let account = store
-        .insert_jmap_account(
-            &NewAccount {
-                display_name: "J".into(),
-                email: "j@example.org".into(),
-                imap_host: String::new(),
-                imap_port: 0,
-                imap_security: Security::Tls,
-                smtp_host: String::new(),
-                smtp_port: 0,
-                smtp_security: Security::Tls,
-                username: "j@example.org".into(),
-            },
-            "https://jmap.example.org/session",
-        )
-        .expect("account");
+    let inbox = store.list_folders(AccountId(account)).expect("list")[0].id;
+    let mut details = store
+        .get_folder(inbox)
+        .expect("get")
+        .expect("inbox")
+        .details;
+    details.delimiter = Some(".".into());
+    store.upsert_folder(&details).expect("delimiter");
+    // A folder already under INBOX.: the list suggests the namespace.
+    details.remote_name = "INBOX.Archive".into();
+    details.display_name = "INBOX.Archive".into();
+    details.role = None;
+    store.upsert_folder(&details).expect("archive");
     drop(store);
     let engine = SyncEngine::new(path.clone(), Arc::new(Quiet));
-    assert_eq!(can_manage_folders(path, account.0), Ok(false));
+
+    let projects = engine
+        .create_folder(account, None, "Projects".into())
+        .expect("create");
+    let year = engine
+        .create_folder(account, Some(projects), "2026".into())
+        .expect("create");
+    let store = Store::open(&path).expect("store");
+    let remote = |id: i64| {
+        store
+            .get_folder(FolderId(id))
+            .expect("get")
+            .expect("folder")
+            .details
+            .remote_name
+    };
+    assert_eq!(remote(projects), "INBOX.Projects");
+    assert_eq!(remote(year), "INBOX.Projects.2026");
+    // Shown without the namespace: Projects at the top, 2026 under it.
     assert_eq!(
-        engine.create_folder(account.0, None, "X".into()),
-        Err(FolderFailure::Unsupported)
+        names(&path, account),
+        [
+            ("INBOX".into(), 0, false),
+            ("Archive".into(), 0, true),
+            ("Projects".into(), 0, true),
+            ("2026".into(), 1, true),
+        ]
     );
+    // INBOX is the top, not a place of its own; moving to the top stays
+    // in the namespace.
+    let targets = move_targets(path.clone(), year).expect("targets");
+    assert!(targets.to_top);
+    assert!(targets.folders.iter().all(|f| f.id != inbox.0));
+    engine.move_folder(year, None).expect("move");
+    assert_eq!(remote(year), "INBOX.2026");
 }

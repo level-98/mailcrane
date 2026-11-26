@@ -116,6 +116,7 @@ Goal: add an IMAP account and read your inbox, online and offline.
 - [x] **M4-23** Server-side rules through ManageSieve (RFC 5804), so rules run when the phone is off; local rules (M4-09) stay for servers without it 🤖
 - [x] **M4-24** Sender pictures in the message list (initials on a stable colour, contact photos only after opting in, never from the network), and a Compact mailbox density without them 🤖
 - [x] **M4-25** Download recent inbox messages in the background after each sync (unmetered network by default, not in Battery Saver, last 14 days, newest 200, up to 1 MB each), so they open at once and offline; setting under Advanced 🤖
+- [x] **M4-26** Manage folders on JMAP accounts (create, rename, move, delete through Mailbox/set) 🤖
 
 ## M5 — Privacy and security
 
@@ -125,7 +126,7 @@ Goal: add an IMAP account and read your inbox, online and offline.
 - [ ] **M5-04** OpenPGP: read and send encrypted and signed mail, Autocrypt, key management 🔒
 - [ ] **M5-05** S/MIME 🔒
 - [ ] **M5-06** Independent security review before 1.0 🧑
-- [ ] **M5-07** Phishing help: show a link's real destination before opening it, show SPF/DKIM/DMARC results from `Authentication-Results`, and warn when the display name pretends to be a different address 🔒🤖
+- [x] **M5-07** Phishing help: show a link's real destination before opening it, show SPF/DKIM/DMARC results from `Authentication-Results`, and warn when the display name pretends to be a different address 🔒🤖
 - [x] **M5-08** Per-account provider authentication server name, so Postfix/OpenDMARC users get the SPF/DKIM/DMARC chip and one-click unsubscribe 🔒🤖
 
 ## M6 — Release

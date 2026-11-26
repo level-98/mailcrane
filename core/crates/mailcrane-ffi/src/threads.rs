@@ -49,7 +49,7 @@ pub fn list_threads(
         .into_iter()
         .map(|t| ThreadSummary {
             thread_id: t.thread_id.0,
-            subject: one_line(&t.subject),
+            subject: crate::messages::display_line(&t.subject),
             participants: t.participants.iter().map(|p| one_line(p)).collect(),
             message_count: t.message_count,
             unread_count: t.unread_count,

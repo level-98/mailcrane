@@ -1,7 +1,7 @@
 //! Parses each synthetic fixture in `tests/fixtures/mime/` and checks the
 //! fields.
 
-use mailcrane_mime::{parse_message, Disposition, ParsedMessage};
+use mailcrane_mime::{is_bidi_control, parse_message, strip_bidi, Disposition, ParsedMessage};
 
 type R = Result<(), Box<dyn std::error::Error>>;
 
@@ -240,4 +240,20 @@ fn inline_part_enforces_the_size_limit() {
         mailcrane_mime::inline_part(&huge, "x@example.org"),
         Err(mailcrane_mime::MimeError::TooLarge)
     );
+}
+
+#[test]
+fn bidi_subject_and_attachment_name() -> R {
+    // #315: the parser keeps what was sent; strip_bidi gives the logical
+    // order the apps show.
+    let m = load("bidi-subject-attachment.eml")?;
+    let subject = m.subject.as_deref().unwrap_or_default();
+    for c in ['\u{202e}', '\u{202d}', '\u{2067}', '\u{2068}', '\u{2069}'] {
+        assert!(subject.contains(c), "{:04X} in the fixture", u32::from(c));
+    }
+    assert_eq!(strip_bidi(subject), "Invoice fdp.exe for March 2026 paid");
+    let name = m.attachments[0].filename.as_deref().unwrap_or_default();
+    assert!(name.chars().any(is_bidi_control));
+    assert_eq!(strip_bidi(name), "invoicefdp.exe");
+    Ok(())
 }

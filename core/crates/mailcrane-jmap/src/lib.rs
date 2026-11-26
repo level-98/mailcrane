@@ -24,7 +24,10 @@ pub use email::{
 };
 pub use error::JmapError;
 pub use http::{Auth, ClientConfig, MAX_RESPONSE_BYTES};
-pub use mailbox::{get_mailboxes, JmapMailbox, MailboxRole};
+pub use mailbox::{
+    create_mailbox, destroy_mailbox, get_mailboxes, update_mailbox, JmapMailbox, MailboxRole,
+    MailboxSetError,
+};
 pub use request::{call, parse_response, MethodCall, MethodResponse};
 pub use session::{discover, Session};
 pub use submission::{

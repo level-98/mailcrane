@@ -11,12 +11,12 @@ data class MailcraneExtendedColors(
 
 val MailcraneLightExtendedColors =
     MailcraneExtendedColors(
-        success = Color(0xFF1F9D63),
+        success = Color(0xFF157A4C),
     )
 
 val MailcraneDarkExtendedColors =
     MailcraneExtendedColors(
-        success = Color(0xFF1F9D63),
+        success = Color(0xFF3DBE83),
     )
 
 val MailcraneLightColors =
@@ -35,7 +35,7 @@ val MailcraneLightColors =
         onSurfaceVariant = Color(0xFF5A6380),
         outline = Color(0xFFD5DBEA),
         outlineVariant = Color(0xFFD5DBEA),
-        error = Color(0xFFD93B3B),
+        error = Color(0xFFC62828),
         onError = Color(0xFFFFFFFF),
     )
 
@@ -55,6 +55,6 @@ val MailcraneDarkColors =
         onSurfaceVariant = Color(0xFF9AA3BF),
         outline = Color(0xFF2A3350),
         outlineVariant = Color(0xFF2A3350),
-        error = Color(0xFFD93B3B),
-        onError = Color(0xFFFFFFFF),
+        error = Color(0xFFF28B82),
+        onError = Color(0xFF0F1424),
     )
