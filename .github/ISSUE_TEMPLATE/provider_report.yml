@@ -1,0 +1,89 @@
+name: Provider test report
+description: I tested Mailcrane with a mail provider (for docs/providers.md)
+title: "[Provider] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for testing! Your report becomes a row in [docs/providers.md](https://github.com/level-98/mailcrane/blob/main/docs/providers.md).
+
+        ⚠️ **Never include your email address, password, app password, tokens, server logins, message content or screenshots showing any of these.** Name the provider only. Write `example.com` or `[redacted]` where you need a placeholder. Something that looks like a security problem goes to [private reporting](https://github.com/level-98/mailcrane/security/advisories/new) instead.
+  - type: input
+    id: provider
+    attributes:
+      label: Provider
+      description: The service, or the server software for a self-hosted server.
+      placeholder: Fastmail, Posteo, self-hosted Dovecot 2.4 + Postfix…
+    validations:
+      required: true
+  - type: dropdown
+    id: signin
+    attributes:
+      label: Protocol and sign-in method
+      options:
+        - IMAP + SMTP, password
+        - IMAP + SMTP, app password
+        - IMAP + SMTP, OAuth (Sign in with Google or Microsoft)
+        - IMAP + SMTP through a local bridge (e.g. Proton Mail Bridge)
+        - JMAP
+        - Other (say in the notes)
+    validations:
+      required: true
+  - type: dropdown
+    id: setup
+    attributes:
+      label: How were the server settings found?
+      options:
+        - Automatically
+        - Automatically, but I had to correct them
+        - Typed by hand
+    validations:
+      required: true
+  - type: input
+    id: platform
+    attributes:
+      label: Device and OS version
+      placeholder: Pixel 8, Android 16
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Mailcrane version or commit
+      description: Settings shows the version; for a build from source, the commit.
+      placeholder: 0.1.0, or test-build-20261126-0815, or 81755b8
+    validations:
+      required: true
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: What worked
+      description: Tick what you tried and what worked. Leave out what you didn't try, and say in the notes what failed.
+      options:
+        - label: Add the account
+        - label: Initial sync (folders and recent mail appear)
+        - label: Read plain-text and HTML mail
+        - label: New mail appears while the app is open
+        - label: New mail notification while the app is closed
+        - label: Send
+        - label: Reply and forward
+        - label: Send an attachment, and open a received one
+        - label: Archive, delete and move
+        - label: Drafts sync with the provider's webmail or another app
+        - label: The sent message appears in Sent exactly once
+        - label: Search
+  - type: dropdown
+    id: result
+    attributes:
+      label: Overall result
+      options:
+        - ✅ Works
+        - ⚠️ Works with issues
+        - ❌ Broken
+    validations:
+      required: true
+  - type: textarea
+    id: notes
+    attributes:
+      label: Notes
+      description: What went wrong, any workaround, and links to bug issues. No account details.
