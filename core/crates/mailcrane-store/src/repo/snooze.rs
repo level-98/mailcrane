@@ -77,6 +77,9 @@ pub struct Snooze {
     pub target_uidnext: Option<u32>,
     /// When a rollback (step 4) began, unix seconds.
     pub rollback_since: Option<i64>,
+    /// A new snooze time asked for while this wake was half done (#431):
+    /// applied once the wake finishes.
+    pub pending_resnooze_at: Option<i64>,
 }
 
 /// A stored message with keywords that start with a given prefix.
@@ -90,7 +93,7 @@ pub struct KeywordedMessage {
 
 const COLS: &str = "id, account_id, message_id_header, original_folder_id, local_message_id, \
     wake_at, state, on_server, mark_unread, attempts, next_attempt_at, step, target_uidnext, \
-    rollback_since";
+    rollback_since, pending_resnooze_at";
 
 fn from_row(r: &Row<'_>) -> Result<Snooze, StoreError> {
     Ok(Snooze {
@@ -111,6 +114,7 @@ fn from_row(r: &Row<'_>) -> Result<Snooze, StoreError> {
             .map(|v| narrow(v, "target_uidnext"))
             .transpose()?,
         rollback_since: r.get(13)?,
+        pending_resnooze_at: r.get(14)?,
     })
 }
 
@@ -130,13 +134,21 @@ impl Store {
             "INSERT INTO snoozes (account_id, message_id_header, original_folder_id, \
              local_message_id, wake_at, state) VALUES (?1, ?2, ?3, ?4, ?5, 'to_snooze') \
              ON CONFLICT (account_id, message_id_header) DO UPDATE SET \
-             wake_at = excluded.wake_at, state = 'to_snooze', mark_unread = 1, \
+             wake_at = CASE WHEN state = 'to_wake' AND step > 0 THEN wake_at \
+                 ELSE excluded.wake_at END, \
+             pending_resnooze_at = CASE WHEN state = 'to_wake' AND step > 0 \
+                 THEN excluded.wake_at ELSE NULL END, \
+             mark_unread = CASE WHEN state = 'to_wake' AND step > 0 THEN mark_unread ELSE 1 END, \
              local_message_id = COALESCE(excluded.local_message_id, local_message_id), \
              original_folder_id = COALESCE(original_folder_id, excluded.original_folder_id), \
              attempts = 0, next_attempt_at = 0, \
-             step = CASE WHEN state = 'to_snooze' THEN step ELSE 0 END, \
-             target_uidnext = CASE WHEN state = 'to_snooze' THEN target_uidnext ELSE NULL END, \
-             rollback_since = CASE WHEN state = 'to_snooze' THEN rollback_since ELSE NULL END",
+             step = CASE WHEN state = 'to_snooze' OR (state = 'to_wake' AND step > 0) \
+                 THEN step ELSE 0 END, \
+             target_uidnext = CASE WHEN state = 'to_snooze' OR (state = 'to_wake' AND step > 0) \
+                 THEN target_uidnext ELSE NULL END, \
+             rollback_since = CASE WHEN state = 'to_snooze' OR (state = 'to_wake' AND step > 0) \
+                 THEN rollback_since ELSE NULL END, \
+             state = CASE WHEN state = 'to_wake' AND step > 0 THEN state ELSE 'to_snooze' END",
             params![
                 s.account_id.0,
                 s.message_id_header,
@@ -275,6 +287,7 @@ impl Store {
                  step = CASE WHEN state = 'to_wake' THEN step ELSE 0 END, \
                  target_uidnext = CASE WHEN state = 'to_wake' THEN target_uidnext ELSE NULL END, \
                  rollback_since = CASE WHEN state = 'to_wake' THEN rollback_since ELSE NULL END, \
+                 pending_resnooze_at = NULL, \
                  state = 'to_wake' \
                  WHERE account_id = ?1 AND message_id_header = ?2",
                 params![account.0, message_id_header, now],
@@ -344,6 +357,39 @@ impl Store {
             params![id.0, now],
         )?;
         Ok(())
+    }
+
+    /// A wake is over. With a re-snooze pending (#431) the row turns into
+    /// `to_snooze` with the new time at step 0, and the next sync snoozes
+    /// the message again; `keep_local` keeps the hidden row it points at
+    /// (the message is where the wake put it), otherwise that row is shown
+    /// again and dropped from the snooze (the snooze finds the message in
+    /// Snoozed by its Message-ID). Without one, the row is deleted. Returns
+    /// whether a re-snooze was applied.
+    pub fn finish_wake(&self, id: SnoozeId, keep_local: bool) -> Result<bool, StoreError> {
+        let tx = self.write_tx()?;
+        if !keep_local {
+            tx.execute(
+                "UPDATE messages SET hidden = 0 WHERE id = \
+                 (SELECT local_message_id FROM snoozes WHERE id = ?1 \
+                  AND pending_resnooze_at IS NOT NULL)",
+                params![id.0],
+            )?;
+        }
+        let resnoozed = tx.execute(
+            "UPDATE snoozes SET state = 'to_snooze', wake_at = pending_resnooze_at, \
+             pending_resnooze_at = NULL, step = 0, target_uidnext = NULL, \
+             rollback_since = NULL, attempts = 0, next_attempt_at = 0, mark_unread = 1, \
+             on_server = 0, \
+             local_message_id = CASE WHEN ?2 THEN local_message_id ELSE NULL END \
+             WHERE id = ?1 AND pending_resnooze_at IS NOT NULL",
+            params![id.0, keep_local],
+        )? > 0;
+        if !resnoozed {
+            tx.execute("DELETE FROM snoozes WHERE id = ?1", params![id.0])?;
+        }
+        tx.commit()?;
+        Ok(resnoozed)
     }
 
     /// The snooze with this id, as stored now.

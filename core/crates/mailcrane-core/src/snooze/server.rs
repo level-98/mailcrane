@@ -176,7 +176,7 @@ fn carry_forward(store: &Store, s: &Snooze) -> Result<Vec<FolderId>, ChangeError
                     store.delete_message_row(id).map_err(store_err)?;
                 }
             }
-            store.delete_snooze(s.id, false).map_err(store_err)?;
+            store.finish_wake(s.id, true).map_err(store_err)?;
         }
         // Whether the wake keyword reached the server isn't known here, so
         // the wake time is kept on this device.
@@ -200,7 +200,8 @@ fn undo(store: &Store, s: &Snooze, listener: &dyn EventListener) -> Result<(), S
                 });
             }
         }
-        store.delete_snooze(s.id, false)
+        // A re-snooze pending (#431) applies, with the message where it is.
+        store.finish_wake(s.id, false).map(|_| ())
     } else {
         if let Some(folder) = s.original_folder_id {
             listener.on_event(CoreEvent::MessagesChanged { folder_id: folder });
@@ -504,7 +505,7 @@ async fn wake_one(
 ) -> Result<Vec<FolderId>, ChangeError> {
     let Some(snoozed) = snoozed_folder(store, s.account_id).map_err(store_err)? else {
         // No Snoozed folder: nothing to move back.
-        store.delete_snooze(s.id, false).map_err(store_err)?;
+        store.finish_wake(s.id, true).map_err(store_err)?;
         return Ok(Vec::new());
     };
     let local = store
@@ -520,7 +521,8 @@ async fn wake_one(
         if let Some(id) = local {
             store.delete_message_row(id).map_err(store_err)?;
         }
-        store.delete_snooze(s.id, false).map_err(store_err)?;
+        // A re-snooze asked for meanwhile now applies (#431).
+        store.finish_wake(s.id, true).map_err(store_err)?;
         return Ok(vec![snoozed.id]);
     }
     // Keyword and \Seen changes go on before the COPY; a resumed move
@@ -554,6 +556,7 @@ async fn wake_one(
     if let Some(id) = local {
         store.delete_message_row(id).map_err(store_err)?;
     }
-    store.delete_snooze(s.id, false).map_err(store_err)?;
+    // A re-snooze asked for while the wake was half done now applies (#431).
+    store.finish_wake(s.id, true).map_err(store_err)?;
     Ok(vec![snoozed.id, dest.id])
 }
