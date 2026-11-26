@@ -86,6 +86,9 @@ pub(crate) struct AccountGate {
     write_lock: WriteLock,
     /// How many calls the user waits for want the lock.
     waiting: AtomicUsize,
+    /// How many times a call has announced itself, ever (tests).
+    #[cfg(test)]
+    announced: AtomicUsize,
 }
 
 impl AccountGate {
@@ -107,6 +110,8 @@ impl AccountGate {
     /// is dropped, so background downloads give way from the start of the
     /// call rather than only once it reaches the lock.
     pub(crate) fn announce(&self) -> Waiting<'_> {
+        #[cfg(test)]
+        self.announced.fetch_add(1, Ordering::SeqCst);
         step(&self.waiting, |n| n.checked_add(1));
         Waiting(&self.waiting)
     }
@@ -121,6 +126,12 @@ impl AccountGate {
     /// Whether a call the user waits for wants the lock.
     fn foreground_waiting(&self) -> bool {
         self.waiting.load(Ordering::SeqCst) > 0
+    }
+
+    /// How many times a call has announced itself so far (tests).
+    #[cfg(test)]
+    pub(crate) fn announcements(&self) -> usize {
+        self.announced.load(Ordering::SeqCst)
     }
 
     /// Whether the lock is free right now (tests).
