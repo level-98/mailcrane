@@ -29,7 +29,7 @@ ROLES = [
     ("InkMuted", "inkMuted", "dark.inkMuted"),
     ("Outline", "outline", "dark.outline"),
     ("Error", "error", "error"),
-    ("OnError", "fixed-white", "fixed-white"),
+    ("OnError", "fixed-white", "dark.surface"),
     ("Success", "success", "success"),
 ]
 
@@ -87,11 +87,17 @@ def mapped_colours(data):
 def check_contrast(data):
     mapped = mapped_colours(data)
     failures = []
+    # Every text/background pair the apps draw (M6-01): text on the page and
+    # on its tinted containers, coloured text (links, errors, success notes),
+    # and text on filled colours.
     pairs = [
         ("OnPrimary", "Primary"),
-        ("Ink", "Surface"),
-        ("InkMuted", "Surface"),
         ("OnPrimaryContainer", "PrimaryContainer"),
+        ("OnError", "Error"),
+    ] + [
+        (foreground, background)
+        for background in ("Surface", "SurfaceDim", "SurfaceHigh")
+        for foreground in ("Ink", "InkMuted", "Primary", "Error", "Success")
     ]
     for theme in ("light", "dark"):
         values = mapped[theme]

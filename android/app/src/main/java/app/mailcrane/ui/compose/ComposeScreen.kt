@@ -51,6 +51,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.KeyboardCapitalization
@@ -163,7 +164,7 @@ fun ComposeContent(
         modifier = modifier,
         topBar = {
             TopAppBar(
-                title = { Text(stringResource(R.string.compose_title)) },
+                title = { Text(stringResource(R.string.compose_title), modifier = Modifier.semantics { heading() }) },
                 navigationIcon = {
                     IconButton(onClick = actions.onClose, enabled = !state.sending) {
                         Icon(
