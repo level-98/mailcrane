@@ -2,4 +2,5 @@
 
 pub mod autoconfig;
 pub mod jmap;
+pub mod presets;
 pub mod setup;

@@ -2,6 +2,7 @@ package app.mailcrane.ui.account
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import app.mailcrane.core.AppPasswordGuide
 import app.mailcrane.core.AddAccountException
 import app.mailcrane.core.ConnectionSecurity
 import app.mailcrane.core.DiscoverException
@@ -77,6 +78,8 @@ data class ManualSetupUiState(
     val step: SetupStep = SetupStep.EMAIL,
     val discovering: Boolean = false,
     val found: DiscoveredSettings? = null,
+    /** The typed address's provider needs an app password (M3-05): its guide shows. */
+    val guide: AppPasswordGuide? = null,
     val discoveryNote: DiscoveryNote? = null,
     /** JMAP instead of IMAP+SMTP (M3-04): one server, a domain or session URL. */
     val jmap: Boolean = false,
@@ -107,7 +110,8 @@ class ManualSetupViewModel
             _state.value = emptyForm()
         }
 
-        fun onEmailChange(value: String) = edit(Field.EMAIL) { copy(email = value) }
+        fun onEmailChange(value: String) =
+            edit(Field.EMAIL) { copy(email = value, guide = core.appPasswordGuide(value.trim())) }
 
         fun onDisplayNameChange(value: String) = edit(Field.DISPLAY_NAME) { copy(displayName = value) }
 

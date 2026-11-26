@@ -81,7 +81,7 @@ Goal: add an IMAP account and read your inbox, online and offline.
   - Start verification early and budget for the yearly CASA security assessment: other open-source clients have been shown "App blocked" while waiting. Keep the app-password IMAP route working as a fallback.
 - [ ] **M3-03** Microsoft 365 and Outlook.com: OAuth and XOAUTH2 🔒🧑
 - [x] **M3-04** JMAP client (Fastmail, Stalwart and others) 🤖
-- [ ] **M3-05** iCloud, Yahoo and AOL guided app-password setup 🧑
+- [ ] **M3-05** iCloud, Yahoo and AOL guided app-password setup 🧑 (code and guide done; checking each provider with a real account still to do)
 - [ ] **M3-06** Provider test matrix: a doc recording which providers have been tested, by whom, and when 🧑
 
 ## M4 — The features that make it good

@@ -13,6 +13,7 @@
     <string name="setup_auto_source_autoconfig">From %1$s’s own settings file.</string>
     <string name="setup_auto_source_srv">From the DNS records of %1$s.</string>
     <string name="setup_auto_source_mx">From the settings file of %1$s, which receives mail for your domain.</string>
+    <string name="setup_auto_source_preset">Built into Mailcrane for %1$s.</string>
     <string name="setup_auto_source_ispdb">From the provider list built into Mailcrane (Mozilla’s ISPDB), for %1$s.</string>
     <string name="setup_auto_use">Use these settings</string>
     <string name="setup_auto_edit">Edit settings</string>
@@ -32,6 +33,31 @@
     <string name="setup_security_starttls">STARTTLS</string>
     <string name="setup_username">Username</string>
     <string name="setup_password">Password</string>
+    <string name="setup_app_password">App password</string>
+    <!-- App-password guide (M3-05). %1$s is the provider, such as "iCloud Mail". -->
+    <string name="app_password_title">%1$s needs an app password</string>
+    <string name="app_password_intro">For your security, %1$s doesn’t let other apps sign in with your normal password. Make an app password for Mailcrane, then type it below.</string>
+    <string name="app_password_open">Open %1$s settings</string>
+    <!-- The number in front of each step. -->
+    <string name="app_password_step_number">%1$d.</string>
+    <string-array name="app_password_steps_icloud">
+        <item>Open your Apple Account page with the button below and sign in.</item>
+        <item>Under Sign-In and Security, choose App-Specific Passwords. Two-factor authentication must be on.</item>
+        <item>Create a password, name it Mailcrane, and copy it.</item>
+        <item>Come back here and paste it as the app password.</item>
+    </string-array>
+    <string-array name="app_password_steps_yahoo">
+        <item>Open your Yahoo account security page with the button below and sign in.</item>
+        <item>Choose Generate app password (or Manage app passwords).</item>
+        <item>Enter Mailcrane as the app name, choose Generate, and copy the password.</item>
+        <item>Come back here and paste it as the app password.</item>
+    </string-array>
+    <string-array name="app_password_steps_aol">
+        <item>Open your AOL account security page with the button below and sign in.</item>
+        <item>Choose Generate app password (or Manage app passwords).</item>
+        <item>Enter Mailcrane as the app name, choose Generate, and copy the password.</item>
+        <item>Come back here and paste it as the app password.</item>
+    </string-array>
     <string name="setup_password_show">Show</string>
     <string name="setup_password_hide">Hide</string>
     <string name="setup_submit">Sign in</string>

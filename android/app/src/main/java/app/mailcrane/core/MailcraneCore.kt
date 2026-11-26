@@ -30,6 +30,12 @@ interface MailcraneCore {
     suspend fun discoverSettings(email: String): List<DiscoveredSettings> = throw DiscoverException.NotFound()
 
     /**
+     * The app-password guide for [email]'s provider (M3-05): iCloud, Yahoo or AOL, by exact domain.
+     * Offline; nothing is sent anywhere.
+     */
+    fun appPasswordGuide(email: String): AppPasswordGuide? = null
+
+    /**
      * Adds a JMAP account (M3-04): finds the session for [JmapAccountSetup.server] (a domain or the
      * session URL), logs in to check, then saves. Same errors as [addAccountManual].
      */
@@ -75,6 +81,8 @@ class UniffiMailcraneCore(
 
     override suspend fun discoverSettings(email: String): List<DiscoveredSettings> =
         app.mailcrane.core.discoverSettings(email, dns)
+
+    override fun appPasswordGuide(email: String): AppPasswordGuide? = app.mailcrane.core.appPasswordGuide(email)
 
     override suspend fun listAccounts(): List<AccountSummary> =
         kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {

@@ -37,6 +37,44 @@ pub enum SettingsSource {
     MxAutoconfig,
     /// Mozilla's ISPDB, bundled in the app (ADR 0003).
     Ispdb,
+    /// Built into Mailcrane for a provider that needs an app password (M3-05).
+    Preset,
+}
+
+/// A provider whose accounts need an app-specific password (M3-05).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum AppPasswordProvider {
+    Icloud,
+    Yahoo,
+    Aol,
+}
+
+/// What setup shows for a provider that needs an app password.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct AppPasswordGuide {
+    pub provider: AppPasswordProvider,
+    /// The provider's name, such as "iCloud Mail".
+    pub provider_name: String,
+    /// The provider's page for making an app password, to open in the
+    /// system browser. The app never fetches it.
+    pub url: String,
+}
+
+/// The app-password guide for `email`'s provider, if it needs one: iCloud,
+/// Yahoo or AOL, by exact domain. Works offline; nothing is sent anywhere.
+#[uniffi::export]
+pub fn app_password_guide(email: String) -> Option<AppPasswordGuide> {
+    use mailcrane_core::account::presets;
+    let preset = presets::preset_for(&email)?;
+    Some(AppPasswordGuide {
+        provider: match preset.provider {
+            presets::AppPasswordProvider::Icloud => AppPasswordProvider::Icloud,
+            presets::AppPasswordProvider::Yahoo => AppPasswordProvider::Yahoo,
+            presets::AppPasswordProvider::Aol => AppPasswordProvider::Aol,
+        },
+        provider_name: preset.name.to_owned(),
+        url: preset.app_password_url.to_owned(),
+    })
 }
 
 /// One set of settings for the user to confirm.
@@ -91,6 +129,7 @@ impl From<DiscoveredConfig> for DiscoveredSettings {
                 core::Source::Srv => SettingsSource::Srv,
                 core::Source::MxAutoconfig => SettingsSource::MxAutoconfig,
                 core::Source::Ispdb => SettingsSource::Ispdb,
+                core::Source::Preset => SettingsSource::Preset,
             },
             source_domain: c.source_domain,
             provider_name: c.provider_name,

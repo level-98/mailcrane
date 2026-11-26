@@ -58,6 +58,8 @@ internal fun EmailStepContent(
             enabled = enabled,
             keyboardType = KeyboardType.Email,
         )
+        // iCloud, Yahoo and AOL need an app password (M3-05): how to make one, before it's typed.
+        state.guide?.let { AppPasswordGuideCard(it) }
         PasswordField(state, actions, enabled)
         Spacer(Modifier.height(8.dp))
         ProgressButton(
@@ -172,7 +174,7 @@ private fun PasswordField(
     FormField(
         value = state.password,
         onValueChange = actions.onPasswordChange,
-        label = R.string.setup_password,
+        label = if (state.guide != null) R.string.setup_app_password else R.string.setup_password,
         error = state.fieldErrors[Field.PASSWORD],
         enabled = enabled,
         keyboardType = KeyboardType.Password,
@@ -219,4 +221,5 @@ private fun SettingsSource.label(): Int =
         SettingsSource.SRV -> R.string.setup_auto_source_srv
         SettingsSource.MX_AUTOCONFIG -> R.string.setup_auto_source_mx
         SettingsSource.ISPDB -> R.string.setup_auto_source_ispdb
+        SettingsSource.PRESET -> R.string.setup_auto_source_preset
     }

@@ -56,6 +56,9 @@ pub enum Source {
     /// The bundled ISPDB snapshot (ADR 0003), for the user's domain or the
     /// MX's domain.
     Ispdb,
+    /// Built into Mailcrane for a provider that needs an app password
+    /// (M3-05, [`super::presets`]).
+    Preset,
 }
 
 /// Settings found for the user to confirm.
@@ -192,7 +195,19 @@ pub async fn discover_with<F: HttpFetcher, R: DnsResolver>(
     http: &F,
     dns: &R,
 ) -> Result<Vec<DiscoveredConfig>, DiscoveryError> {
+    let typed = email;
     let email = Email::parse(email).ok_or(DiscoveryError::InvalidEmail)?;
+    // iCloud, Yahoo and AOL (M3-05): built in, so nothing is looked up.
+    if let Some(preset) = super::presets::preset_for(typed) {
+        return Ok(vec![DiscoveredConfig {
+            source: Source::Preset,
+            source_domain: email.domain.clone(),
+            provider_name: Some(preset.name.to_owned()),
+            username: preset.username(typed),
+            imap: preset.imap,
+            smtp: preset.smtp,
+        }]);
+    }
     let deadline = Instant::now() + TOTAL_BUDGET;
     let mut found: Vec<DiscoveredConfig> = Vec::new();
     let mut timed_out = false;

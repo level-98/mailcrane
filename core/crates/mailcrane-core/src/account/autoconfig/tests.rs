@@ -314,3 +314,21 @@ async fn a_hosted_domain_is_found_in_the_ispdb_through_mx() {
     assert_eq!(found[0].imap.host, "imap.gmail.com");
     assert_eq!(found[0].username, ADDRESS);
 }
+
+#[tokio::test]
+async fn app_password_providers_are_built_in_and_looked_up_nowhere() {
+    // M3-05: iCloud, Yahoo and AOL come from the preset, with no request.
+    let http = FakeHttp::default();
+    let dns = FakeDns::default();
+    let found = discover_with("ann@icloud.com", &http, &dns)
+        .await
+        .expect("found");
+    assert_eq!(found.len(), 1);
+    assert_eq!(found[0].source, Source::Preset);
+    assert_eq!(found[0].source_domain, "icloud.com");
+    assert_eq!(found[0].provider_name.as_deref(), Some("iCloud Mail"));
+    assert_eq!(found[0].imap.host, "imap.mail.me.com");
+    assert_eq!(found[0].username, "ann@icloud.com");
+    assert!(http.seen().is_empty());
+    assert!(dns.seen.lock().expect("lock").is_empty());
+}

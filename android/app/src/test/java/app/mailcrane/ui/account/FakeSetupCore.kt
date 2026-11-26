@@ -1,5 +1,6 @@
 package app.mailcrane.ui.account
 
+import app.mailcrane.core.AppPasswordGuide
 import app.mailcrane.core.ConnectionSecurity
 import app.mailcrane.core.JmapAccountSetup
 import app.mailcrane.core.MailServer
@@ -9,7 +10,10 @@ import app.mailcrane.core.ManualAccountConfig
 /** A core for the account setup tests: adding an account returns [result]'s id or throws. */
 internal class FakeSetupCore(
     private val result: () -> Long,
+    private val guides: Map<String, AppPasswordGuide> = emptyMap(),
 ) : MailcraneCore {
+    override fun appPasswordGuide(email: String): AppPasswordGuide? = guides[email]
+
     var lastConfig: ManualAccountConfig? = null
     var lastJmap: JmapAccountSetup? = null
 
