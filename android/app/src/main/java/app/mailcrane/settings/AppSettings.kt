@@ -182,7 +182,11 @@ sealed interface StartView {
             when {
                 text == "unified" -> Unified
                 text?.startsWith("account:") == true ->
-                    text.removePrefix("account:").toLongOrNull()?.takeIf { it > 0 }?.let { Account(it) } ?: Last
+                    text
+                        .removePrefix("account:")
+                        .toLongOrNull()
+                        ?.takeIf { it > 0 }
+                        ?.let { Account(it) } ?: Last
                 else -> Last
             }
     }
