@@ -68,6 +68,8 @@ pub struct FakeImapBuilder {
     noselect: Vec<String>,
     namespace: Option<(String, char)>,
     mailbox: Option<Mailbox>,
+    tls: Option<tls::TestTls>,
+    ports: Option<(u16, u16)>,
 }
 
 impl FakeImapBuilder {
@@ -152,17 +154,33 @@ impl FakeImapBuilder {
         self
     }
 
+    /// Serves this certificate instead of the shared self-signed one.
+    pub fn tls(mut self, tls: tls::TestTls) -> Self {
+        self.tls = Some(tls);
+        self
+    }
+
+    /// Listens on these ports (implicit TLS, then STARTTLS) instead of free
+    /// ones picked at random.
+    pub fn ports(mut self, tls_port: u16, starttls_port: u16) -> Self {
+        self.ports = Some((tls_port, starttls_port));
+        self
+    }
+
     pub async fn start(self) -> Result<FakeImap, String> {
         // The certificate is made once per process (see tls::generate).
         // Starting is quick (see `servers_start_in_under_100_ms`), but it is
         // not timed here: a busy machine would fail unrelated tests (#268).
-        let tls = tls::generate()?;
+        let tls = match self.tls {
+            Some(tls) => tls,
+            None => tls::generate()?,
+        };
         // Like a real server (993 and 143), one port is implicit TLS and the
         // other starts in plain text for STARTTLS. Guessing the mode from
         // whether a TLS hello arrives in time fails when the client is slow
         // to build its TLS config (Windows' verifier often is).
-        let tls_listener = Loopback::bind().await?;
-        let plain_listener = Loopback::bind().await?;
+        let tls_listener = Loopback::bind_or_any(self.ports.map(|p| p.0)).await?;
+        let plain_listener = Loopback::bind_or_any(self.ports.map(|p| p.1)).await?;
         let addr = tls_listener.addr();
         let starttls_addr = plain_listener.addr();
         let mailbox = self.mailbox.unwrap_or_else(|| {
@@ -242,6 +260,8 @@ impl FakeImap {
             noselect: Vec::new(),
             namespace: None,
             mailbox: None,
+            tls: None,
+            ports: None,
         }
     }
 
