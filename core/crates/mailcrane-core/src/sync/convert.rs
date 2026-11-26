@@ -68,7 +68,8 @@ pub(crate) fn json_strings(items: &[String]) -> String {
 /// §7.5.2 group markers are left out (#433): the end marker has no mailbox,
 /// and the start marker has a NIL host *and* an end marker after it. A NIL
 /// host with no end marker later in the list is an unqualified address
-/// that some servers send that way (`MAILER-DAEMON`, `root`), and is kept.
+/// that some servers send that way (`MAILER-DAEMON`, `root`), and is kept,
+/// as is one followed by another start before the next end marker.
 /// An empty mailbox or host counts as NIL.
 fn envelope_emails(list: &[EnvelopeAddress]) -> Vec<(usize, String)> {
     let part = |v: &Option<Vec<u8>>| {
@@ -85,9 +86,15 @@ fn envelope_emails(list: &[EnvelopeAddress]) -> Vec<(usize, String)> {
         match part(&a.host) {
             Some(host) => out.push((i, format!("{mailbox}@{host}"))),
             None => {
+                // A group start only if the next end marker closes this
+                // group, with no other start in between: a lone address
+                // before a separate group is kept.
                 let starts_group = list
                     .get(i.saturating_add(1)..)
-                    .is_some_and(|rest| rest.iter().any(is_end));
+                    .unwrap_or_default()
+                    .iter()
+                    .find(|b| is_end(b) || (part(&b.mailbox).is_some() && part(&b.host).is_none()))
+                    .is_some_and(is_end);
                 if !starts_group {
                     out.push((i, mailbox));
                 }
@@ -385,6 +392,21 @@ mod tests {
             rows[2].to_json,
             "[{\"name\":null,\"email\":\"root\"},\
              {\"name\":\"Bo\",\"email\":\"bo@example.net\"}]"
+        );
+    }
+
+    /// A lone unqualified address before a separate group is kept; only the
+    /// group's own start marker is dropped.
+    #[test]
+    fn a_lone_address_before_a_group_is_kept() {
+        let data = fetched_addresses(
+            ANA,
+            "((NIL NIL \"root\" NIL)(NIL NIL \"team\" NIL)(\"Bo\" NIL \"bo\" \"example.net\")(NIL NIL NIL NIL))",
+        );
+        let row = header_row(FolderId(1), &data).expect("row");
+        assert_eq!(
+            row.to_json,
+            "[{\"name\":null,\"email\":\"root\"},{\"name\":\"Bo\",\"email\":\"bo@example.net\"}]"
         );
     }
 
