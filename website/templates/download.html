@@ -20,10 +20,10 @@
 
   <section class="info-card nightly-card" aria-labelledby="nightly-title">
     <h2 id="nightly-title">{{<icon name="clock" />}} Nightly test build (unofficial)</h2>
-    {% if nightly and nightly.available %}
+    {% if nightly and nightly.available and nightly.apk_url %}
     <p>An automatic build of the latest code, for testing. It’s signed with a development key, isn’t meant for daily use, and installs only over earlier test builds, not over a store version.</p>
     <a class="button button-outline nightly-download" href="{{ nightly.apk_url }}">Download the test build{% if nightly.commit %} ({{ nightly.commit }}){% endif %}</a>
-    <p class="nightly-meta">Built {{ nightly.date }}{% if nightly.commit %} from commit <a href="{{ nightly.commit_url }}">{{ nightly.commit }}</a>{% endif %}. <a href="{{ nightly.release_url }}">Release notes</a> · <a href="{{ nightly.releases_url }}">All releases</a></p>
+    <p class="nightly-meta">Built {{ nightly.date | default(value="recently") }}{% if nightly.commit and nightly.commit_url %} from commit <a href="{{ nightly.commit_url }}">{{ nightly.commit }}</a>{% endif %}.{% if nightly.release_url %} <a href="{{ nightly.release_url }}">Release notes</a> ·{% endif %} <a href="{{ config.extra.github_url }}/releases">All releases</a></p>
     {% else %}
     <p>There’s no test build right now. Earlier ones are on the <a href="{{ config.extra.github_url }}/releases">releases page</a>.</p>
     {% endif %}

@@ -21,10 +21,13 @@ API_URL = f"https://api.github.com/repos/{REPOSITORY}/releases?per_page=50"
 REPO_URL = f"https://github.com/{REPOSITORY}"
 DOWNLOAD_PREFIX = f"{REPO_URL}/releases/download/"
 TAG = re.compile(r"test-build-[0-9A-Za-z][0-9A-Za-z.-]*")
-# A commit SHA: hex with at least one letter, so a date like 20261126 isn't one.
-SHA = re.compile(r"\b(?=[0-9]*[a-f])[0-9a-f]{7,40}\b")
+# The commit in the APK names the builds use: mailcrane-81755b8-release-debugsigned.apk (older test builds)
+# and mailcrane-dev-1a2b3c4-test.apk (nightly.yml). Never guessed from the release title.
+ASSET_SHA = re.compile(r"mailcrane-(?:dev-)?([0-9a-f]{7,40})-[^/]*\.apk")
 OUTPUT = Path(__file__).resolve().parents[1] / "data" / "nightly.json"
 NONE = {"available": False, "releases_url": f"{REPO_URL}/releases"}
+# What the Download page reads from an available snapshot.
+REQUIRED = ("tag", "date", "apk_name", "apk_url", "release_url", "releases_url")
 
 
 def is_test_build(release: object) -> bool:
@@ -39,12 +42,24 @@ def is_test_build(release: object) -> bool:
     )
 
 
-def commit_of(release: dict) -> str | None:
+def commit_of(release: dict, apk_name: str) -> str | None:
+    """A full target SHA, else the one in the APK's name; None rather than a guess."""
     target = release.get("target_commitish")
     if isinstance(target, str) and re.fullmatch(r"[0-9a-f]{40}", target):
         return target
-    match = SHA.search(release.get("name") or "")
-    return match.group(0) if match else None
+    match = ASSET_SHA.fullmatch(apk_name)
+    return match.group(1) if match else None
+
+
+def is_valid(snapshot: object) -> bool:
+    """A snapshot the Download page can render: not available, or with every field it shows."""
+    if not isinstance(snapshot, dict):
+        return False
+    if snapshot.get("available") is not True:
+        return snapshot.get("available") is False
+    return all(isinstance(snapshot.get(key), str) and snapshot[key] for key in REQUIRED) and str(
+        snapshot["apk_url"]
+    ).startswith(DOWNLOAD_PREFIX)
 
 
 def build_snapshot(releases: list) -> dict:
@@ -60,6 +75,8 @@ def build_snapshot(releases: list) -> dict:
                 a
                 for a in build.get("assets") or []
                 if isinstance(a, dict)
+                # Still uploading ("open", "starter") would be a 404 until the next rebuild.
+                and a.get("state") == "uploaded"
                 and str(a.get("name", "")).endswith(".apk")
                 and str(a.get("browser_download_url", "")).startswith(DOWNLOAD_PREFIX)
             ),
@@ -67,7 +84,7 @@ def build_snapshot(releases: list) -> dict:
         )
         if apk is None:
             continue
-        commit = commit_of(build)
+        commit = commit_of(build, str(apk["name"]))
         return {
             "available": True,
             "tag": build["tag_name"],
@@ -98,14 +115,25 @@ def fetch_releases() -> list:
     return releases
 
 
+def saved(output: Path) -> dict | None:
+    """The saved snapshot, if it is there, readable and complete."""
+    try:
+        snapshot = json.loads(output.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return snapshot if is_valid(snapshot) else None
+
+
 def refresh(output: Path = OUTPUT) -> dict:
-    """Rewrites `output`. When GitHub can't be reached, keeps what's there."""
+    """Rewrites `output`. When GitHub can't be reached, keeps a good saved snapshot, or says none."""
     try:
         snapshot = build_snapshot(fetch_releases())
-    except (HTTPError, URLError, RuntimeError, ValueError, OSError) as error:
-        print(f"nightly: kept the existing snapshot ({error})", file=sys.stderr)
-        if output.exists():
-            return json.loads(output.read_text(encoding="utf-8"))
+    except (HTTPError, URLError, RuntimeError, ValueError, TypeError, KeyError, OSError) as error:
+        kept = saved(output)
+        if kept is not None:
+            print(f"nightly: kept the saved snapshot ({error})", file=sys.stderr)
+            return kept
+        print(f"nightly: no usable snapshot, writing none ({error})", file=sys.stderr)
         snapshot = dict(NONE)
     output.write_text(json.dumps(snapshot, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     print(f"nightly: {snapshot.get('tag') or 'no test build'} -> {output}")
