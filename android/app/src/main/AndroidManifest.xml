@@ -78,6 +78,16 @@
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="Keeps a connection to the user's own mail server open (IMAP IDLE) so new mail is notified within a minute. Turned on by the user in Settings." />
         </service>
+        <!-- Push wake-ups through the user's UnifiedPush distributor (M4-05), off by default.
+             Not exported: the connector library's own receiver hands events to it after
+             checking this app's registration token. -->
+        <service
+            android:name=".push.MailcranePushService"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="org.unifiedpush.android.connector.PUSH_EVENT" />
+            </intent-filter>
+        </service>
         <!-- OAuth sign-in (M3-01): the browser comes back here. Exported so the browser can
              reach it; the core trusts nothing in the intent until `state` matches a sign-in it
              started. -->
