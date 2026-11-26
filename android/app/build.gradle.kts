@@ -16,6 +16,10 @@ val rustRelease = gradle.startParameter.taskNames.any { it.contains("Release", i
 
 android {
     namespace = mailcraneApplicationId
+    // Pinned so release builds are reproducible (docs/fdroid.md): the NDK's
+    // linker and libc++ end up in the APK. cargoNdkBuild uses the same NDK.
+    // To update, change it here and NDK_VERSION in .github/workflows/ci.yml.
+    ndkVersion = "30.0.16248370"
     compileSdk {
         version = release(37) { minorApiLevel = 2 }
     }
@@ -95,6 +99,8 @@ val cargoTargetDir: File =
         if (it.isAbsolute) it else coreDir.file(it.path).asFile
     } ?: coreDir.dir("target").asFile
 
+val ndkDir = androidComponents.sdkComponents.ndkDirectory
+
 val cargoNdkBuild by tasks.registering(Exec::class) {
     group = "build"
     description = "Builds mailcrane-ffi for arm64-v8a and x86_64 with cargo-ndk."
@@ -112,6 +118,8 @@ val cargoNdkBuild by tasks.registering(Exec::class) {
     // disk with several builds running at once.
     environment("CARGO_INCREMENTAL", "0")
     environment("CARGO_PROFILE_DEV_DEBUG", "line-tables-only")
+    // The pinned NDK (ndkVersion), not whichever one cargo-ndk would find first.
+    doFirst { (this as Exec).environment("ANDROID_NDK_HOME", ndkDir.get().asFile.path) }
     // Release builds don't embed this machine's paths (the checkout and the
     // cargo registry), so the same source builds the same library anywhere
     // (F-Droid reproducible builds, M6-04; docs/fdroid.md). Debug builds are

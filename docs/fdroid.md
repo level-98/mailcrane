@@ -19,18 +19,23 @@ F-Droid can publish our own signed APK if its build from the same tag produces t
 - Release builds remap the paths Rust would embed (the checkout and the cargo registry) to fixed prefixes (`--remap-path-prefix`, in `cargoNdkBuild`).
 - No git commit or build time in the APK.
 - Gradle and every library are pinned (`gradle/wrapper`, `gradle/libs.versions.toml`); Rust crates are pinned by `core/Cargo.lock`.
+- The tools that make the native code are pinned too:
 
-Still to decide (each changes every developer's setup, so they need a maintainer's yes):
-
-1. **Pin the Rust toolchain:** a `rust-toolchain.toml` naming an exact version, for example `1.100.0`, with the two Android targets. Different compiler versions produce different machine code.
-2. **Pin the NDK:** `ndkVersion` in `android/app/build.gradle.kts`. The NDK's linker and libc++ are part of the output.
-3. **Pin cargo-ndk:** the CI workflow installs whatever is newest; name a version there and in the recipe.
+| What | Version | Where it's set | Also update |
+|---|---|---|---|
+| Rust | 1.100.0 | `rust-toolchain.toml` (rustup reads it for every `cargo` run) | `toolchain:` in `.github/workflows/ci.yml` (both jobs) and `ios.yml`; the recipe's `--default-toolchain` |
+| Android NDK | 30.0.16248370 | `ndkVersion` in `android/app/build.gradle.kts`; `cargoNdkBuild` passes the same NDK to cargo-ndk | `NDK_VERSION` in `ci.yml`; the recipe's `ndk:`; `android/README.md` |
+| cargo-ndk | 4.1.2 | `cargo-ndk@4.1.2` in `ci.yml` | the recipe's `cargo install`; `android/README.md` |
 
 Then build twice on different machines (or once locally and once with `fdroid build`) and compare with `apksigcopier compare`, or `diffoscope` for detail. Record the result in issue #71.
 
+### Updating a pin
+
+Change every place in its row in one PR, so CI, developers and F-Droid keep building with the same tools. After a Rust update, run `cargo xtask ci` and fix any new clippy warnings in the same PR. Developers need nothing more for Rust: rustup installs the new version on the next `cargo` run. For a new NDK they run `sdkmanager "ndk;<version>"`; until they do, Gradle stops and names the missing NDK (or downloads it, where the SDK licences are accepted). On F-Droid a pin change takes effect with the next release's recipe entry, so update the recipe when that release is submitted.
+
 ## Draft recipe for fdroiddata
 
-`metadata/app.mailcrane.yml`, to adapt when the merge request is opened. Version numbers here are placeholders; use the pins chosen above.
+`metadata/app.mailcrane.yml`, to adapt when the merge request is opened. The versions match the pins above; keep them in step.
 
 ```yaml
 Categories:
@@ -63,7 +68,7 @@ Builds:
       - $$rustup$$/rustup-init.sh -y --default-toolchain 1.100.0 --profile minimal --target aarch64-linux-android,x86_64-linux-android
       - source $HOME/.cargo/env
       - cargo install cargo-ndk --version 4.1.2 --locked
-    ndk: r29
+    ndk: 30.0.16248370
     output: build/outputs/apk/release/app-release-unsigned.apk
 
 AutoUpdateMode: Version
@@ -82,9 +87,8 @@ The store listing (title, descriptions, icon, per-version changelogs) is read fr
 
 ## Maintainer steps
 
-1. Decide the three pins above and add them.
-2. Tag the first release (see the release process, #70).
-3. Add screenshots.
-4. Run `fdroid lint` and `fdroid build -v -l app.mailcrane` with the recipe (F-Droid's server tools in Docker), and install the result.
-5. Open the merge request to `fdroid/fdroiddata`, and answer the reviewers.
-6. Record the reproducibility result in #71.
+1. Tag the first release (see the release process, #70).
+2. Add screenshots.
+3. Run `fdroid lint` and `fdroid build -v -l app.mailcrane` with the recipe (F-Droid's server tools in Docker), and install the result.
+4. Open the merge request to `fdroid/fdroiddata`, and answer the reviewers.
+5. Record the reproducibility result in #71.

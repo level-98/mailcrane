@@ -69,7 +69,7 @@ Usage: cargo xtask <command> [--strict] [--only <step>]... [--skip <step>]...
 
 Commands:
   ci        every step below except bindings, then a summary table
-  design    generated theme check and unit tests
+  design    generated theme check, its unit tests, and scripts/test_release_notes.py
   fmt       cargo fmt --all --check
   lint      release guard (#289), cargo clippy --workspace --all-targets -- -D warnings,
             and clippy on mailcrane-ffi with --features debug-fixtures
@@ -302,8 +302,19 @@ fn design(ctx: &Ctx) -> Result<Outcome, Error> {
         ));
     }
     let tests: Vec<&str> = [prefix, &["-m", "unittest", "design/test_gen_theme.py"]].concat();
-    let ok = run(&ctx.root, python, &tests)?;
-    Ok(outcome(ok, "python -m unittest design/test_gen_theme.py"))
+    if !run(&ctx.root, python, &tests)? {
+        return Ok(Outcome::Failed(
+            "`python -m unittest design/test_gen_theme.py` failed".into(),
+        ));
+    }
+    // The release tooling's tests run here too: this is CI's Python step.
+    let scripts: Vec<&str> =
+        [prefix, &["-m", "unittest", "scripts/test_release_notes.py"]].concat();
+    let ok = run(&ctx.root, python, &scripts)?;
+    Ok(outcome(
+        ok,
+        "python -m unittest scripts/test_release_notes.py",
+    ))
 }
 
 fn fmt(ctx: &Ctx) -> Result<Outcome, Error> {

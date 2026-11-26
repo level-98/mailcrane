@@ -50,7 +50,7 @@ Every pull request and every push to `main` runs [`ci.yml`](.github/workflows/ci
 
 | Job | Runs on | Checks |
 |---|---|---|
-| `linux` | Ubuntu | Every step except iOS (`--strict --skip ios`): fmt, clippy, tests, `cargo deny`, the design check, and the Android lint, unit tests and debug build (the core cross-compiled for arm64-v8a and x86_64). The debug APK is uploaded as the `android-debug-apk` artifact for 7 days, so you can install it with `adb install` without building. |
+| `linux` | Ubuntu | Every step except iOS (`--strict --skip ios`): fmt, clippy, tests, `cargo deny`, the design check and the release-notes script tests, and the Android lint, unit tests and debug build (the core cross-compiled for arm64-v8a and x86_64). The debug APK is uploaded as the `android-debug-apk` artifact for 7 days, so you can install it with `adb install` without building. |
 | `windows` | Windows | fmt, clippy and tests of the core (`--strict --only fmt,lint,test`), so it stays portable. |
 | `ci-ok` | Ubuntu | Passes only if every job above passed. Look here first. |
 
