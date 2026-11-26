@@ -39,7 +39,23 @@ class UnifiedPushTest {
     private val context: Application = RuntimeEnvironment.getApplication()
 
     @Before
-    fun setUp() = UnifiedPushState.forgetForTests()
+    fun setUp() {
+        UnifiedPushState.forgetForTests()
+        // A new endpoint queues JMAP push work (M4-27). The app sets WorkManager up itself, and
+        // Robolectric keeps it across tests, so set it up once; these tests only look at the
+        // state, so the queue never runs.
+        if (!androidx.work.WorkManager.isInitialized()) {
+            val never = java.util.concurrent.Executor { }
+            androidx.work.WorkManager.initialize(
+                context,
+                androidx.work.Configuration
+                    .Builder()
+                    .setExecutor(never)
+                    .setTaskExecutor(never)
+                    .build(),
+            )
+        }
+    }
 
     @After
     fun tearDown() = UnifiedPushState.forgetForTests()

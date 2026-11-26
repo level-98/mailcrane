@@ -19,6 +19,8 @@ sealed interface PushStatus {
         val endpoint: String,
         /** The distributor's own backend is down and this address is a stand-in that may change. */
         val temporary: Boolean,
+        /** Keys for encrypted pushes (RFC 8291), if the distributor gave them (M4-27). */
+        val keys: WebPushKeys? = null,
     ) : PushStatus
 
     /** No distributor app could be used. */
@@ -29,6 +31,16 @@ sealed interface PushStatus {
         val reason: FailureKind,
     ) : PushStatus
 }
+
+/**
+ * The Web Push keys the distributor gave (RFC 8291), base64url: the public key, and the auth
+ * secret JMAP servers need to encrypt pushes to this phone. Kept in the app's private
+ * preferences, as the connector library keeps them; never logged.
+ */
+data class WebPushKeys(
+    val p256dh: String,
+    val auth: String,
+)
 
 /** Why registering failed, in the terms the settings screen explains. */
 enum class FailureKind {
@@ -73,6 +85,10 @@ class UnifiedPushState private constructor(
             is PushStatus.Ready -> {
                 edit.putString(KEY_ENDPOINT, status.endpoint)
                 edit.putBoolean(KEY_TEMPORARY, status.temporary)
+                status.keys?.let {
+                    edit.putString(KEY_P256DH, it.p256dh)
+                    edit.putString(KEY_AUTH, it.auth)
+                }
             }
             is PushStatus.Failed -> edit.putString(KEY_FAILURE, status.reason.name)
         }
@@ -89,7 +105,7 @@ class UnifiedPushState private constructor(
                     .getString(
                         KEY_ENDPOINT,
                         null,
-                    )?.let { PushStatus.Ready(it, prefs.getBoolean(KEY_TEMPORARY, false)) }
+                    )?.let { PushStatus.Ready(it, prefs.getBoolean(KEY_TEMPORARY, false), readKeys()) }
                     ?: PushStatus.Registering
             KIND_FAILED ->
                 PushStatus.Failed(
@@ -99,6 +115,12 @@ class UnifiedPushState private constructor(
             KIND_NO_DISTRIBUTOR -> PushStatus.NoDistributor
             else -> PushStatus.Registering
         }
+    }
+
+    private fun readKeys(): WebPushKeys? {
+        val p256dh = prefs.getString(KEY_P256DH, null) ?: return null
+        val auth = prefs.getString(KEY_AUTH, null) ?: return null
+        return WebPushKeys(p256dh, auth)
     }
 
     private fun kindOf(status: PushStatus): String =
@@ -117,6 +139,8 @@ class UnifiedPushState private constructor(
         private const val KEY_ENDPOINT = "endpoint"
         private const val KEY_TEMPORARY = "temporary"
         private const val KEY_FAILURE = "failure"
+        private const val KEY_P256DH = "p256dh"
+        private const val KEY_AUTH = "auth"
         private const val KIND_OFF = "off"
         private const val KIND_REGISTERING = "registering"
         private const val KIND_READY = "ready"
