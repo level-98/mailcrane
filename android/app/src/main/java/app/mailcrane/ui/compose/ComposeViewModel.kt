@@ -134,6 +134,11 @@ data class ComposeUiState(
      * right after a late keystroke it moved onto newer text (#419). Null for every other change.
      */
     val bodyCursor: Int? = null,
+    /**
+     * A saved draft or a reply's quote is still loading (#435). The subject and body are read-only until it
+     * lands or fails: typing into them now would be overwritten by the load.
+     */
+    val loadingContent: Boolean = false,
     val sending: Boolean = false,
     val error: ComposeError? = null,
     /** Addresses named in [error], for "all recipients were refused". */
@@ -277,37 +282,46 @@ class ComposeViewModel
 
         /** Fills the screen from a saved draft (opening a Drafts folder message first if needed). */
         private fun openDraft(request: DraftRequest) {
-            _state.update { it.copy(openedDraft = request, signatureAdded = true) }
+            _state.update { it.copy(openedDraft = request, signatureAdded = true, loadingContent = true) }
             viewModelScope.launch {
-                val loaded =
-                    try {
-                        val id = request.draftId ?: request.messageId?.let { core.openDraft(it) } ?: return@launch
-                        id to core.getDraft(id)
-                    } catch (e: CancellationException) {
-                        throw e
-                    } catch (e: Exception) {
-                        _state.update { it.copy(error = ComposeError.DRAFT_UNAVAILABLE) }
-                        return@launch
-                    }
-                val (id, draft) = loaded
-                val cc = chipsOf(draft.cc)
-                val bcc = chipsOf(draft.bcc)
-                _state.update {
-                    // Back to a saved draft: carry on writing at its end (#419).
-                    it.withOutsideBody(draft.bodyText, cursorAtEnd = true).copy(
-                        draftId = id,
-                        fromAccountId = draft.accountId,
-                        to = chipsOf(draft.to),
-                        cc = cc,
-                        bcc = bcc,
-                        showCcBcc = it.showCcBcc || !cc.isEmpty || !bcc.isEmpty,
-                        subject = draft.subject,
-                        inReplyTo = draft.inReplyTo,
-                        references = draft.references,
-                        forwardAttachmentsOf = draft.forwardAttachmentsOf,
-                        plainTextOnly = true,
-                    )
+                // However the load ends (applied, failed, nothing to open), the fields take typing again.
+                try {
+                    loadDraft(request)
+                } finally {
+                    _state.update { it.copy(loadingContent = false) }
                 }
+            }
+        }
+
+        private suspend fun loadDraft(request: DraftRequest) {
+            val loaded =
+                try {
+                    val id = request.draftId ?: request.messageId?.let { core.openDraft(it) } ?: return
+                    id to core.getDraft(id)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    _state.update { it.copy(error = ComposeError.DRAFT_UNAVAILABLE) }
+                    return
+                }
+            val (id, draft) = loaded
+            val cc = chipsOf(draft.cc)
+            val bcc = chipsOf(draft.bcc)
+            _state.update {
+                // Back to a saved draft: carry on writing at its end (#419).
+                it.withOutsideBody(draft.bodyText, cursorAtEnd = true).copy(
+                    draftId = id,
+                    fromAccountId = draft.accountId,
+                    to = chipsOf(draft.to),
+                    cc = cc,
+                    bcc = bcc,
+                    showCcBcc = it.showCcBcc || !cc.isEmpty || !bcc.isEmpty,
+                    subject = draft.subject,
+                    inReplyTo = draft.inReplyTo,
+                    references = draft.references,
+                    forwardAttachmentsOf = draft.forwardAttachmentsOf,
+                    plainTextOnly = true,
+                )
             }
         }
 
@@ -374,35 +388,43 @@ class ComposeViewModel
 
         /** Fills the screen with the core's reply draft: recipients as chips, subject, quoted body. */
         private fun prefill(reply: ReplyRequest) {
-            _state.update { it.copy(prefilledFor = reply, signatureAdded = true) }
+            _state.update { it.copy(prefilledFor = reply, signatureAdded = true, loadingContent = true) }
             viewModelScope.launch {
-                val draft =
-                    try {
-                        core.prepareReply(reply.messageId, reply.kind, reply.quoteHeader)
-                    } catch (e: CancellationException) {
-                        throw e
-                    } catch (e: Exception) {
-                        _state.update { it.copy(error = ComposeError.REPLY_UNAVAILABLE) }
-                        return@launch
-                    }
-                val cc = chipsOf(draft.cc)
-                val signature = core.signatureFor(draft.accountId)
-                val kind = if (reply.kind == ReplyKind.FORWARD) DraftKind.FORWARD else DraftKind.REPLY
-                val body = core.applySignature(draft.bodyText, signature, kind)
-                _state.update {
-                    it.withOutsideBody(body).copy(
-                        fromAccountId = draft.accountId,
-                        to = chipsOf(draft.to),
-                        cc = cc,
-                        showCcBcc = it.showCcBcc || !cc.isEmpty,
-                        subject = draft.subject,
-                        signature = signature,
-                        inReplyTo = draft.inReplyTo,
-                        references = draft.references,
-                        forwardAttachmentsOf = draft.forwardAttachmentsOf,
-                        plainTextOnly = true,
-                    )
+                try {
+                    loadReply(reply)
+                } finally {
+                    _state.update { it.copy(loadingContent = false) }
                 }
+            }
+        }
+
+        private suspend fun loadReply(reply: ReplyRequest) {
+            val draft =
+                try {
+                    core.prepareReply(reply.messageId, reply.kind, reply.quoteHeader)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    _state.update { it.copy(error = ComposeError.REPLY_UNAVAILABLE) }
+                    return
+                }
+            val cc = chipsOf(draft.cc)
+            val signature = core.signatureFor(draft.accountId)
+            val kind = if (reply.kind == ReplyKind.FORWARD) DraftKind.FORWARD else DraftKind.REPLY
+            val body = core.applySignature(draft.bodyText, signature, kind)
+            _state.update {
+                it.withOutsideBody(body).copy(
+                    fromAccountId = draft.accountId,
+                    to = chipsOf(draft.to),
+                    cc = cc,
+                    showCcBcc = it.showCcBcc || !cc.isEmpty,
+                    subject = draft.subject,
+                    signature = signature,
+                    inReplyTo = draft.inReplyTo,
+                    references = draft.references,
+                    forwardAttachmentsOf = draft.forwardAttachmentsOf,
+                    plainTextOnly = true,
+                )
             }
         }
 
@@ -544,6 +566,8 @@ class ComposeViewModel
         fun showCcBcc() = _state.update { it.copy(showCcBcc = true) }
 
         fun onSubjectChange(value: String) {
+            // Read-only while a draft or reply loads (#435): the load would overwrite it.
+            if (_state.value.loadingContent) return
             _state.update { it.copy(subject = value) }
             scheduleSave()
         }
@@ -559,6 +583,8 @@ class ComposeViewModel
             value: String,
             baseRevision: Long = _state.value.bodyRevision,
         ) {
+            // Read-only while a draft or reply loads (#435): the load would overwrite it.
+            if (_state.value.loadingContent) return
             _state.update {
                 if (baseRevision == it.bodyRevision) {
                     return@update it.copy(body = value, bodyStyles = restyle(it.body, value, it.bodyStyles))

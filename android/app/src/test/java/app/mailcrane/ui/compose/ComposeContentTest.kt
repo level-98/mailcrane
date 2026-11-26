@@ -3,13 +3,18 @@ package app.mailcrane.ui.compose
 import android.app.Application
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.width
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.text.TextLayoutResult
@@ -136,5 +141,20 @@ class ComposeContentTest {
         compose.onNodeWithText("Schedule send").assertIsEnabled()
         compose.onNodeWithText("Discard").performClick()
         assertEquals(1, discarded)
+    }
+
+    @Test
+    fun theMessageWaitsWhileADraftOrReplyLoads() {
+        // #435: read-only with an announced loading indicator, then editable once the load lands.
+        var state by mutableStateOf(
+            ComposeUiState(accounts = one, fromAccountId = 1, loadingContent = true),
+        )
+        compose.setContent { MailcraneTheme { ComposeContent(state, ComposeActions()) } }
+        compose.onNodeWithTag("compose-body").assertIsNotEnabled()
+        compose.onNodeWithContentDescription("Loading the message…").assertIsDisplayed()
+        state = state.copy(loadingContent = false)
+        compose.waitForIdle()
+        compose.onNodeWithTag("compose-body").assertIsEnabled()
+        assertEquals(0, compose.onAllNodesWithTag("compose-loading").fetchSemanticsNodes().size)
     }
 }

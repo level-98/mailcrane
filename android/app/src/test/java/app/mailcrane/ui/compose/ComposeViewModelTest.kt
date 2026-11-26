@@ -81,6 +81,9 @@ class ComposeViewModelTest {
 
         var replies = 0
         var replyFailure: ReplyFailure? = null
+
+        /** When set, a draft or reply load waits for it, as a slow one would (#435). */
+        var loadGate: CompletableDeferred<Unit>? = null
         var signatures = mapOf<Long, String>()
         val drafts = mutableMapOf<Long, ComposeDraft>()
         val deleted = mutableListOf<Long>()
@@ -95,7 +98,10 @@ class ComposeViewModelTest {
             return id
         }
 
-        override suspend fun getDraft(draftId: Long): ComposeDraft = drafts[draftId] ?: throw DraftFailure.NotFound()
+        override suspend fun getDraft(draftId: Long): ComposeDraft {
+            loadGate?.await()
+            return drafts[draftId] ?: throw DraftFailure.NotFound()
+        }
 
         override suspend fun openDraft(messageId: Long): Long {
             drafts[7] =
@@ -179,6 +185,7 @@ class ComposeViewModelTest {
             quoteHeader: String,
         ): ComposeDraft {
             replies++
+            loadGate?.await()
             replyFailure?.let { throw it }
             return ComposeDraft(
                 accountId = 2,
@@ -567,6 +574,72 @@ class ComposeViewModelTest {
         // A new message after that starts from scratch.
         reopened.reset()
         assertFalse(reopened.state.value.bodyCursorAtEnd)
+    }
+
+    @Test
+    fun typingWaitsForADraftToLoad() {
+        // #435: edits made while the draft loads are refused; once it lands, typing works and the draft is intact.
+        val core = FakeCore()
+        val vm = started(core)
+        vm.onSubjectChange("Plans")
+        vm.onBodyChange("Draft text")
+        vm.requestClose()
+        val id = core.drafts.keys.single()
+        val gate = CompletableDeferred<Unit>()
+        core.loadGate = gate
+        val reopened = ComposeViewModel(core, FakeAppSettings()).apply { start(1, draft = DraftRequest(draftId = id)) }
+        assertTrue(reopened.state.value.loadingContent)
+        reopened.onBodyChange("typed too early")
+        reopened.onSubjectChange("also too early")
+        assertEquals("", reopened.state.value.body)
+        assertEquals("", reopened.state.value.subject)
+        gate.complete(Unit)
+        assertFalse(reopened.state.value.loadingContent)
+        assertEquals("Draft text", reopened.state.value.body)
+        assertEquals("Plans", reopened.state.value.subject)
+        reopened.onBodyChange("Draft text, more")
+        assertEquals("Draft text, more", reopened.state.value.body)
+    }
+
+    @Test
+    fun typingWaitsForAReplyToLoad() {
+        val core = FakeCore()
+        val gate = CompletableDeferred<Unit>()
+        core.loadGate = gate
+        val vm = ComposeViewModel(core, FakeAppSettings())
+        vm.start(1, ReplyRequest(42, ReplyKind.REPLY, "Ana wrote:"))
+        assertTrue(vm.state.value.loadingContent)
+        vm.onBodyChange("Thanks")
+        assertEquals("", vm.state.value.body)
+        gate.complete(Unit)
+        assertFalse(vm.state.value.loadingContent)
+        assertTrue(
+            vm.state.value.body
+                .contains("> Noon?"),
+        )
+        assertEquals("Re: Lunch", vm.state.value.subject)
+    }
+
+    @Test
+    fun aFailedLoadLeavesTheFieldsEditable() {
+        // #435: on failure the fields take typing again, empty, with the existing error.
+        val core = FakeCore().apply { replyFailure = ReplyFailure.BodyNotDownloaded() }
+        val gate = CompletableDeferred<Unit>()
+        core.loadGate = gate
+        val vm = ComposeViewModel(core, FakeAppSettings())
+        vm.start(1, ReplyRequest(42, ReplyKind.REPLY, "x"))
+        assertTrue(vm.state.value.loadingContent)
+        gate.complete(Unit)
+        assertFalse(vm.state.value.loadingContent)
+        assertEquals(ComposeError.REPLY_UNAVAILABLE, vm.state.value.error)
+        vm.onBodyChange("Typed after all")
+        assertEquals("Typed after all", vm.state.value.body)
+        // A draft that's gone ends loading too.
+        val drafts = FakeCore()
+        val reopened = ComposeViewModel(drafts, FakeAppSettings())
+        reopened.start(1, draft = DraftRequest(draftId = 999))
+        assertFalse(reopened.state.value.loadingContent)
+        assertEquals(ComposeError.DRAFT_UNAVAILABLE, reopened.state.value.error)
     }
 
     @Test

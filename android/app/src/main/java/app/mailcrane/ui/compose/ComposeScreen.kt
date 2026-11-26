@@ -30,6 +30,7 @@ import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
@@ -50,6 +51,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.LiveRegionMode
@@ -233,10 +235,12 @@ fun ComposeContent(
                 Recipient(RecipientField.BCC, R.string.compose_bcc, state, actions, editable)
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
             }
+            // A draft or reply still loading would overwrite whatever is typed now (#435).
+            val contentEditable = editable && !state.loadingContent
             TextField(
                 value = state.subject,
                 onValueChange = actions.onSubjectChange,
-                enabled = editable,
+                enabled = contentEditable,
                 singleLine = true,
                 placeholder = { Text(stringResource(R.string.compose_subject)) },
                 keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
@@ -245,11 +249,24 @@ fun ComposeContent(
             )
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
             ComposeAttachments(state, actions.onRemoveAttachment)
+            if (state.loadingContent) {
+                val loading = stringResource(R.string.compose_loading_content)
+                LinearProgressIndicator(
+                    modifier =
+                        Modifier
+                            .fillMaxWidth()
+                            .testTag("compose-loading")
+                            .semantics {
+                                contentDescription = loading
+                                liveRegion = LiveRegionMode.Polite
+                            },
+                )
+            }
             RichBodyField(
                 state = state,
                 onBodyChange = actions.onBodyChange,
                 actions = actions.rich,
-                enabled = editable,
+                enabled = contentEditable,
                 colors = plainFieldColors(),
                 currentState = actions.currentState,
             )
