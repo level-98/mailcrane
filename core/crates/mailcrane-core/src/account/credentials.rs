@@ -63,7 +63,7 @@ pub fn credential(
         .map_err(|_| CredentialError::Storage)?;
     if provider.is_some() {
         return token_cache()
-            .cached(account.0, now())
+            .cached(store.cache_scope(), account.0, now())
             .map(Credential::OAuth)
             .ok_or(CredentialError::ReauthRequired);
     }
@@ -105,20 +105,38 @@ pub async fn refresh_if_needed(
     let Some(provider) = oauth_provider_of(store, account)? else {
         return Ok(());
     };
-    refresh_token(secrets, account, &provider, extra_roots, timeout).await
+    refresh_token(
+        secrets,
+        store.cache_scope(),
+        account,
+        &provider,
+        extra_roots,
+        timeout,
+    )
+    .await
 }
 
 /// [`refresh_if_needed`] once the provider is known, without the store, so
-/// a future that must be `Send` can await it.
+/// a future that must be `Send` can await it. `scope` is the store's
+/// `cache_scope` (or `Store::scope_of` its path).
 pub async fn refresh_token(
     secrets: &dyn SecretStore,
+    scope: &str,
     account: AccountId,
     provider: &OAuthProvider,
     extra_roots: &[Vec<u8>],
     timeout: Duration,
 ) -> Result<(), CredentialError> {
     token_cache()
-        .access_token(secrets, account.0, provider, now(), extra_roots, timeout)
+        .access_token(
+            secrets,
+            scope,
+            account.0,
+            provider,
+            now(),
+            extra_roots,
+            timeout,
+        )
         .await
         .map(|_| ())
         .map_err(|e| match e {
