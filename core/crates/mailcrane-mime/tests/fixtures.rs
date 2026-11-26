@@ -257,3 +257,19 @@ fn bidi_subject_and_attachment_name() -> R {
     assert_eq!(strip_bidi(name), "invoicefdp.exe");
     Ok(())
 }
+
+/// #391: in an HTML-only message, block boundaries (headings, paragraphs,
+/// `<br>`, list items, table cells, quotes) become one space in the
+/// snippet, even with no whitespace between the tags; inline tags (`b`,
+/// `a`, `span`) add none.
+#[test]
+fn html_blocks_are_separated_in_the_snippet() -> R {
+    let m = load("html-blocks.eml")?;
+    assert_eq!(
+        m.snippet,
+        "New people to discover Suggested accounts based on your contacts \
+         Line one Line two Line three First Second Cell A Cell B Head C \
+         Quoted Examples stay one word"
+    );
+    Ok(())
+}
