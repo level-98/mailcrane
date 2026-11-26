@@ -77,6 +77,31 @@ foreach ($f in $wiring) {
     if (-not (Test-Path (Join-Path $root $f))) { Stop-Fleet "$f is missing. Run 'synapse add-project' for this repository first." }
 }
 
+# The main checkout's settings for a worktree, minus Synapse's own hooks: the Synapse registry binds the project to the
+# main checkout only, so they always refuse in a worktree and just print noise. Other hooks, the MCP server and env stay.
+# Read and checked here, before any window opens.
+function Get-WorktreeSettings([string] $Path) {
+    try { $settings = Get-Content -Raw -Encoding UTF8 $Path | ConvertFrom-Json } catch { $settings = $null }
+    if ($null -eq $settings -or $settings -isnot [System.Management.Automation.PSCustomObject]) {
+        Stop-Fleet ".claude\settings.local.json isn't a JSON object. Run 'synapse add-project' for this repository again."
+    }
+    $hooks = $settings.PSObject.Properties['hooks']
+    if ($hooks -and $hooks.Value -is [System.Management.Automation.PSCustomObject]) {
+        foreach ($event in @($hooks.Value.PSObject.Properties.Name)) {
+            $groups = @(foreach ($group in @($hooks.Value.$event)) {
+                $kept = @(@($group.hooks) | Where-Object {
+                    $_ -and -not (((@($_.command) + @($_.args)) -join ' ') -match '[\\/]\.synapse[\\/]app[\\/]hooks[\\/]')
+                })
+                if ($kept.Count -gt 0) { $group.hooks = $kept; $group }
+            })
+            if ($groups.Count -gt 0) { $hooks.Value.$event = $groups } else { $hooks.Value.PSObject.Properties.Remove($event) }
+        }
+        if (@($hooks.Value.PSObject.Properties).Count -eq 0) { $settings.PSObject.Properties.Remove('hooks') }
+    }
+    return ($settings | ConvertTo-Json -Depth 32)
+}
+$worktreeSettings = Get-WorktreeSettings (Join-Path $root '.claude\settings.local.json')
+
 foreach ($tool in @('claude', 'gh', 'git')) {
     if (-not (Get-Command $tool -ErrorAction SilentlyContinue)) { Stop-Fleet "'$tool' is not on PATH." }
 }
@@ -110,11 +135,8 @@ function Initialize-Worktree([string] $Seat) {
         $dest = Join-Path $wt $f
         New-Item -ItemType Directory -Force (Split-Path $dest -Parent) | Out-Null
         if ($f -eq '.claude\settings.local.json') {
-            # The Synapse registry binds the project to the main checkout only, so its hooks always refuse in a
-            # worktree and just print noise; keep everything else (the MCP server, env).
-            $settings = Get-Content -Raw (Join-Path $root $f) | ConvertFrom-Json
-            $settings.PSObject.Properties.Remove('hooks')
-            [IO.File]::WriteAllText($dest, ($settings | ConvertTo-Json -Depth 32), (New-Object Text.UTF8Encoding $false))
+            # Without Synapse's hooks (see Get-WorktreeSettings).
+            [IO.File]::WriteAllText($dest, $worktreeSettings, (New-Object Text.UTF8Encoding $false))
         } else {
             Copy-Item (Join-Path $root $f) $dest -Force
         }
