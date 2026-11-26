@@ -77,9 +77,11 @@ jobs:
 
   sign:
     needs: build
-    # The development key is for main's builds only. The environment is
-    # also restricted to main in the repository settings.
-    if: github.ref == 'refs/heads/main'
+    # The development key is for main's own nightly or hand-started builds
+    # only. The environment is also restricted to main in the settings.
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-latest
     timeout-minutes: 20
     environment: nightly
@@ -173,12 +175,17 @@ jobs:
 
   publish:
     needs: [check, build, sign]
-    if: github.ref == 'refs/heads/main' && needs.sign.outputs.signed == 'true'
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') &&
+      needs.sign.outputs.signed == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
-      # To create the pre-release and delete old test builds. Nothing else writes.
+      # To create the pre-release and delete old test builds.
       contents: write
+      # To start the site rebuild (Sync roadmap) afterwards.
+      actions: write
     env:
       VERSION: ${{ needs.build.outputs.version }}
       PREVIOUS: ${{ needs.check.outputs.previous }}
@@ -232,3 +239,8 @@ jobs:
       # Only test-build-* pre-releases can go (scripts/test_prune_test_builds.py).
       - name: Keep the newest 7 test builds
         run: python3 scripts/prune_test_builds.py --keep 7
+
+      # The Download page shows the latest test build from data generated at
+      # build time (#425, website branch); Sync roadmap rebuilds the site.
+      - name: Rebuild the website
+        run: gh workflow run roadmap-sync.yml --ref main
