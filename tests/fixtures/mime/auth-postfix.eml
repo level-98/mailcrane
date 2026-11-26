@@ -1,0 +1,17 @@
+Received: from out.example.net (out.example.net [192.0.2.10])
+	by mx2.example.org (Postfix) with ESMTPS id 4F3; Wed, 25 Nov 2026 10:00:00 +0000
+Authentication-Results: mx2.example.org;
+	spf=pass smtp.mailfrom=news.example.net;
+	dkim=pass header.d=example.net;
+	dmarc=pass header.from=example.net
+From: Example News <news@example.net>
+To: Bob <bob@example.org>
+Subject: Auth: Postfix layout (needs the server name setting)
+Date: Wed, 25 Nov 2026 10:00:00 +0000
+Message-ID: <auth-postfix@example.net>
+
+Postfix with OpenDMARC writes its Authentication-Results header just
+below its own Received header.
+Expected: no chip by default. In this account's settings, under Advanced,
+set the authentication server name to mx2.example.org: then the chip
+says "Verified". Clear it again: no chip.

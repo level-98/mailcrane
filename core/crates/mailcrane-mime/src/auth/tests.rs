@@ -323,6 +323,110 @@ fn hostile_received_headers_never_panic() {
     assert_eq!(trusted_results(&[rcv(&long), ar(FORGED_PASS)]), None);
 }
 
+/// Postfix with OpenDMARC: the milter's header right below Postfix's own
+/// Received header.
+const POSTFIX_AR: &str = "mx2.example.org; dmarc=pass header.from=example.net";
+
+#[test]
+fn the_postfix_layout_needs_the_accounts_authserv_id() {
+    let trace = [rcv(HANDOFF), ar(POSTFIX_AR)];
+    // Without the setting: no chip, as before.
+    assert_eq!(trusted_results(&trace), None);
+    assert_eq!(trusted_results_with(&trace, None), None);
+    // With it: trusted.
+    assert_eq!(
+        trusted_results_with(&trace, Some("mx2.example.org")),
+        Some(POSTFIX_AR)
+    );
+    assert_eq!(
+        trusted_results_with(&trace, Some("MX2.Example.org.")),
+        Some(POSTFIX_AR)
+    );
+    // A different id, or the same organisation but another host, isn't enough.
+    assert_eq!(trusted_results_with(&trace, Some("mx1.example.org")), None);
+    assert_eq!(trusted_results_with(&trace, Some("example.org")), None);
+    assert_eq!(trusted_results_with(&trace, Some("")), None);
+}
+
+#[test]
+fn the_whole_run_below_the_handoff_is_searched_but_nothing_further() {
+    // OpenDKIM's header first, then OpenDMARC's.
+    let dkim = "mx2.example.org.dkim; dkim=pass header.d=example.net";
+    let trace = [rcv(HANDOFF), ar(dkim), ar(POSTFIX_AR)];
+    assert_eq!(
+        trusted_results_with(&trace, Some("mx2.example.org")),
+        Some(POSTFIX_AR)
+    );
+    // A forged header with that id lower down, below another Received, is
+    // never trusted.
+    let forged = [
+        rcv(HANDOFF),
+        rcv("from sender.example.net by out.example.net"),
+        ar(POSTFIX_AR),
+    ];
+    assert_eq!(trusted_results_with(&forged, Some("mx2.example.org")), None);
+    // Nor when the handoff wasn't received by the provider.
+    let elsewhere = [
+        rcv("from mx1.example.org (mx1.example.org [10.0.0.1]) by mx2.example.org"),
+        rcv("from x.example.org (x.example.org [10.0.0.9]) by relay.example.com"),
+        ar(POSTFIX_AR),
+    ];
+    assert_eq!(
+        trusted_results_with(&elsewhere, Some("mx2.example.org")),
+        None
+    );
+}
+
+#[test]
+fn a_header_above_the_handoff_still_wins() {
+    let trace = [ar(PROVIDER_PASS), rcv(HANDOFF), ar(POSTFIX_AR)];
+    assert_eq!(
+        trusted_results_with(&trace, Some("mx2.example.org")),
+        Some(PROVIDER_PASS)
+    );
+}
+
+#[test]
+fn the_setting_changes_nothing_else() {
+    // Every layout the default rule decides comes out the same with an
+    // unrelated id set.
+    let layouts: [&[TraceHeader]; 4] = [
+        &[ar(PROVIDER_PASS), rcv(HANDOFF), ar(FORGED_PASS)],
+        &[rcv(HANDOFF), ar(FORGED_PASS)],
+        &[
+            ar(PROVIDER_PASS),
+            rcv("from webmail.example.org (localhost [127.0.0.1]) by mx2.example.org"),
+        ],
+        &[],
+    ];
+    for trace in layouts {
+        assert_eq!(
+            trusted_results_with(trace, Some("mx9.example.com")),
+            trusted_results(trace)
+        );
+    }
+}
+
+#[test]
+fn in_the_run_below_the_handoff_the_first_header_with_the_id_wins() {
+    // The provider's real result first, a sender's forged pass with the
+    // same authserv-id below it: the real one counts.
+    let real = "mx2.example.org; dmarc=fail header.from=example.net";
+    let forged = "mx2.example.org; dmarc=pass header.from=example.net";
+    let trace = [rcv(HANDOFF), ar(real), ar(forged)];
+    assert_eq!(
+        trusted_results_with(&trace, Some("mx2.example.org")),
+        Some(real)
+    );
+    // A forged pass first in the run under another authserv-id is skipped.
+    let other = "mx9.example.org; dmarc=pass header.from=example.net";
+    let trace = [rcv(HANDOFF), ar(other), ar(real)];
+    assert_eq!(
+        trusted_results_with(&trace, Some("mx2.example.org")),
+        Some(real)
+    );
+}
+
 mod props {
     use super::*;
     use proptest::prelude::*;

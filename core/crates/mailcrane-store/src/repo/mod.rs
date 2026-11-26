@@ -28,7 +28,10 @@ pub use pending_ops::{CancelReport, NewOp, OpId, OpKind, OpMessage, PendingOp};
 pub use rules::{NewRule, Rule, RuleAction, RuleCondition, RuleId};
 pub use search::SearchFilter;
 pub use server_rules::{ServerRules, ServerRulesState};
-pub use settings::{SignatureSetting, ACCOUNT_COLOR_COUNT, MAX_SIGNATURE_BYTES};
+pub use settings::{
+    is_valid_authserv_id, SignatureSetting, ACCOUNT_COLOR_COUNT, MAX_AUTHSERV_ID_LEN,
+    MAX_SIGNATURE_BYTES,
+};
 pub use snooze::{KeywordedMessage, NewSnooze, Snooze, SnoozeId, SnoozeState};
 pub use threads::{ThreadSummary, UnthreadedMessage};
 

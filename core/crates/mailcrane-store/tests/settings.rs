@@ -95,3 +95,56 @@ fn bad_colors_and_unknown_accounts_change_nothing() -> R {
     assert_eq!(store.get_account_color(id)?, Some(2));
     Ok(())
 }
+
+#[test]
+fn provider_authserv_id_is_unset_until_chosen_and_survives_a_reopen() -> R {
+    let dir = tempfile::tempdir()?;
+    let path = dir.path().join("a.db");
+    let store = Store::open(&path)?;
+    let id = store.insert_account(&account())?;
+    assert_eq!(store.get_provider_authserv_id(id)?, None);
+    assert!(store.set_provider_authserv_id(id, Some("mx2.example.org"))?);
+    drop(store);
+    let store = Store::open(&path)?;
+    assert_eq!(
+        store.get_provider_authserv_id(id)?.as_deref(),
+        Some("mx2.example.org")
+    );
+    assert!(store.set_provider_authserv_id(id, None)?);
+    assert_eq!(store.get_provider_authserv_id(id)?, None);
+    Ok(())
+}
+
+#[test]
+fn bad_authserv_ids_and_unknown_accounts_change_nothing() -> R {
+    let store = Store::open_in_memory()?;
+    assert_eq!(store.get_provider_authserv_id(AccountId(9))?, None);
+    assert!(!store.set_provider_authserv_id(AccountId(9), Some("mx.example.org"))?);
+    let id = store.insert_account(&account())?;
+    assert!(store.set_provider_authserv_id(id, Some("mx.example.org"))?);
+    let too_long = format!("{}.example.org", "a".repeat(250));
+    for bad in [
+        "",
+        "localhost",
+        "MX.example.org",
+        "mx..example.org",
+        ".example.org",
+        "example.org.",
+        "mx example.org",
+        "mx.example.org;",
+        "mx.пример.рф",
+        too_long.as_str(),
+    ] {
+        assert!(
+            store.set_provider_authserv_id(id, Some(bad)).is_err(),
+            "{bad:?}"
+        );
+        assert!(!is_valid_authserv_id(bad), "{bad:?}");
+    }
+    assert_eq!(
+        store.get_provider_authserv_id(id)?.as_deref(),
+        Some("mx.example.org")
+    );
+    assert!(is_valid_authserv_id("mx_1-a.example.co.uk"));
+    Ok(())
+}

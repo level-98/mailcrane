@@ -12,6 +12,7 @@ import app.mailcrane.core.MessageAction
 import app.mailcrane.core.MessageBody
 import app.mailcrane.core.MessageCore
 import app.mailcrane.core.MessageDetail
+import app.mailcrane.core.SenderTrustChanges
 import app.mailcrane.core.SnoozeFailure
 import app.mailcrane.core.SnoozeInfo
 import app.mailcrane.core.SyncErrorKind
@@ -31,6 +32,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.getAndUpdate
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.stateIn
@@ -143,6 +145,7 @@ class MessageViewModel
         settings: AppSettings,
         private val linkCleaner: LinkCleaner,
         private val linkChecker: LinkChecker,
+        private val senderTrust: SenderTrustChanges,
         @Assisted private val messageId: Long,
     ) : ViewModel() {
         @AssistedFactory
@@ -174,6 +177,26 @@ class MessageViewModel
 
         init {
             load()
+            viewModelScope.launch {
+                // A provider server name was saved or cleared: read the sender check again at once.
+                senderTrust.version.drop(1).collect { refresh() }
+            }
+        }
+
+        /** Reads the shown message again without the loading state, for example after [SenderTrustChanges]. */
+        private fun refresh() {
+            val ready = _state.value as? MessageState.Ready ?: return
+            loading?.cancel()
+            loading =
+                viewModelScope.launch {
+                    try {
+                        val message = core.getMessage(messageId, ready.remoteAllowed)
+                        _state.value =
+                            ready.copy(message = message, unsubscribe = core.unsubscribeOptions(messageId))
+                    } catch (e: SyncFailure.Failed) {
+                        _state.value = MessageState.Failed(e.kind)
+                    }
+                }
         }
 
         /** Loads the message, downloading the body first if needed. Also the retry after a failure. */

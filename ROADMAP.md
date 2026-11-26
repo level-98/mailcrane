@@ -127,6 +127,7 @@ Goal: add an IMAP account and read your inbox, online and offline.
 - [ ] **M5-05** S/MIME 🔒
 - [ ] **M5-06** Independent security review before 1.0 🧑
 - [x] **M5-07** Phishing help: show a link's real destination before opening it, show SPF/DKIM/DMARC results from `Authentication-Results`, and warn when the display name pretends to be a different address 🔒🤖
+- [x] **M5-08** Per-account provider authentication server name, so Postfix/OpenDMARC users get the SPF/DKIM/DMARC chip and one-click unsubscribe 🔒🤖
 
 ## M6 — Release
 

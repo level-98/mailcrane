@@ -8,7 +8,7 @@
 //! Results the sender wrote into the message themselves are ignored.
 //! Nothing is looked up online.
 
-use mailcrane_mime::auth::{summarize, trusted_results, AuthSummary};
+use mailcrane_mime::auth::{summarize, trusted_results_with, AuthSummary};
 use mailcrane_mime::ParsedMessage;
 
 mod display_name;
@@ -44,14 +44,15 @@ pub struct SenderCheck {
 }
 
 /// Reads the trusted authentication results of `parsed` and checks the
-/// display name of its first From address.
-pub fn sender_check(parsed: &ParsedMessage) -> SenderCheck {
+/// display name of its first From address. `provider_authserv_id` is the
+/// account's setting (M5-08), if any: see [`trusted_results_with`].
+pub fn sender_check(parsed: &ParsedMessage, provider_authserv_id: Option<&str>) -> SenderCheck {
     let from = parsed.from.first();
     let from_domain = from
         .and_then(|a| a.email.rsplit_once('@'))
         .map(|(_, d)| d)
         .unwrap_or_default();
-    let trusted = trusted_results(&parsed.trace);
+    let trusted = trusted_results_with(&parsed.trace, provider_authserv_id);
     let auth = summarize(trusted.unwrap_or_default(), from_domain);
     SenderCheck {
         trusted: trusted.is_some(),

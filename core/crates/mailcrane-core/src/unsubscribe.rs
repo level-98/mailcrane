@@ -16,7 +16,7 @@ pub use mailcrane_mime::unsubscribe::MailtoTarget;
 
 use mailcrane_mime::parse_message;
 use mailcrane_mime::unsubscribe::{
-    dkim_aligned, dkim_pass_domains, parse_list_unsubscribe, trusted_results,
+    dkim_aligned, dkim_pass_domains, parse_list_unsubscribe, trusted_results_with,
 };
 use mailcrane_store::{MessageId, Store, StoreError};
 
@@ -77,11 +77,22 @@ pub fn unsubscribe_options(
     let Some(raw) = store.get_body(message)? else {
         return Ok(None);
     };
-    Ok(options_from_raw(&raw))
+    let provider_id = store.provider_authserv_id_for_message(message)?;
+    Ok(options_from_raw_with(&raw, provider_id.as_deref()))
 }
 
-/// [`unsubscribe_options`] for raw message bytes.
+/// [`unsubscribe_options`] for raw message bytes, for an account with no
+/// provider authserv-id set.
 pub fn options_from_raw(raw: &[u8]) -> Option<UnsubscribeOptions> {
+    options_from_raw_with(raw, None)
+}
+
+/// [`options_from_raw`] for an account whose provider authserv-id is
+/// `provider_authserv_id` (M5-08, see [`trusted_results_with`]).
+pub fn options_from_raw_with(
+    raw: &[u8],
+    provider_authserv_id: Option<&str>,
+) -> Option<UnsubscribeOptions> {
     let parsed = parse_message(raw).ok()?;
     let header = parsed.list_unsubscribe.as_deref()?;
     let list = parse_list_unsubscribe(header, parsed.list_unsubscribe_post.as_deref());
@@ -94,7 +105,7 @@ pub fn options_from_raw(raw: &[u8]) -> Option<UnsubscribeOptions> {
         .map(|a| a.email.clone())
         .unwrap_or_default();
     let from_domain = sender.rsplit_once('@').map(|(_, d)| d).unwrap_or_default();
-    let authenticated = trusted_results(&parsed.trace)
+    let authenticated = trusted_results_with(&parsed.trace, provider_authserv_id)
         .map(dkim_pass_domains)
         .unwrap_or_default()
         .iter()
@@ -124,7 +135,8 @@ pub async fn one_click_unsubscribe(
     let raw = store
         .get_body(message)?
         .ok_or(UnsubscribeError::UnknownMessage)?;
-    let target = options_from_raw(&raw)
+    let provider_id = store.provider_authserv_id_for_message(message)?;
+    let target = options_from_raw_with(&raw, provider_id.as_deref())
         .and_then(|o| o.one_click)
         .ok_or(UnsubscribeError::NotOffered)?;
     post_one_click(&target, extra_roots).await

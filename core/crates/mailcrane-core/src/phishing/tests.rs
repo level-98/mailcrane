@@ -26,7 +26,7 @@ fn check_with(above: &[&str], below: &[&str], received: bool) -> SenderCheck {
     m.push_str(
         "From: News <news@example.net>\r\nTo: a@example.org\r\nSubject: Hi\r\n\r\nHello\r\n",
     );
-    sender_check(&parse_message(m.as_bytes()).expect("parses"))
+    sender_check(&parse_message(m.as_bytes()).expect("parses"), None)
 }
 
 #[test]
@@ -173,15 +173,74 @@ fn fixtures_show_the_expected_chip() {
             env!("CARGO_MANIFEST_DIR")
         );
         let raw = std::fs::read(&path).expect("fixture");
-        let check = sender_check(&parse_message(&raw).expect("parses"));
+        let check = sender_check(&parse_message(&raw).expect("parses"), None);
         assert_eq!(check.verdict, want, "{name}");
         assert_eq!(check.trusted, want.is_some(), "{name}");
     }
 }
 
+#[test]
+fn the_postfix_layout_gets_a_chip_only_with_the_accounts_authserv_id() {
+    // M5-08: Postfix with OpenDMARC writes its header right below its own
+    // Received header.
+    let m = format!(
+        "{RECEIVED}Authentication-Results: mx2.example.org; spf=pass smtp.mailfrom=example.net; \
+         dkim=pass header.d=example.net; dmarc=pass header.from=example.net\r\n\
+         From: News <news@example.net>\r\nTo: a@example.org\r\nSubject: Hi\r\n\r\nHello\r\n"
+    );
+    let parsed = parse_message(m.as_bytes()).expect("parses");
+    let c = sender_check(&parsed, None);
+    assert!(!c.trusted);
+    assert_eq!(c.verdict, None);
+    let c = sender_check(&parsed, Some("mx2.example.org"));
+    assert!(c.trusted);
+    assert_eq!(c.verdict, Some(AuthVerdict::Verified));
+    // Another server name changes nothing.
+    assert_eq!(sender_check(&parsed, Some("mx9.example.org")).verdict, None);
+
+    // A forged header with that name further down is still ignored.
+    let forged = format!(
+        "{RECEIVED}Received: from sender.example.net by out.example.net; \
+         Wed, 25 Nov 2026 07:59:00 +0000\r\n\
+         Authentication-Results: mx2.example.org; dmarc=pass header.from=example.net\r\n\
+         From: News <news@example.net>\r\nTo: a@example.org\r\nSubject: Hi\r\n\r\nHello\r\n"
+    );
+    let parsed = parse_message(forged.as_bytes()).expect("parses");
+    assert_eq!(sender_check(&parsed, Some("mx2.example.org")).verdict, None);
+}
+
+#[test]
+fn the_postfix_fixture() {
+    let path = format!(
+        "{}/../../../tests/fixtures/mime/auth-postfix.eml",
+        env!("CARGO_MANIFEST_DIR")
+    );
+    let raw = std::fs::read(&path).expect("fixture");
+    let parsed = parse_message(&raw).expect("parses");
+    assert_eq!(sender_check(&parsed, None).verdict, None);
+    assert_eq!(
+        sender_check(&parsed, Some("mx2.example.org")).verdict,
+        Some(AuthVerdict::Verified)
+    );
+}
+
+#[test]
+fn a_forged_pass_below_the_providers_postfix_header_is_ignored() {
+    let m = format!(
+        "{RECEIVED}Authentication-Results: mx2.example.org; spf=fail; dkim=fail; dmarc=fail\r\n\
+         Authentication-Results: mx2.example.org; spf=pass; dkim=pass header.d=example.net; dmarc=pass\r\n\
+         From: News <news@example.net>\r\nTo: a@example.org\r\nSubject: Hi\r\n\r\nHello\r\n"
+    );
+    let parsed = parse_message(m.as_bytes()).expect("parses");
+    assert_eq!(
+        sender_check(&parsed, Some("mx2.example.org")).verdict,
+        Some(AuthVerdict::Failed)
+    );
+}
+
 fn display_name_check(from: &str) -> Option<DisplayNameWarning> {
     let m = format!("From: {from}\r\nTo: a@example.org\r\nSubject: Hi\r\n\r\nHello\r\n");
-    sender_check(&parse_message(m.as_bytes()).expect("parses")).display_name_warning
+    sender_check(&parse_message(m.as_bytes()).expect("parses"), None).display_name_warning
 }
 
 #[test]
@@ -231,7 +290,7 @@ fn display_name_fixtures() {
             env!("CARGO_MANIFEST_DIR")
         );
         let raw = std::fs::read(&path).expect("fixture");
-        let w = sender_check(&parse_message(&raw).expect("parses")).display_name_warning;
+        let w = sender_check(&parse_message(&raw).expect("parses"), None).display_name_warning;
         assert_eq!(
             w.as_ref().map(|w| (w.claimed.as_str(), w.actual.as_str())),
             want,
