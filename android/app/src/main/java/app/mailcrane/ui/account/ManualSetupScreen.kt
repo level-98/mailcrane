@@ -40,6 +40,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.liveRegion
@@ -53,13 +54,12 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.mailcrane.R
-import app.mailcrane.oauth.OAuthSignIn
-import app.mailcrane.oauth.OAuthResult
-import androidx.compose.ui.platform.LocalContext
 import app.mailcrane.core.ConnectionSecurity
 import app.mailcrane.core.Field
 import app.mailcrane.core.FieldProblem
 import app.mailcrane.core.MailServer
+import app.mailcrane.oauth.OAuthResult
+import app.mailcrane.oauth.OAuthSignIn
 
 /** Add an IMAP/SMTP account by typing the server details. Calls [onAccountAdded] once it's saved. */
 @Composable

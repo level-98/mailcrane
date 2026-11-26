@@ -2,9 +2,6 @@ package app.mailcrane.ui.account
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import app.mailcrane.oauth.OAuthResult
-import app.mailcrane.core.OAuthProviderConfig
-import app.mailcrane.core.OAuthFailure
 import app.mailcrane.core.AddAccountException
 import app.mailcrane.core.ConnectionSecurity
 import app.mailcrane.core.DiscoverException
@@ -15,7 +12,10 @@ import app.mailcrane.core.JmapAccountSetup
 import app.mailcrane.core.MailServer
 import app.mailcrane.core.MailcraneCore
 import app.mailcrane.core.ManualAccountConfig
+import app.mailcrane.core.OAuthFailure
+import app.mailcrane.core.OAuthProviderConfig
 import app.mailcrane.core.ServerConfig
+import app.mailcrane.oauth.OAuthResult
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow

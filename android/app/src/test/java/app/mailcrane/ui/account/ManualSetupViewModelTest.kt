@@ -155,7 +155,10 @@ class ManualSetupViewModelTest {
         assertEquals("ann@gmail.com", email)
         assertEquals(true, vm.state.value.checking)
 
-        vm.onGoogleResult(app.mailcrane.oauth.OAuthResult.SignedIn("signin-1"))
+        vm.onGoogleResult(
+            app.mailcrane.oauth.OAuthResult
+                .SignedIn("signin-1"),
+        )
         assertEquals(9L, vm.state.value.addedAccountId)
         assertEquals(Triple("signin-1", "ann@gmail.com", ""), core.lastGoogle)
     }
@@ -170,14 +173,26 @@ class ManualSetupViewModelTest {
         assertEquals(false, vm.state.value.gmail)
         vm.startGoogleSignIn()
         // Cancelled in the browser: back to the form, no error.
-        vm.onGoogleResult(app.mailcrane.oauth.OAuthResult.Failed(app.mailcrane.core.OAuthFailure.Denied()))
+        vm.onGoogleResult(
+            app.mailcrane.oauth.OAuthResult
+                .Failed(
+                    app.mailcrane.core.OAuthFailure
+                        .Denied(),
+                ),
+        )
         assertFalse(vm.state.value.checking)
         assertNull(vm.state.value.error)
         // Anything else (or no browser) says so.
         vm.startGoogleSignIn()
-        vm.onGoogleResult(app.mailcrane.oauth.OAuthResult.Failed(null))
+        vm.onGoogleResult(
+            app.mailcrane.oauth.OAuthResult
+                .Failed(null),
+        )
         assertEquals(SetupError(SetupFailure.GOOGLE_SIGN_IN_FAILED), vm.state.value.error)
-        assertEquals(app.mailcrane.R.string.setup_error_google, SetupError(SetupFailure.GOOGLE_SIGN_IN_FAILED).message())
+        assertEquals(
+            app.mailcrane.R.string.setup_error_google,
+            SetupError(SetupFailure.GOOGLE_SIGN_IN_FAILED).message(),
+        )
     }
 
     @Test
