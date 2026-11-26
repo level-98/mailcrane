@@ -1,0 +1,8 @@
+From: "ceo@example.com" <x@example.net>
+To: Bob <bob@example.org>
+Subject: Display name: claims another address
+Date: Wed, 25 Nov 2026 09:01:00 +0000
+Message-ID: <display-name-spoof@example.net>
+
+The From name is ceo@example.com, but the message is from x@example.net.
+Expected: a warning banner above the body naming both addresses.
