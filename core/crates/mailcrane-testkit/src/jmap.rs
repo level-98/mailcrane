@@ -1105,7 +1105,11 @@ fn mailbox_set(state: &mut State, args: &Value, id: &str) -> Value {
         for mid in destroy.iter().filter_map(Value::as_str) {
             if !state.mailboxes.iter().any(|m| m.id == mid) {
                 not_destroyed.insert(mid.to_owned(), err("notFound"));
-            } else if state.mailboxes.iter().any(|m| m.parent_id.as_deref() == Some(mid)) {
+            } else if state
+                .mailboxes
+                .iter()
+                .any(|m| m.parent_id.as_deref() == Some(mid))
+            {
                 not_destroyed.insert(mid.to_owned(), err("mailboxHasChild"));
             } else if !remove_emails && state.emails.iter().any(|e| e.mailboxes.contains(mid)) {
                 not_destroyed.insert(mid.to_owned(), err("mailboxHasEmail"));
@@ -1122,4 +1126,3 @@ fn mailbox_set(state: &mut State, args: &Value, id: &str) -> Value {
         "destroyed": destroyed, "notDestroyed": not_destroyed
     }, id])
 }
-

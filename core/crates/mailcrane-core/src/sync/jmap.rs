@@ -13,8 +13,8 @@
 use super::convert::jmap_header_row;
 use super::initial::{save_body, SyncConfig, SyncError};
 use crate::events::{AccountId, CoreEvent, EventListener, FolderId};
-use mailcrane_jmap::{Auth, ClientConfig, JmapEmail, JmapError, MailboxRole, Session};
 use crate::folder_admin::{CreatePlan, FolderAdminError, RenamePlan};
+use mailcrane_jmap::{Auth, ClientConfig, JmapEmail, JmapError, MailboxRole, Session};
 use mailcrane_store::{BodyState, Folder, FolderRole, MessageId, NewFolder, Store};
 use std::collections::{BTreeSet, HashMap};
 
@@ -675,4 +675,3 @@ fn folder_role(role: &MailboxRole) -> Option<FolderRole> {
 fn leaf(path: &str) -> &str {
     path.rsplit('/').next().unwrap_or(path)
 }
-

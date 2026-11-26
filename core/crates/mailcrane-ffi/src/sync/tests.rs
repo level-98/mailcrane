@@ -960,15 +960,15 @@ fn a_jmap_account_manages_folders_through_mailbox_set() {
     assert!(id_of("Projects/2026").is_some());
 
     // Rename: the subfolder's path follows; the server keeps the parent.
-    engine.rename_folder(projects, "Work".into()).expect("rename");
+    engine
+        .rename_folder(projects, "Work".into())
+        .expect("rename");
     assert!(server_parent("Work").is_some() && server_parent("Projects").is_none());
     assert_eq!(id_of("Work"), Some(projects));
     assert!(id_of("Work/2026").is_some());
 
     // Move under Work.
-    engine
-        .move_folder(receipts, Some(projects))
-        .expect("move");
+    engine.move_folder(receipts, Some(projects)).expect("move");
     assert_eq!(server_parent("Receipts"), Some(Some("mb-projects".into())));
     assert_eq!(id_of("Work/Receipts"), Some(receipts));
 
@@ -982,15 +982,27 @@ fn a_jmap_account_manages_folders_through_mailbox_set() {
         })
     );
     let inbox = id_of("Inbox").expect("inbox");
-    assert_eq!(engine.rename_folder(inbox, "Post".into()), Err(FolderFailure::SystemFolder));
-    assert_eq!(engine.delete_folder(projects), Err(FolderFailure::HasSubfolders));
+    assert_eq!(
+        engine.rename_folder(inbox, "Post".into()),
+        Err(FolderFailure::SystemFolder)
+    );
+    assert_eq!(
+        engine.delete_folder(projects),
+        Err(FolderFailure::HasSubfolders)
+    );
 
     // The server refuses a folder that still holds mail: nothing changes here.
     let mail = id_of("Mail").expect("mail");
-    let before = Store::open(&path).expect("store").list_folders(account).expect("list");
+    let before = Store::open(&path)
+        .expect("store")
+        .list_folders(account)
+        .expect("list");
     assert_eq!(engine.delete_folder(mail), Err(FolderFailure::HasMessages));
     assert_eq!(
-        Store::open(&path).expect("store").list_folders(account).expect("list"),
+        Store::open(&path)
+            .expect("store")
+            .list_folders(account)
+            .expect("list"),
         before
     );
     assert!(server_parent("Mail").is_some());

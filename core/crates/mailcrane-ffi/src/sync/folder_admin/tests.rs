@@ -135,7 +135,6 @@ fn a_local_account_creates_renames_moves_and_deletes_folders() {
     assert_eq!(names(&path, account), [("INBOX".into(), 0, false)]);
 }
 
-
 #[test]
 fn an_inbox_namespace_is_the_top_level() {
     // #325: every personal folder under INBOX., "." as delimiter.

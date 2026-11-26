@@ -236,10 +236,10 @@ impl SyncEngine {
         let id = FolderId(folder_id);
         // Refused moves and renames fail before connecting.
         let mut p = plan(&folders, id, derived.as_deref())?;
-        if p.is_noop() {
-            return Ok(());
-        }
         match kind {
+            // On IMAP the server's namespace may make a move that looks like
+            // a no-op here a real one (#325): plan again on the connection.
+            Kind::Jmap | Kind::Local if p.is_noop() => return Ok(()),
             Kind::Jmap => {
                 let target = p.clone();
                 self.jmap_admin(account, move |s| {

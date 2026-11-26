@@ -289,6 +289,16 @@ fn by_path(a: &Folder, b: &Folder) -> Ordering {
         .then_with(|| a.details.remote_name.cmp(&b.details.remote_name))
 }
 
+/// The personal namespace the folder list suggests (#325), for IMAP and
+/// local accounts. JMAP has none (its Inbox is stored as `Inbox`).
+fn imap_namespace(store: &Store, folders: &[Folder]) -> Option<String> {
+    let account = folders.first()?.details.account_id;
+    match store.account_protocol(account) {
+        Ok(Some(mailcrane_store::Protocol::Jmap { .. })) => None,
+        _ => folder_admin::derive_namespace(folders),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -536,14 +546,3 @@ mod tests {
         );
     }
 }
-
-/// The personal namespace the folder list suggests (#325), for IMAP and
-/// local accounts. JMAP has none (its Inbox is stored as `Inbox`).
-fn imap_namespace(store: &Store, folders: &[Folder]) -> Option<String> {
-    let account = folders.first()?.details.account_id;
-    match store.account_protocol(account) {
-        Ok(Some(mailcrane_store::Protocol::Jmap { .. })) => None,
-        _ => folder_admin::derive_namespace(folders),
-    }
-}
-
