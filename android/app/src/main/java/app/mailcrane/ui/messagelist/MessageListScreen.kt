@@ -70,6 +70,11 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import java.time.ZonedDateTime
 import java.util.Locale
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.clearAndSetSemantics
 
 /**
  * The messages of folder [folderId], newest first. [onCompose] adds a compose button, which carries
@@ -277,7 +282,16 @@ fun MessageListContent(
                     text = { Text(label) },
                     // Collapses to the icon while scrolling down, so it covers less of the list.
                     expanded = !listState.canScrollBackward,
-                    modifier = fabModifier,
+                    // One label whether expanded or not: collapsed, the icon alone said nothing (M6-01).
+                    modifier =
+                        fabModifier.clearAndSetSemantics {
+                            contentDescription = label
+                            role = Role.Button
+                            onClick {
+                                onCompose()
+                                true
+                            }
+                        },
                 )
             }
         },

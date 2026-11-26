@@ -48,6 +48,7 @@ import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.mailcrane.R
 import app.mailcrane.core.FolderSummary
+import androidx.compose.ui.semantics.heading
 
 /** Indent per folder level, as in the drawer. */
 private val LEVEL_INDENT = 16.dp
@@ -97,7 +98,9 @@ fun ManageFoldersContent(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text(stringResource(R.string.folders_manage_title)) },
+                title = {
+                    Text(stringResource(R.string.folders_manage_title), modifier = Modifier.semantics { heading() })
+                },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(

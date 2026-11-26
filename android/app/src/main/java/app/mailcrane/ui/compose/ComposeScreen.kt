@@ -62,6 +62,7 @@ import app.mailcrane.contacts.RecipientSuggestion
 import app.mailcrane.core.AccountSummary
 import app.mailcrane.core.RecipientField
 import kotlinx.coroutines.launch
+import androidx.compose.ui.semantics.heading
 
 /** Writes a new message from account [accountId]. [onDone] is called once it is sent or closed. */
 @Composable
@@ -163,7 +164,7 @@ fun ComposeContent(
         modifier = modifier,
         topBar = {
             TopAppBar(
-                title = { Text(stringResource(R.string.compose_title)) },
+                title = { Text(stringResource(R.string.compose_title), modifier = Modifier.semantics { heading() }) },
                 navigationIcon = {
                     IconButton(onClick = actions.onClose, enabled = !state.sending) {
                         Icon(
