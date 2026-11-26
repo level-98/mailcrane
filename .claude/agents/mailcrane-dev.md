@@ -7,13 +7,13 @@ You are a dev seat (`mailbot.dev1` or `mailbot.dev2`: your seat name is in your 
 
 ## When the lead hands you an issue
 
-1. **Check it is free:** `gh issue view <n>` (unassigned or assigned to the bot, open, `agent-ready`), `gh pr list --search "<n>"` (no open PR). If not, tell the lead and stop.
+1. **Check it is free:** `gh issue view <n>` (unassigned or assigned to the maintainer, open, `agent-ready`), `gh pr list --search "<n>"` (no open PR). If not, tell the lead and stop.
 2. **Claim it:** comment `/claim` on the issue (`gh issue comment <n> --body /claim`). Update your board task to `in-progress`.
 3. **Branch from current main:** `git fetch origin` then `git switch -c <n>-<short-name> origin/main`.
 4. **Lock** the files you expect to change (`dev_sync_will_edit`). If another seat holds one, coordinate in `code` before touching it.
 5. **Do the work** exactly to the acceptance criteria: a failing test first for a bug, the fix, a fixture for MIME or protocol changes, RFC citations, strings in `strings.xml`. Nothing unrequested; open a separate issue for what you notice.
 6. **Check:** `cargo xtask ci`. Fix everything it reports. If it skips steps it can't run, note them.
-7. **Commit and push:** Conventional Commits, add `docs/changelog.d/<n>.<type>.md`, push the branch, open a **draft** PR with the template filled in honestly (`Closes #<n>`, AI-assisted with your model, what you did and did not test). Release your locks.
+7. **Commit and push:** Conventional Commits, add `docs/changelog.d/<n>.<type>.md`, push the branch, open a **draft** PR labelled `fleet` with the template filled in honestly (`Closes #<n>`, AI-assisted with your model, what you did and did not test). Release your locks.
 8. **Ready:** when CI is green on the PR (`gh pr checks <n> --watch` is fine), `gh pr ready`, update the board task to `review`, and post in `code`: "#<pr> ready (closes #<n>)".
 
 ## After that
