@@ -29,7 +29,6 @@ LABELS = {
     "post-1.0": ("D5DBEA", "Not until after 1.0. Please don't claim yet."),
     "area:core": ("BFD0FF", "Rust core"),
     "area:android": ("BFD0FF", "Android app"),
-    "area:ios": ("BFD0FF", "iOS app"),
     "area:design": ("BFD0FF", "Brand, icons and UI design"),
     "area:docs": ("BFD0FF", "Documentation"),
     "area:ci": ("BFD0FF", "CI, tooling and repo setup"),
@@ -53,8 +52,6 @@ AREA_WORDS = {
     # "decision" and "label" doesn't hit "Gmail labels".
     "area:android": ["android", "jetpack compose", "compose theme", "material you",
                      "talkback", "f-droid", "google play", "glance", "tablet", "keystore"],
-    "area:ios": ["ios", "ipad", "swiftui", "voiceover", "testflight", "app store",
-                 "widgetkit", "keychain", "xcframework"],
     "area:design": ["brand", "brand pack", "design", "illustrations", "empty states"],
     "area:ci": ["ci", "github actions", "dependabot", "renovate", "release builds",
                 "release script", "secret", "issue per task",
@@ -62,8 +59,8 @@ AREA_WORDS = {
     "area:docs": ["docs", "doc", "website", "policy", "readme"],
 }
 
-# UI work that lands in both apps even though neither platform is named.
-BOTH_APPS = ["both platforms", "dark mode", "swipe actions", "biometrics", "widgets",
+# UI work, even though no platform is named.
+APP_WORDS = ["dark mode", "swipe actions", "biometrics", "widgets",
              "compose screen", "rich-text compose"]
 
 
@@ -72,38 +69,16 @@ def _has(text: str, word: str) -> bool:
 
 
 def guess_areas(text: str) -> set:
-    """Return one or more area labels: CI and tooling first, then the app
-    platforms (both, for work that lands in both apps), then design or docs,
-    and otherwise the Rust core."""
+    """Return one or more area labels: CI and tooling first, then the
+    Android app, then design or docs, and otherwise the Rust core."""
     if any(_has(text, w) for w in AREA_WORDS["area:ci"]):
         return {"area:ci"}
-    areas = {a for a in ("area:android", "area:ios")
-             if any(_has(text, w) for w in AREA_WORDS[a])}
-    if any(_has(text, w) for w in BOTH_APPS):
-        areas |= {"area:android", "area:ios"}
-    if areas:
-        return areas
+    if any(_has(text, w) for w in AREA_WORDS["area:android"] + APP_WORDS):
+        return {"area:android"}
     for area in ("area:design", "area:docs"):
         if any(_has(text, w) for w in AREA_WORDS[area]):
             return {area}
     return {"area:core"}
-
-
-# Android first: app work in M1-M6 is Android only, and M7 is the iOS app
-# (ROADMAP.md, docs/decisions/0002-android-first-ios-after-release.md).
-IOS_MILESTONE = "m7"
-ANDROID_FIRST = {"m1", "m2", "m3", "m4", "m5", "m6"}
-
-
-def platform_areas(areas: set, milestone: str) -> set:
-    """Point app work at the platform its milestone is for."""
-    if milestone == IOS_MILESTONE:
-        return (areas - {"area:android"}) | {"area:ios"}
-    if "area:ci" in areas:
-        return areas
-    if milestone in ANDROID_FIRST and "area:ios" in areas:
-        return (areas - {"area:ios"}) | {"area:android"}
-    return areas
 
 
 def parse_roadmap(text: str):
@@ -131,7 +106,7 @@ def parse_roadmap(text: str):
         if milestone == "m8":
             labels.add("post-1.0")
         if milestone != "pre-launch":
-            labels |= platform_areas(guess_areas(title), milestone)
+            labels |= guess_areas(title)
         tasks.append({
             "id": m["id"], "title": title, "section": section, "milestone": milestone,
             "labels": sorted(labels), "agent_candidate": agent_candidate,

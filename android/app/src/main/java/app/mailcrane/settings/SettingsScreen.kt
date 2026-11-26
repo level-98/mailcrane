@@ -227,6 +227,7 @@ fun SettingsScreen(
         }
         ReadingSection()
         NotificationsSection()
+        PushSection()
         AppLockSection()
         SwitchRow(
             title = R.string.settings_hide_outside,

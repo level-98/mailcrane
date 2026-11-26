@@ -1,0 +1,4 @@
+# For wlc, Weblate's command-line client (docs/translations.md).
+[weblate]
+url = https://hosted.weblate.org/api/
+translation = mailcrane/android
