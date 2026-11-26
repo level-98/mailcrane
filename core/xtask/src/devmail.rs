@@ -11,6 +11,11 @@ use crate::{cargo, run, say, Ctx, Error};
 /// Where the copied CA lands on the emulator, for Settings to install.
 const DEVICE_CA: &str = "/sdcard/Download/mailcrane-dev-ca.crt";
 
+/// The fixed ports of the `dev-mail` binary (IMAP TLS and STARTTLS, SMTP
+/// TLS and submission). They must match `IMAP_PORTS` and `SMTP_PORTS` in
+/// `mailcrane-testkit/src/bin/dev-mail.rs`; a test checks they do.
+const PORTS: [u16; 4] = [1993, 1143, 1465, 1587];
+
 pub fn run_server(ctx: &Ctx, args: impl Iterator<Item = String>) -> Result<ExitCode, Error> {
     let mut extra = Vec::new();
     let mut args = args;
@@ -48,7 +53,7 @@ pub fn run_server(ctx: &Ctx, args: impl Iterator<Item = String>) -> Result<ExitC
     if !run(&ctx.core, &cargo(), &certs)? {
         return Err("could not make the dev mail certificates".into());
     }
-    push_ca_to_emulators(&state.join("mailcrane-dev-ca.crt"));
+    prepare_emulators(&state.join("mailcrane-dev-ca.crt"));
 
     let fixtures_arg = fixtures.display().to_string();
     let mut serve: Vec<&str> = bin.to_vec();
@@ -78,31 +83,45 @@ fn adb() -> PathBuf {
     PathBuf::from("adb")
 }
 
-/// Copies the CA to every running emulator. Never to a physical phone: a
-/// CA on a real device would let whoever holds the server key read its
-/// traffic, so only emulators (`emulator-NNNN`) get it.
-fn push_ca_to_emulators(ca: &Path) {
+/// Gets every running emulator ready: copies the CA to it and forwards the
+/// server's ports with `adb reverse`, so the app reaches the server at
+/// `127.0.0.1`. On API 37 the app's connections to `10.0.2.2`, the
+/// emulator's alias for the host, never arrive (#404 QA), while `adb
+/// reverse` works. Never a physical phone: a CA on a real device would let
+/// whoever holds the server key read its traffic, so only emulators
+/// (`emulator-NNNN`) are touched.
+fn prepare_emulators(ca: &Path) {
     let adb = adb();
     let Ok(out) = Command::new(&adb).arg("devices").output() else {
-        say("dev-mail: adb not found; copy the CA to the emulator yourself (docs/dev-mail.md).");
+        say("dev-mail: adb not found. Copy the CA to the emulator yourself, and run:");
+        say_reverse_commands();
         return;
     };
+    if !out.status.success() {
+        say(format_args!(
+            "dev-mail: `adb devices` failed ({}). Copy the CA to the emulator yourself, \
+             and run:",
+            String::from_utf8_lossy(&out.stderr).trim()
+        ));
+        say_reverse_commands();
+        return;
+    }
     let listing = String::from_utf8_lossy(&out.stdout);
-    let emulators: Vec<&str> = listing
-        .lines()
-        .filter_map(|line| {
-            let mut parts = line.split_whitespace();
-            match (parts.next(), parts.next()) {
-                (Some(serial), Some("device")) if serial.starts_with("emulator-") => Some(serial),
-                _ => None,
-            }
-        })
-        .collect();
+    let (emulators, not_ready) = emulators(&listing);
+    for (serial, state) in &not_ready {
+        say(format_args!(
+            "dev-mail: {serial} is {state}, so it wasn't set up. Wait for it to boot (or \
+             accept the USB debugging prompt), then run this again."
+        ));
+    }
     if emulators.is_empty() {
-        say("dev-mail: no running emulator; start one and run this again to copy the CA.");
+        if not_ready.is_empty() {
+            say("dev-mail: no running emulator; start one and run this again to set it up.");
+        }
         return;
     }
     for serial in emulators {
+        reverse_ports(&adb, serial);
         let pushed = Command::new(&adb)
             .args(["-s", serial, "push"])
             .arg(ca)
@@ -113,11 +132,125 @@ fn push_ca_to_emulators(ca: &Path) {
         if pushed {
             say(format_args!(
                 "dev-mail: copied the CA to {serial} as Download/mailcrane-dev-ca.crt. \
-                 Install it once: Settings > Security > More security settings > \
-                 Encryption & credentials > Install a certificate > CA certificate."
+                 Install it once: {SETTINGS_PATH} (docs/dev-mail.md)."
             ));
         } else {
             say(format_args!("dev-mail: could not copy the CA to {serial}."));
         }
+    }
+}
+
+/// `adb -s <serial> reverse tcp:P tcp:P` for each server port: on the
+/// emulator, `127.0.0.1:P` then reaches `127.0.0.1:P` on this machine.
+fn reverse_ports(adb: &Path, serial: &str) {
+    let failed: Vec<u16> = PORTS
+        .iter()
+        .copied()
+        .filter(|port| {
+            let spec = format!("tcp:{port}");
+            !Command::new(adb)
+                .args(["-s", serial, "reverse", &spec, &spec])
+                .output()
+                .map(|o| o.status.success())
+                .unwrap_or(false)
+        })
+        .collect();
+    if failed.is_empty() {
+        say(format_args!(
+            "dev-mail: forwarded ports {} on {serial} to this machine (adb reverse); \
+             use 127.0.0.1 as the server in the app.",
+            port_list()
+        ));
+    } else {
+        say(format_args!(
+            "dev-mail: adb reverse failed on {serial} for port(s) {failed:?}; run:"
+        ));
+        say_reverse_commands();
+    }
+}
+
+/// Prints the `adb reverse` commands for setting an emulator up by hand.
+fn say_reverse_commands() {
+    for port in PORTS {
+        say(format_args!(
+            "    adb -s emulator-5554 reverse tcp:{port} tcp:{port}"
+        ));
+    }
+}
+
+fn port_list() -> String {
+    PORTS.map(|p| p.to_string()).join(", ")
+}
+
+/// Where to install a CA certificate in the emulator's Settings, as
+/// docs/dev-mail.md gives it.
+const SETTINGS_PATH: &str = "Settings > Security & privacy > More security settings > \
+     Encryption & credentials > Install a certificate > CA certificate \
+     (or search Settings for \"CA certificate\")";
+
+/// From `adb devices` output: the emulators that are ready, and the
+/// emulators that aren't (`offline`, `unauthorized`), with their state.
+/// Phones are left out of both, as they never get the CA.
+fn emulators(listing: &str) -> (Vec<&str>, Vec<(&str, &str)>) {
+    let mut ready = Vec::new();
+    let mut not_ready = Vec::new();
+    for line in listing.lines() {
+        let mut parts = line.split_whitespace();
+        if let (Some(serial), Some(state)) = (parts.next(), parts.next()) {
+            if !serial.starts_with("emulator-") {
+                continue;
+            }
+            if state == "device" {
+                ready.push(serial);
+            } else {
+                not_ready.push((serial, state));
+            }
+        }
+    }
+    (ready, not_ready)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_ready_emulators_get_the_ca_and_others_are_named() {
+        let listing = "List of devices attached\n\
+                       emulator-5554\tdevice\n\
+                       emulator-5556\toffline\n\
+                       emulator-5558\tunauthorized\n\
+                       R5CT0000000\tdevice\n\
+                       \n";
+        let (ready, not_ready) = emulators(listing);
+        assert_eq!(ready, ["emulator-5554"]);
+        assert_eq!(
+            not_ready,
+            [
+                ("emulator-5556", "offline"),
+                ("emulator-5558", "unauthorized")
+            ]
+        );
+        assert_eq!(emulators("List of devices attached\n\n"), (vec![], vec![]));
+    }
+
+    #[test]
+    fn the_forwarded_ports_are_the_servers_ports() {
+        let server = include_str!("../../crates/mailcrane-testkit/src/bin/dev-mail.rs");
+        let imap = format!("IMAP_PORTS: (u16, u16) = ({}, {});", PORTS[0], PORTS[1]);
+        let smtp = format!("SMTP_PORTS: (u16, u16) = ({}, {});", PORTS[2], PORTS[3]);
+        assert!(server.contains(&imap), "{imap}");
+        assert!(server.contains(&smtp), "{smtp}");
+    }
+
+    #[test]
+    fn the_settings_path_matches_the_docs() {
+        let docs = include_str!("../../../docs/dev-mail.md");
+        let path = SETTINGS_PATH
+            .split(" (")
+            .next()
+            .unwrap_or_default()
+            .replace(" > ", " → ");
+        assert!(docs.contains(&path), "{path}");
     }
 }

@@ -54,14 +54,23 @@ impl Loopback {
         Err("no port free on both 127.0.0.1 and ::1".into())
     }
 
-    /// Binds `127.0.0.1` and, when it is free, `::1` to `port` (for
-    /// `cargo xtask dev-mail`, which needs ports the emulator setup can name).
+    /// Binds `127.0.0.1` and `::1` to `port` (for `cargo xtask dev-mail`,
+    /// which needs ports the emulator setup can name). If another process
+    /// already holds `[::1]:port`, this fails rather than leave a host client
+    /// on `localhost` talking to it; only a machine with no IPv6 loopback at
+    /// all goes without `::1`.
     pub(crate) async fn bind_port(port: u16) -> Result<Self, String> {
         let v4 = TcpListener::bind((Ipv4Addr::LOCALHOST, port))
             .await
             .map_err(|error| format!("127.0.0.1:{port}: {error}"))?;
         let addr = v4.local_addr().map_err(|error| error.to_string())?;
-        let v6 = TcpListener::bind((Ipv6Addr::LOCALHOST, port)).await.ok();
+        let v6 = match TcpListener::bind((Ipv6Addr::LOCALHOST, port)).await {
+            Ok(listener) => Some(listener),
+            Err(error) if error.kind() == io::ErrorKind::AddrInUse => {
+                return Err(format!("[::1]:{port}: {error}"));
+            }
+            Err(_) => None,
+        };
         Ok(Self { v4, v6, addr })
     }
 

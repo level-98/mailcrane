@@ -305,6 +305,30 @@ mod suite {
         }
     }
 
+    /// `cargo xtask dev-mail` uses fixed ports. If another process already
+    /// listens on `[::1]` at one of them, starting fails instead of leaving
+    /// `localhost` clients to reach that process (#404 review).
+    #[tokio::test]
+    async fn a_fixed_port_taken_on_the_ipv6_loopback_is_an_error() {
+        if !has_ipv6_loopback().await {
+            return;
+        }
+        let squatter = tokio::net::TcpListener::bind((std::net::Ipv6Addr::LOCALHOST, 0))
+            .await
+            .expect("squatter");
+        let port = squatter.local_addr().expect("addr").port();
+        let Ok(spare) = tokio::net::TcpListener::bind((std::net::Ipv6Addr::LOCALHOST, 0)).await
+        else {
+            return;
+        };
+        let spare_port = spare.local_addr().expect("addr").port();
+        drop(spare);
+        let Err(error) = FakeSmtp::builder().ports(port, spare_port).start().await else {
+            panic!("start should be refused while [::1]:{port} is taken");
+        };
+        assert!(error.contains("[::1]"), "{error}");
+    }
+
     #[tokio::test]
     async fn imap_tls_and_commands_work() {
         let server = FakeImap::builder()
