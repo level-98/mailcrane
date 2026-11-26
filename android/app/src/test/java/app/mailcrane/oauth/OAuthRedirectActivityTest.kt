@@ -4,13 +4,12 @@ import android.app.Application
 import android.content.Intent
 import android.net.Uri
 import app.mailcrane.MainActivity
-import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.flow.toList
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.take
+import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
-import kotlinx.coroutines.async
-import kotlinx.coroutines.CoroutineStart
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull

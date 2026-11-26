@@ -37,6 +37,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -52,19 +53,18 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.mailcrane.R
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.delay
-import androidx.lifecycle.compose.LifecycleEventEffect
-import androidx.lifecycle.Lifecycle
-import androidx.compose.runtime.rememberCoroutineScope
 import app.mailcrane.core.ConnectionSecurity
 import app.mailcrane.core.Field
 import app.mailcrane.core.FieldProblem
 import app.mailcrane.core.MailServer
 import app.mailcrane.oauth.OAuthResult
 import app.mailcrane.oauth.OAuthSignIn
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 /** How long a resumed setup screen waits for the browser's redirect before giving up on it. */
 internal const val GOOGLE_RETURN_GRACE_MS = 1_500L
