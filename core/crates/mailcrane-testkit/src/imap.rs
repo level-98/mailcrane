@@ -1235,26 +1235,170 @@ fn header_fields(raw: &[u8], wanted: &[&str]) -> Vec<u8> {
     out
 }
 
-fn subject_of(raw: &[u8]) -> String {
-    String::from_utf8_lossy(raw)
-        .split("\r\n")
-        .take_while(|line| !line.is_empty())
-        .find_map(|line| line.strip_prefix("Subject: ").map(str::to_string))
-        .unwrap_or_else(|| "Test".to_string())
+/// The first `name` header of `raw`, unfolded (RFC 5322 §2.2.3) and
+/// trimmed, with CR, LF and NUL removed; `None` when absent or empty.
+/// Accepts LF-only line ends too, since fixtures and appended mail vary.
+fn header_value(raw: &[u8], name: &str) -> Option<String> {
+    let text = String::from_utf8_lossy(raw);
+    let mut found: Option<String> = None;
+    for line in text.split('\n') {
+        let line = line.strip_suffix('\r').unwrap_or(line);
+        if line.is_empty() {
+            break;
+        }
+        if line.starts_with([' ', '\t']) {
+            if let Some(value) = found.as_mut() {
+                value.push(' ');
+                value.push_str(line.trim());
+            }
+            continue;
+        }
+        if found.is_some() {
+            break;
+        }
+        if let Some((n, v)) = line.split_once(':') {
+            if n.trim().eq_ignore_ascii_case(name) {
+                found = Some(v.trim().to_string());
+            }
+        }
+    }
+    found
+        .map(|v| v.replace(['\r', '\n', '\0'], ""))
+        .filter(|v| !v.is_empty())
 }
 
-/// The message's own `Message-ID` header, or `<uid@example.org>` for
-/// fixtures without one, as a real server's ENVELOPE would report it.
-fn message_id_of(raw: &[u8], uid: u32) -> String {
-    String::from_utf8_lossy(raw)
-        .split("\r\n")
-        .take_while(|line| !line.is_empty())
-        .find_map(|line| {
-            let (name, value) = line.split_once(':')?;
-            name.eq_ignore_ascii_case("Message-ID")
-                .then(|| value.trim().to_string())
-        })
-        .unwrap_or_else(|| format!("<{uid}@example.org>"))
+/// `"text"`, escaped, or `NIL` (RFC 9051 §4.5 nstring).
+fn nstring(value: Option<&str>) -> String {
+    value.map_or_else(|| "NIL".to_string(), |v| format!("\"{}\"", quoted(v)))
+}
+
+/// Splits an address list at commas outside quotes, angle brackets and
+/// comments, and drops RFC 5322 §3.4 group syntax (`name: a, b;`).
+fn split_addresses(value: &str) -> Vec<String> {
+    let mut parts = Vec::new();
+    let mut current = String::new();
+    let (mut in_quote, mut escaped, mut angle, mut comment) = (false, false, 0u32, 0u32);
+    for c in value.chars() {
+        if escaped {
+            escaped = false;
+            current.push(c);
+            continue;
+        }
+        match c {
+            '\\' if in_quote || comment > 0 => escaped = true,
+            '"' if comment == 0 => in_quote = !in_quote,
+            '<' if !in_quote && comment == 0 => angle = angle.saturating_add(1),
+            '>' if !in_quote && comment == 0 => angle = angle.saturating_sub(1),
+            '(' if !in_quote => comment = comment.saturating_add(1),
+            ')' if !in_quote => comment = comment.saturating_sub(1),
+            // A group's display name ends at ':'; its members follow.
+            ':' if !in_quote && angle == 0 && comment == 0 => {
+                current.clear();
+                continue;
+            }
+            ',' | ';' if !in_quote && angle == 0 && comment == 0 => {
+                parts.push(std::mem::take(&mut current));
+                continue;
+            }
+            _ => {}
+        }
+        current.push(c);
+    }
+    parts.push(current);
+    parts
+        .into_iter()
+        .map(|p| p.trim().to_string())
+        .filter(|p| !p.is_empty())
+        .collect()
+}
+
+/// Text outside `(comments)`, trimmed.
+fn without_comments(text: &str) -> String {
+    let mut depth = 0u32;
+    let mut out = String::new();
+    for c in text.chars() {
+        match c {
+            '(' => depth = depth.saturating_add(1),
+            ')' => depth = depth.saturating_sub(1),
+            _ if depth == 0 => out.push(c),
+            _ => {}
+        }
+    }
+    out.trim().to_string()
+}
+
+/// One envelope address, `(name NIL mailbox host)` (RFC 9051 §7.5.2), from
+/// `Name <local@host>`, `"Name" <local@host>` or a bare `local@host`.
+fn envelope_address(entry: &str) -> String {
+    let (name, address) = match (entry.find('<'), entry.rfind('>')) {
+        (Some(open), Some(close)) if open < close => (
+            entry.get(..open).map(without_comments).unwrap_or_default(),
+            entry
+                .get(open + 1..close)
+                .unwrap_or_default()
+                .trim()
+                .to_string(),
+        ),
+        _ => (String::new(), without_comments(entry)),
+    };
+    let name = name
+        .strip_prefix('"')
+        .and_then(|n| n.strip_suffix('"'))
+        .map(|n| n.replace("\\\"", "\"").replace("\\\\", "\\"))
+        .unwrap_or(name);
+    let (mailbox, host) = match address.rsplit_once('@') {
+        Some((local, host)) => (local.to_string(), Some(host.to_string())),
+        None => (address, None),
+    };
+    format!(
+        "({} NIL {} {})",
+        nstring(Some(name.as_str()).filter(|n| !n.is_empty())),
+        nstring(Some(mailbox.as_str()).filter(|m| !m.is_empty())),
+        nstring(host.as_deref().filter(|h| !h.is_empty()))
+    )
+}
+
+/// An envelope address list, `((...)(...))`, or `NIL` when the header is
+/// absent or names nobody.
+fn envelope_addresses(value: Option<&str>) -> String {
+    let list: Vec<String> = value
+        .map(split_addresses)
+        .unwrap_or_default()
+        .iter()
+        .map(|entry| envelope_address(entry))
+        .collect();
+    if list.is_empty() {
+        "NIL".to_string()
+    } else {
+        format!("({})", list.concat())
+    }
+}
+
+/// The message's `ENVELOPE` (RFC 9051 §7.5.2), built from its own headers
+/// as a real server does: date, subject, from, sender, reply-to, to, cc,
+/// bcc, in-reply-to, message-id. Values are sent as written (encoded words
+/// stay encoded). Sender and Reply-To default to From when absent. A
+/// message without a Message-ID gets `<uid@example.org>`, so fixtures
+/// without one still have a stable id (#416).
+fn envelope(raw: &[u8], uid: u32) -> String {
+    let field = |name: &str| header_value(raw, name);
+    let from = field("From");
+    let sender = field("Sender").or_else(|| from.clone());
+    let reply_to = field("Reply-To").or_else(|| from.clone());
+    let message_id = field("Message-ID").unwrap_or_else(|| format!("<{uid}@example.org>"));
+    format!(
+        "({} {} {} {} {} {} {} {} {} {})",
+        nstring(field("Date").as_deref()),
+        nstring(field("Subject").as_deref()),
+        envelope_addresses(from.as_deref()),
+        envelope_addresses(sender.as_deref()),
+        envelope_addresses(reply_to.as_deref()),
+        envelope_addresses(field("To").as_deref()),
+        envelope_addresses(field("Cc").as_deref()),
+        envelope_addresses(field("Bcc").as_deref()),
+        nstring(field("In-Reply-To").as_deref()),
+        nstring(Some(message_id.as_str())),
+    )
 }
 
 fn body_structure(raw: &[u8]) -> String {
@@ -1342,7 +1486,8 @@ async fn handle_uid_command(
                     if message.corrupt_envelope {
                         line.push_str(" ENVELOPE (\"only\" \"two\")");
                     } else {
-                        line.push_str(&format!(" ENVELOPE (\"Wed, 24 Nov 2026 10:46:51 +0000\" \"{}\" ((\"Alice\" NIL \"alice\" \"example.org\")) ((\"Alice\" NIL \"alice\" \"example.org\")) ((\"Alice\" NIL \"alice\" \"example.org\")) ((\"Recipient\" NIL \"recipient\" \"example.net\")) NIL NIL NIL \"{}\")", quoted(&subject_of(&message.raw)), quoted(&message_id_of(&message.raw, message.uid))));
+                        line.push_str(" ENVELOPE ");
+                        line.push_str(&envelope(&message.raw, message.uid));
                     }
                 }
                 if items.contains("BODYSTRUCTURE") {
@@ -1540,4 +1685,79 @@ fn internal_date_now() -> String {
         (rem % 3600) / 60,
         rem % 60
     )
+}
+
+#[cfg(test)]
+mod envelope_tests {
+    use super::envelope;
+
+    /// #416: the envelope describes the message itself, field by field.
+    #[test]
+    fn the_envelope_comes_from_the_message_headers() {
+        let raw = b"Date: Tue, 03 Mar 2026 09:15:00 +0100\r\n\
+            From: \"Ana B.\" <ana@example.org>\r\n\
+            To: Bo <bo@example.net>, carl@example.com\r\n\
+            Cc: =?UTF-8?Q?D=C3=A9?= <de@example.org>\r\n\
+            Subject: Lunch\r\n\
+            \tplans\r\n\
+            In-Reply-To: <p1@example.org>\r\n\
+            Message-ID: <m1@example.org>\r\n\
+            \r\nBody\r\n";
+        assert_eq!(
+            envelope(raw, 7),
+            "(\"Tue, 03 Mar 2026 09:15:00 +0100\" \"Lunch plans\" \
+             ((\"Ana B.\" NIL \"ana\" \"example.org\")) \
+             ((\"Ana B.\" NIL \"ana\" \"example.org\")) \
+             ((\"Ana B.\" NIL \"ana\" \"example.org\")) \
+             ((\"Bo\" NIL \"bo\" \"example.net\")(NIL NIL \"carl\" \"example.com\")) \
+             ((\"=?UTF-8?Q?D=C3=A9?=\" NIL \"de\" \"example.org\")) \
+             NIL \"<p1@example.org>\" \"<m1@example.org>\")"
+        );
+    }
+
+    /// Sender and Reply-To default to From (RFC 9051 §7.5.2); absent fields
+    /// are NIL; a fixture without a Message-ID keeps its stable fallback.
+    #[test]
+    fn missing_fields_are_nil_and_sender_and_reply_to_default_to_from() {
+        assert_eq!(
+            envelope(b"From: ana@example.org\r\n\r\nx", 3),
+            "(NIL NIL ((NIL NIL \"ana\" \"example.org\")) ((NIL NIL \"ana\" \"example.org\")) \
+             ((NIL NIL \"ana\" \"example.org\")) NIL NIL NIL NIL \"<3@example.org>\")"
+        );
+        let raw = b"From: ana@example.org\r\nSender: list@example.net\r\n\
+            Reply-To: Team <team@example.com>\r\nBcc: undisclosed-recipients:;\r\n\r\n";
+        let env = envelope(raw, 1);
+        assert!(env.contains(" ((NIL NIL \"list\" \"example.net\")) ((\"Team\" NIL \"team\" \"example.com\")) NIL NIL NIL NIL "), "{env}");
+    }
+
+    /// Quotes and backslashes in names are escaped; groups, comments and
+    /// LF-only line ends work; odd input never panics.
+    #[test]
+    fn odd_headers_are_escaped_and_never_panic() {
+        let raw = b"From: \"A \\\"Q\\\" B\" <a@example.org>\nTo: Team: x@example.org, (c) y@example.net;\n\nz";
+        let env = envelope(raw, 1);
+        assert!(
+            env.contains("((\"A \\\"Q\\\" B\" NIL \"a\" \"example.org\"))"),
+            "{env}"
+        );
+        assert!(
+            env.contains("((NIL NIL \"x\" \"example.org\")(NIL NIL \"y\" \"example.net\"))"),
+            "{env}"
+        );
+        for raw in [
+            &b""[..],
+            b"\r\n\r\n",
+            b"From:\r\n\r\n",
+            b"From: <>\r\n",
+            b"From: >a@b<\r\n",
+            b"From: \"unterminated <a@b>\r\n",
+            b"From: a@b@c, ,,, ;;; ::: ((((\r\n",
+            b"To: \xff\xfe@\xff\r\n",
+            b"\tcontinuation without a header\r\nFrom: x@y\r\n",
+        ] {
+            let env = envelope(raw, 9);
+            assert!(env.starts_with('(') && env.ends_with(')'), "{env}");
+            assert!(!env.contains('\r') && !env.contains('\n'), "{env}");
+        }
+    }
 }
