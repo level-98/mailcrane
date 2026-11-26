@@ -70,6 +70,13 @@ pub struct Snooze {
     pub mark_unread: bool,
     pub attempts: u32,
     pub next_attempt_at: i64,
+    /// How far a move without MOVE got (`migrations/0023_snooze_step.sql`):
+    /// 0 when nothing has been done on the server yet.
+    pub step: u8,
+    /// The target folder's UIDNEXT recorded just before the COPY.
+    pub target_uidnext: Option<u32>,
+    /// When a rollback (step 4) began, unix seconds.
+    pub rollback_since: Option<i64>,
 }
 
 /// A stored message with keywords that start with a given prefix.
@@ -82,7 +89,8 @@ pub struct KeywordedMessage {
 }
 
 const COLS: &str = "id, account_id, message_id_header, original_folder_id, local_message_id, \
-    wake_at, state, on_server, mark_unread, attempts, next_attempt_at";
+    wake_at, state, on_server, mark_unread, attempts, next_attempt_at, step, target_uidnext, \
+    rollback_since";
 
 fn from_row(r: &Row<'_>) -> Result<Snooze, StoreError> {
     Ok(Snooze {
@@ -97,6 +105,12 @@ fn from_row(r: &Row<'_>) -> Result<Snooze, StoreError> {
         mark_unread: narrow::<u8>(r.get(8)?, "mark_unread")? != 0,
         attempts: narrow(r.get(9)?, "attempts")?,
         next_attempt_at: r.get(10)?,
+        step: narrow(r.get(11)?, "step")?,
+        target_uidnext: r
+            .get::<_, Option<i64>>(12)?
+            .map(|v| narrow(v, "target_uidnext"))
+            .transpose()?,
+        rollback_since: r.get(13)?,
     })
 }
 
@@ -119,7 +133,10 @@ impl Store {
              wake_at = excluded.wake_at, state = 'to_snooze', mark_unread = 1, \
              local_message_id = COALESCE(excluded.local_message_id, local_message_id), \
              original_folder_id = COALESCE(original_folder_id, excluded.original_folder_id), \
-             attempts = 0, next_attempt_at = 0",
+             attempts = 0, next_attempt_at = 0, \
+             step = CASE WHEN state = 'to_snooze' THEN step ELSE 0 END, \
+             target_uidnext = CASE WHEN state = 'to_snooze' THEN target_uidnext ELSE NULL END, \
+             rollback_since = CASE WHEN state = 'to_snooze' THEN rollback_since ELSE NULL END",
             params![
                 s.account_id.0,
                 s.message_id_header,
@@ -194,7 +211,8 @@ impl Store {
             rows.map(|r| r?).collect::<Result<Vec<_>, _>>()?
         };
         tx.execute(
-            "UPDATE snoozes SET state = 'to_wake', attempts = 0, next_attempt_at = 0 \
+            "UPDATE snoozes SET state = 'to_wake', attempts = 0, next_attempt_at = 0, \
+             step = 0, target_uidnext = NULL, rollback_since = NULL \
              WHERE state = 'snoozed' AND wake_at <= ?1",
             params![now],
         )?;
@@ -211,18 +229,35 @@ impl Store {
         now: i64,
     ) -> Result<bool, StoreError> {
         let tx = self.write_tx()?;
-        let existing: Option<(String, Option<i64>)> = tx
+        let existing: Option<(String, Option<i64>, i64)> = tx
             .query_row(
-                "SELECT state, local_message_id FROM snoozes \
+                "SELECT state, local_message_id, step FROM snoozes \
                  WHERE account_id = ?1 AND message_id_header = ?2",
                 params![account.0, message_id_header],
-                |r| Ok((r.get(0)?, r.get(1)?)),
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
             )
             .optional()?;
-        let Some((state, local)) = existing else {
+        let Some((state, local, step)) = existing else {
             return Ok(false);
         };
-        if state == "to_snooze" {
+        if state == "to_snooze" && step > 0 {
+            // The server move has started (#423): dropping the row now would
+            // leave a copy in the Snoozed folder. Let it finish (or roll
+            // back), then wake it at once, without marking it unread, and
+            // without waiting out the back-off.
+            tx.execute(
+                "UPDATE snoozes SET wake_at = ?3, mark_unread = 0, attempts = 0, \
+                 next_attempt_at = 0 WHERE account_id = ?1 AND message_id_header = ?2",
+                params![account.0, message_id_header, now],
+            )?;
+            // A rollback (step 4) ends with the message where it was: show
+            // it now rather than when the server finally allows it.
+            if step == 4 {
+                if let Some(m) = local {
+                    tx.execute("UPDATE messages SET hidden = 0 WHERE id = ?1", params![m])?;
+                }
+            }
+        } else if state == "to_snooze" {
             // Not on the server yet: just show it again.
             if let Some(m) = local {
                 tx.execute("UPDATE messages SET hidden = 0 WHERE id = ?1", params![m])?;
@@ -232,9 +267,15 @@ impl Store {
                 params![account.0, message_id_header],
             )?;
         } else {
+            // A wake already under way keeps its step, so it resumes rather
+            // than copying again (#423).
             tx.execute(
-                "UPDATE snoozes SET state = 'to_wake', mark_unread = 0, wake_at = ?3, \
-                 attempts = 0, next_attempt_at = 0 \
+                "UPDATE snoozes SET mark_unread = 0, wake_at = ?3, attempts = 0, \
+                 next_attempt_at = 0, \
+                 step = CASE WHEN state = 'to_wake' THEN step ELSE 0 END, \
+                 target_uidnext = CASE WHEN state = 'to_wake' THEN target_uidnext ELSE NULL END, \
+                 rollback_since = CASE WHEN state = 'to_wake' THEN rollback_since ELSE NULL END, \
+                 state = 'to_wake' \
                  WHERE account_id = ?1 AND message_id_header = ?2",
                 params![account.0, message_id_header, now],
             )?;
@@ -254,7 +295,8 @@ impl Store {
         )?;
         tx.execute(
             "UPDATE snoozes SET state = 'snoozed', on_server = ?2, local_message_id = NULL, \
-             attempts = 0, next_attempt_at = 0 WHERE id = ?1 AND state = 'to_snooze'",
+             attempts = 0, next_attempt_at = 0, step = 0, target_uidnext = NULL, \
+             rollback_since = NULL WHERE id = ?1 AND state = 'to_snooze'",
             params![id.0, on_server],
         )?;
         tx.commit()?;
@@ -275,6 +317,42 @@ impl Store {
         tx.execute("DELETE FROM snoozes WHERE id = ?1", params![id.0])?;
         tx.commit()?;
         Ok(())
+    }
+
+    /// Records how far a move without MOVE got (#423). `target_uidnext` is
+    /// kept unless a new value is given.
+    pub fn set_snooze_step(
+        &self,
+        id: SnoozeId,
+        step: u8,
+        target_uidnext: Option<u32>,
+    ) -> Result<(), StoreError> {
+        self.conn.execute(
+            "UPDATE snoozes SET step = ?2, target_uidnext = COALESCE(?3, target_uidnext) \
+             WHERE id = ?1",
+            params![id.0, step, target_uidnext],
+        )?;
+        Ok(())
+    }
+
+    /// The server refused after the COPY: step 4, the copy is to be
+    /// removed. `rollback_since` keeps the time of the first refusal.
+    pub fn start_snooze_rollback(&self, id: SnoozeId, now: i64) -> Result<(), StoreError> {
+        self.conn.execute(
+            "UPDATE snoozes SET step = 4, rollback_since = COALESCE(rollback_since, ?2) \
+             WHERE id = ?1",
+            params![id.0, now],
+        )?;
+        Ok(())
+    }
+
+    /// The snooze with this id, as stored now.
+    pub fn get_snooze_by_id(&self, id: SnoozeId) -> Result<Option<Snooze>, StoreError> {
+        let sql = format!("SELECT {COLS} FROM snoozes WHERE id = ?1");
+        self.conn
+            .query_row(&sql, params![id.0], |r| Ok(from_row(r)))
+            .optional()?
+            .transpose()
     }
 
     /// Tries a snooze again at `next_attempt_at`.
