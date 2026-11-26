@@ -53,6 +53,9 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.mailcrane.R
+import app.mailcrane.oauth.OAuthSignIn
+import app.mailcrane.oauth.OAuthResult
+import androidx.compose.ui.platform.LocalContext
 import app.mailcrane.core.ConnectionSecurity
 import app.mailcrane.core.Field
 import app.mailcrane.core.FieldProblem
@@ -65,6 +68,9 @@ fun ManualSetupScreen(
     viewModel: ManualSetupViewModel = hiltViewModel(),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
+    val context = LocalContext.current
+    // Sign in with Google (M3-02): the browser's answer comes back through the redirect activity.
+    LaunchedEffect(viewModel) { OAuthSignIn.results.collect(viewModel::onGoogleResult) }
     state.addedAccountId?.let { id ->
         LaunchedEffect(id) {
             onAccountAdded(id)
@@ -92,6 +98,13 @@ fun ManualSetupScreen(
                 onDiscover = viewModel::discover,
                 onEditSettings = viewModel::editSettings,
                 onSetUpManually = viewModel::setUpManually,
+                onSignInWithGoogle = {
+                    viewModel.startGoogleSignIn()?.let { (provider, email) ->
+                        if (!OAuthSignIn.start(context, provider, email)) {
+                            viewModel.onGoogleResult(OAuthResult.Failed(null))
+                        }
+                    }
+                },
             ),
     )
 }
@@ -115,6 +128,7 @@ data class ManualSetupActions(
     val onDiscover: () -> Unit = {},
     val onEditSettings: () -> Unit = {},
     val onSetUpManually: () -> Unit = {},
+    val onSignInWithGoogle: () -> Unit = {},
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -512,6 +526,7 @@ internal fun SetupError.message(): Int {
         SetupFailure.AUTH_FAILED -> pick(R.string.setup_error_auth_imap, R.string.setup_error_auth_smtp)
         SetupFailure.TIMEOUT -> pick(R.string.setup_error_timeout_imap, R.string.setup_error_timeout_smtp)
         SetupFailure.SAVE_FAILED -> R.string.setup_error_save_failed
+        SetupFailure.GOOGLE_SIGN_IN_FAILED -> R.string.setup_error_google
         SetupFailure.UNEXPECTED -> R.string.setup_error_unexpected
     }
 }

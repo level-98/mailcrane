@@ -169,6 +169,41 @@ impl Store {
     /// Sets the account's provider authserv-id, or clears it with `None`.
     /// Returns whether the account exists. An id that isn't a valid host
     /// name (see [`is_valid_authserv_id`]) is refused and nothing changes.
+    /// The OAuth provider the account signs in with (M3-02), such as
+    /// `"google"`, or `None` for a password. `None` too for an account that
+    /// doesn't exist.
+    pub fn oauth_provider(&self, account: AccountId) -> Result<Option<String>, StoreError> {
+        Ok(self
+            .conn
+            .query_row(
+                "SELECT oauth_provider FROM accounts WHERE id = ?1",
+                params![account.0],
+                |r| r.get::<_, Option<String>>(0),
+            )
+            .optional()?
+            .flatten())
+    }
+
+    /// Records that the account signs in with `provider` (only `"google"`
+    /// so far), or with a password for `None`. Returns whether the account
+    /// exists.
+    pub fn set_oauth_provider(
+        &self,
+        account: AccountId,
+        provider: Option<&str>,
+    ) -> Result<bool, StoreError> {
+        if provider.is_some_and(|p| p != "google") {
+            return Err(StoreError::Invalid {
+                field: "oauth_provider",
+            });
+        }
+        let n = self.conn.execute(
+            "UPDATE accounts SET oauth_provider = ?2 WHERE id = ?1",
+            params![account.0, provider],
+        )?;
+        Ok(n > 0)
+    }
+
     pub fn set_provider_authserv_id(
         &self,
         account: AccountId,

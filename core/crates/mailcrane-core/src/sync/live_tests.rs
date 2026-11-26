@@ -4,7 +4,7 @@
 
 use super::*;
 use crate::events::{CoreEvent, EventListener};
-use mailcrane_imap::ImapSecurity;
+use mailcrane_imap::{ImapAuth, ImapSecurity, Secret};
 use mailcrane_store::{NewAccount, NewFolder, Security};
 use mailcrane_testkit::{FakeImap, Quirk};
 use std::cell::{Cell, RefCell};
@@ -452,7 +452,7 @@ fn login(imap: &FakeImap) -> impl Fn() -> Result<ImapLogin, SyncErrorKind> {
         Ok(ImapLogin {
             config,
             username: USER.into(),
-            password: Secret::new(PASSWORD),
+            auth: ImapAuth::Password(Secret::new(PASSWORD)),
         })
     }
 }
@@ -652,7 +652,7 @@ async fn bad_credentials_are_reported_once_and_the_loop_ends() {
             config: ImapConfig::new("localhost", port, ImapSecurity::ImplicitTls)
                 .with_extra_root_cert(cert.clone()),
             username: USER.into(),
-            password: Secret::new("wrong"),
+            auth: ImapAuth::Password(Secret::new("wrong")),
         })
     };
     // Nobody stops it: a refused login ends the loop by itself.

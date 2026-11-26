@@ -15,6 +15,8 @@ struct Shared {
     faults: Vec<Fault>,
     quirks: Vec<Quirk>,
     user: (String, String),
+    /// The access token XOAUTH2 accepts for the user, if it's offered.
+    xoauth2_token: Option<String>,
     special_use: Vec<(String, String)>,
     /// Folders listed as `\Noselect` parents (RFC 9051 §7.3.1).
     noselect: Vec<String>,
@@ -58,6 +60,7 @@ pub struct FakeImap {
 
 pub struct FakeImapBuilder {
     user: Option<(String, String)>,
+    xoauth2_token: Option<String>,
     folders: Vec<(String, Vec<Vec<u8>>)>,
     faults: Vec<Fault>,
     quirks: Vec<Quirk>,
@@ -121,6 +124,14 @@ impl FakeImapBuilder {
         self.quirk(Quirk::GmailLabels)
     }
 
+    /// Offers `AUTH=XOAUTH2` (Gmail, M3-02) and accepts `token` for the
+    /// user. A wrong token gets Google's answer: a `+` with a base64 JSON
+    /// error, then `NO` after the client's empty line.
+    pub fn xoauth2_token(mut self, token: impl Into<String>) -> Self {
+        self.xoauth2_token = Some(token.into());
+        self
+    }
+
     pub fn user(mut self, username: impl Into<String>, password: impl Into<String>) -> Self {
         self.user = Some((username.into(), password.into()));
         self
@@ -174,6 +185,7 @@ impl FakeImapBuilder {
             faults: self.faults,
             quirks: self.quirks,
             user,
+            xoauth2_token: self.xoauth2_token,
             special_use: self.special_use,
             noselect: self.noselect,
             namespace: self.namespace,
@@ -222,6 +234,7 @@ impl FakeImap {
     pub fn builder() -> FakeImapBuilder {
         FakeImapBuilder {
             user: None,
+            xoauth2_token: None,
             folders: Vec::new(),
             faults: Vec::new(),
             quirks: Vec::new(),
@@ -525,6 +538,9 @@ async fn handle_imap_command(
             };
             if secure {
                 caps.push_str(" AUTH=PLAIN");
+                if shared.xoauth2_token.is_some() {
+                    caps.push_str(" AUTH=XOAUTH2");
+                }
             } else {
                 // RFC 9051 §6.2.1 and §7.2.2: offer STARTTLS, refuse login.
                 if !faults.contains(&Fault::NoStartTls) {
@@ -568,6 +584,47 @@ async fn handle_imap_command(
                 format!("{tag} OK LOGIN completed\r\n")
             } else {
                 format!("{tag} NO authentication failed\r\n")
+            }
+        }
+        "AUTHENTICATE"
+            if parts
+                .get(2)
+                .is_some_and(|m| m.eq_ignore_ascii_case("XOAUTH2")) =>
+        {
+            let Some(expected) = shared.xoauth2_token.as_deref() else {
+                return stream
+                    .write_all(format!("{tag} NO unsupported mechanism\r\n").as_bytes())
+                    .await
+                    .map_err(|error| error.to_string());
+            };
+            stream
+                .write_all(b"+ \r\n")
+                .await
+                .map_err(|error| error.to_string())?;
+            stream.flush().await.map_err(|error| error.to_string())?;
+            let mut response = [0u8; 2048];
+            let read = stream
+                .read(&mut response)
+                .await
+                .map_err(|error| error.to_string())?;
+            let line = String::from_utf8_lossy(response.get(..read).unwrap_or_default());
+            let decoded = decode_base64(line.trim()).unwrap_or_default();
+            let want = format!("user={}\x01auth=Bearer {expected}\x01\x01", user.0);
+            if decoded == want.as_bytes() && !faults.contains(&Fault::RejectLogin) {
+                format!("{tag} OK AUTHENTICATE completed\r\n")
+            } else {
+                // {"status":"401","schemes":"Bearer","scope":"https://mail.google.com/"}
+                stream
+                    .write_all(b"+ eyJzdGF0dXMiOiI0MDEiLCJzY2hlbWVzIjoiQmVhcmVyIiwic2NvcGUiOiJodHRwczovL21haWwuZ29vZ2xlLmNvbS8ifQ==\r\n")
+                    .await
+                    .map_err(|error| error.to_string())?;
+                stream.flush().await.map_err(|error| error.to_string())?;
+                let mut empty = [0u8; 16];
+                let _ = stream
+                    .read(&mut empty)
+                    .await
+                    .map_err(|error| error.to_string())?;
+                format!("{tag} NO [AUTHENTICATIONFAILED] Invalid credentials (Failure)\r\n")
             }
         }
         "AUTHENTICATE" => {

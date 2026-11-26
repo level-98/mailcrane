@@ -109,6 +109,16 @@ impl TokenCache {
         }
     }
 
+    /// The cached access token for `account` if it hasn't expired, without
+    /// refreshing: for the synchronous paths that build a login once
+    /// [`TokenCache::access_token`] has run.
+    pub fn cached(&self, account: i64, now: i64) -> Option<AccessToken> {
+        self.lock()
+            .get(&account)
+            .filter(|(_, expires_at)| *expires_at > now)
+            .map(|(token, _)| token.clone())
+    }
+
     /// Drops the cached access token (after the server rejected it).
     pub fn forget(&self, account: i64) {
         self.lock().remove(&account);

@@ -58,14 +58,35 @@ internal fun EmailStepContent(
             enabled = enabled,
             keyboardType = KeyboardType.Email,
         )
-        PasswordField(state, actions, enabled)
-        Spacer(Modifier.height(8.dp))
-        ProgressButton(
-            busy = state.discovering,
-            busyLabel = R.string.setup_auto_looking,
-            label = R.string.setup_auto_continue,
-            onClick = actions.onDiscover,
-        )
+        if (state.gmail) {
+            // Gmail needs Sign in with Google (M3-02): no password is typed here.
+            Text(
+                text = stringResource(R.string.setup_google_gmail_note),
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            ProgressButton(
+                busy = state.checking,
+                busyLabel = R.string.setup_google_signing_in,
+                label = R.string.setup_google_sign_in,
+                onClick = actions.onSignInWithGoogle,
+            )
+        } else {
+            PasswordField(state, actions, enabled)
+            Spacer(Modifier.height(8.dp))
+            ProgressButton(
+                busy = state.discovering,
+                busyLabel = R.string.setup_auto_looking,
+                label = R.string.setup_auto_continue,
+                onClick = actions.onDiscover,
+            )
+            // Google Workspace accounts on their own domain.
+            OutlinedButton(
+                onClick = actions.onSignInWithGoogle,
+                enabled = enabled && !state.checking,
+                modifier = Modifier.fillMaxWidth(),
+            ) { Text(stringResource(R.string.setup_google_sign_in)) }
+        }
+        state.error?.let { ErrorCard(it) }
         TextButton(
             onClick = actions.onSetUpManually,
             enabled = enabled,

@@ -225,9 +225,9 @@ async fn smtp_connection(
         match command.as_str() {
             "EHLO" => stream
                 .write_all(if faults.contains(&Fault::NoStartTls) {
-                    b"250-mailcrane.test\r\n250 AUTH PLAIN LOGIN\r\n"
+                    b"250-mailcrane.test\r\n250 AUTH PLAIN LOGIN XOAUTH2\r\n"
                 } else {
-                    b"250-mailcrane.test\r\n250-STARTTLS\r\n250 AUTH PLAIN LOGIN\r\n"
+                    b"250-mailcrane.test\r\n250-STARTTLS\r\n250 AUTH PLAIN LOGIN XOAUTH2\r\n"
                 })
                 .await
                 .map_err(|error| error.to_string())?,
@@ -417,9 +417,9 @@ async fn smtp_plain_stream(
         match command.as_str() {
             "EHLO" => stream
                 .write_all(if quirks.contains(&Quirk::FutureRelease) {
-                    &b"250-mailcrane.test\r\n250-FUTURERELEASE 604800 2099-01-01T00:00:00Z\r\n250 AUTH PLAIN LOGIN\r\n"[..]
+                    &b"250-mailcrane.test\r\n250-FUTURERELEASE 604800 2099-01-01T00:00:00Z\r\n250 AUTH PLAIN LOGIN XOAUTH2\r\n"[..]
                 } else {
-                    &b"250-mailcrane.test\r\n250 AUTH PLAIN LOGIN\r\n"[..]
+                    &b"250-mailcrane.test\r\n250 AUTH PLAIN LOGIN XOAUTH2\r\n"[..]
                 })
                 .await
                 .map_err(|error| error.to_string())?,

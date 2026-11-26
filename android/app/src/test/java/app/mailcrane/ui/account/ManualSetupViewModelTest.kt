@@ -141,4 +141,41 @@ class ManualSetupViewModelTest {
         assertEquals(SetupStep.EMAIL, vm.state.value.step)
         assertEquals("993", vm.state.value.imapPort)
     }
+
+    @Test
+    fun gmailSignsInWithGoogleAndAddsTheAccount() {
+        // M3-02: a Gmail address goes through Sign in with Google.
+        val core = FakeSetupCore({ 9 })
+        val vm = ManualSetupViewModel(core)
+        vm.onEmailChange("ann@gmail.com")
+        assertEquals(true, vm.state.value.gmail)
+        val (provider, email) = vm.startGoogleSignIn() ?: error("started")
+        assertEquals("google", provider.id)
+        assertEquals("ann@gmail.com", email)
+        assertEquals(true, vm.state.value.checking)
+
+        vm.onGoogleResult(app.mailcrane.oauth.OAuthResult.SignedIn("signin-1"))
+        assertEquals(9L, vm.state.value.addedAccountId)
+        assertEquals(Triple("signin-1", "ann@gmail.com", ""), core.lastGoogle)
+    }
+
+    @Test
+    fun googleSignInNeedsAnAddressAndReportsFailures() {
+        val vm = ManualSetupViewModel(FakeSetupCore({ 9 }))
+        assertNull(vm.startGoogleSignIn())
+        assertEquals(FieldProblem.MALFORMED_EMAIL, vm.state.value.fieldErrors[Field.EMAIL])
+
+        vm.onEmailChange("ann@example.com")
+        assertEquals(false, vm.state.value.gmail)
+        vm.startGoogleSignIn()
+        // Cancelled in the browser: back to the form, no error.
+        vm.onGoogleResult(app.mailcrane.oauth.OAuthResult.Failed(app.mailcrane.core.OAuthFailure.Denied()))
+        assertFalse(vm.state.value.checking)
+        assertNull(vm.state.value.error)
+        // Anything else (or no browser) says so.
+        vm.startGoogleSignIn()
+        vm.onGoogleResult(app.mailcrane.oauth.OAuthResult.Failed(null))
+        assertEquals(SetupError(SetupFailure.GOOGLE_SIGN_IN_FAILED), vm.state.value.error)
+        assertEquals(app.mailcrane.R.string.setup_error_google, SetupError(SetupFailure.GOOGLE_SIGN_IN_FAILED).message())
+    }
 }

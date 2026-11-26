@@ -14,7 +14,9 @@ use mailcrane_core::sync::{
     live_stop, log_failure, run_live_updates, FolderSyncer, ImapLogin, LiveAccount, LiveConfig,
     LiveStop, SyncConfig, SyncError as CoreSyncError,
 };
-use mailcrane_imap::{save_folder_list, ImapConfig, ImapError, ImapSecurity, Secret, Session};
+use mailcrane_imap::{
+    save_folder_list, ImapAuth, ImapConfig, ImapError, ImapSecurity, Secret, Session,
+};
 use mailcrane_store::{AccountId, FolderId, FolderRole, MessageId, Security, Store};
 
 /// Why a sync failed. Never carries server text.
@@ -887,8 +889,29 @@ impl SyncEngine {
         store: &Store,
         account: AccountId,
     ) -> Result<Session, events::SyncErrorKind> {
+        // An OAuth account (M3-02) gets a fresh access token first.
+        if let Ok(secrets) = crate::secrets::secret_store() {
+            match mailcrane_core::account::credentials::refresh_if_needed(
+                store,
+                secrets.as_ref(),
+                account,
+                &[],
+                OAUTH_TIMEOUT,
+            )
+            .await
+            {
+                Err(mailcrane_core::account::credentials::CredentialError::ReauthRequired) => {
+                    return Err(events::SyncErrorKind::Auth)
+                }
+                Err(mailcrane_core::account::credentials::CredentialError::Storage) => {
+                    return Err(events::SyncErrorKind::Storage)
+                }
+                // Not reachable now: try the cached token.
+                Err(mailcrane_core::account::credentials::CredentialError::Missing) | Ok(()) => {}
+            }
+        }
         let login = imap_login(store, account, self.extra_root_cert().as_deref())?;
-        Session::connect(&login.config, &login.username, &login.password)
+        Session::connect_auth(&login.config, &login.username, &login.auth)
             .await
             .map_err(|e: ImapError| {
                 let e = CoreSyncError::from(e);
@@ -941,13 +964,27 @@ fn imap_login(
     {
         return Err(events::SyncErrorKind::NotFound);
     }
-    let password = crate::secrets::secret_store()
-        .and_then(|s| s.get(&SecretKey::account_password(account.0)))
-        .map_err(|_| events::SyncErrorKind::Auth)?
-        .ok_or(events::SyncErrorKind::Auth)?;
-    let password = std::str::from_utf8(password.expose())
-        .map_err(|_| events::SyncErrorKind::Auth)?
-        .to_owned();
+    let secrets = crate::secrets::secret_store().map_err(|_| events::SyncErrorKind::Auth)?;
+    // Outside an async runtime (the connection pool), an OAuth account's
+    // token is refreshed here; inside one, the async paths did it first.
+    if tokio::runtime::Handle::try_current().is_err() {
+        if let Ok(rt) = runtime() {
+            let _ = rt.block_on(mailcrane_core::account::credentials::refresh_if_needed(
+                store,
+                secrets.as_ref(),
+                account,
+                &[],
+                OAUTH_TIMEOUT,
+            ));
+        }
+    }
+    use mailcrane_core::account::credentials::{credential, Credential, CredentialError};
+    let auth = match credential(store, secrets.as_ref(), account) {
+        Ok(Credential::Password(p)) => ImapAuth::Password(Secret::new(p)),
+        Ok(Credential::OAuth(token)) => ImapAuth::XOAuth2(Secret::new(token.as_str())),
+        Err(CredentialError::Storage) => return Err(events::SyncErrorKind::Storage),
+        Err(_) => return Err(events::SyncErrorKind::Auth),
+    };
     let security = match row.details.imap_security {
         Security::Tls => ImapSecurity::ImplicitTls,
         Security::Starttls => ImapSecurity::StartTls,
@@ -959,9 +996,12 @@ fn imap_login(
     Ok(ImapLogin {
         config,
         username: row.details.username,
-        password: Secret::new(password),
+        auth,
     })
 }
+
+/// How long refreshing an OAuth access token may take (M3-02).
+const OAUTH_TIMEOUT: Duration = Duration::from_secs(20);
 
 /// How long the background check waits for background downloads before
 /// returning its notifications.

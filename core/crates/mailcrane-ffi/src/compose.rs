@@ -496,6 +496,8 @@ async fn send_with(
     draft: ComposeDraft,
     options: &core::SendOptions,
 ) -> Result<SendResult, SendFailure> {
+    let account = mailcrane_store::AccountId(draft.account_id);
+    crate::secrets::refresh_oauth(db_path, secrets, account).await;
     let prepared = prepare(db_path, secrets, draft, options)?;
     let report = core::send_prepared(prepared).await?;
     Ok(SendResult {

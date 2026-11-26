@@ -21,7 +21,7 @@
 use super::initial::{log_failure, FolderSyncer, SyncConfig, SyncError};
 use super::WriteLock;
 use crate::events::{AccountId, CoreEvent, EventListener, FolderId, SyncErrorKind};
-use mailcrane_imap::{save_folders, IdleOutcome, ImapConfig, ImapError, Secret, Session};
+use mailcrane_imap::{save_folders, IdleOutcome, ImapAuth, ImapConfig, ImapError, Session};
 use mailcrane_store::{FolderRole, Store};
 use std::future::Future;
 use std::time::Duration;
@@ -74,8 +74,8 @@ pub struct ImapLogin {
     pub config: ImapConfig,
     /// The account's user name.
     pub username: String,
-    /// The password or token.
-    pub password: Secret,
+    /// The password, or an OAuth access token (M3-02).
+    pub auth: ImapAuth,
 }
 
 /// Tells a running [`run_live_updates`] to stop. Dropping it stops it too.
@@ -358,7 +358,7 @@ impl<'a, L: Fn() -> Result<ImapLogin, SyncErrorKind>> Source for ImapSource<'a, 
 
     async fn connect(&mut self) -> Result<ImapConn<'a>, SyncErrorKind> {
         let login = (self.login)()?;
-        let mut session = Session::connect(&login.config, &login.username, &login.password)
+        let mut session = Session::connect_auth(&login.config, &login.username, &login.auth)
             .await
             .map_err(|e| {
                 let e = SyncError::from(e);
