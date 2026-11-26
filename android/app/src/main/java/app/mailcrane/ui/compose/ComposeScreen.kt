@@ -14,7 +14,6 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ButtonDefaults
@@ -57,7 +56,6 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
@@ -141,7 +139,8 @@ data class ComposeActions(
     val onRemoveRecipient: (RecipientField, Int) -> Unit = { _, _ -> },
     val onEditLastRecipient: (RecipientField) -> Unit = {},
     val onShowCcBcc: () -> Unit = {},
-    val onSubjectChange: (String) -> Unit = {},
+    /** The subject text, and the subject revision it was typed against (#429). */
+    val onSubjectChange: (String, Long) -> Unit = { _, _ -> },
     /** The body text, and the body revision it was typed against (#419). */
     val onBodyChange: (String, Long) -> Unit = { _, _ -> },
     /** The view model's state right now, ahead of the composed state while edits are in flight (#419). */
@@ -233,15 +232,12 @@ fun ComposeContent(
                 Recipient(RecipientField.BCC, R.string.compose_bcc, state, actions, editable)
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
             }
-            TextField(
-                value = state.subject,
-                onValueChange = actions.onSubjectChange,
+            SubjectField(
+                state = state,
+                onSubjectChange = actions.onSubjectChange,
                 enabled = editable,
-                singleLine = true,
-                placeholder = { Text(stringResource(R.string.compose_subject)) },
-                keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
                 colors = plainFieldColors(),
-                modifier = Modifier.fillMaxWidth(),
+                currentState = actions.currentState,
             )
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
             ComposeAttachments(state, actions.onRemoveAttachment)
