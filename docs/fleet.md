@@ -8,6 +8,7 @@ A maintainer can run five Claude Code sessions on their own machine that work th
 |---|---|---|---|
 | `mailbot.lead` | `.claude/agents/mailcrane-lead.md` | the main checkout (read-only) | Watches GitHub, triages, decides, dispatches, merges, writes the hourly report |
 | `mailbot.dev1`, `mailbot.dev2` | `.claude/agents/mailcrane-dev.md` | `.worktrees/dev1`, `.worktrees/dev2` | One issue at a time, from claim to ready PR |
+| `mailbot.dev3` | `.claude/agents/mailcrane-dev.md` | `.worktrees/dev3` | Like dev1 and dev2, but only issues that need no emulator or device (see rule 12). Not started by default: `-Seats dev3` |
 | `mailbot.review` | `.claude/agents/mailcrane-review.md` | `.worktrees/review` | Code review of every `fleet` PR marked ready |
 | `mailbot.qa` | `.claude/agents/mailcrane-qa.md` | `.worktrees/qa` | Emulator checks and screenshots of UI PRs; exploratory passes that file bugs |
 
@@ -59,9 +60,11 @@ Only these still go to the maintainer, as a `dev_ask` card:
 5. **One issue per dev seat, one PR per issue.** Claims are made as the maintainer, who has no claim limit (`claim.yml`).
 6. **Lock before editing a file another seat might touch** (`dev_sync_will_edit`, `dev_sync_lock`), release when the PR is pushed. Lock keys are relative to the worktree root, so `core/crates/x/src/lib.rs` is the same lock in every worktree.
 7. **Never claim a check passed that you didn't run.** Say what you skipped and why.
-8. **At most four agent PRs open at once.** At four, the lead stops dispatching new issues and puts its effort into getting the open ones finished.
+8. **At most six agent PRs open at once.** At six, the lead stops dispatching new issues and puts its effort into getting the open ones finished.
 9. **Pace with `ScheduleWakeup`**: 1200–1800 s when idle; a direct message or `dev_wake` wakes a seat sooner. Never poll in a tight loop.
 10. **Stuck for more than an hour** on the same failure: post in `alerts`, update the board task to `blocked`, and move on or go idle.
+11. **One heavy job on the machine at a time.** Memory is the real limit. A heavy job is a full cargo workspace build or test (`cargo test --workspace`, a full `cargo xtask ci`), a Gradle build, the emulator, or a long under-load test loop. Take the Synapse lock `locks/heavy-job` (`dev_sync_lock`) before starting one and release it as soon as it ends. Without the lock, run targeted checks (`cargo test -p <crate>`, clippy on the crates you touched) and say in the PR what you ran and what you left to GitHub CI.
+12. **Emulator work goes to dev1, dev2 and QA.** dev3 takes only issues that need no emulator or device: core and Rust, testkit, CI and workflows, docs and the website, and Android changes fully covered by JVM unit tests. QA's emulator is off by default. QA starts it only to verify an open PR that touches `android/` or for a post-merge device check, holds `locks/heavy-job` while it runs, and shuts it down (`adb emu kill`) straight after.
 
 ## Merging
 
@@ -92,7 +95,7 @@ Every seat acts as the maintainer, through their existing `gh` and git sign-in o
 
 - every PR a seat opens gets the **`fleet`** label (add it with `gh pr create --label fleet`, or `gh pr edit --add-label fleet` straight after);
 - every issue a seat opens gets the `fleet` label too;
-- every comment a seat posts starts with its seat name in bold, for example **mailbot.review:**.
+- every comment a seat posts starts with its seat name in bold, for example **mailbot.review:**. The only exceptions are `/claim` and `/unclaim`: `claim.yml` acts only on a comment whose whole body is that command, so post exactly `/claim` with no prefix. In Git Bash, `MSYS_NO_PATHCONV=1 gh issue comment <n> --body "/claim"` (otherwise Git Bash rewrites `/claim` into a Windows path); in PowerShell, the plain `gh issue comment <n> --body "/claim"`. Then check `gh issue view <n> --json assignees` shows the maintainer before starting work.
 
 Never print or log a token, and never change the maintainer's git or `gh` configuration.
 
@@ -112,7 +115,7 @@ Then, from the repository root:
 scripts/fleet/start-fleet.ps1
 ```
 
-It creates the worktrees, wires each one to Synapse, and opens one terminal window per seat. Close a window to stop that seat. `-Seats lead,dev1` starts only some.
+It creates the worktrees, wires each one to Synapse, and opens one terminal window per seat. Close a window to stop that seat. By default it starts `lead`, `dev1`, `dev2`, `review` and `qa`; `-Seats lead,dev1` starts only some, and `-Seats dev3` adds the third dev seat. `-DryRun` checks everything and prints what it would start, without creating worktrees or opening windows.
 
 ## Known gaps
 

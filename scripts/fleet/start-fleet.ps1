@@ -16,6 +16,14 @@ scripts/fleet/start-fleet.ps1
 
 .EXAMPLE
 scripts/fleet/start-fleet.ps1 -Seats lead,dev1
+
+.EXAMPLE
+scripts/fleet/start-fleet.ps1 -Seats dev3
+Starts the third dev seat, which only takes issues that need no emulator (docs/fleet.md).
+
+.EXAMPLE
+scripts/fleet/start-fleet.ps1 -Seats dev3 -DryRun
+Checks everything and prints what it would start, without creating worktrees or opening windows.
 #>
 # No positional binding: under 'powershell -File', '-Seats lead, dev1' would
 # otherwise bind the stray 'dev1' to -PermissionMode.
@@ -23,7 +31,9 @@ scripts/fleet/start-fleet.ps1 -Seats lead,dev1
 param(
     [string[]] $Seats = @('lead', 'dev1', 'dev2', 'review', 'qa'),
     [string] $PermissionMode = 'auto',
-    [string] $Model = ''
+    [string] $Model = '',
+    # Check and print the plan only: no fetch, no worktrees, no windows.
+    [switch] $DryRun
 )
 
 $ErrorActionPreference = 'Stop'
@@ -32,6 +42,8 @@ $roles = @{
     lead   = 'mailcrane-lead'
     dev1   = 'mailcrane-dev'
     dev2   = 'mailcrane-dev'
+    # Not in the default -Seats: only for issues that need no emulator.
+    dev3   = 'mailcrane-dev'
     review = 'mailcrane-review'
     qa     = 'mailcrane-qa'
 }
@@ -72,6 +84,15 @@ foreach ($tool in @('claude', 'gh', 'git')) {
 $login = (& gh api user --jq .login 2>$null)
 if (-not $login) { Stop-Fleet "gh isn't signed in. Run 'gh auth login' first." }
 Write-Host "Fleet will act on GitHub as $login."
+
+if ($DryRun) {
+    foreach ($seat in $Seats) {
+        $dir = if ($seat -eq 'lead') { $root } else { Join-Path $root ".worktrees\$seat" }
+        $state = if ($seat -eq 'lead' -or (Test-Path $dir)) { 'exists' } else { 'would be created' }
+        Write-Host "  would start mailbot.$seat ($($roles[$seat])) in $dir ($state)"
+    }
+    exit 0
+}
 
 # --- Worktrees ---------------------------------------------------------------
 

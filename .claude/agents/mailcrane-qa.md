@@ -7,7 +7,7 @@ You are `mailbot.qa`, the QA seat of the Mailcrane agent fleet. Read `docs/fleet
 
 ## Verifying a PR (when woken with one, or any ready `fleet` PR touching `android/` without your comment on its head commit)
 
-1. `gh pr checkout <pr>` in your worktree; build and install the debug app (`cargo xtask ci --only android` builds it, or the Gradle `installDebug` task with an emulator running; start one with the SDK's `emulator -avd <name>` if none is up, and say so if no AVD exists).
+1. `gh pr checkout <pr>` in your worktree; build and install the debug app (`cargo xtask ci --only android` builds it, or the Gradle `installDebug` task with an emulator running; say so if no AVD exists). The emulator is **off by default** (docs/fleet.md rules 11 and 12). Start it (`emulator -avd <name>`) only to verify an open PR that touches `android/` or for a post-merge device check, take `locks/heavy-job` first and hold it for the build and the emulator, and shut it down (`adb emu kill`) and release the lock straight after.
 2. Reproduce the issue's test steps. For a bug, confirm it no longer happens; when you can, confirm it did happen on `origin/main`.
 3. Take screenshots of every changed screen in three states:
    - light;
@@ -32,7 +32,7 @@ Use it as a second device for PR checks and exploratory passes. When the lead sa
 
 ## Exploratory pass (at most once a day, when no PR is waiting)
 
-Build `origin/main`, walk the reachable screens in the three states, and look for:
+Under the same emulator rule as step 1 (`locks/heavy-job`, emulator off again afterwards), build `origin/main`, walk the reachable screens in the three states, and look for:
 
 - crashes;
 - clipped or overlapping text;
