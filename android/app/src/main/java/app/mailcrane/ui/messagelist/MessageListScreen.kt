@@ -584,19 +584,31 @@ private fun SwipeableRow(
                 true
             }
         }
+    // SwipeToDismissBox keys its dismiss effect on this callback as well as on the settled value, so a
+    // new lambda on every recomposition runs the action again. A read or flag swipe changes the row,
+    // the row recomposes while it is still springing back, and the action ran again: the message
+    // flipped read, unread, read… and each run restarted the spring from rest, so the row crawled back
+    // over seconds (#368). One callback for the row's lifetime, reading the latest message and handlers.
+    val currentMessage by rememberUpdatedState(message)
+    val currentSwipe by rememberUpdatedState(swipe)
+    val onDismiss: (SwipeToDismissBoxValue) -> Unit =
+        remember(state, scope) {
+            { value ->
+                val handlers = currentSwipe
+                val action = if (value == SwipeToDismissBoxValue.StartToEnd) handlers.right else handlers.left
+                handlers.onSwipe(currentMessage, action)
+                scope.launch {
+                    if (swipeRemovesRow(action)) delay(SWIPE_REMOVE_TIMEOUT_MS)
+                    state.reset()
+                }
+            }
+        }
     SwipeToDismissBox(
         state = state,
         modifier = Modifier.semantics { customActions = actions },
         enableDismissFromStartToEnd = swipe.right != SwipeAction.NONE,
         enableDismissFromEndToStart = swipe.left != SwipeAction.NONE,
-        onDismiss = { value ->
-            val action = if (value == SwipeToDismissBoxValue.StartToEnd) swipe.right else swipe.left
-            swipe.onSwipe(message, action)
-            scope.launch {
-                if (swipeRemovesRow(action)) delay(SWIPE_REMOVE_TIMEOUT_MS)
-                state.reset()
-            }
-        },
+        onDismiss = onDismiss,
         backgroundContent = {
             val action =
                 when (state.dismissDirection) {

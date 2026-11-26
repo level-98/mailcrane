@@ -24,7 +24,7 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import java.time.ZonedDateTime
 
-/** Swiping rows in the message list (#341), against a state held here instead of a view model. */
+/** Swiping rows in the message list (#341, #368), against a state held here instead of a view model. */
 @RunWith(RobolectricTestRunner::class)
 // A plain Application: the real one loads the native core, which these tests don't need.
 @Config(sdk = [35], application = Application::class, qualifiers = "en-rGB")
@@ -52,7 +52,10 @@ class SwipeUiTest {
     )
     private val swiped = mutableListOf<Pair<Long, SwipeAction>>()
 
-    private fun show() {
+    private fun show(
+        right: SwipeAction = SwipeAction.FLAG,
+        onSwipe: (MessageSummary, SwipeAction) -> Unit = { message, action -> swiped += message.id to action },
+    ) {
         compose.setContent {
             MailcraneTheme {
                 MessageListContent(
@@ -63,9 +66,9 @@ class SwipeUiTest {
                     onLoadMore = {},
                     swipe =
                         SwipeHandlers(
-                            right = SwipeAction.FLAG,
+                            right = right,
                             left = SwipeAction.ARCHIVE,
-                            onSwipe = { message, action -> swiped += message.id to action },
+                            onSwipe = onSwipe,
                         ),
                 )
             }
@@ -125,5 +128,26 @@ class SwipeUiTest {
         compose.waitForIdle()
         assertEquals(listOf(1L to SwipeAction.FLAG), swiped)
         assertEquals(start, left("Subject 1"), 1f)
+    }
+
+    @Test
+    fun aReadSwipeRunsOnceWhenTheCoreUpdatesTheRow() {
+        // Like the core: marking a message unread changes the row while it springs back. That
+        // recomposition used to run the action again and again, flipping read and unread, and the
+        // row crawled back over seconds.
+        show(right = SwipeAction.READ_UNREAD) { message, action ->
+            swiped += message.id to action
+            state =
+                state.copy(
+                    messages = state.messages.map { if (it.id == message.id) it.copy(isSeen = !it.isSeen) else it },
+                )
+        }
+        val start = left("Subject 1")
+        compose.mainClock.autoAdvance = false
+        compose.onNodeWithText("Subject 1", useUnmergedTree = true).performTouchInput { swipeRight() }
+        compose.mainClock.advanceTimeBy(1_000)
+        assertEquals(listOf(1L to SwipeAction.READ_UNREAD), swiped)
+        assertFalse("marked unread once", state.messages.first { it.id == 1L }.isSeen)
+        assertEquals("back in place within a second", start, left("Subject 1"), 1f)
     }
 }
