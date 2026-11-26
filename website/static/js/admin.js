@@ -6,22 +6,26 @@
 //   reaches the page through textContent, never innerHTML.
 // - Links are built from validated numbers, or are URLs checked to start with
 //   https://github.com/level-98/mailcrane/.
-// - Unauthenticated: 60 requests an hour per IP. Every request is conditional
-//   (If-None-Match with the stored ETag) and a 304 doesn't count, so an
-//   unchanged repository costs nothing. Responses are kept in localStorage.
-// - Refreshes every 60 s while the tab is visible, and backs off until the
-//   limit resets when few requests are left.
+// - Unauthenticated, GitHub allows 60 requests an hour per network, and a 304
+//   counts like any other answer. So this page spends at most BUDGET requests
+//   per rolling hour in this browser (counted in localStorage, so reloads and
+//   other tabs share it): 2 every 5 minutes, 4 every 15 minutes, and a
+//   comments request only when an open fleet PR has changed. That is about 40
+//   an hour, leaving room for the Refresh button. ETags still save bandwidth.
+// - Refreshes only while the tab is visible.
 "use strict";
 
 (() => {
   const OWNER = "level-98";
   const API = `https://api.github.com/repos/${OWNER}/mailcrane`;
   const REPO = `https://github.com/${OWNER}/mailcrane`;
-  const CI_WORKFLOW = ".github/workflows/ci.yml";
-  const REFRESH_MS = 60 * 1000;
-  const LOW_REMAINING = 10;
-  const DAY_MS = 24 * 60 * 60 * 1000;
-  const CACHE_PREFIX = "mailcrane-admin:";
+  const HOUR = 60 * 60 * 1000;
+  const DAY = 24 * HOUR;
+  const BUDGET = 50;
+  const FAST_MS = 5 * 60 * 1000;
+  const SLOW_MS = 15 * 60 * 1000;
+  const LOW_REMAINING = 5;
+  const PREFIX = "mailcrane-admin:";
 
   const $ = (id) => document.getElementById(id);
   const statusLine = $("admin-status");
@@ -29,160 +33,320 @@
   const refreshButton = $("admin-refresh");
   if (!statusLine || !errorLine || !refreshButton) return;
 
-  let pausedUntil = 0;
-  let remaining = null;
-  let lastRefresh = 0;
-  let running = false;
-  let timer = null;
+  // ---------- Small helpers ----------
+
+  const isNumber = (n) => Number.isSafeInteger(n) && n > 0;
+  // A commit SHA: hex with at least one letter, so a date like 20261126 isn't one.
+  const SHA = /\b(?=[0-9]*[a-f])[0-9a-f]{7,40}\b/;
+  const isSha = (s) => typeof s === "string" && /^[0-9a-f]{7,40}$/.test(s) && /[a-f]/.test(s);
+  const text = (s) => (typeof s === "string" ? s : "");
+  const list = (value) => (Array.isArray(value) ? value : []);
+  const names = (labels) => list(labels).map((l) => text(l && l.name));
+  const time = (iso) => {
+    const t = Date.parse(iso);
+    return Number.isFinite(t) ? t : 0;
+  };
+  const hasNextPage = (response) => /rel="next"/.test(response.headers.get("Link") || "");
 
   // ---------- Storage (may be blocked: private browsing, strict settings) ----------
 
-  function cacheGet(url) {
+  const memory = new Map();
+
+  function load(key, fallback) {
     try {
-      const raw = localStorage.getItem(CACHE_PREFIX + url);
-      return raw ? JSON.parse(raw) : null;
+      const raw = localStorage.getItem(PREFIX + key);
+      return raw === null ? fallback : JSON.parse(raw);
     } catch (error) {
-      return null;
+      return memory.has(key) ? memory.get(key) : fallback;
     }
   }
 
-  function cachePut(url, entry) {
+  function save(key, value) {
+    memory.set(key, value);
     try {
-      localStorage.setItem(CACHE_PREFIX + url, JSON.stringify(entry));
+      localStorage.setItem(PREFIX + key, JSON.stringify(value));
     } catch (error) {
-      // Full or blocked: the page still works, it just can't revalidate.
+      // Full or blocked: this tab keeps going on the in-memory copy.
     }
+  }
+
+  // ---------- The request budget: BUDGET per rolling hour, in this browser ----------
+
+  function spent() {
+    const now = Date.now();
+    return list(load("spent", [])).filter((t) => Number.isFinite(t) && t <= now && now - t < HOUR);
+  }
+
+  const budgetLeft = () => BUDGET - spent().length;
+
+  // When `needed` requests fit in the budget again (now, if they already do).
+  function budgetFreeAt(needed) {
+    const times = spent().sort((a, b) => a - b);
+    const over = times.length + needed - BUDGET;
+    return over <= 0 ? Date.now() : times[over - 1] + HOUR;
+  }
+
+  function spend() {
+    const times = spent();
+    times.push(Date.now());
+    save("spent", times);
   }
 
   // ---------- Requests ----------
 
-  function noteRateLimit(response) {
-    const left = Number(response.headers.get("X-RateLimit-Remaining"));
-    const reset = Number(response.headers.get("X-RateLimit-Reset"));
-    if (Number.isFinite(left)) remaining = left;
-    if (Number.isFinite(left) && Number.isFinite(reset) && left < LOW_REMAINING) {
-      pausedUntil = Math.max(pausedUntil, reset * 1000);
-    }
-    // Secondary limits answer with Retry-After (seconds).
-    const retryAfter = Number(response.headers.get("Retry-After"));
-    if (Number.isFinite(retryAfter) && retryAfter > 0) {
-      pausedUntil = Math.max(pausedUntil, Date.now() + retryAfter * 1000);
-    }
+  // Only the fields the page shows are kept, so storage stays small.
+  const slimPull = (pr) => ({
+    number: pr && pr.number,
+    title: text(pr && pr.title),
+    draft: Boolean(pr && pr.draft),
+    labels: names(pr && pr.labels),
+    sha: text(pr && pr.head && pr.head.sha),
+    created_at: text(pr && pr.created_at),
+    updated_at: text(pr && pr.updated_at),
+    merged_at: text(pr && pr.merged_at),
+  });
+  const slimRun = (run) => ({
+    id: run && run.id,
+    event: text(run && run.event),
+    branch: text(run && run.head_branch),
+    sha: text(run && run.head_sha),
+    status: text(run && run.status),
+    conclusion: text(run && run.conclusion),
+    created_at: text(run && run.created_at),
+  });
+
+  const ENDPOINTS = {
+    open: {
+      path: "/pulls?state=open&per_page=100",
+      slim: (data, response) => ({ more: hasNextPage(response), items: list(data).map(slimPull) }),
+    },
+    ci: {
+      path: "/actions/workflows/ci.yml/runs?per_page=100",
+      slim: (data) => list(data && data.workflow_runs).map(slimRun),
+    },
+    releases: {
+      path: "/releases?per_page=10",
+      slim: (data) =>
+        list(data).map((r) => ({
+          name: text(r && r.name),
+          tag: text(r && r.tag_name),
+          draft: Boolean(r && r.draft),
+          published_at: text(r && r.published_at),
+          commitish: text(r && r.target_commitish),
+          assets: list(r && r.assets).map((a) => ({ name: text(a && a.name), url: text(a && a.browser_download_url) })),
+        })),
+    },
+    issues: {
+      path: "/issues?state=open&per_page=100",
+      slim: (data, response) => ({
+        more: hasNextPage(response),
+        items: list(data)
+          .filter((i) => i && !i.pull_request)
+          .map((i) => ({
+            number: i.number,
+            title: text(i.title),
+            labels: names(i.labels),
+            assigned: list(i.assignees).length > 0,
+            created_at: text(i.created_at),
+          })),
+      }),
+    },
+    closed: {
+      path: "/pulls?state=closed&sort=updated&direction=desc&per_page=50",
+      slim: (data, response) => ({ more: hasNextPage(response), items: list(data).map(slimPull) }),
+    },
+    release: {
+      path: "/actions/workflows/release.yml/runs?per_page=3",
+      slim: (data) => list(data && data.workflow_runs).map(slimRun),
+    },
+    // The newest comments in the whole repository, for "reviewed on head".
+    comments: {
+      path: "/issues/comments?sort=created&direction=desc&per_page=100",
+      slim: (data) =>
+        list(data).map((c) => ({
+          number: Number((text(c && c.issue_url).match(/\/issues\/(\d+)$/) || [])[1]),
+          login: text(c && c.user && c.user.login),
+          // A review comment names the commit near its start.
+          start: text(c && c.body).slice(0, 400),
+          created_at: text(c && c.created_at),
+        })),
+    },
+  };
+  const FAST = ["open", "ci"];
+  const SLOW = ["releases", "issues", "closed", "release"];
+
+  let errors = new Set();
+  let remaining = null;
+
+  const pausedUntil = () => Number(load("pausedUntil", 0)) || 0;
+
+  function pauseUntil(at) {
+    if (at > pausedUntil()) save("pausedUntil", at);
   }
 
-  // Returns { data, savedAt, error }: fresh data, or the saved copy with an
-  // error when GitHub can't be reached or refuses.
-  async function get(path) {
-    const url = API + path;
-    const cached = cacheGet(url);
-    const fallback = (error) => ({
-      data: cached ? cached.data : null,
-      savedAt: cached ? cached.savedAt : null,
-      error,
-    });
+  function noteRateLimit(response) {
+    const left = response.headers.get("X-RateLimit-Remaining");
+    const reset = response.headers.get("X-RateLimit-Reset");
+    if (left !== null && Number.isFinite(Number(left))) {
+      // The lowest figure of this refresh: answers arrive in any order.
+      remaining = remaining === null ? Number(left) : Math.min(remaining, Number(left));
+      if (Number(left) < LOW_REMAINING && reset !== null && Number.isFinite(Number(reset))) {
+        pauseUntil(Number(reset) * 1000);
+      }
+    }
+    const retryAfter = Number(response.headers.get("Retry-After"));
+    if (Number.isFinite(retryAfter) && retryAfter > 0) pauseUntil(Date.now() + retryAfter * 1000);
+  }
+
+  // Fetches one endpoint and saves its slim data. The page always renders
+  // from what's saved; failures go to `errors`.
+  async function refreshEndpoint(key) {
+    const endpoint = ENDPOINTS[key];
+    const stored = load(`data:${key}`, null);
+    if (budgetLeft() < 1) {
+      errors.add("this browser’s hourly request budget is used up");
+      return;
+    }
     const headers = { Accept: "application/vnd.github+json" };
-    if (cached && typeof cached.etag === "string") headers["If-None-Match"] = cached.etag;
+    if (stored && typeof stored.etag === "string") headers["If-None-Match"] = stored.etag;
+    spend();
     let response;
     try {
       // no-store: the browser's own cache would turn GitHub's 304 into a 200.
-      response = await fetch(url, {
+      response = await fetch(API + endpoint.path, {
         headers,
         cache: "no-store",
         credentials: "omit",
         referrerPolicy: "no-referrer",
       });
     } catch (error) {
-      return fallback("GitHub couldn’t be reached");
+      errors.add("GitHub couldn’t be reached");
+      return;
     }
     noteRateLimit(response);
-    if (response.status === 304 && cached) {
-      return { data: cached.data, savedAt: Date.now(), error: null };
+    if (response.status === 304 && stored) {
+      save(`data:${key}`, { ...stored, savedAt: Date.now() });
+      return;
     }
     if (response.ok) {
-      let data;
       try {
-        data = await response.json();
+        const data = endpoint.slim(await response.json(), response);
+        save(`data:${key}`, { etag: response.headers.get("ETag"), data, savedAt: Date.now() });
       } catch (error) {
-        return fallback("GitHub sent something unreadable");
+        errors.add("GitHub sent something unreadable");
       }
-      cachePut(url, { etag: response.headers.get("ETag"), data, savedAt: Date.now() });
-      return { data, savedAt: Date.now(), error: null };
+      return;
     }
     if (response.status === 403 || response.status === 429) {
-      if (pausedUntil <= Date.now()) pausedUntil = Date.now() + 5 * 60 * 1000;
-      return fallback("GitHub’s rate limit was reached");
+      pauseUntil(Date.now() + 10 * 60 * 1000);
+      errors.add("GitHub’s rate limit was reached");
+      return;
     }
-    return fallback(`GitHub answered ${response.status}`);
+    errors.add(`GitHub answered ${response.status}`);
+  }
+
+  const saved = (key) => {
+    const entry = load(`data:${key}`, null);
+    return entry ? entry.data : null;
+  };
+
+  // ---------- Reviews: whether the fleet's review seat commented on the head ----------
+
+  // Fetched only when an open fleet PR's head or update time changed since the
+  // last look (a new comment changes its update time).
+  async function refreshReviews() {
+    const open = saved("open");
+    const fleet = list(open && open.items).filter((pr) => pr.labels.includes("fleet") && isNumber(pr.number));
+    const known = load("reviews", {});
+    const changed = fleet.some((pr) => {
+      const seen = known[pr.number];
+      return !seen || seen.sha !== pr.sha || seen.updated !== pr.updated_at;
+    });
+    if (!changed) return;
+    await refreshEndpoint("comments");
+    const comments = saved("comments");
+    if (comments === null) return;
+    // Fewer than a page means this is every comment there is.
+    const complete = comments.length < 100;
+    const oldest = comments.length > 0 ? time(comments[comments.length - 1].created_at) : 0;
+    const reviews = {};
+    fleet.forEach((pr) => {
+      // Only the repository owner's own comments count (the fleet posts as
+      // the owner); anyone else could type the same prefix.
+      const mine = comments.filter(
+        (c) => c.number === pr.number && c.login === OWNER && c.start.startsWith("**mailbot.review:**"),
+      );
+      let state;
+      if (mine.some((c) => isSha(pr.sha) && c.start.includes(pr.sha.slice(0, 7)))) state = "head";
+      else if (mine.length > 0) state = "earlier";
+      else if (complete || oldest <= time(pr.created_at)) state = "none";
+      else state = "unknown";
+      reviews[pr.number] = { sha: pr.sha, updated: pr.updated_at, state };
+    });
+    save("reviews", reviews);
   }
 
   // ---------- Building the page (textContent only) ----------
 
-  function node(tag, className, text) {
+  function node(tag, className, content) {
     const element = document.createElement(tag);
     if (className) element.className = className;
-    if (text !== undefined && text !== null) element.textContent = String(text);
+    if (content !== undefined && content !== null) element.textContent = String(content);
     return element;
   }
 
   // A link only to the repository on github.com; anything else becomes text.
-  function link(href, text, className) {
-    if (typeof href !== "string" || !href.startsWith(`${REPO}/`)) return node("span", className, text);
-    const a = node("a", className, text);
+  function link(href, content, className) {
+    if (typeof href !== "string" || !href.startsWith(`${REPO}/`)) return node("span", className, content);
+    const a = node("a", className, content);
     a.href = href;
     a.rel = "noreferrer";
     return a;
   }
 
-  const isNumber = (n) => Number.isSafeInteger(n) && n > 0;
-  const isSha = (s) => typeof s === "string" && /^[0-9a-f]{7,40}$/.test(s);
-  const text = (s) => (typeof s === "string" ? s : "");
-  const list = (value) => (Array.isArray(value) ? value : []);
-  const labelNames = (item) => list(item && item.labels).map((l) => text(l && l.name));
-
   function when(iso) {
-    const time = Date.parse(iso);
-    if (!Number.isFinite(time)) return node("span", "admin-muted", "");
-    const minutes = Math.round((Date.now() - time) / 60000);
+    const t = time(iso);
+    if (!t) return node("span", "admin-muted", "");
+    const minutes = Math.round((Date.now() - t) / 60000);
     let ago;
     if (minutes < 1) ago = "just now";
     else if (minutes < 60) ago = `${minutes} min ago`;
     else if (minutes < 48 * 60) ago = `${Math.round(minutes / 60)} h ago`;
     else ago = `${Math.round(minutes / 1440)} days ago`;
     const span = node("time", "admin-muted", ago);
-    span.dateTime = new Date(time).toISOString();
-    span.title = new Date(time).toLocaleString();
+    span.dateTime = new Date(t).toISOString();
+    span.title = new Date(t).toLocaleString();
     return span;
   }
 
-  function pill(label, tone) {
-    return node("span", `admin-pill admin-pill-${tone}`, label);
-  }
+  const pill = (label, tone) => node("span", `admin-pill admin-pill-${tone}`, label);
 
   // A workflow run's state; `prefix` names it ("CI") where that isn't obvious.
   function runPill(run, prefix = "") {
     const say = (state) => (prefix ? `${prefix} ${state}` : state);
-    if (!run) return pill(say("not run yet"), "neutral");
-    const status = text(run.status);
-    if (status !== "completed") return pill(say(status === "queued" ? "queued" : "running"), "running");
-    const conclusion = text(run.conclusion);
-    if (conclusion === "success") return pill(say("passed"), "ok");
-    if (conclusion === "skipped" || conclusion === "neutral") return pill(say(conclusion), "neutral");
-    return pill(say(conclusion || "failed"), "fail");
+    if (!run) return pill(say("unknown"), "neutral");
+    if (run.status !== "completed") return pill(say(run.status === "queued" ? "queued" : "running"), "running");
+    if (run.conclusion === "success") return pill(say("passed"), "ok");
+    if (run.conclusion === "skipped" || run.conclusion === "neutral") return pill(say(run.conclusion), "neutral");
+    return pill(say(run.conclusion || "failed"), "fail");
   }
 
-  function fill(id, children, emptyText) {
+  function fill(id, children, emptyText, note) {
     const target = $(id);
     if (!target) return;
     target.replaceChildren();
     if (children === null) {
       target.append(node("p", "admin-empty", "Not available yet."));
-    } else if (children.length === 0) {
+      return;
+    }
+    if (children.length === 0) {
       target.append(node("p", "admin-empty", emptyText));
     } else {
       const ul = node("ul", "admin-list");
       children.forEach((child) => ul.append(child));
       target.append(ul);
     }
+    if (note) target.append(node("p", "admin-meta", note));
   }
 
   function row(...parts) {
@@ -191,73 +355,73 @@
     return li;
   }
 
-  function prLink(pr) {
-    if (!isNumber(pr && pr.number)) return node("span", "admin-title", text(pr && pr.title));
+  function numbered(kind, item) {
     const wrap = node("span", "admin-title");
-    wrap.append(link(`${REPO}/pull/${pr.number}`, `#${pr.number}`, "admin-num"), " ", text(pr.title));
+    if (isNumber(item.number)) wrap.append(link(`${REPO}/${kind}/${item.number}`, `#${item.number}`, "admin-num"), " ");
+    wrap.append(item.title);
     return wrap;
   }
 
-  function renderBuild(releases) {
+  function renderBuild() {
     const target = $("admin-build");
     if (!target) return;
     target.replaceChildren();
+    const releases = saved("releases");
     if (releases === null) {
       target.append(node("p", "admin-empty", "Not available yet."));
       return;
     }
-    const build = list(releases).find((r) => r && !r.draft && text(r.tag_name).startsWith("test-build-"));
+    const build = list(releases).find((r) => !r.draft && r.tag.startsWith("test-build-"));
     if (!build) {
       target.append(node("p", "admin-empty", "No test build yet."));
       return;
     }
-    const apk = list(build.assets).find(
-      (a) => a && text(a.name).endsWith(".apk") && text(a.browser_download_url).startsWith(`${REPO}/releases/download/`),
-    );
-    if (apk) {
-      target.append(link(apk.browser_download_url, `Download ${text(apk.name)}`, "button button-primary admin-download"));
-    }
+    const apk = list(build.assets).find((a) => a.name.endsWith(".apk") && a.url.startsWith(`${REPO}/releases/download/`));
+    if (apk) target.append(link(apk.url, `Download ${apk.name}`, "button button-primary admin-download"));
     const meta = node("p", "admin-meta");
-    meta.append(node("span", null, text(build.name) || text(build.tag_name)), " · ", when(build.published_at));
-    const commit = (text(build.name).match(/\b[0-9a-f]{7,40}\b/) || [])[0];
-    if (isSha(commit)) meta.append(" · ", link(`${REPO}/commit/${commit}`, commit, "admin-num"));
+    meta.append(node("span", null, build.name || build.tag), " · ", when(build.published_at));
+    const commit = isSha(build.commitish) ? build.commitish : (build.name.match(SHA) || [])[0];
+    if (isSha(commit)) meta.append(" · ", link(`${REPO}/commit/${commit}`, commit.slice(0, 7), "admin-num"));
     target.append(meta);
   }
 
-  function renderPrs(pulls, runs, reviews) {
-    if (pulls === null) return fill("admin-prs", null);
-    const fleet = list(pulls).filter((pr) => labelNames(pr).includes("fleet"));
-    const ciRuns = list(runs && runs.workflow_runs).filter((r) => r && r.path === CI_WORKFLOW);
+  function renderPrs() {
+    const open = saved("open");
+    if (open === null) return fill("admin-prs", null);
+    const ci = list(saved("ci"));
+    const reviews = load("reviews", {});
+    const fleet = list(open.items).filter((pr) => pr.labels.includes("fleet"));
     fill(
       "admin-prs",
       fleet.map((pr) => {
-        const sha = text(pr.head && pr.head.sha);
-        const labels = labelNames(pr);
         const badges = node("span", "admin-badges");
         badges.append(pr.draft ? pill("draft", "neutral") : pill("ready", "running"));
-        badges.append(runPill(ciRuns.find((r) => r.head_sha === sha), "CI"));
-        const review = reviews.get(pr.number);
-        if (review === "head") badges.append(pill("reviewed on head", "ok"));
-        else if (review === "earlier") badges.append(pill("reviewed earlier", "neutral"));
-        else if (review === "none") badges.append(pill("not reviewed", "neutral"));
-        if (labels.includes("qa-verified")) badges.append(pill("qa-verified", "ok"));
-        if (labels.includes("security")) badges.append(pill("security", "fail"));
+        badges.append(runPill(ci.find((r) => r.sha === pr.sha), "CI"));
+        const review = reviews[pr.number];
+        const state = review && review.sha === pr.sha ? review.state : "unknown";
+        const label = { head: "reviewed on head", earlier: "reviewed earlier", none: "not reviewed" }[state];
+        badges.append(pill(label || "review unknown", state === "head" ? "ok" : "neutral"));
+        if (pr.labels.includes("qa-verified")) badges.append(pill("qa-verified", "ok"));
+        if (pr.labels.includes("security")) badges.append(pill("security", "fail"));
         badges.append(when(pr.created_at));
-        return row(prLink(pr), badges);
+        return row(numbered("pull", pr), badges);
       }),
       "No open fleet pull requests.",
+      open.more ? "More than 100 pull requests are open; only the newest 100 are checked." : null,
     );
   }
 
-  function renderMerged(closed) {
+  function renderMerged() {
+    const closed = saved("closed");
     if (closed === null) return fill("admin-merged", null);
-    const merged = list(closed)
-      .filter((pr) => labelNames(pr).includes("fleet") && Date.now() - Date.parse(pr.merged_at) < DAY_MS)
-      .sort((a, b) => Date.parse(b.merged_at) - Date.parse(a.merged_at));
+    const merged = list(closed.items)
+      .filter((pr) => pr.labels.includes("fleet") && pr.merged_at && Date.now() - time(pr.merged_at) < DAY)
+      .sort((a, b) => time(b.merged_at) - time(a.merged_at));
     fill(
       "admin-merged",
-      merged.map((pr) => row(prLink(pr), when(pr.merged_at))),
+      merged.map((pr) => row(numbered("pull", pr), when(pr.merged_at))),
       "Nothing merged in the last 24 hours.",
+      closed.more ? "Only the 50 most recently updated closed pull requests are checked." : null,
     );
   }
 
@@ -265,9 +429,9 @@
     if (runs === null) return fill(id, null);
     fill(
       id,
-      list(runs && runs.workflow_runs).slice(0, 3).map((run) => {
+      runs.slice(0, 3).map((run) => {
         const title = node("span", "admin-title");
-        const label = `${text(run.event)} on ${text(run.head_branch) || "?"}`;
+        const label = `${run.event} on ${run.branch || "?"}`;
         title.append(isNumber(run.id) ? link(`${REPO}/actions/runs/${run.id}`, label) : node("span", null, label));
         const badges = node("span", "admin-badges");
         badges.append(runPill(run), when(run.created_at));
@@ -277,147 +441,156 @@
     );
   }
 
-  function renderIssues(issues) {
+  function renderIssues() {
     const target = $("admin-issues");
+    const issues = saved("issues");
     if (!target) return;
     if (issues === null) return fill("admin-issues", null);
-    const open = list(issues).filter((i) => i && !i.pull_request);
+    const open = list(issues.items);
     const count = (predicate) => open.filter(predicate).length;
+    // With more than one page, the counts are only a lower bound.
+    const atLeast = issues.more ? "≥ " : "";
     const counts = node("p", "admin-counts");
     const stat = (n, label) => {
       const s = node("span", "admin-stat");
-      s.append(node("strong", null, n), ` ${label}`);
+      s.append(node("strong", null, `${atLeast}${n}`), ` ${label}`);
       return s;
     };
     counts.append(
-      stat(count((i) => labelNames(i).includes("agent-ready") && list(i.assignees).length === 0), "agent-ready, free"),
-      stat(count((i) => labelNames(i).includes("needs-human")), "needs-human"),
-      stat(count((i) => !labelNames(i).some((l) => l.startsWith("area:"))), "untriaged"),
+      stat(count((i) => i.labels.includes("agent-ready") && !i.assigned), "agent-ready, free"),
+      stat(count((i) => i.labels.includes("needs-human")), "needs-human"),
+      stat(count((i) => !i.labels.some((l) => l.startsWith("area:"))), "untriaged"),
     );
     const newest = open
       .slice()
-      .sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at))
+      .sort((a, b) => time(b.created_at) - time(a.created_at))
       .slice(0, 5)
-      .map((issue) => {
-        const title = node("span", "admin-title");
-        if (isNumber(issue.number)) {
-          title.append(link(`${REPO}/issues/${issue.number}`, `#${issue.number}`, "admin-num"), " ");
-        }
-        title.append(text(issue.title));
-        return row(title, when(issue.created_at));
-      });
+      .map((issue) => row(numbered("issues", issue), when(issue.created_at)));
     fill("admin-issues", newest, "No open issues.");
     target.prepend(counts);
   }
 
-  // Whether the fleet's review seat has commented on the head commit. Only the
-  // repository owner's own comments count (the fleet posts as the owner);
-  // anyone else could type the same prefix.
-  function reviewState(comments, sha) {
-    const fromReview = list(comments).filter(
-      (c) => c && c.user && c.user.login === OWNER && text(c.body).startsWith("**mailbot.review:**"),
-    );
-    if (fromReview.length === 0) return "none";
-    return isSha(sha) && fromReview.some((c) => text(c.body).includes(sha.slice(0, 7))) ? "head" : "earlier";
+  function renderAll() {
+    renderBuild();
+    renderPrs();
+    renderMerged();
+    const ci = saved("ci");
+    renderRuns("admin-ci", ci === null ? null : list(ci).filter((r) => r.event === "push" && r.branch === "main"));
+    const release = saved("release");
+    renderRuns("admin-release", release === null ? null : list(release));
+    renderIssues();
   }
 
-  // ---------- Refreshing ----------
+  // ---------- Scheduling ----------
+
+  const lastRun = (tier) => Number(load(`last:${tier}`, 0)) || 0;
 
   function clock(ms) {
     return new Date(ms).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
   }
 
-  function showStatus(message) {
-    const left = remaining === null ? "" : ` · ${remaining} GitHub requests left this hour`;
-    statusLine.textContent = message + left;
+  function countdown(ms) {
+    const s = Math.max(0, Math.ceil(ms / 1000));
+    return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
   }
 
-  async function refresh() {
-    if (running) return;
-    if (Date.now() < pausedUntil) {
-      showStatus(`Paused until ${clock(pausedUntil)}: GitHub’s hourly limit is nearly used up`);
-      return;
-    }
+  // When the next automatic refresh happens: the next tier due, no earlier
+  // than the budget and any rate-limit pause allow.
+  function nextDue() {
+    const fast = Math.max(lastRun("fast") + FAST_MS, budgetFreeAt(FAST.length));
+    const slow = Math.max(lastRun("slow") + SLOW_MS, budgetFreeAt(SLOW.length));
+    return Math.max(Math.min(fast, slow), pausedUntil());
+  }
+
+  let running = false;
+  let lastOutcome = "";
+
+  function showStatus() {
+    const parts = [];
+    if (lastOutcome) parts.push(lastOutcome);
+    const now = Date.now();
+    if (pausedUntil() > now) parts.push(`paused until ${clock(pausedUntil())} (GitHub’s limit)`);
+    else if (!running) parts.push(`next refresh in ${countdown(nextDue() - now)}`);
+    parts.push(`${budgetLeft()} of ${BUDGET} requests left this hour`);
+    if (remaining !== null) parts.push(`GitHub: ${remaining} left for this network`);
+    statusLine.textContent = parts.join(" · ");
+    // The button spends the fast tier's requests: only when the budget has them.
+    const wait = Math.max(budgetFreeAt(FAST.length), pausedUntil()) - now;
+    refreshButton.disabled = running || wait > 0;
+    refreshButton.textContent = wait > 0 ? `Refresh (${countdown(wait)})` : "Refresh";
+  }
+
+  async function refresh(manual) {
+    if (running || pausedUntil() > Date.now()) return;
     running = true;
-    refreshButton.disabled = true;
-    const errors = new Set();
-    let oldest = null;
-    const load = async (path) => {
-      const result = await get(path);
-      if (result.error) {
-        errors.add(result.error);
-        if (result.savedAt) oldest = Math.min(oldest === null ? Date.now() : oldest, result.savedAt);
-      }
-      return result.data;
-    };
+    errors = new Set();
+    remaining = null;
+    showStatus();
+    const now = Date.now();
     try {
-      const [releases, pulls, runs, mainRuns, releaseRuns, closed, issues] = await Promise.all([
-        load("/releases?per_page=20"),
-        load("/pulls?state=open&per_page=50"),
-        load("/actions/runs?per_page=50"),
-        load("/actions/workflows/ci.yml/runs?branch=main&per_page=3"),
-        load("/actions/workflows/release.yml/runs?per_page=3"),
-        load("/pulls?state=closed&sort=updated&direction=desc&per_page=30"),
-        load("/issues?state=open&per_page=100"),
-      ]);
-      // One comments request per open fleet PR, to see whether the head was
-      // reviewed; unchanged threads answer 304.
-      const reviews = new Map();
-      const fleet = list(pulls).filter((pr) => labelNames(pr).includes("fleet") && isNumber(pr.number));
-      await Promise.all(
-        fleet.map(async (pr) => {
-          const comments = await load(`/issues/${pr.number}/comments?per_page=100`);
-          if (comments !== null) reviews.set(pr.number, reviewState(comments, text(pr.head && pr.head.sha)));
-        }),
-      );
-      renderBuild(releases);
-      renderPrs(pulls, runs, reviews);
-      renderMerged(closed);
-      renderRuns("admin-ci", mainRuns);
-      renderRuns("admin-release", releaseRuns);
-      renderIssues(issues);
-      lastRefresh = Date.now();
-      if (errors.size > 0) {
-        errorLine.hidden = false;
-        const saved = oldest === null ? "Nothing is saved in this browser yet." : `Showing what was saved at ${clock(oldest)}.`;
-        errorLine.textContent = `${[...errors].join("; ")}. ${saved}`;
-        showStatus(`Tried at ${clock(lastRefresh)}`);
-      } else {
-        errorLine.hidden = true;
-        errorLine.textContent = "";
-        showStatus(`Updated at ${clock(lastRefresh)}`);
+      const fastDue = manual || now - lastRun("fast") >= FAST_MS;
+      const slowDue = now - lastRun("slow") >= SLOW_MS;
+      if (fastDue && budgetLeft() >= FAST.length) {
+        await Promise.all(FAST.map(refreshEndpoint));
+        save("last:fast", Date.now());
+        await refreshReviews();
       }
-      if (Date.now() < pausedUntil) {
-        showStatus(`Updated at ${clock(lastRefresh)}; paused until ${clock(pausedUntil)} (GitHub’s hourly limit)`);
+      if (slowDue && budgetLeft() >= SLOW.length) {
+        await Promise.all(SLOW.map(refreshEndpoint));
+        save("last:slow", Date.now());
       }
     } finally {
       running = false;
-      refreshButton.disabled = false;
     }
+    renderAll();
+    if (errors.size > 0) {
+      const times = Object.keys(ENDPOINTS)
+        .map((key) => load(`data:${key}`, null))
+        .filter(Boolean)
+        .map((entry) => entry.savedAt)
+        .filter(Number.isFinite);
+      const savedNote =
+        times.length === 0 ? "Nothing is saved in this browser yet." : `Showing what was saved by ${clock(Math.min(...times))}.`;
+      errorLine.hidden = false;
+      errorLine.textContent = `${[...errors].join("; ")}. ${savedNote}`;
+      lastOutcome = `Tried at ${clock(Date.now())}`;
+    } else {
+      errorLine.hidden = true;
+      errorLine.textContent = "";
+      lastOutcome = `Updated at ${clock(Date.now())}`;
+    }
+    showStatus();
   }
 
-  function schedule() {
-    clearTimeout(timer);
+  // Forget keys from older versions of this page (whole raw responses).
+  try {
+    const keep = new Set(["spent", "pausedUntil", "reviews", "last:fast", "last:slow"]);
+    Object.keys(ENDPOINTS).forEach((key) => keep.add(`data:${key}`));
+    for (let i = localStorage.length - 1; i >= 0; i -= 1) {
+      const key = localStorage.key(i);
+      if (key && key.startsWith(PREFIX) && !keep.has(key.slice(PREFIX.length))) localStorage.removeItem(key);
+    }
+  } catch (error) {
+    // Storage blocked: nothing to clean.
+  }
+
+  refreshButton.addEventListener("click", () => refresh(true));
+
+  // Once a second while visible: update the countdown, refresh when due.
+  let ticker = null;
+  function tick() {
+    if (!running && Date.now() >= nextDue()) refresh(false);
+    else showStatus();
+  }
+  function start() {
+    clearInterval(ticker);
     if (document.hidden) return;
-    timer = setTimeout(async () => {
-      await refresh();
-      schedule();
-    }, REFRESH_MS);
+    ticker = setInterval(tick, 1000);
+    tick();
   }
+  document.addEventListener("visibilitychange", start);
 
-  refreshButton.addEventListener("click", async () => {
-    await refresh();
-    schedule();
-  });
-
-  document.addEventListener("visibilitychange", async () => {
-    if (document.hidden) {
-      clearTimeout(timer);
-      return;
-    }
-    if (Date.now() - lastRefresh >= REFRESH_MS) await refresh();
-    schedule();
-  });
-
-  refresh().then(schedule);
+  // Show what's saved at once, then refresh whatever is due.
+  renderAll();
+  start();
 })();
