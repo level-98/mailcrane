@@ -721,7 +721,7 @@ Mailcrane uses the connection only to wait for new mail, so the extra battery us
     <string name="setup_jmap_server_hint">Your provider’s domain (such as example.org) or its JMAP session URL. Use an app password if your provider has them.</string>
     <!-- Push wake-ups (UnifiedPush, M4-05). -->
     <string name="push_title">Push wake-ups (UnifiedPush)</string>
-    <string name="push_summary">Let a UnifiedPush distributor app wake Mailcrane to check for mail, without a permanent connection. Your mail server doesn’t send these itself: it needs a push gateway on your side that watches your mailbox and sends to the address below.</string>
+    <string name="push_summary">Let a UnifiedPush distributor app wake Mailcrane to check for mail, without a permanent connection. JMAP accounts are told the address below and push by themselves. IMAP servers don’t: they need a push gateway on your side that watches your mailbox and sends to that address.</string>
     <string name="push_no_distributor">Needs a UnifiedPush distributor app on this phone</string>
     <string name="push_registering">Asking the distributor for an address…</string>
     <string name="push_ready">Ready. Give this address to your push gateway:</string>
@@ -734,4 +734,5 @@ Mailcrane uses the connection only to wait for new mail, so the extra battery us
     <string name="push_failed_unregistered">The distributor ended the registration. Turn this off and on again to register anew.</string>
     <string name="push_check_channel">Push checks</string>
     <string name="push_check_notification">Checking for new mail</string>
+    <string name="push_setup_notification">Setting up push from your mail server</string>
 </resources>
