@@ -226,6 +226,7 @@ fun SettingsScreen(
             AccountsSection(accounts, onAddAccount, onRemoveAccount)
         }
         NotificationsSection()
+        PushSection()
         AppLockSection()
         SwitchRow(
             title = R.string.settings_hide_outside,

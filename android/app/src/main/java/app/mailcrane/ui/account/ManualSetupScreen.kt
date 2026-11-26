@@ -512,6 +512,7 @@ internal fun SetupError.message(): Int {
         SetupFailure.AUTH_FAILED -> pick(R.string.setup_error_auth_imap, R.string.setup_error_auth_smtp)
         SetupFailure.TIMEOUT -> pick(R.string.setup_error_timeout_imap, R.string.setup_error_timeout_smtp)
         SetupFailure.SAVE_FAILED -> R.string.setup_error_save_failed
+        SetupFailure.ALREADY_ADDED -> R.string.setup_error_already_added
         SetupFailure.UNEXPECTED -> R.string.setup_error_unexpected
     }
 }

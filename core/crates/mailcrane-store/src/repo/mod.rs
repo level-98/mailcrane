@@ -10,6 +10,7 @@ mod messages;
 mod notify;
 mod outbox;
 mod pending_ops;
+mod push;
 mod rules;
 mod search;
 mod server_rules;
@@ -25,6 +26,7 @@ pub use outbox::{
     NewOutboxMessage, OutboxId, OutboxMessage, OutboxState, SaveSentCopy, ScheduleMode, SentCopy,
 };
 pub use pending_ops::{CancelReport, NewOp, OpId, OpKind, OpMessage, PendingOp};
+pub use push::PushSubscriptionRow;
 pub use rules::{NewRule, Rule, RuleAction, RuleCondition, RuleId};
 pub use search::SearchFilter;
 pub use server_rules::{ServerRules, ServerRulesState};
