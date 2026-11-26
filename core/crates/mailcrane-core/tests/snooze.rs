@@ -804,3 +804,247 @@ async fn a_refusal_after_flagging_carries_the_move_forward() {
     assert_eq!(live(&imap, "Snoozed").await, 1);
     assert_eq!(live(&imap, "INBOX").await, 0, "not shown twice");
 }
+
+// --- #444: every early exit, against the model in snooze/server.rs ----------
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Dir {
+    Snooze,
+    Wake,
+}
+
+#[derive(Debug, Clone)]
+enum Case {
+    /// The first command containing this text is carried out, then the
+    /// connection drops.
+    Drop(&'static str),
+    /// Commands containing this text are refused (in this folder, if any).
+    Refuse(Option<&'static str>, &'static str),
+    /// A drop after the COPY, then the original disappears.
+    MissingOriginal,
+    /// A drop after the COPY, then the copy disappears.
+    MissingCopy,
+}
+
+/// A server on the same messages, with or without MOVE.
+async fn twin(imap: &FakeImap, with_move_cap: bool, faults: Vec<Fault>) -> FakeImap {
+    let mut builder = FakeImap::builder()
+        .user(USER, PASSWORD)
+        .mailbox(imap.mailbox());
+    if !with_move_cap {
+        builder = builder.quirk(Quirk::NoMove);
+    }
+    for f in faults {
+        builder = builder.fault(f);
+    }
+    builder.start().await.expect("imap")
+}
+
+async fn live_with_keyword(imap: &FakeImap, folder: &str) -> usize {
+    imap.mailbox()
+        .messages(folder)
+        .await
+        .iter()
+        .filter(|m| m.flags.iter().any(|f| f.starts_with("$snoozed")))
+        .count()
+}
+
+async fn run_case(dir: Dir, with_move_cap: bool, case: Case) {
+    let name = format!("{dir:?} move={with_move_cap} {case:?}");
+    let base = FakeImap::builder()
+        .user(USER, PASSWORD)
+        .folder("INBOX", vec![raw("Lunch", "lunch@example.net")])
+        .start()
+        .await
+        .expect("imap");
+    let store = Store::open_in_memory().expect("store");
+    let account = setup(&base, &store).await;
+    let inbox = folder(&store, account, "INBOX");
+    snooze(&store, &visible(&store, inbox), WAKE, &Quiet).expect("snooze");
+    let start = if dir == Dir::Wake {
+        assert_eq!(
+            run_sync(&base, &store, account, NOW).await.snoozed,
+            1,
+            "{name}"
+        );
+        sync_all(&base, &store, account).await;
+        let uid = base.mailbox().messages("Snoozed").await[0].uid;
+        base.mailbox().add_flag("Snoozed", uid, "\\Seen").await;
+        assert_eq!(wake_due(&store, WAKE + 60, &Quiet).expect("wake").len(), 1);
+        WAKE + 60
+    } else {
+        NOW
+    };
+    let (source, target) = match dir {
+        Dir::Snooze => ("INBOX", "Snoozed"),
+        Dir::Wake => ("Snoozed", "INBOX"),
+    };
+    let faults = match &case {
+        Case::Drop(text) => vec![Fault::DropAfterCommandOnce((*text).into())],
+        Case::Refuse(folder, text) => vec![Fault::RefuseCommand {
+            folder: folder.map(Into::into),
+            text: (*text).into(),
+        }],
+        Case::MissingOriginal | Case::MissingCopy => {
+            vec![Fault::DropAfterCommandOnce("UID COPY".into())]
+        }
+    };
+    let faulty = twin(&base, with_move_cap, faults).await;
+    let _ = run_sync(&faulty, &store, account, start).await;
+    // The mutations only mean something when the drop left a move part-way.
+    let mid_move = list_snoozed(&store, Some(account))
+        .expect("list")
+        .iter()
+        .any(|r| r.step > 0);
+    match &case {
+        _ if !mid_move => {}
+        Case::MissingOriginal => {
+            let originals = base.mailbox().messages(source).await;
+            for m in originals {
+                base.mailbox().expunge(source, m.uid).await;
+            }
+        }
+        Case::MissingCopy => {
+            if let Some(copy) = base.mailbox().messages(target).await.last() {
+                base.mailbox().expunge(target, copy.uid).await;
+            }
+        }
+        _ => {}
+    }
+    // A healthy server afterwards: retries resume and finish.
+    let healthy = twin(&base, with_move_cap, Vec::new()).await;
+    for day in 1..=6 {
+        let _ = run_sync(&healthy, &store, account, start + day * 2 * 86_400).await;
+    }
+
+    // Invariant 1: one live place. Invariant 2: no keyword in Snoozed
+    // without a row. Then the expected end state.
+    let rows = list_snoozed(&store, Some(account)).expect("list");
+    let in_inbox = live(&base, "INBOX").await;
+    let in_snoozed = live(&base, "Snoozed").await;
+    let lost = matches!(case, Case::MissingOriginal) && dir == Dir::Snooze;
+    if !lost {
+        assert_eq!(in_inbox + in_snoozed, 1, "{name}: one live place");
+    }
+    if rows.is_empty() {
+        assert_eq!(
+            live_with_keyword(&base, "Snoozed").await,
+            0,
+            "{name}: keyword without a row"
+        );
+    }
+    let refused = matches!(case, Case::Refuse(..));
+    match dir {
+        Dir::Snooze if refused => {
+            // Undone, or (refusals the move never meets) snoozed.
+            assert!(
+                rows.is_empty() || rows[0].state == SnoozeState::Snoozed,
+                "{name}: {rows:?}"
+            );
+        }
+        Dir::Snooze => {
+            assert_eq!(rows.len(), 1, "{name}");
+            assert_eq!(rows[0].state, SnoozeState::Snoozed, "{name}");
+            assert_eq!(in_snoozed, 1, "{name}");
+        }
+        Dir::Wake => {
+            assert!(rows.is_empty(), "{name}: woken: {rows:?}");
+            assert_eq!(in_inbox, 1, "{name}: back in the Inbox");
+            let refused_cleanup = matches!(case, Case::Refuse(Some("INBOX"), "-FLAGS"));
+            if !refused_cleanup {
+                let back = base.mailbox().messages("INBOX").await;
+                let copy = back
+                    .iter()
+                    .find(|m| !m.flags.iter().any(|f| f == "\\Deleted"))
+                    .expect("copy");
+                assert!(
+                    !copy
+                        .flags
+                        .iter()
+                        .any(|f| f.starts_with("$snoozed") || f == "\\Seen"),
+                    "{name}: unsnoozed and unread: {:?}",
+                    copy.flags
+                );
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn every_early_exit_keeps_the_model_invariants() {
+    let cases = [
+        Case::Drop("UID COPY"),
+        Case::Drop("UID MOVE"),
+        Case::Drop("\\Deleted"),
+        Case::Drop("UID EXPUNGE"),
+        Case::Drop("-FLAGS"),
+        Case::Refuse(None, "UID COPY"),
+        Case::Refuse(None, "UID MOVE"),
+        Case::Refuse(Some("INBOX"), "\\Deleted"),
+        Case::Refuse(Some("Snoozed"), "\\Deleted"),
+        Case::Refuse(None, "UID EXPUNGE"),
+        Case::Refuse(Some("INBOX"), "-FLAGS"),
+        Case::Refuse(None, "+FLAGS"),
+        Case::MissingOriginal,
+        Case::MissingCopy,
+    ];
+    for dir in [Dir::Snooze, Dir::Wake] {
+        for with_move_cap in [false, true] {
+            for case in &cases {
+                run_case(dir, with_move_cap, case.clone()).await;
+            }
+        }
+    }
+}
+
+/// #444: the original disappears after a COPY whose reply was lost (step 1),
+/// and the wake time changes before the retry. The copy is the message now:
+/// it's kept (not rolled back, which would lose it), with only the new
+/// keyword.
+#[tokio::test]
+async fn a_lost_original_after_the_copy_keeps_the_copy_with_the_new_keyword() {
+    let imap = no_move(vec![Fault::DropAfterCommandOnce("UID COPY".into())], &[]).await;
+    let store = Store::open_in_memory().expect("store");
+    let account = snooze_lunch(&imap, &store).await;
+    assert_eq!(run_sync(&imap, &store, account, NOW).await.remaining, 1);
+    assert_eq!(
+        list_snoozed(&store, Some(account)).expect("list")[0].step,
+        1
+    );
+
+    let original = imap.mailbox().messages("INBOX").await[0].uid;
+    imap.mailbox().expunge("INBOX", original).await;
+    // The hidden row went with it (as a sync of a vanished message does),
+    // so the retry has to search for the message, and finds nothing.
+    let hidden = list_snoozed(&store, Some(account)).expect("list")[0]
+        .local_message_id
+        .expect("hidden row");
+    store.delete_message_row(hidden).expect("delete row");
+    let later_wake = NOW + 48 * 3600;
+    store
+        .snooze_message(&mailcrane_store::NewSnooze {
+            account_id: account,
+            message_id_header: "lunch@example.net".into(),
+            original_folder_id: None,
+            hide_message: None,
+            wake_at: later_wake,
+        })
+        .expect("new time");
+
+    let report = run_sync(&imap, &store, account, LATER).await;
+    assert_eq!(report.snoozed, 1, "{report:?}");
+    let parked = imap.mailbox().messages("Snoozed").await;
+    assert_eq!(parked.len(), 1, "the copy is kept");
+    let new_keyword = format_keyword(later_wake).expect("keyword");
+    let old_keyword = format_keyword(WAKE).expect("keyword");
+    assert!(
+        parked[0].flags.contains(&new_keyword),
+        "{:?}",
+        parked[0].flags
+    );
+    assert!(
+        !parked[0].flags.contains(&old_keyword),
+        "{:?}",
+        parked[0].flags
+    );
+}
