@@ -106,6 +106,28 @@ Tags are `vMAJOR.MINOR.PATCH`, with an optional pre-release suffix: `v0.1.0`, `v
 
 If the release job fails, fix the cause on `main` and tag again with a new PATCH, or delete the tag and the draft and push the tag again. Re-running a failed sign job replaces the files on the existing draft and keeps its text.
 
+## Nightly test builds
+
+[.github/workflows/nightly.yml](../.github/workflows/nightly.yml) (#425) makes an unofficial test build of `main` every night at 02:30 UTC, and on **Run workflow** (Actions → Nightly test build). No agent publishes anything: GitHub Actions does it, once you've done the setup below.
+
+1. **check** skips the night if `main` hasn't changed since the newest `test-build-*` release.
+2. **build** is the build job of `release.yml`, called with `build_only`: the same `cargo xtask ci --strict` and Gradle release build as a release.
+3. **sign** runs in the `nightly` environment with the **development key** that the earlier test builds used, never the release key. It only downloads the APK, then zipaligns and signs it. Without the secrets it prints "No test build published" and stops.
+4. **publish** (no secrets, `main` only) makes a pre-release named `test-build-<YYYYMMDD>-nightly` with the APK, its SHA-256 and the commits since the last test build. It's never a `v*` tag, a normal release or "latest". Then it deletes test builds beyond the newest 7 (`scripts/prune_test_builds.py`, which can only delete `test-build-*` pre-releases; `--dry-run` lists what it would delete).
+
+A development-key build installs over earlier test builds, not over a store or release version.
+
+### Setup (maintainer, once)
+
+1. **Settings → Environments → New environment**, named `nightly`. Under **Deployment branches and tags**, choose **Selected branches and tags** and add `main`. No required reviewers: that's the point of a nightly. The first run on `main` creates the environment automatically if it doesn't exist, without the branch rule, so add the rule either way.
+2. Add these environment secrets for the development keystore (the standard Android debug keystore, alias `androiddebugkey`; QA can tell you which file the earlier test builds used):
+   - `NIGHTLY_KEYSTORE_B64`: the keystore file, base64-encoded (`[Convert]::ToBase64String([IO.File]::ReadAllBytes("debug.keystore"))` in PowerShell);
+   - `NIGHTLY_KEYSTORE_PASSWORD` and `NIGHTLY_KEY_PASSWORD`: `android` for the standard debug keystore;
+   - `NIGHTLY_KEY_ALIAS`: `androiddebugkey`.
+3. Start **Run workflow** once on `main` and check that a `test-build-…-nightly` pre-release appears.
+
+To stop nightly builds, disable the workflow (Actions → Nightly test build → ⋯ → Disable workflow) or delete the environment's secrets.
+
 ## Checklist
 
 - [ ] Version PR merged; `cargo xtask release-check <tag>` passes on `main`
