@@ -90,6 +90,14 @@ pub(crate) fn one_line(text: &str) -> String {
         .collect()
 }
 
+/// [`one_line`] for text the app shows as a line of its own: subjects and
+/// attachment names. Bidi controls are removed too, so an override can't
+/// reverse what's shown (`invoice\u{202E}fdp.exe` showing as
+/// `invoiceexe.pdf`, #315).
+pub(crate) fn display_line(text: &str) -> String {
+    one_line(&mailcrane_mime::strip_bidi(text))
+}
+
 impl From<MessageHeader> for MessageSummary {
     fn from(m: MessageHeader) -> Self {
         let d = m.details;
@@ -97,7 +105,7 @@ impl From<MessageHeader> for MessageSummary {
             id: m.id.0,
             from_name: one_line(d.from_name.as_deref().unwrap_or_default()),
             from_addr: one_line(d.from_addr.as_deref().unwrap_or_default()),
-            subject: one_line(&d.subject),
+            subject: display_line(&d.subject),
             snippet: one_line(&d.snippet),
             date: d.date,
             is_seen: d.flags.seen,
@@ -506,7 +514,7 @@ pub fn get_message(
         to: Vec::new(),
         cc: Vec::new(),
         date: d.date,
-        subject: one_line(&d.subject),
+        subject: display_line(&d.subject),
         is_seen: d.flags.seen,
         is_flagged: d.flags.flagged,
         body: MessageBody::NotDownloaded,
@@ -524,7 +532,7 @@ pub fn get_message(
         // Inline images are shown in the body, not listed.
         .filter(|a| !(a.is_inline && a.content_id.is_some() && a.mime_type.starts_with("image/")))
         .map(|a| AttachmentInfo {
-            name: one_line(a.filename.as_deref().unwrap_or_default()),
+            name: display_line(a.filename.as_deref().unwrap_or_default()),
             mime_type: one_line(&a.mime_type),
             size: u64::try_from(a.size).unwrap_or(0),
             part_id: a.part_id,
@@ -770,10 +778,13 @@ mod tests {
     /// Stores `raw` as the body of a new message in `folder`, with the
     /// attachment metadata `parse_message` finds, as `fetch_body` does.
     fn with_body(path: &str, folder: FolderId, uid: u32, raw: &[u8]) -> i64 {
+        with_header_and_body(path, &header(folder, uid, 1_000), raw)
+    }
+
+    /// [`with_body`] with a header row of the caller's.
+    fn with_header_and_body(path: &str, row: &NewMessageHeader, raw: &[u8]) -> i64 {
         let store = Store::open(path).expect("store");
-        let id = store
-            .upsert_message_header(&header(folder, uid, 1_000))
-            .expect("insert");
+        let id = store.upsert_message_header(row).expect("insert");
         let attachments: Vec<NewAttachment> = parse_message(raw)
             .map(|p| p.attachments)
             .unwrap_or_default()
@@ -1092,6 +1103,38 @@ mod tests {
         assert_eq!(a.mime_type, "application/pdf");
         assert!(a.name.ends_with(".pdf"));
         assert!(a.size > 0);
+    }
+
+    #[test]
+    fn display_line_removes_bidi_controls() {
+        assert_eq!(display_line("invoice\u{202e}fdp.exe"), "invoicefdp.exe");
+        assert_eq!(display_line("a\u{2067}b\u{2069}\r\nc"), "ab  c");
+        assert_eq!(display_line("שלום"), "שלום", "right-to-left letters stay");
+    }
+
+    #[test]
+    fn bidi_controls_never_reach_the_subject_or_attachment_name() {
+        // #315: an RLO in the subject or file name would reverse what the
+        // list row, the message header and notifications show.
+        let (_dir, path, folder) = setup();
+        let raw = fixture("mime", "bidi-subject-attachment.eml");
+        let parsed = parse_message(&raw).expect("parse");
+        let subject = parsed.subject.expect("subject");
+        assert!(
+            subject.chars().any(mailcrane_mime::is_bidi_control),
+            "stored as sent"
+        );
+        let mut row = header(folder, 1, 1_000);
+        row.subject = subject;
+        let id = with_header_and_body(&path, &row, &raw);
+
+        let want = "Invoice fdp.exe for March 2026 paid";
+        let m = get_message(path.clone(), id, false).expect("message");
+        assert_eq!(m.subject, want);
+        assert_eq!(m.attachments.len(), 1);
+        assert_eq!(m.attachments[0].name, "invoicefdp.exe");
+        let list = list_messages(path, folder.0, 0, 10).expect("list");
+        assert_eq!(list[0].subject, want);
     }
 
     #[test]
