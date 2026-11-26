@@ -599,3 +599,17 @@ fn skipping_literal_hops_trusts_no_forged_header() {
         None
     );
 }
+
+/// #442 review: a bare IPv4 `by` is not a host name, so it never becomes
+/// a provider (`org_domain("192.0.2.1")` would be "2.1"), whether it's
+/// the topmost hop or the first one past the cap.
+#[test]
+fn a_bare_ipv4_by_is_never_a_provider() {
+    let v4 = "by 192.0.2.1 with SMTP; Thu, 26 Nov 2026 14:30:00 +0000";
+    assert_eq!(received_by(v4), None);
+    let pass = "2.1; dmarc=pass header.from=example.net";
+    assert_eq!(trusted_results(&[rcv(v4), ar(pass)]), None);
+    let mut many: Vec<TraceHeader> = (0..=MAX_LITERAL_HOPS).map(|_| rcv(v4)).collect();
+    many.push(ar(pass));
+    assert_eq!(trusted_results_with(&many, Some("mx.example.org")), None);
+}

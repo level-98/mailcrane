@@ -374,7 +374,10 @@ pub fn received_by(received: &str) -> Option<String> {
                 .next()?
                 .trim_end_matches([';', '.'])
                 .to_ascii_lowercase();
+            // An address literal is not a host name, even a bare IPv4 one
+            // made of digits and dots (#442 review).
             let ok = !host.is_empty()
+                && host.parse::<std::net::IpAddr>().is_err()
                 && host.contains('.')
                 && host
                     .chars()
