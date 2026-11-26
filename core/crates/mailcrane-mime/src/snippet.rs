@@ -34,7 +34,7 @@ pub fn snippet(text: &str) -> String {
 }
 
 /// Block-level HTML tags whose start or end separates text (#391).
-const BLOCK_TAGS: [&str; 22] = [
+const BLOCK_TAGS: [&str; 40] = [
     "p",
     "div",
     "h1",
@@ -56,17 +56,36 @@ const BLOCK_TAGS: [&str; 22] = [
     "table",
     "dt",
     "dd",
+    "dl",
     "section",
+    "center",
+    "header",
+    "footer",
+    "article",
+    "aside",
+    "nav",
+    "main",
+    "address",
+    "caption",
+    "figure",
+    "figcaption",
+    "details",
+    "summary",
+    "form",
+    "fieldset",
+    "legend",
+    "option",
 ];
 
-/// The longest name in [`BLOCK_TAGS`].
+/// The longest name in [`BLOCK_TAGS`] (a test keeps it right).
 const LONGEST_TAG: usize = 10;
 
 /// `html` with a space in front of every block-level start or end tag, so
 /// text from adjacent blocks stays apart when the HTML is turned into text
 /// (`mail_parser::html_to_text` only separates some of them). Inline tags
-/// (`b`, `a`, `span`) are left as they are. One pass, a few characters of
-/// look-ahead per `<`, and no panics on any input (#391).
+/// (`b`, `a`, `span`) are left as they are. One pass, a few bytes of
+/// look-ahead per `<` with no allocation, and no panics on any input
+/// (#391).
 pub(crate) fn space_html_blocks(html: &str) -> String {
     let mut out = String::with_capacity(html.len().saturating_add(html.len() / 16));
     let mut rest = html;
@@ -74,15 +93,17 @@ pub(crate) fn space_html_blocks(html: &str) -> String {
         let (before, tag) = rest.split_at(at);
         out.push_str(before);
         let name_start = usize::from(tag.as_bytes().get(1) == Some(&b'/')) + 1;
-        let name: String = tag
-            .get(name_start..)
-            .unwrap_or_default()
-            .chars()
-            .take_while(char::is_ascii_alphanumeric)
+        let after = tag.as_bytes().get(name_start..).unwrap_or_default();
+        let len = after
+            .iter()
             .take(LONGEST_TAG + 1)
-            .map(|c| c.to_ascii_lowercase())
-            .collect();
-        if BLOCK_TAGS.contains(&name.as_str()) {
+            .take_while(|b| b.is_ascii_alphanumeric())
+            .count();
+        let name = after.get(..len).unwrap_or_default();
+        if BLOCK_TAGS
+            .iter()
+            .any(|t| t.as_bytes().eq_ignore_ascii_case(name))
+        {
             out.push(' ');
         }
         out.push('<');
@@ -95,6 +116,21 @@ pub(crate) fn space_html_blocks(html: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn longest_tag_covers_every_block_tag() {
+        assert!(BLOCK_TAGS.iter().all(|t| t.len() <= LONGEST_TAG));
+        assert!(BLOCK_TAGS.iter().any(|t| t.len() == LONGEST_TAG));
+    }
+
+    /// #440 review: newsletter layouts use these blocks too.
+    #[test]
+    fn layout_blocks_are_separated() {
+        assert_eq!(
+            space_html_blocks("<header>Acme</header><main>Hello</main><center>Sale</center>"),
+            " <header>Acme </header> <main>Hello </main> <center>Sale </center>"
+        );
+    }
 
     #[test]
     fn block_tags_get_a_space_and_inline_tags_dont() {

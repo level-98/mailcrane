@@ -269,7 +269,7 @@ fn html_blocks_are_separated_in_the_snippet() -> R {
         m.snippet,
         "New people to discover Suggested accounts based on your contacts \
          Line one Line two Line three First Second Cell A Cell B Head C \
-         Quoted Examples stay one word"
+         Quoted Examples stay one word Acme Hello Sale Today"
     );
     Ok(())
 }

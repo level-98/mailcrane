@@ -725,6 +725,25 @@ mod tests {
         assert_eq!(run(&out.html, false).html, out.html);
     }
 
+    /// #391: the too-deep fallback separates adjacent blocks too.
+    #[test]
+    fn the_deep_nesting_fallback_separates_blocks() {
+        let depth = 50_000;
+        let html = format!(
+            "{}<h1>Heading</h1><p>Body</p>{}",
+            "<div>".repeat(depth),
+            "</div>".repeat(depth)
+        );
+        let out = run(&html, false);
+        assert!(out.html.starts_with("<pre>"));
+        assert!(
+            !out.html.contains("HeadingBody"),
+            "{}",
+            out.html.get(..200).unwrap_or_default()
+        );
+        assert!(out.html.contains("Heading"));
+    }
+
     #[test]
     fn sanitize_moderate_nesting_is_kept() {
         let depth = 500;
