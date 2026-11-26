@@ -7,8 +7,6 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DatePicker
 import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -21,7 +19,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import app.mailcrane.R
@@ -65,30 +62,10 @@ fun formatSendAt(
         .withLocale(locale)
         .format(Instant.ofEpochSecond(sendAt).atZone(zone))
 
-/** "Schedule send": presets, or a date and time of the user's choosing. */
-@Composable
-fun ScheduleButton(
-    enabled: Boolean,
-    onSchedule: (Long) -> Unit,
-) {
-    var open by rememberSaveable { mutableStateOf(false) }
-    IconButton(onClick = { open = true }, enabled = enabled) {
-        Icon(painterResource(R.drawable.ic_mc_snooze), contentDescription = stringResource(R.string.schedule_send))
-    }
-    if (open) {
-        ScheduleDialog(
-            onPick = {
-                open = false
-                onSchedule(it)
-            },
-            onDismiss = { open = false },
-        )
-    }
-}
-
+/** "Schedule send": presets, or a date and then a time of the user's choosing. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun ScheduleDialog(
+fun ScheduleDialog(
     onPick: (Long) -> Unit,
     onDismiss: () -> Unit,
 ) {
