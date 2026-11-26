@@ -9,6 +9,10 @@ weight = 4
 
 Not yet. A beta for Android is planned for December 2026. This site will link to official releases when they are available.
 
+## Is there an iPhone version?
+
+Not before Mailcrane 1.0. Mailcrane is an Android app, and no iOS app is planned until after the 1.0 release ([decision 0005](https://github.com/level-98/mailcrane/blob/main/docs/decisions/0005-no-ios-before-1-0.md)). The mail engine is written in Rust and kept platform-neutral, so an iPhone app stays possible later.
+
 ## Which providers will work?
 
 IMAP and SMTP are planned for broad compatibility, with JMAP and guided sign-in for selected providers. See the [provider status pages](@/docs/providers/_index.md); planned support is not the same as a tested release.

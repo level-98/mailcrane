@@ -41,7 +41,7 @@ class BuildSnapshotTests(unittest.TestCase):
             [1, 2],
         )
 
-    def test_ios_milestone_collects_moved_tasks_in_roadmap_order(self):
+    def test_ios_tasks_are_not_on_the_roadmap(self):
         titles = {
             1: "[M7-02] iOS check on every PR",
             2: "[M6-06] TestFlight beta and App Store release",
@@ -63,11 +63,10 @@ class BuildSnapshotTests(unittest.TestCase):
 
         snapshot = build_snapshot(issues)
 
-        self.assertEqual([group["id"] for group in snapshot["groups"]], ["M1", "M7"])
-        self.assertEqual(
-            [task["id"] for task in snapshot["groups"][1]["tasks"]],
-            ["M7-01", "M7-02", "M0-16", "M1-11", "M7-03", "M6-06"],
-        )
+        # Decision 0005: M7 and the iOS tasks with older IDs are left out.
+        self.assertEqual([group["id"] for group in snapshot["groups"]], ["M1"])
+        self.assertEqual([task["id"] for task in snapshot["groups"][0]["tasks"]], ["M1-10"])
+        self.assertEqual(snapshot["total"], 1)
 
     def test_empty_issue_list_has_zero_progress(self):
         snapshot = build_snapshot([])
