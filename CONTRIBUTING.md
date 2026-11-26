@@ -110,7 +110,7 @@ The agent runs on a maintainer's Claude token, so:
 
 ## Other ways to help
 
-- **Try it with your own provider** and report what breaks (never share your account details).
+- **Try it with your own provider** and fill in a [provider test report](../../issues/new?template=provider_report.yml), even when everything works. Results are collected in [docs/providers.md](docs/providers.md). Never share your account details.
 - **Design**: mockups and UX feedback, following Material 3 and Apple's guidelines.
 - **Write docs**, and later **translate** (once Weblate is set up).
 
