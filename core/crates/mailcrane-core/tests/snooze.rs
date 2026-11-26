@@ -1045,3 +1045,82 @@ async fn a_lost_original_after_the_copy_keeps_the_copy_with_the_new_keyword() {
         parked[0].flags
     );
 }
+
+/// #431: snoozing a message again while its wake is half done. The wake
+/// finishes first, then the new snooze applies: one copy, in Snoozed,
+/// snoozed until the newer time. With and without MOVE.
+#[tokio::test]
+async fn a_resnooze_during_a_half_done_wake_ends_with_one_snoozed_copy() {
+    for with_move_cap in [false, true] {
+        let name = format!("move={with_move_cap}");
+        let imap = no_move(Vec::new(), &[]).await;
+        let store = Store::open_in_memory().expect("store");
+        let account = snoozed_and_due(&imap, &store).await;
+        let drop_on = if with_move_cap {
+            "UID MOVE"
+        } else {
+            "UID COPY"
+        };
+        let flaky = twin(
+            &imap,
+            with_move_cap,
+            vec![Fault::DropAfterCommandOnce(drop_on.into())],
+        )
+        .await;
+        assert_eq!(
+            run_sync(&flaky, &store, account, WAKE + 60).await.remaining,
+            1,
+            "{name}"
+        );
+        assert!(
+            list_snoozed(&store, Some(account)).expect("list")[0].step > 0,
+            "{name}: half done"
+        );
+
+        // The copy shows up in the Inbox, and the user snoozes it again.
+        sync_all(&imap, &store, account).await;
+        let inbox = folder(&store, account, "INBOX");
+        let copy = visible(&store, inbox);
+        assert_eq!(copy.len(), 1, "{name}");
+        let later_wake = WAKE + 72 * 3600;
+        snooze(&store, &copy, later_wake, &Quiet).expect("re-snooze");
+        let row = &list_snoozed(&store, Some(account)).expect("list")[0];
+        assert_eq!(row.state, SnoozeState::ToWake, "{name}: the wake goes on");
+        assert_eq!(row.pending_resnooze_at, Some(later_wake), "{name}");
+
+        let healthy = twin(&imap, with_move_cap, Vec::new()).await;
+        run_sync(&healthy, &store, account, LATER).await;
+        run_sync(&healthy, &store, account, LATER + 60).await;
+        assert_eq!(live(&imap, "INBOX").await, 0, "{name}: not in the Inbox");
+        assert_eq!(
+            live(&imap, "Snoozed").await,
+            1,
+            "{name}: one copy, in Snoozed"
+        );
+        let rows = list_snoozed(&store, Some(account)).expect("list");
+        assert_eq!(rows.len(), 1, "{name}");
+        assert_eq!(
+            (rows[0].state, rows[0].wake_at),
+            (SnoozeState::Snoozed, later_wake),
+            "{name}"
+        );
+        let parked = imap.mailbox().messages("Snoozed").await;
+        let new_keyword = format_keyword(later_wake).expect("keyword");
+        let live_copy = parked
+            .iter()
+            .find(|m| !m.flags.iter().any(|f| f == r"\Deleted"))
+            .expect("copy");
+        assert!(
+            live_copy.flags.contains(&new_keyword),
+            "{name}: {:?}",
+            live_copy.flags
+        );
+        assert!(
+            !live_copy
+                .flags
+                .iter()
+                .any(|f| f.starts_with("$snoozed") && f != &new_keyword),
+            "{name}: only the new keyword"
+        );
+    }
+}

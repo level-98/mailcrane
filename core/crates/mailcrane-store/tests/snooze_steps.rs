@@ -112,3 +112,49 @@ fn a_rollback_keeps_its_start_time_and_unsnooze_shows_the_message() -> R {
     );
     Ok(())
 }
+
+#[test]
+fn a_resnooze_during_a_half_done_wake_waits_for_the_wake() -> R {
+    let store = Store::open_in_memory()?;
+    let a = account(&store)?;
+    let id = store.snooze_message(&new(a))?;
+    store.finish_snooze(id, true)?;
+    assert_eq!(store.take_due_snoozes(1_795_600_000)?.len(), 1);
+    // Re-snoozing at step 0 behaves as before: back to to_snooze at once.
+    store.snooze_message(&NewSnooze {
+        wake_at: 1_795_700_000,
+        ..new(a)
+    })?;
+    let s = store.get_snooze_by_id(id)?.ok_or("snooze")?;
+    assert_eq!(
+        (s.state, s.pending_resnooze_at),
+        (SnoozeState::ToSnooze, None)
+    );
+
+    // Mid-wake (step > 0): the wake keeps going and the new time waits.
+    store.finish_snooze(id, true)?;
+    assert_eq!(store.take_due_snoozes(1_795_800_000)?.len(), 1);
+    store.set_snooze_step(id, 2, Some(9))?;
+    store.snooze_message(&NewSnooze {
+        wake_at: 1_795_900_000,
+        ..new(a)
+    })?;
+    let s = store.get_snooze_by_id(id)?.ok_or("snooze")?;
+    assert_eq!(
+        (s.state, s.step, s.target_uidnext, s.pending_resnooze_at),
+        (SnoozeState::ToWake, 2, Some(9), Some(1_795_900_000))
+    );
+    // The wake finishes: the re-snooze applies, at step 0.
+    assert!(store.finish_wake(id, true)?);
+    let s = store.get_snooze_by_id(id)?.ok_or("snooze")?;
+    assert_eq!(
+        (s.state, s.step, s.wake_at, s.pending_resnooze_at),
+        (SnoozeState::ToSnooze, 0, 1_795_900_000, None)
+    );
+    // Without a pending re-snooze, finishing a wake deletes the row.
+    store.finish_snooze(id, true)?;
+    assert_eq!(store.take_due_snoozes(1_796_000_000)?.len(), 1);
+    assert!(!store.finish_wake(id, true)?);
+    assert!(store.get_snooze_by_id(id)?.is_none());
+    Ok(())
+}
