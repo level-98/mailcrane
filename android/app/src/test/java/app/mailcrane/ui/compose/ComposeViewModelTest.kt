@@ -675,6 +675,59 @@ class ComposeViewModelTest {
     }
 
     @Test
+    fun typingWhileTheSignatureArrivesKeepsBoth() {
+        // #430: the field shows "H" and keeps typing while the signature is added; its edits are based on the
+        // revision before the signature. Both the typed text and the signature end up in the body.
+        val core = FakeCore().apply { signatures = mapOf(1L to "Ann") }
+        val vm = ComposeViewModel(core, FakeAppSettings())
+        val typing = vm.state.value.bodyRevision
+        vm.onBodyChange("H", typing)
+        vm.start(1)
+        assertEquals("H\n\n-- \nAnn", vm.state.value.body)
+        vm.onBodyChange("Hi", typing)
+        vm.onBodyChange("Hi there", typing)
+        assertEquals("Hi there\n\n-- \nAnn", vm.state.value.body)
+        assertEquals(1, separators(vm.state.value.body))
+    }
+
+    @Test
+    fun switchingFromWhileTypingKeepsTheTextAndTheNewSignature() {
+        // #430: the From swap lands between two keystrokes; the second, typed against the old body, is moved
+        // onto the new one, and the signature block is found by its marker, not by where it was.
+        val accounts = listOf(AccountSummary(1, "a@example.org", "A"), AccountSummary(2, "b@example.org", "B"))
+        val core = FakeCore(accounts).apply { signatures = mapOf(1L to "Ann", 2L to "Bea") }
+        val vm = started(core)
+        val signed = vm.state.value.bodyRevision
+        vm.onBodyChange("Hi\n\n-- \nAnn", signed)
+        vm.onFromChange(2)
+        assertEquals("Hi\n\n-- \nBea", vm.state.value.body)
+        vm.onBodyChange("Hi!\n\n-- \nAnn", signed)
+        assertEquals("Hi!\n\n-- \nBea", vm.state.value.body)
+        // Typing on against the new revision, then switching back: still one signature, the right one.
+        vm.onBodyChange("Hi! See you\n\n-- \nBea", vm.state.value.bodyRevision)
+        vm.onFromChange(1)
+        assertEquals("Hi! See you\n\n-- \nAnn", vm.state.value.body)
+    }
+
+    @Test
+    fun repeatedSwitchesNeverDuplicateTheSignature() {
+        val accounts = listOf(AccountSummary(1, "a@example.org", "A"), AccountSummary(2, "b@example.org", "B"))
+        val core = FakeCore(accounts).apply { signatures = mapOf(1L to "Ann", 2L to "Bea") }
+        val vm = started(core)
+        vm.onBodyChange("Notes\n\n-- \nAnn", vm.state.value.bodyRevision)
+        repeat(5) {
+            vm.onFromChange(2)
+            assertEquals("Notes\n\n-- \nBea", vm.state.value.body)
+            vm.onFromChange(1)
+            assertEquals("Notes\n\n-- \nAnn", vm.state.value.body)
+        }
+        assertEquals(1, separators(vm.state.value.body))
+    }
+
+    /** How many signature separator lines the body has. */
+    private fun separators(body: String) = body.lines().count { it == "-- " }
+
+    @Test
     fun noSignatureMeansNoSeparator() {
         val vm = started(FakeCore())
         assertEquals("", vm.state.value.body)
