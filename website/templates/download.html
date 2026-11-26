@@ -1,5 +1,4 @@
 {% extends "base.html" %}
-{% import "macros.html" as m %}
 {% block content %}
 {% set dl = config.extra.download %}
 {% set any_live = dl.fdroid_url or dl.play_url or dl.github_url %}
@@ -12,22 +11,22 @@
   </p>
 
   <div class="store-grid">
-    {{ m::store_button(name="F-Droid", detail="Fully free build, no Google services", url=dl.fdroid_url) }}
-    {{ m::store_button(name="Google Play", detail="Automatic updates through Play", url=dl.play_url) }}
-    {{ m::store_button(name="GitHub Releases", detail="Signed APK, straight from the project", url=dl.github_url) }}
+    {{<store_button name="F-Droid" detail="Fully free build, no Google services" url={dl.fdroid_url} />}}
+    {{<store_button name="Google Play" detail="Automatic updates through Play" url={dl.play_url} />}}
+    {{<store_button name="GitHub Releases" detail="Signed APK, straight from the project" url={dl.github_url} />}}
   </div>
 
   <section class="info-grid" aria-label="Before you install">
     <div class="info-card">
-      <h2>{{ m::icon(name="bell") }} Get notified</h2>
+      <h2>{{<icon name="bell" />}} Get notified</h2>
       <p>Follow the release in <a href="{{ config.extra.discussions_url }}">GitHub Discussions</a>, or <a href="{{ config.extra.github_url }}">watch the repository</a> on GitHub and choose <strong>Watch → Custom → Releases</strong> to get an email when a new version is out.</p>
     </div>
     <div class="info-card">
-      <h2>{{ m::icon(name="check") }} Requirements</h2>
+      <h2>{{<icon name="check" />}} Requirements</h2>
       <p>Android {{ config.extra.min_android }} or later, and an email account with IMAP and SMTP or JMAP. Most providers work; see the <a href="{{ get_url(path='@/docs/providers/_index.md') }}">provider guides</a>.</p>
     </div>
     <div class="info-card">
-      <h2>{{ m::icon(name="shield") }} Privacy</h2>
+      <h2>{{<icon name="shield" />}} Privacy</h2>
       <p>The app collects nothing and talks only to your mail servers. The stores have their own policies for downloads and updates. Read the <a href="{{ get_url(path='@/privacy.md') }}">privacy policy</a>.</p>
     </div>
   </section>

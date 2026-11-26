@@ -1,5 +1,5 @@
-{# Small inline icons (24x24, stroked with currentColor). Decorative: always aria-hidden. #}
-{% macro icon(name) %}
+{# Components (Tera 2, registered globally). Small inline icons (24x24, stroked with currentColor). Decorative: always aria-hidden. #}
+{% component icon(name: string) %}
 <svg class="icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
 {% if name == "shield" %}<path d="M12 3 4.5 6v5.5c0 4.6 3.2 8.3 7.5 9.5 4.3-1.2 7.5-4.9 7.5-9.5V6L12 3Z"/><path d="m8.8 12 2.2 2.2 4.4-4.4"/>
 {% elif name == "at" %}<circle cx="12" cy="12" r="3.6"/><path d="M15.6 12v1.4a2.6 2.6 0 0 0 5.2 0V12a8.8 8.8 0 1 0-3.5 7"/>
@@ -15,11 +15,11 @@
 {% else %}<circle cx="12" cy="12" r="8"/>
 {% endif %}
 </svg>
-{% endmacro icon %}
+{% endcomponent icon %}
 
 {# One store button for /download/ and the home page. An empty url renders a
    disabled "Coming soon" button, so release day is a config edit only. #}
-{% macro store_button(name, detail, url) %}
+{% component store_button(name: string, detail: string, url: string) %}
 {% if url %}
 <a class="store-button" href="{{ url }}">
   <span class="store-name">{{ name }}</span>
@@ -31,17 +31,17 @@
   <span class="store-detail">Coming soon</span>
 </span>
 {% endif %}
-{% endmacro store_button %}
+{% endcomponent store_button %}
 
 {# One stage (Now, Next, After 1.0) of /roadmap/: the listed milestones with their open tasks. #}
-{% macro roadmap_stage(stage_id, label, blurb, cls, ids, groups) %}
+{% component roadmap_stage(stage_id: string, label: string, blurb: string, cls: string, ids: array, groups: array) %}
   <section class="roadmap-stage" id="{{ stage_id }}" aria-labelledby="{{ stage_id }}-title">
     <h2 id="{{ stage_id }}-title"><span class="stage-tag {{ cls }}">{{ label }}</span> {{ blurb }}</h2>
     <div class="milestone-grid">
       {% for id in ids %}
       {% for group in groups %}
       {% if group.id == id %}
-      {% set open_tasks = group.tasks | filter(attribute="state", value="open") %}
+      {% set open_tasks = [t for t in group.tasks if t.state == "open"] %}
       <article class="milestone-card">
         <div class="milestone-top">
           <h3>{{ group.title }}</h3>
@@ -55,7 +55,7 @@
         <h4 class="task-heading">Still to do</h4>
         <ul class="task-list">
           {% for task in open_tasks %}
-          <li>{{ self::icon(name="clock") }} <a href="{{ task.url }}">{{ task.title }}</a></li>
+          <li>{{<icon name="clock" />}} <a href="{{ task.url }}">{{ task.title }}</a></li>
           {% endfor %}
         </ul>
         {% endif %}
@@ -65,4 +65,4 @@
       {% endfor %}
     </div>
   </section>
-{% endmacro roadmap_stage %}
+{% endcomponent roadmap_stage %}

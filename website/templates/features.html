@@ -1,5 +1,4 @@
 {% extends "base.html" %}
-{% import "macros.html" as m %}
 {% block content %}
 {% set features = load_data(path="data/features.json") %}
 <main class="page-wrap section-wrap page-wide" id="main">
@@ -16,7 +15,7 @@
   {% for group in features.groups %}
   <section class="feature-group" id="{{ group.id }}" aria-labelledby="{{ group.id }}-title">
     <div class="group-heading">
-      <span class="feature-icon feature-icon-{{ group.id }}">{{ m::icon(name=group.icon) }}</span>
+      <span class="feature-icon feature-icon-{{ group.id }}">{{<icon name={group.icon} />}}</span>
       <div>
         <h2 id="{{ group.id }}-title">{{ group.title }}</h2>
         <p>{{ group.intro }}</p>
@@ -35,7 +34,7 @@
 
   <div class="cta-band">
     <p>Want it on your phone?</p>
-    <a class="button button-primary" href="{{ get_url(path='@/download.md') }}">{{ m::icon(name="download") }} Download</a>
+    <a class="button button-primary" href="{{ get_url(path='@/download.md') }}">{{<icon name="download" />}} Download</a>
   </div>
 </main>
 {% endblock content %}

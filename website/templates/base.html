@@ -72,7 +72,7 @@
       <nav class="main-nav" aria-label="Main navigation">
         <a href="{{ features_url }}"{% if here == "/features/" %} aria-current="page"{% endif %}>Features</a>
         <a href="{{ roadmap_url }}"{% if here == "/roadmap/" %} aria-current="page"{% endif %}>What’s coming</a>
-        <a href="{{ docs_url }}"{% if here is starting_with("/docs/") %} aria-current="page"{% endif %}>Docs</a>
+        <a href="{{ docs_url }}"{% if here is starting_with(pat="/docs/") %} aria-current="page"{% endif %}>Docs</a>
         <a href="{{ get_url(path='@/contribute.md') }}"{% if here == "/contribute/" %} aria-current="page"{% endif %}>Contribute</a>
       </nav>
       <details class="mobile-nav">
