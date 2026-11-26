@@ -346,6 +346,17 @@ impl Store {
         Ok(())
     }
 
+    /// Back to step 0 with nothing recorded, after a refused wake was
+    /// rolled back and is to be tried again (#436).
+    pub fn reset_snooze_step(&self, id: SnoozeId) -> Result<(), StoreError> {
+        self.conn.execute(
+            "UPDATE snoozes SET step = 0, target_uidnext = NULL, rollback_since = NULL \
+             WHERE id = ?1",
+            params![id.0],
+        )?;
+        Ok(())
+    }
+
     /// The snooze with this id, as stored now.
     pub fn get_snooze_by_id(&self, id: SnoozeId) -> Result<Option<Snooze>, StoreError> {
         let sql = format!("SELECT {COLS} FROM snoozes WHERE id = ?1");

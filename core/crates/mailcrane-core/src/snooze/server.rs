@@ -105,6 +105,14 @@ pub async fn sync_snoozes(
                     listener.on_event(CoreEvent::MessagesChanged { folder_id });
                 }
             }
+            Ok(None) if s.state == SnoozeState::ToWake => {
+                tracing::warn!(
+                    snooze = s.id.0,
+                    "wake rolled back on the server: retried later"
+                );
+                keep_wake(store, s, now, listener)?;
+                report.remaining = report.remaining.saturating_add(1);
+            }
             Ok(None) => {
                 tracing::warn!(snooze = s.id.0, state = ?s.state, "rolled back on the server");
                 undo(store, s, listener)?;
@@ -147,6 +155,14 @@ pub async fn sync_snoozes(
                     report.remaining = report.remaining.saturating_add(1);
                 }
             }
+            Err(_) if s.state == SnoozeState::ToWake => {
+                // Nothing was changed on the server before the move (#436),
+                // so the message is still snoozed there, keyword and all:
+                // keep the row and try the wake again later.
+                tracing::warn!(snooze = s.id.0, "wake refused by the server: retried later");
+                keep_wake(store, s, now, listener)?;
+                report.remaining = report.remaining.saturating_add(1);
+            }
             Err(_) => {
                 tracing::warn!(snooze = s.id.0, state = ?s.state, "snooze refused by the server");
                 undo(store, s, listener)?;
@@ -187,6 +203,30 @@ fn carry_forward(store: &Store, s: &Snooze) -> Result<Vec<FolderId>, ChangeError
         .into_iter()
         .chain(s.original_folder_id)
         .collect())
+}
+
+/// A wake the server refused (or that was rolled back): the message is
+/// still in Snoozed with its keyword (#436). The row stays, back at step 0
+/// and deferred with back-off, and the message is shown in Snoozed until
+/// the wake gets through.
+fn keep_wake(
+    store: &Store,
+    s: &Snooze,
+    now: i64,
+    listener: &dyn EventListener,
+) -> Result<(), StoreError> {
+    store.reset_snooze_step(s.id)?;
+    let attempts = s.attempts.saturating_add(1);
+    store.defer_snooze(s.id, now.saturating_add(backoff_secs(attempts)))?;
+    if let Some(folder) = snoozed_folder(store, s.account_id)? {
+        if let Some(id) = store.find_message_by_header(folder.id, &s.message_id_header)? {
+            store.set_message_hidden(id, false)?;
+            listener.on_event(CoreEvent::MessagesChanged {
+                folder_id: folder.id,
+            });
+        }
+    }
+    Ok(())
 }
 
 /// The server refused for good: show the message again where it is.
@@ -349,6 +389,38 @@ async fn fix_copy_keyword(
     Ok(())
 }
 
+/// After a wake's move: on the copy in `dest`, removes every snooze keyword
+/// and, when the snooze asks for it, `\Seen` (#436). Only copies made by
+/// this wake are touched (`find_copies`).
+async fn unsnooze_copy(
+    session: &mut Session,
+    s: &Snooze,
+    dest: &Folder,
+) -> Result<(), ChangeError> {
+    let info = session.select(&dest.details.remote_name).await?;
+    for uid in find_copies(session, s).await? {
+        if info.custom_keywords {
+            let fetched = session.uid_fetch_flags(uid, uid, None).await?;
+            let keywords: Vec<String> = fetched
+                .updates
+                .into_iter()
+                .filter(|u| u.uid == uid)
+                .flat_map(|u| u.flags)
+                .filter(|f| f.starts_with(KEYWORD_PREFIX))
+                .collect();
+            for k in &keywords {
+                session.uid_store_keyword(&[uid], k, false).await?;
+            }
+        }
+        if s.mark_unread {
+            session
+                .uid_store_flag(&[uid], SystemFlag::Seen, false)
+                .await?;
+        }
+    }
+    Ok(())
+}
+
 /// Where a wake puts the message back: its original folder, else the Inbox.
 fn wake_destination(store: &Store, s: &Snooze) -> Result<Folder, ChangeError> {
     let folders = store.list_folders(s.account_id).map_err(store_err)?;
@@ -455,6 +527,11 @@ async fn snooze_one(
             // The original is gone after the COPY (expunged before the
             // connection dropped, or by another client): the copy is the
             // message now, so the move is done. Rolling back would lose it.
+            // Its keyword gets the current wake time, as after any resumed
+            // move (#436).
+            if info.custom_keywords {
+                fix_copy_keyword(session, s, &snoozed, new.as_deref()).await?;
+            }
             store
                 .finish_snooze(s.id, info.custom_keywords && new.is_some())
                 .map_err(store_err)?;
@@ -515,42 +592,51 @@ async fn wake_one(
         s,
         session.uid_search_message_id(&s.message_id_header).await?,
     );
+    let _ = info;
+    let dest = wake_destination(store, s)?;
     if uids.is_empty() {
-        // Already woken (by another install) or moved away by the user.
+        // Moved before a dropped connection (this install recorded where
+        // to), or already woken by another install, or moved away by the
+        // user. In the first case the copy still needs its keyword and
+        // \Seen changes.
+        if s.target_uidnext.is_some() {
+            unsnooze_copy(session, s, &dest).await?;
+        }
         if let Some(id) = local {
             store.delete_message_row(id).map_err(store_err)?;
         }
         store.delete_snooze(s.id, false).map_err(store_err)?;
-        return Ok(vec![snoozed.id]);
+        return Ok(vec![snoozed.id, dest.id]);
     }
-    // Keyword and \Seen changes go on before the COPY; a resumed move
-    // doesn't repeat them.
-    if info.custom_keywords && s.step == STEP_NONE {
-        let mut old = old_keywords(store, &snoozed, s)?;
-        if let Some(k) = format_keyword(s.wake_at) {
-            if !old.contains(&k) {
-                old.push(k);
+    // Nothing on the server changes before the move (#436): the keyword
+    // removal and the \Seen change are made on the copy in `dest` after
+    // it, so a refused or dropped wake leaves the message as it was. The
+    // copy is found by Message-ID at or above `dest`'s UIDNEXT, recorded
+    // here first (for MOVE too).
+    let s = match s.target_uidnext {
+        Some(_) => s.clone(),
+        None => {
+            let next = session.select(&dest.details.remote_name).await?.uidnext;
+            store
+                .set_snooze_step(s.id, s.step, Some(next))
+                .map_err(store_err)?;
+            session.select(&snoozed.details.remote_name).await?;
+            Snooze {
+                target_uidnext: Some(next),
+                ..s.clone()
             }
         }
-        for k in &old {
-            session.uid_store_keyword(&uids, k, false).await?;
-        }
-    }
-    if s.mark_unread && s.step == STEP_NONE {
-        session
-            .uid_store_flag(&uids, SystemFlag::Seen, false)
-            .await?;
-    }
-    let dest = wake_destination(store, s)?;
+    };
     move_uids(
         store,
         session,
-        s,
+        &s,
         &uids,
         &snoozed.details.remote_name,
         &dest.details.remote_name,
     )
     .await?;
+    unsnooze_copy(session, &s, &dest).await?;
     if let Some(id) = local {
         store.delete_message_row(id).map_err(store_err)?;
     }

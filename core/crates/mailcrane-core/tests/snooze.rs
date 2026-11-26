@@ -569,13 +569,136 @@ async fn without_move_a_refused_store_on_wake_removes_the_copy() {
     .await;
 
     let report = run_sync(&refusing, &store, account, WAKE + 60).await;
-    assert_eq!(report.failed, 1, "{report:?}");
+    // #436: the wake is kept and retried, not dropped.
+    assert_eq!((report.failed, report.remaining), (0, 1), "{report:?}");
     assert_eq!(live(&imap, "INBOX").await, 0, "no copy left in the Inbox");
     assert_eq!(
         live(&imap, "Snoozed").await,
         1,
         "still snoozed on the server"
     );
+    assert_keyword_and_row_kept(&imap, &store, account).await;
+}
+
+/// After a refused wake: the message in Snoozed still has its wake keyword
+/// and the device still has the snooze row, back at step 0 (#436).
+async fn assert_keyword_and_row_kept(imap: &FakeImap, store: &Store, account: AccountId) {
+    let parked = imap.mailbox().messages("Snoozed").await;
+    let keyword = format_keyword(WAKE).expect("keyword");
+    assert!(
+        parked.iter().any(|m| m.flags.contains(&keyword)),
+        "keyword intact: {parked:?}"
+    );
+    let kept = list_snoozed(store, Some(account)).expect("list");
+    assert_eq!(kept.len(), 1, "row kept");
+    assert_eq!((kept[0].state, kept[0].step), (SnoozeState::ToWake, 0));
+}
+
+/// The woken copy in the Inbox: no snooze keyword, and unread.
+async fn assert_woken_copy(imap: &FakeImap) {
+    let back = imap.mailbox().messages("INBOX").await;
+    assert_eq!(back.len(), 1, "{back:?}");
+    assert!(
+        !back[0].flags.iter().any(|f| f.starts_with("$snoozed")),
+        "{:?}",
+        back[0].flags
+    );
+    assert!(!back[0].flags.iter().any(|f| f == "\\Seen"), "unread");
+}
+
+/// A server with MOVE on the same messages.
+async fn with_move(imap: &FakeImap, faults: Vec<Fault>) -> FakeImap {
+    let mut builder = FakeImap::builder()
+        .user(USER, PASSWORD)
+        .mailbox(imap.mailbox());
+    for f in faults {
+        builder = builder.fault(f);
+    }
+    builder.start().await.expect("imap")
+}
+
+/// Marks the message in Snoozed read, so the wake has to make it unread.
+async fn read_in_snoozed(imap: &FakeImap) {
+    let uid = imap.mailbox().messages("Snoozed").await[0].uid;
+    imap.mailbox().add_flag("Snoozed", uid, "\\Seen").await;
+}
+
+#[tokio::test]
+async fn a_refused_move_on_wake_keeps_the_keyword_and_the_row() {
+    let imap = no_move(Vec::new(), &[]).await;
+    let store = Store::open_in_memory().expect("store");
+    let account = snoozed_and_due(&imap, &store).await;
+    let refusing = with_move(
+        &imap,
+        vec![Fault::RefuseCommand {
+            folder: None,
+            text: "UID MOVE".into(),
+        }],
+    )
+    .await;
+
+    let report = run_sync(&refusing, &store, account, WAKE + 60).await;
+    assert_eq!(report.remaining, 1, "{report:?}");
+    assert_keyword_and_row_kept(&imap, &store, account).await;
+    let snoozed = folder(&store, account, "Snoozed");
+    assert_eq!(
+        visible(&store, snoozed).len(),
+        1,
+        "shown in Snoozed meanwhile"
+    );
+
+    // The server allows it again: the retry wakes it properly.
+    let healthy = with_move(&imap, Vec::new()).await;
+    let report = run_sync(&healthy, &store, account, LATER).await;
+    assert_eq!(report.woken, 1, "{report:?}");
+    assert_woken_copy(&imap).await;
+    assert!(list_snoozed(&store, Some(account))
+        .expect("list")
+        .is_empty());
+}
+
+#[tokio::test]
+async fn a_move_whose_reply_is_lost_still_unsnoozes_the_copy() {
+    let imap = no_move(Vec::new(), &[]).await;
+    let store = Store::open_in_memory().expect("store");
+    let account = snoozed_and_due(&imap, &store).await;
+    read_in_snoozed(&imap).await;
+    let flaky = with_move(&imap, vec![Fault::DropAfterCommandOnce("UID MOVE".into())]).await;
+
+    assert_eq!(
+        run_sync(&flaky, &store, account, WAKE + 60).await.remaining,
+        1
+    );
+    // The MOVE happened; the copy still has its keyword until the retry.
+    assert!(imap.mailbox().messages("Snoozed").await.is_empty());
+    let report = run_sync(&flaky, &store, account, LATER).await;
+    assert_eq!(report.woken, 1, "{report:?}");
+    assert_woken_copy(&imap).await;
+}
+
+#[tokio::test]
+async fn a_dropped_copy_on_wake_ends_with_an_unsnoozed_unread_copy() {
+    let imap = no_move(Vec::new(), &[]).await;
+    let store = Store::open_in_memory().expect("store");
+    let account = snoozed_and_due(&imap, &store).await;
+    read_in_snoozed(&imap).await;
+    let flaky = same_mailbox(&imap, vec![Fault::DropAfterCommandOnce("UID COPY".into())]).await;
+
+    assert_eq!(
+        run_sync(&flaky, &store, account, WAKE + 60).await.remaining,
+        1
+    );
+    // Nothing was changed on the original before the move.
+    let keyword = format_keyword(WAKE).expect("keyword");
+    let original = imap.mailbox().messages("Snoozed").await;
+    assert!(
+        original[0].flags.contains(&keyword),
+        "{:?}",
+        original[0].flags
+    );
+    let report = run_sync(&flaky, &store, account, LATER).await;
+    assert_eq!(report.woken, 1, "{report:?}");
+    assert_woken_copy(&imap).await;
 }
 
 // --- #432 review -----------------------------------------------------------
