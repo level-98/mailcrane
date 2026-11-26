@@ -533,6 +533,13 @@ pub fn save_oauth_account(
         smtp_security: store_security(config.smtp.security),
         username: config.username.trim().to_owned(),
     };
+    // The same account can't be added twice (#346), whichever way it signs in.
+    ensure_not_added(
+        store,
+        IncomingServer::Imap(&account.imap_host),
+        &account.username,
+        &account.email,
+    )?;
     let id = store
         .insert_account(&account)
         .map_err(|_| AddAccountError::SaveFailed)?;

@@ -25,7 +25,7 @@ pub(crate) const MIGRATIONS: &[&str] = &[
     include_str!("../migrations/0018_server_rules.sql"),
     include_str!("../migrations/0019_rules_missing_folder.sql"),
     include_str!("../migrations/0020_provider_authserv_id.sql"),
-    include_str!("../migrations/0021_oauth_provider.sql"),
+    include_str!("../migrations/0022_oauth_provider.sql"),
 ];
 
 fn user_version(conn: &Connection) -> Result<i64, StoreError> {

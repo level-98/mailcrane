@@ -369,6 +369,17 @@ async fn add_oauth_with(
         crate::oauth::finished_access_token(sign_in_id).ok_or(AddAccountError::AuthFailed {
             server: MailServer::Imap,
         })?;
+    // A duplicate (#346) is refused before Google's servers are contacted.
+    // The store is dropped before the await: it isn't `Sync`.
+    {
+        let store = Store::open(db_path).map_err(|_| AddAccountError::SaveFailed)?;
+        core::ensure_not_added(
+            &store,
+            core::IncomingServer::Imap(config.imap.host.trim()),
+            config.username.trim(),
+            config.email.trim(),
+        )?;
+    }
     core::check_oauth_account(config, &token, options).await?;
     let store = Store::open(db_path).map_err(|_| AddAccountError::SaveFailed)?;
     let id = core::save_oauth_account(&store, config, provider)?;
