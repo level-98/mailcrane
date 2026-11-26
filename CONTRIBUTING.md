@@ -84,7 +84,7 @@ AI-written contributions are welcome on the same terms as any other.
 - Read the diff yourself before marking it ready.
 - Please don't open lots of low-effort PRs at once. Maintainers may close them without review.
 
-A maintainer may also run the local agent fleet (five Claude Code sessions coordinated over Synapse, acting through the maintainer's account): see [docs/fleet.md](docs/fleet.md). Its PRs carry the `fleet` label.
+A maintainer may also run the local agent fleet (up to six Claude Code sessions coordinated over Synapse, acting through the maintainer's account): see [docs/fleet.md](docs/fleet.md). Its PRs carry the `fleet` label.
 
 Maintainers can also hand an `agent-ready` issue straight to the project's own agent by adding the `agent-go` label. It opens a draft PR for a human to review.
 

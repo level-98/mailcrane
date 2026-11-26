@@ -27,6 +27,7 @@ pub(crate) const MIGRATIONS: &[&str] = &[
     include_str!("../migrations/0020_provider_authserv_id.sql"),
     include_str!("../migrations/0021_jmap_push.sql"),
     include_str!("../migrations/0022_oauth_provider.sql"),
+    include_str!("../migrations/0023_snooze_step.sql"),
 ];
 
 fn user_version(conn: &Connection) -> Result<i64, StoreError> {
@@ -206,6 +207,37 @@ mod tests {
             |r| r.get(0),
         )?;
         assert_eq!(half, 0, "failed migration must be rolled back entirely");
+        Ok(())
+    }
+
+    #[test]
+    fn v22_snoozes_upgrade_with_no_step() -> R {
+        // A snooze row as main had it before #423: schema v22, mid-move.
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("m.db");
+        let v22 = MIGRATIONS.get(..22).ok_or("fewer than 22 migrations")?;
+        {
+            let mut conn = Connection::open(&path)?;
+            run(&mut conn, v22)?;
+            assert_eq!(user_version(&conn)?, 22);
+            conn.execute_batch(
+                "INSERT INTO accounts (display_name, email, imap_host, imap_port, imap_security, \
+                 smtp_host, smtp_port, smtp_security, username) VALUES \
+                 ('A','a@example.org','imap.example.org',993,'tls','smtp.example.org',465,'tls','a'); \
+                 INSERT INTO snoozes (account_id, message_id_header, wake_at, state) \
+                 VALUES (1, 'm1@example.org', 1795600000, 'to_snooze');",
+            )?;
+        }
+
+        let store = crate::Store::open(&path)?;
+        assert_eq!(store.schema_version()?, i64::try_from(MIGRATIONS.len())?);
+        let snoozes = store.list_snoozes(None)?;
+        let old = snoozes.first().ok_or("snooze")?;
+        assert_eq!((old.step, old.target_uidnext), (0, None));
+        // The new column only takes the five known steps.
+        drop(store);
+        let conn = Connection::open(&path)?;
+        assert!(conn.execute("UPDATE snoozes SET step = 5", []).is_err());
         Ok(())
     }
 }
