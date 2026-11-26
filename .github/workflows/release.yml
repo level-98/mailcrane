@@ -119,7 +119,7 @@ jobs:
       # Pull requests already ran it in ci.yml.
       - name: cargo xtask ci
         if: github.event_name != 'pull_request'
-        run: cargo xtask ci --strict --skip ios
+        run: cargo xtask ci --strict
         env:
           ANDROID_NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/${{ env.NDK_VERSION }}
 

@@ -1,6 +1,6 @@
 # 0002: Android first; the iOS app follows after the Android release
 
-Status: accepted
+Status: replaced by [0005](0005-no-ios-before-1-0.md) (no iOS before 1.0)
 Date: 2026-11-24
 
 ## Context

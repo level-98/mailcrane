@@ -23,7 +23,7 @@ F-Droid can publish our own signed APK if its build from the same tag produces t
 
 | What | Version | Where it's set | Also update |
 |---|---|---|---|
-| Rust | 1.100.0 | `rust-toolchain.toml` (rustup reads it for every `cargo` run) | `toolchain:` in `.github/workflows/ci.yml` (both jobs) and `ios.yml`; the recipe's `--default-toolchain` |
+| Rust | 1.100.0 | `rust-toolchain.toml` (rustup reads it for every `cargo` run) | `toolchain:` in `.github/workflows/ci.yml` (both jobs); the recipe's `--default-toolchain` |
 | Android NDK | 30.0.16248370 | `ndkVersion` in `android/app/build.gradle.kts`; `cargoNdkBuild` passes the same NDK to cargo-ndk | `NDK_VERSION` in `ci.yml`; the recipe's `ndk:`; `android/README.md` |
 | cargo-ndk | 4.1.2 | `cargo-ndk@4.1.2` in `ci.yml` | the recipe's `cargo install`; `android/README.md` |
 

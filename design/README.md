@@ -40,7 +40,7 @@ Typeface: **DM Sans** (Open Font License). The wordmark is Bold converted to out
 
 ## Regenerating app themes
 
-Change a brand colour in `colors.json`, then run `python3 design/gen_theme.py` to regenerate the Android Compose and iOS asset themes together. Run `python3 design/gen_theme.py --check` in CI to ensure generated files match the JSON.
+Change a brand colour in `colors.json`, then run `python3 design/gen_theme.py` to regenerate the Android Compose theme. Run `python3 design/gen_theme.py --check` in CI to ensure generated files match the JSON.
 
 ## Folders
 
@@ -48,11 +48,10 @@ Change a brand colour in `colors.json`, then run `python3 design/gen_theme.py` t
 |---|---|---|
 | `brand/` | Crane mark and wordmark in colour, white and mono, as SVG with PNG copies | Website, README, docs |
 | `app-icon/icon-master.svg` | 1024 px icon source | |
-| `app-icon/ios/AppIcon.appiconset/` | Single 1024 px icon, no alpha (Xcode 14+) | `ios/…/Assets.xcassets` |
 | `app-icon/android/res/` | Adaptive icon: vector foreground, colour background, monochrome layer for Android 13 themed icons, plus legacy PNGs for every density | Merge into `android/app/src/main/res` |
 | `app-icon/android/playstore-icon-512.png` | Play Console listing icon | |
-| `splash/` | Android 12+ splash icon (content inside the 192 dp circle) and iOS launch logo @1x/2x/3x | |
-| `ui-icons/svg/` | 24 line icons, 24 px, 1.75 stroke, `currentColor` | iOS (as SVG assets) |
+| `splash/` | Android 12+ splash icon (content inside the 192 dp circle) | |
+| `ui-icons/svg/` | 24 line icons, 24 px, 1.75 stroke, `currentColor` | Website, docs |
 | `ui-icons/android-vector/` | The same icons as tintable VectorDrawables, `ic_mc_*.xml` | `android/app/src/main/res/drawable` |
 | `illustrations/` | Empty inbox, no results, welcome (SVG, and PNG @3x) | Empty states |
 

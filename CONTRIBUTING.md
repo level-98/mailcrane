@@ -50,11 +50,9 @@ Every pull request and every push to `main` runs [`ci.yml`](.github/workflows/ci
 
 | Job | Runs on | Checks |
 |---|---|---|
-| `linux` | Ubuntu | Every step except iOS (`--strict --skip ios`): fmt, clippy, tests, `cargo deny`, the design check and the release-notes script tests, and the Android lint, unit tests, debug and release builds (the core cross-compiled for arm64-v8a and x86_64), with a check that each APK packages its own core. The debug APK is uploaded as the `android-debug-apk` artifact for 7 days, so you can install it with `adb install` without building. |
+| `linux` | Ubuntu | Every step (`--strict`): fmt, clippy, tests, `cargo deny`, the design check and the release-notes script tests, and the Android lint, unit tests, debug and release builds (the core cross-compiled for arm64-v8a and x86_64), with a check that each APK packages its own core. The debug APK is uploaded as the `android-debug-apk` artifact for 7 days, so you can install it with `adb install` without building. |
 | `windows` | Windows | fmt, clippy and tests of the core (`--strict --only fmt,lint,test`), so it stays portable. |
 | `ci-ok` | Ubuntu | Passes only if every job above passed. Look here first. |
-
-The iOS job comes back in M7-02 (#144). Until then, iOS checks run only when a maintainer starts `ios.yml` by hand.
 
 ## Review
 
@@ -106,12 +104,12 @@ The agent runs on a maintainer's Claude token, so:
 | `security` | Touches sign-in, credentials, TLS, encryption or the sanitiser |
 | `post-1.0` | Not until after 1.0. Please don't claim yet. |
 | `m0` … `m8` | Milestone (see ROADMAP.md) |
-| `area:core` · `area:android` · `area:ios` · `area:design` · `area:docs` · `area:ci` | Which part of the project |
+| `area:core` · `area:android` · `area:design` · `area:docs` · `area:ci` | Which part of the project |
 
 ## Other ways to help
 
 - **Try it with your own provider** and fill in a [provider test report](../../issues/new?template=provider_report.yml), even when everything works. Results are collected in [docs/providers.md](docs/providers.md). Never share your account details.
-- **Design**: mockups and UX feedback, following Material 3 and Apple's guidelines.
+- **Design**: mockups and UX feedback, following Material 3.
 - **Write docs.**
 - **Translate** the app on Weblate. See [Translations](#translations).
 

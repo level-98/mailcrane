@@ -31,7 +31,7 @@ struct Step {
 }
 
 /// Steps in the order `ci` runs them. `bindings` is not part of `ci`.
-const CI_STEPS: [Step; 7] = [
+const CI_STEPS: [Step; 6] = [
     Step {
         name: "design",
         run: design,
@@ -56,10 +56,6 @@ const CI_STEPS: [Step; 7] = [
         name: "android",
         run: android,
     },
-    Step {
-        name: "ios",
-        run: ios,
-    },
 ];
 
 const BINDINGS: Step = Step {
@@ -82,7 +78,6 @@ Commands:
   android   ktlintCheck, lintDebug, testDebugUnitTest, assembleDebug and checkFreeDependencies
             through Gradle; then assembleRelease and assembleDebug, and a check that
             each APK packages its own core (the debug one has the fixture loader)
-  ios       XCFramework, xcodegen, swiftlint and xcodebuild test (macOS only)
   bindings  generate Kotlin and Swift bindings into core/target/bindings/
   fuzz <target> [--seconds N]
             run a fuzz target (default 60 s); needs nightly and cargo-fuzz.
@@ -608,52 +603,6 @@ fn check_apk_core(path: &Path, debug: bool) -> Result<(), Error> {
     }
 }
 
-fn ios(ctx: &Ctx) -> Result<Outcome, Error> {
-    let dir = ctx.root.join("ios");
-    if !cfg!(target_os = "macos") {
-        return Ok(Outcome::Skipped("iOS checks need macOS".into()));
-    }
-    if !has_tool("xcodebuild", "-version") {
-        return Ok(Outcome::Skipped("xcodebuild is not installed".into()));
-    }
-    if !dir.join("project.yml").is_file() {
-        return Ok(Outcome::Skipped(
-            "ios/project.yml does not exist yet".into(),
-        ));
-    }
-    for tool in ["xcodegen", "swiftlint"] {
-        if !has_tool(tool, "--version") {
-            return Ok(Outcome::Skipped(format!("{tool} is not installed")));
-        }
-    }
-
-    if !run(&dir, "sh", &["scripts/build-xcframework.sh"])? {
-        return Ok(Outcome::Failed(
-            "`scripts/build-xcframework.sh` failed".into(),
-        ));
-    }
-
-    if !run(&dir, "xcodegen", &["generate"])? {
-        return Ok(Outcome::Failed("`xcodegen generate` failed".into()));
-    }
-    if !run(&dir, "swiftlint", &["--strict"])? {
-        return Ok(Outcome::Failed("`swiftlint --strict` failed".into()));
-    }
-
-    let result_bundle = dir.join("build").join("Mailcrane.xcresult");
-    let test_args = vec![
-        "test".to_string(),
-        "-scheme".to_string(),
-        "Mailcrane".to_string(),
-        "-destination".to_string(),
-        "platform=iOS Simulator,name=iPhone 17".to_string(),
-        "-resultBundlePath".to_string(),
-        result_bundle.display().to_string(),
-    ];
-    let ok = run(&dir, "xcodebuild", &test_args)?;
-    Ok(outcome(ok, "xcodebuild test"))
-}
-
 /// Cargo's output directory. Steps run Cargo from `core/`, so a relative
 /// `CARGO_TARGET_DIR` is relative to `core/`, as Cargo itself treats it.
 fn target_dir(ctx: &Ctx) -> PathBuf {
@@ -969,8 +918,8 @@ mod tests {
 
     #[test]
     fn lists_and_repeats_combine() {
-        let o = parse(&["--skip", "ios", "--skip", "deny,android,"]).unwrap();
-        assert_eq!(o.skip, ["ios", "deny", "android"]);
+        let o = parse(&["--skip", "design", "--skip", "deny,android,"]).unwrap();
+        assert_eq!(o.skip, ["design", "deny", "android"]);
         assert!(o.only.is_empty());
     }
 
