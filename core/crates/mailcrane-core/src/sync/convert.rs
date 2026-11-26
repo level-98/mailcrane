@@ -274,6 +274,47 @@ mod tests {
         );
     }
 
+    /// The FETCH data a server sends for one message, parsed as a session
+    /// would parse it.
+    fn fetched(internal_date: &str, envelope_date: &str) -> FetchData {
+        let line = format!(
+            "* 1 FETCH (UID 7 INTERNALDATE \"{internal_date}\" ENVELOPE ({envelope_date} \
+             \"Hello\" ((\"Ana\" NIL \"ana\" \"example.org\")) NIL NIL NIL NIL NIL NIL \
+             \"<m1@example.org>\"))\r\n"
+        );
+        match mailcrane_imap::parse_response(line.as_bytes()) {
+            Ok((
+                mailcrane_imap::parser::Response::Untagged(
+                    mailcrane_imap::parser::Untagged::Fetch(data),
+                ),
+                _,
+            )) => *data,
+            other => panic!("not a FETCH: {other:?}"),
+        }
+    }
+
+    /// #410: an INTERNALDATE with an impossible year doesn't crash the sync
+    /// or drop the message. The message is stored, dated from its `Date`
+    /// header, or 0 when it has none, the fallback for a missing date.
+    #[test]
+    fn a_bad_internal_date_still_gives_a_row() {
+        for bad in [
+            "01-Jan-9223372036854775807 00:00:00 +0000",
+            "01-Mar-99999999999999999 00:00:00 +0000",
+            "01-Jan-0000 00:00:00 +0000",
+        ] {
+            let data = fetched(bad, "\"Tue, 24 Nov 2026 10:46:51 +0000\"");
+            assert_eq!(data.internal_date.as_deref(), Some(bad));
+            let row = header_row(FolderId(1), &data).expect("row");
+            assert_eq!(row.uid, 7);
+            assert_eq!(row.internal_date, 1_795_517_211, "{bad}");
+            assert_eq!(row.date, 1_795_517_211, "{bad}");
+
+            let row = header_row(FolderId(1), &fetched(bad, "NIL")).expect("row, no Date");
+            assert_eq!((row.internal_date, row.date), (0, 0), "{bad}");
+        }
+    }
+
     #[test]
     fn json_is_escaped() {
         assert_eq!(
