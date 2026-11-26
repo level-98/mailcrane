@@ -6,3 +6,29 @@ compile_sass = false
 minify_html = true
 generate_feeds = false
 build_search_index = false
+
+[extra]
+github_url = "https://github.com/level-98/mailcrane"
+discussions_url = "https://github.com/level-98/mailcrane/discussions"
+# Android minSdk 26 (android/app/build.gradle.kts on main).
+min_android = "8.0"
+# true while static/screens/*.png are the neutral placeholders: alt text then
+# says so and the strip shows a "Screenshots coming soon" note. Set to false
+# when the real emulator screenshots are dropped in.
+screens_placeholder = true
+
+# Release day: paste each store's URL here and the /download/ page and the
+# home page's buttons switch from a disabled "Coming soon" to a live link.
+# Leave a value empty ("") while that store isn't live.
+[extra.download]
+fdroid_url = ""
+play_url = ""
+github_url = ""
+
+# Which roadmap milestones (from data/roadmap.json) show under each heading on
+# /roadmap/. Milestones not listed here (M7 iOS, P launch checks) are not shown.
+[extra.roadmap]
+done = ["M0", "M1", "M2"]
+now = ["M3", "M5", "M6"]
+next = ["M4"]
+later = ["M8"]

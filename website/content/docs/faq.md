@@ -1,13 +1,13 @@
 +++
 title = "Frequently asked questions"
-description = "Answers about Mailcrane's status, privacy, and provider plans."
+description = "Answers about downloading Mailcrane, providers and privacy."
 template = "page.html"
 weight = 4
 +++
 
 ## Can I download Mailcrane?
 
-Not yet. A beta for Android is planned for December 2026. This site will link to official releases when they are available.
+Not yet: the first public release is being prepared. On release day the [download page](@/download.md) will link to F-Droid, Google Play and GitHub Releases. It also shows how to get notified when it’s out.
 
 ## Is there an iPhone version?
 
@@ -15,15 +15,15 @@ Not before Mailcrane 1.0. Mailcrane is an Android app, and no iOS app is planned
 
 ## Which providers will work?
 
-IMAP and SMTP are planned for broad compatibility, with JMAP and guided sign-in for selected providers. See the [provider status pages](@/docs/providers/_index.md); planned support is not the same as a tested release.
+Any provider that offers IMAP and SMTP, or JMAP, which covers most of them. Gmail sign-in with your Google account is coming. See the [provider guides](@/docs/providers/_index.md) for what has been tested.
 
 ## Does Mailcrane collect my mail?
 
-There is no released app yet. The project intends to avoid analytics and Mailcrane-operated mail servers. Read the [privacy page](@/privacy.md) for the current website details and the status of the app policy draft.
+No. Mailcrane has no servers and no analytics: your mail goes only between your phone and your mail server. Read the [privacy policy](@/privacy.md).
 
 ## Are the screens real?
 
-They are proposed design concepts. They show the visual direction and may include features that are not implemented.
+Yes. The screenshots on the home page come from the app as it is today, filled with made-up test mail.
 
 ## How can I help?
 

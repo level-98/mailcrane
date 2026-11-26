@@ -53,6 +53,13 @@ jobs:
         run: zola build
       - name: Check links offline
         run: lychee --offline public/
+      - name: Upload preview for reviewers
+        if: github.event_name == 'pull_request'
+        uses: actions/upload-artifact@v7
+        with:
+          name: website-preview
+          path: website/public
+          retention-days: 7
       - name: Upload Pages artifact
         if: github.ref == 'refs/heads/website'
         uses: actions/upload-pages-artifact@v5

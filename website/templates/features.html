@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block content %}
+{% set features = load_data(path="data/features.json") %}
+<main class="page-wrap section-wrap page-wide" id="main">
+  <p class="eyebrow">Features</p>
+  <h1 class="page-title">Everything you need. <span>Nothing watching you.</span></h1>
+  <div class="page-intro">{{ page.content | safe }}</div>
+
+  <nav class="chip-nav" aria-label="Feature groups">
+    {% for group in features.groups %}
+    <a class="chip" href="#{{ group.id }}">{{ group.title }}</a>
+    {% endfor %}
+  </nav>
+
+  {% for group in features.groups %}
+  <section class="feature-group" id="{{ group.id }}" aria-labelledby="{{ group.id }}-title">
+    <div class="group-heading">
+      <span class="feature-icon feature-icon-{{ group.id }}">{{<icon name={group.icon} />}}</span>
+      <div>
+        <h2 id="{{ group.id }}-title">{{ group.title }}</h2>
+        <p>{{ group.intro }}</p>
+      </div>
+    </div>
+    <ul class="card-grid">
+      {% for item in group.items %}
+      <li class="feature-card{% if item.soon %} is-soon{% endif %}">
+        <h3>{{ item.title }}{% if item.soon %} <span class="stage-tag stage-next">Coming soon</span>{% endif %}</h3>
+        <p>{{ item.text }}</p>
+      </li>
+      {% endfor %}
+    </ul>
+  </section>
+  {% endfor %}
+
+  <div class="cta-band">
+    <p>Want it on your phone?</p>
+    <a class="button button-primary" href="{{ get_url(path='@/download.md') }}">{{<icon name="download" />}} Download</a>
+  </div>
+</main>
+{% endblock content %}
