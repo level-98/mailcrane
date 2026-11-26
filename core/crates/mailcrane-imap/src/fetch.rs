@@ -410,6 +410,12 @@ pub fn parse_internal_date(text: &str) -> Option<i64> {
         _ => return None,
     };
     let year: i64 = d.next()?.parse().ok()?;
+    // RFC 9051 §9 `date-year` is 4DIGIT; anything else is a broken server.
+    // Bounding it before the arithmetic below keeps every step in range,
+    // as `search::query::parse_date` in the core does (#410).
+    if !(1..=9999).contains(&year) {
+        return None;
+    }
     let mut t = time.split(':');
     let (h, m, s): (i64, i64, i64) = (
         t.next()?.parse().ok()?,
@@ -436,14 +442,23 @@ pub fn parse_internal_date(text: &str) -> Option<i64> {
     {
         return None;
     }
-    // Days since 1970-01-01 (civil-from-days, Howard Hinnant).
-    let y = if month <= 2 { year - 1 } else { year };
+    // Days since 1970-01-01 (days-from-civil, Howard Hinnant). The year is
+    // bounded above, but each step is checked anyway, so a wider bound
+    // later can't bring the overflow back (#410).
+    let y = if month <= 2 { year.checked_sub(1)? } else { year };
     let era = y.div_euclid(400);
-    let yoe = y - era * 400;
+    let yoe = y.checked_sub(era.checked_mul(400)?)?;
     let mp = (month + 9) % 12;
     let doy = (153 * mp + 2) / 5 + day - 1;
-    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-    let days = era * 146_097 + doe - 719_468;
+    let doe = yoe
+        .checked_mul(365)?
+        .checked_add(yoe / 4)?
+        .checked_sub(yoe / 100)?
+        .checked_add(doy)?;
+    let days = era
+        .checked_mul(146_097)?
+        .checked_add(doe)?
+        .checked_sub(719_468)?;
     days.checked_mul(86_400)?
         .checked_add(h * 3600 + m * 60 + s)?
         .checked_sub(offset)
@@ -464,6 +479,33 @@ mod tests {
         assert_eq!(parse_internal_date("garbage"), None);
         assert_eq!(parse_internal_date("32-Jan-2026 00:00:00 +0000"), None);
         assert_eq!(parse_internal_date("01-Foo-2026 00:00:00 +0000"), None);
+    }
+
+    /// #410: a server can send any year. Out-of-range years give `None`
+    /// instead of overflowing (a panic in debug builds, a garbage date in
+    /// release); years 1 and 9999 still parse.
+    #[test]
+    fn internal_date_with_an_out_of_range_year_is_none_not_a_panic() {
+        for text in [
+            "01-Jan-9223372036854775807 00:00:00 +0000",
+            "01-Mar-99999999999999999 00:00:00 +0000",
+            "01-Jan--9223372036854775808 00:00:00 +0000",
+            "01-Mar--1 00:00:00 +0000",
+            "01-Jan-0 00:00:00 +0000",
+            "01-Jan-0000 00:00:00 +0000",
+            "01-Jan-10000 00:00:00 +0000",
+            "31-Dec-99999999999999 23:59:60 -2359",
+        ] {
+            assert_eq!(parse_internal_date(text), None, "{text}");
+        }
+        assert_eq!(
+            parse_internal_date("01-Jan-0001 00:00:00 +0000"),
+            Some(-62_135_596_800)
+        );
+        assert_eq!(
+            parse_internal_date("31-Dec-9999 23:59:59 +0000"),
+            Some(253_402_300_799)
+        );
     }
 
     fn code(name: &str, args: Option<&str>) -> Untagged {
