@@ -14,6 +14,9 @@ import kotlinx.coroutines.flow.asSharedFlow
 
 /** How a sign-in in the browser ended (M3-01). */
 sealed interface OAuthResult {
+    /** The browser came back with a redirect; the code is being exchanged. A result follows. */
+    data object Returned : OAuthResult
+
     /** Signed in: pass [signInId] to `oauthAttach` once the account is saved. */
     data class SignedIn(
         val signInId: String,

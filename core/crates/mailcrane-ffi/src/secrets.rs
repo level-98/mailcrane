@@ -100,6 +100,31 @@ pub(crate) fn secret_store() -> Result<Arc<dyn SecretStore>, SecretError> {
     slot.clone().ok_or(SecretError::Unavailable)
 }
 
+/// For an OAuth account (M3-02), refreshes its access token if it's about to
+/// expire, before a send is prepared. Opens and drops the store first, so
+/// the future stays `Send`. Failures are left to the send to report.
+pub(crate) async fn refresh_oauth(
+    db_path: &str,
+    secrets: &dyn mailcrane_core::secrets::SecretStore,
+    account: mailcrane_store::AccountId,
+) {
+    use mailcrane_core::account::credentials::{oauth_provider_of, refresh_token};
+    let provider = match mailcrane_store::Store::open(db_path) {
+        Ok(store) => oauth_provider_of(&store, account).ok().flatten(),
+        Err(_) => None,
+    };
+    if let Some(provider) = provider {
+        let _ = refresh_token(
+            secrets,
+            account,
+            &provider,
+            &[],
+            std::time::Duration::from_secs(20),
+        )
+        .await;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

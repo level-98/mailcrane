@@ -37,9 +37,11 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.liveRegion
@@ -51,12 +53,21 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.mailcrane.R
 import app.mailcrane.core.ConnectionSecurity
 import app.mailcrane.core.Field
 import app.mailcrane.core.FieldProblem
 import app.mailcrane.core.MailServer
+import app.mailcrane.oauth.OAuthResult
+import app.mailcrane.oauth.OAuthSignIn
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+
+/** How long a resumed setup screen waits for the browser's redirect before giving up on it. */
+internal const val GOOGLE_RETURN_GRACE_MS = 1_500L
 
 /** Add an IMAP/SMTP account by typing the server details. Calls [onAccountAdded] once it's saved. */
 @Composable
@@ -65,6 +76,19 @@ fun ManualSetupScreen(
     viewModel: ManualSetupViewModel = hiltViewModel(),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
+    val context = LocalContext.current
+    // Sign in with Google (M3-02): the browser's answer comes back through the redirect activity.
+    LaunchedEffect(viewModel) { OAuthSignIn.results.collect(viewModel::onGoogleResult) }
+    // Back from the browser with no redirect (the tab was closed): after a moment, stop waiting.
+    val scope = rememberCoroutineScope()
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
+        if (viewModel.state.value.waitingForGoogle) {
+            scope.launch {
+                delay(GOOGLE_RETURN_GRACE_MS)
+                viewModel.googleNotReturned()
+            }
+        }
+    }
     state.addedAccountId?.let { id ->
         LaunchedEffect(id) {
             onAccountAdded(id)
@@ -92,6 +116,13 @@ fun ManualSetupScreen(
                 onDiscover = viewModel::discover,
                 onEditSettings = viewModel::editSettings,
                 onSetUpManually = viewModel::setUpManually,
+                onSignInWithGoogle = {
+                    viewModel.startGoogleSignIn()?.let { (provider, email) ->
+                        if (!OAuthSignIn.start(context, provider, email)) {
+                            viewModel.onGoogleResult(OAuthResult.Failed(null))
+                        }
+                    }
+                },
             ),
     )
 }
@@ -115,6 +146,7 @@ data class ManualSetupActions(
     val onDiscover: () -> Unit = {},
     val onEditSettings: () -> Unit = {},
     val onSetUpManually: () -> Unit = {},
+    val onSignInWithGoogle: () -> Unit = {},
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -513,6 +545,7 @@ internal fun SetupError.message(): Int {
         SetupFailure.TIMEOUT -> pick(R.string.setup_error_timeout_imap, R.string.setup_error_timeout_smtp)
         SetupFailure.SAVE_FAILED -> R.string.setup_error_save_failed
         SetupFailure.ALREADY_ADDED -> R.string.setup_error_already_added
+        SetupFailure.GOOGLE_SIGN_IN_FAILED -> R.string.setup_error_google
         SetupFailure.UNEXPECTED -> R.string.setup_error_unexpected
     }
 }

@@ -144,11 +144,81 @@ class ManualSetupViewModelTest {
     }
 
     @Test
+    fun gmailSignsInWithGoogleAndAddsTheAccount() {
+        // M3-02: a Gmail address goes through Sign in with Google.
+        val core = FakeSetupCore({ 9 })
+        val vm = ManualSetupViewModel(core)
+        vm.onEmailChange("ann@gmail.com")
+        assertEquals(true, vm.state.value.gmail)
+        val (provider, email) = vm.startGoogleSignIn() ?: error("started")
+        assertEquals("google", provider.id)
+        assertEquals("ann@gmail.com", email)
+        assertEquals(true, vm.state.value.checking)
+
+        vm.onGoogleResult(
+            app.mailcrane.oauth.OAuthResult
+                .SignedIn("signin-1"),
+        )
+        assertEquals(9L, vm.state.value.addedAccountId)
+        assertEquals(Triple("signin-1", "ann@gmail.com", ""), core.lastGoogle)
+    }
+
+    @Test
+    fun googleSignInNeedsAnAddressAndReportsFailures() {
+        val vm = ManualSetupViewModel(FakeSetupCore({ 9 }))
+        assertNull(vm.startGoogleSignIn())
+        assertEquals(FieldProblem.MALFORMED_EMAIL, vm.state.value.fieldErrors[Field.EMAIL])
+
+        vm.onEmailChange("ann@example.com")
+        assertEquals(false, vm.state.value.gmail)
+        vm.startGoogleSignIn()
+        // Cancelled in the browser: back to the form, no error.
+        vm.onGoogleResult(
+            app.mailcrane.oauth.OAuthResult
+                .Failed(
+                    app.mailcrane.core.OAuthFailure
+                        .Denied(),
+                ),
+        )
+        assertFalse(vm.state.value.checking)
+        assertNull(vm.state.value.error)
+        // Anything else (or no browser) says so.
+        vm.startGoogleSignIn()
+        vm.onGoogleResult(
+            app.mailcrane.oauth.OAuthResult
+                .Failed(null),
+        )
+        assertEquals(SetupError(SetupFailure.GOOGLE_SIGN_IN_FAILED), vm.state.value.error)
+        assertEquals(
+            app.mailcrane.R.string.setup_error_google,
+            SetupError(SetupFailure.GOOGLE_SIGN_IN_FAILED).message(),
+        )
+    }
+
+    @Test
     fun aDuplicateAccountIsSaidPlainly() {
         // #346: the core refuses a second copy of an account; the screen says why.
         assertEquals(
             app.mailcrane.R.string.setup_error_already_added,
             SetupError(SetupFailure.ALREADY_ADDED).message(),
         )
+    }
+
+    @Test
+    fun closingTheBrowserTabLeavesSigningInButAReturnStaysWaiting() {
+        // #376: back in the app with nothing from the browser means the tab was closed.
+        val vm = ManualSetupViewModel(FakeSetupCore({ 9 }))
+        vm.onEmailChange("ann@gmail.com")
+        vm.startGoogleSignIn()
+        assertEquals(true, vm.state.value.waitingForGoogle)
+        vm.googleNotReturned()
+        assertFalse(vm.state.value.checking)
+        assertNull(vm.state.value.error)
+
+        // A redirect that arrived: the code is being exchanged, so don't give up.
+        vm.startGoogleSignIn()
+        vm.onGoogleResult(app.mailcrane.oauth.OAuthResult.Returned)
+        vm.googleNotReturned()
+        assertEquals(true, vm.state.value.checking)
     }
 }

@@ -29,6 +29,22 @@ interface MailcraneCore {
      */
     suspend fun discoverSettings(email: String): List<DiscoveredSettings> = throw DiscoverException.NotFound()
 
+    /** Whether [email] is a gmail.com or googlemail.com address, so setup offers Sign in with Google (M3-02). */
+    fun isGmailAddress(email: String): Boolean = false
+
+    /** Google's OAuth settings for [app.mailcrane.oauth.OAuthSignIn]. @throws OAuthFailure */
+    fun googleOAuthProvider(): OAuthProviderConfig = throw OAuthFailure.InvalidProvider()
+
+    /**
+     * Adds a Google account after Sign in with Google (M3-02): [signInId] is what the redirect
+     * returned. Logs in to Gmail with the token, then saves. @throws AddAccountException
+     */
+    suspend fun addAccountGoogle(
+        signInId: String,
+        email: String,
+        displayName: String,
+    ): Long = throw AddAccountException.NotReady()
+
     /**
      * Adds a JMAP account (M3-04): finds the session for [JmapAccountSetup.server] (a domain or the
      * session URL), logs in to check, then saves. Same errors as [addAccountManual].
@@ -75,6 +91,16 @@ class UniffiMailcraneCore(
 
     override suspend fun discoverSettings(email: String): List<DiscoveredSettings> =
         app.mailcrane.core.discoverSettings(email, dns)
+
+    override fun isGmailAddress(email: String): Boolean = app.mailcrane.core.isGmailAddress(email)
+
+    override fun googleOAuthProvider(): OAuthProviderConfig = app.mailcrane.core.googleOauthProvider()
+
+    override suspend fun addAccountGoogle(
+        signInId: String,
+        email: String,
+        displayName: String,
+    ): Long = app.mailcrane.core.addAccountGoogle(dbPath, signInId, email, displayName)
 
     override suspend fun listAccounts(): List<AccountSummary> =
         kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {

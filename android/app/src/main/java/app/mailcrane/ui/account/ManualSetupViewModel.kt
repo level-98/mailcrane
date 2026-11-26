@@ -12,7 +12,10 @@ import app.mailcrane.core.JmapAccountSetup
 import app.mailcrane.core.MailServer
 import app.mailcrane.core.MailcraneCore
 import app.mailcrane.core.ManualAccountConfig
+import app.mailcrane.core.OAuthFailure
+import app.mailcrane.core.OAuthProviderConfig
 import app.mailcrane.core.ServerConfig
+import app.mailcrane.oauth.OAuthResult
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -33,6 +36,9 @@ enum class SetupFailure {
 
     /** The same account is already in the app (#346). */
     ALREADY_ADDED,
+
+    /** Sign in with Google didn't finish (M3-02): refused, no browser, or the sign-in expired. */
+    GOOGLE_SIGN_IN_FAILED,
 
     /** Anything the core did not classify, including an app set-up bug. */
     UNEXPECTED,
@@ -80,6 +86,10 @@ data class ManualSetupUiState(
     val step: SetupStep = SetupStep.EMAIL,
     val discovering: Boolean = false,
     val found: DiscoveredSettings? = null,
+    /** A gmail.com or googlemail.com address: Sign in with Google is the way in (M3-02). */
+    val gmail: Boolean = false,
+    /** Sign in with Google is open in the browser and nothing has come back yet. */
+    val waitingForGoogle: Boolean = false,
     val discoveryNote: DiscoveryNote? = null,
     /** JMAP instead of IMAP+SMTP (M3-04): one server, a domain or session URL. */
     val jmap: Boolean = false,
@@ -110,7 +120,8 @@ class ManualSetupViewModel
             _state.value = emptyForm()
         }
 
-        fun onEmailChange(value: String) = edit(Field.EMAIL) { copy(email = value) }
+        fun onEmailChange(value: String) =
+            edit(Field.EMAIL) { copy(email = value, gmail = core.isGmailAddress(value.trim())) }
 
         fun onDisplayNameChange(value: String) = edit(Field.DISPLAY_NAME) { copy(displayName = value) }
 
@@ -209,6 +220,89 @@ class ManualSetupViewModel
                     fieldErrors = emptyMap(),
                 )
             }
+
+        /**
+         * Starts Sign in with Google (M3-02) for the typed address: returns the provider and the
+         * address to open in the browser, or null (with a field error) if there's no address yet.
+         */
+        fun startGoogleSignIn(): Pair<OAuthProviderConfig, String>? {
+            val current = _state.value
+            if (current.checking) return null
+            val email = current.email.trim()
+            if (!email.contains('@')) {
+                _state.update { it.copy(fieldErrors = mapOf(Field.EMAIL to FieldProblem.MALFORMED_EMAIL)) }
+                return null
+            }
+            val provider =
+                try {
+                    core.googleOAuthProvider()
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Exception) {
+                    _state.update { it.copy(error = SetupError(SetupFailure.GOOGLE_SIGN_IN_FAILED)) }
+                    return null
+                }
+            _state.update {
+                it.copy(checking = true, waitingForGoogle = true, error = null, fieldErrors = emptyMap())
+            }
+            return provider to email
+        }
+
+        /**
+         * The app is in front again but the browser sent nothing back: the user closed the tab.
+         * Back to the form, quietly. Called a moment after the app resumes, so a redirect that's
+         * on its way still wins.
+         */
+        fun googleNotReturned() {
+            _state.update {
+                if (it.waitingForGoogle) it.copy(checking = false, waitingForGoogle = false) else it
+            }
+        }
+
+        /** How Sign in with Google ended in the browser: on success, the account is checked and saved. */
+        fun onGoogleResult(result: OAuthResult) {
+            when (result) {
+                // The browser came back; the code is being exchanged.
+                OAuthResult.Returned -> _state.update { it.copy(waitingForGoogle = false) }
+                is OAuthResult.Failed -> {
+                    // Cancelled in the browser: back to the form, quietly.
+                    val cancelled = result.reason is OAuthFailure.Denied
+                    _state.update {
+                        it.copy(
+                            checking = false,
+                            waitingForGoogle = false,
+                            error = if (cancelled) null else SetupError(SetupFailure.GOOGLE_SIGN_IN_FAILED),
+                        )
+                    }
+                }
+                is OAuthResult.SignedIn -> {
+                    val current = _state.value
+                    _state.update { it.copy(checking = true, waitingForGoogle = false, error = null) }
+                    viewModelScope.launch {
+                        val added =
+                            try {
+                                Result.success(
+                                    core.addAccountGoogle(
+                                        result.signInId,
+                                        current.email.trim(),
+                                        current.displayName.trim(),
+                                    ),
+                                )
+                            } catch (e: CancellationException) {
+                                throw e
+                            } catch (e: Exception) {
+                                Result.failure(e)
+                            }
+                        _state.update { state ->
+                            added.fold(
+                                onSuccess = { id -> state.copy(checking = false, addedAccountId = id) },
+                                onFailure = { e -> state.withFailure(e) },
+                            )
+                        }
+                    }
+                }
+            }
+        }
 
         /** Checks the settings by logging in, and saves the account if both servers accept it. */
         fun submit() {

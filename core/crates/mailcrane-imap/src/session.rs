@@ -4,7 +4,7 @@ use crate::command::{self, Arg, Tags};
 use crate::connection::{connect_tcp, within, Connection, Io};
 use crate::error::ImapError;
 use crate::parser::{Code, Condition, Limits, RespText, Response, StatusKind, Untagged};
-use crate::{b64, mutf7, roles, tls, Secret};
+use crate::{b64, mutf7, roles, tls, ImapAuth, Secret};
 use mailcrane_store::{AccountId, FolderId, FolderRole, NewFolder, Store};
 use std::collections::HashMap;
 use std::time::Duration;
@@ -138,10 +138,28 @@ impl Session {
         username: &str,
         password: &Secret,
     ) -> Result<Session, ImapError> {
+        Self::connect_auth(config, username, &ImapAuth::Password(password.clone())).await
+    }
+
+    /// [`Session::connect`] with a password or an OAuth access token.
+    pub async fn connect_auth(
+        config: &ImapConfig,
+        username: &str,
+        auth: &ImapAuth,
+    ) -> Result<Session, ImapError> {
         if config.host.is_empty() || config.host.chars().any(|c| c.is_control() || c == ' ') {
             return Err(ImapError::InvalidInput);
         }
-        if !valid_credential(username) || !valid_credential(password.expose()) {
+        let secret = match auth {
+            ImapAuth::Password(s) | ImapAuth::XOAuth2(s) => s,
+        };
+        if !valid_credential(username) || !valid_credential(secret.expose()) {
+            return Err(ImapError::InvalidInput);
+        }
+        // XOAUTH2 separates its fields with ^A: neither may contain one.
+        if matches!(auth, ImapAuth::XOAuth2(_))
+            && (username.contains('\u{1}') || secret.expose().contains('\u{1}'))
+        {
             return Err(ImapError::InvalidInput);
         }
         let host = config.host.as_str();
@@ -183,7 +201,7 @@ impl Session {
             // RFC 9051 §7.1.4: already authenticated, over TLS.
             return Ok(session);
         }
-        session.login(username, password).await?;
+        session.login(username, auth).await?;
         tracing::debug!(host, "IMAP logged in");
         Ok(session)
     }
@@ -250,9 +268,21 @@ impl Session {
         capabilities_in(&done).ok_or(ImapError::Protocol)
     }
 
-    /// `AUTHENTICATE PLAIN` if offered (RFC 9051 §6.2.2, RFC 4616),
-    /// otherwise `LOGIN` (§6.2.3) unless `LOGINDISABLED` is advertised.
-    async fn login(&mut self, username: &str, password: &Secret) -> Result<(), ImapError> {
+    /// With a password: `AUTHENTICATE PLAIN` if offered (RFC 9051 §6.2.2,
+    /// RFC 4616), otherwise `LOGIN` (§6.2.3) unless `LOGINDISABLED` is
+    /// advertised. With a token: `AUTHENTICATE XOAUTH2`, which the server
+    /// must offer.
+    async fn login(&mut self, username: &str, auth: &ImapAuth) -> Result<(), ImapError> {
+        let password = match auth {
+            ImapAuth::Password(password) => password,
+            ImapAuth::XOAuth2(token) => {
+                if !has_cap(&self.caps, "AUTH=XOAUTH2") {
+                    return Err(ImapError::AuthFailed);
+                }
+                let done = self.authenticate_xoauth2(username, token).await?;
+                return self.after_login(done).await;
+            }
+        };
         let done = if has_cap(&self.caps, "AUTH=PLAIN") {
             self.authenticate_plain(username, password).await?
         } else if has_cap(&self.caps, "LOGINDISABLED") {
@@ -267,6 +297,11 @@ impl Session {
             )
             .await?
         };
+        self.after_login(done).await
+    }
+
+    /// The end of a login: the server's answer, then its capabilities.
+    async fn after_login(&mut self, done: Done) -> Result<(), ImapError> {
         if done.status != StatusKind::Ok {
             return Err(ImapError::AuthFailed);
         }
@@ -276,6 +311,28 @@ impl Session {
             None => self.capability().await?,
         };
         Ok(())
+    }
+
+    /// Google's XOAUTH2 (developers.google.com/gmail/imap/xoauth2-protocol):
+    /// the token after the server's `+`. A refused token comes back as a
+    /// second `+` with an error description, which is answered with an
+    /// empty line; the server then sends `NO`. The token is never logged.
+    async fn authenticate_xoauth2(
+        &mut self,
+        username: &str,
+        token: &Secret,
+    ) -> Result<Done, ImapError> {
+        self.last_command = Some("AUTHENTICATE");
+        let tag = self.tags.next();
+        let start = format!("{tag} AUTHENTICATE XOAUTH2\r\n").into_bytes();
+        let payload = format!("user={username}\x01auth=Bearer {}\x01\x01", token.expose());
+        let response = format!("{}\r\n", b64::encode(payload.as_bytes())).into_bytes();
+        let limit = self.command_timeout;
+        within(
+            limit,
+            exchange(&mut self.conn, tag, vec![start, response, b"\r\n".to_vec()]),
+        )
+        .await?
     }
 
     async fn authenticate_plain(

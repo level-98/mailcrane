@@ -133,8 +133,8 @@ fn sessions() -> MutexGuard<'static, Sessions> {
 
 /// The process-wide access-token cache (memory only).
 pub(crate) fn token_cache() -> &'static TokenCache {
-    static C: OnceLock<TokenCache> = OnceLock::new();
-    C.get_or_init(TokenCache::new)
+    // The core's, so sync and sending see the tokens a sign-in saved.
+    core::token_cache()
 }
 
 /// Starts a sign-in with `provider`: returns the URL to open in the system
@@ -210,6 +210,42 @@ pub(crate) fn attach_with(
         .ok_or(OAuthFailure::NoSuchSignIn)?;
     token_cache().save(secrets, account_id, &tokens, now())?;
     Ok(())
+}
+
+/// The access token of a finished sign-in, still waiting for an account.
+pub(crate) fn finished_access_token(sign_in_id: &str) -> Option<String> {
+    sessions()
+        .finished
+        .get(sign_in_id)
+        .map(|(tokens, _)| tokens.access_token.clone())
+}
+
+/// The Google provider's settings (M3-02), for `oauth_begin`.
+#[uniffi::export]
+pub fn google_oauth_provider() -> Result<OAuthProviderConfig, OAuthFailure> {
+    let p = mailcrane_core::oauth::providers::google::provider()
+        .ok_or(OAuthFailure::InvalidProvider)?;
+    Ok(OAuthProviderConfig {
+        id: p.id,
+        authorization_endpoint: p.authorization_endpoint.to_string(),
+        token_endpoint: p.token_endpoint.to_string(),
+        client_id: p.client_id,
+        scopes: p.scopes,
+        redirect_uri: p.redirect_uri,
+        extra_auth_params: p
+            .extra_auth_params
+            .into_iter()
+            .map(|(name, value)| OAuthParam { name, value })
+            .collect(),
+    })
+}
+
+/// Whether setup should offer "Sign in with Google" first for `email`: a
+/// gmail.com or googlemail.com address. Google Workspace accounts can use
+/// it too.
+#[uniffi::export]
+pub fn is_gmail_address(email: String) -> bool {
+    mailcrane_core::oauth::providers::google::is_gmail_address(&email)
 }
 
 fn now() -> i64 {

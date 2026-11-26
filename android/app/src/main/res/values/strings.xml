@@ -9,6 +9,11 @@
     <string name="setup_auto_continue">Continue</string>
     <string name="setup_auto_looking">Looking up settings…</string>
     <string name="setup_auto_manual">Set up manually</string>
+    <!-- Sign in with Google (M3-02). Google's wording for the button. -->
+    <string name="setup_google_sign_in">Sign in with Google</string>
+    <string name="setup_google_signing_in">Signing in…</string>
+    <string name="setup_google_gmail_note">Gmail accounts sign in with Google in your browser. Mailcrane never sees your Google password.</string>
+    <string name="setup_error_google">Signing in with Google didn’t finish. Try again.</string>
     <string name="setup_auto_found_title">Check these settings</string>
     <string name="setup_auto_source_autoconfig">From %1$s’s own settings file.</string>
     <string name="setup_auto_source_srv">From the DNS records of %1$s.</string>

@@ -162,7 +162,12 @@ fn plan(
         Action::Flag => (OpKind::Flag, None),
         Action::Unflag => (OpKind::Unflag, None),
         Action::Archive => {
-            let archive = role_folder(FolderRole::Archive)?.ok_or(ActionError::NoArchiveFolder)?;
+            // Gmail has no Archive folder: archiving removes the Inbox label,
+            // which a move to All Mail (`\All`, RFC 6154) does (M3-02).
+            let archive = match role_folder(FolderRole::Archive)? {
+                Some(archive) => archive,
+                None => role_folder(FolderRole::All)?.ok_or(ActionError::NoArchiveFolder)?,
+            };
             (OpKind::Move, Some(archive))
         }
         Action::Delete => match role_folder(FolderRole::Trash)? {

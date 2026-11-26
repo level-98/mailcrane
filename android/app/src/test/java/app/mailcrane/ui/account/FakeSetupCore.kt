@@ -5,6 +5,7 @@ import app.mailcrane.core.JmapAccountSetup
 import app.mailcrane.core.MailServer
 import app.mailcrane.core.MailcraneCore
 import app.mailcrane.core.ManualAccountConfig
+import app.mailcrane.core.OAuthProviderConfig
 
 /** A core for the account setup tests: adding an account returns [result]'s id or throws. */
 internal class FakeSetupCore(
@@ -12,6 +13,29 @@ internal class FakeSetupCore(
 ) : MailcraneCore {
     var lastConfig: ManualAccountConfig? = null
     var lastJmap: JmapAccountSetup? = null
+    var lastGoogle: Triple<String, String, String>? = null
+
+    override fun isGmailAddress(email: String) = email.endsWith("@gmail.com")
+
+    override fun googleOAuthProvider() =
+        OAuthProviderConfig(
+            id = "google",
+            authorizationEndpoint = "https://accounts.example.org/auth",
+            tokenEndpoint = "https://oauth2.example.org/token",
+            clientId = "client",
+            scopes = listOf("https://mail.google.com/"),
+            redirectUri = "app.mailcrane:/oauth2redirect",
+            extraAuthParams = emptyList(),
+        )
+
+    override suspend fun addAccountGoogle(
+        signInId: String,
+        email: String,
+        displayName: String,
+    ): Long {
+        lastGoogle = Triple(signInId, email, displayName)
+        return result()
+    }
 
     override fun hello() = ""
 

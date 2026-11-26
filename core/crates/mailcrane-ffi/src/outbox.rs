@@ -151,7 +151,9 @@ pub(crate) async fn send_via_outbox_with(
     draft: ComposeDraft,
     options: &core::SendOptions,
 ) -> Result<SendResult, SendFailure> {
+    let account = AccountId(draft.account_id);
     let id = enqueue_draft(db_path, draft)?;
+    crate::secrets::refresh_oauth(db_path, secrets, account).await;
     let prepared = match prepare_one(db_path, secrets, id, options) {
         Ok(Some(p)) => p,
         Ok(None) => {
@@ -302,6 +304,7 @@ pub(crate) async fn send_outbox_with(
     options: &core::SendOptions,
 ) -> Result<OutboxStatus, SyncFailure> {
     let storage = |_| failed(events::SyncErrorKind::Storage);
+    crate::secrets::refresh_oauth(db_path, secrets, account).await;
     for id in due_ids(db_path, account)? {
         let prepared = match prepare_one(db_path, secrets, id, options) {
             Ok(Some(p)) => p,
