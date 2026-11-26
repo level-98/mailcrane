@@ -54,12 +54,20 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.mailcrane.R
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
+import androidx.lifecycle.compose.LifecycleEventEffect
+import androidx.lifecycle.Lifecycle
+import androidx.compose.runtime.rememberCoroutineScope
 import app.mailcrane.core.ConnectionSecurity
 import app.mailcrane.core.Field
 import app.mailcrane.core.FieldProblem
 import app.mailcrane.core.MailServer
 import app.mailcrane.oauth.OAuthResult
 import app.mailcrane.oauth.OAuthSignIn
+
+/** How long a resumed setup screen waits for the browser's redirect before giving up on it. */
+internal const val GOOGLE_RETURN_GRACE_MS = 1_500L
 
 /** Add an IMAP/SMTP account by typing the server details. Calls [onAccountAdded] once it's saved. */
 @Composable
@@ -71,6 +79,16 @@ fun ManualSetupScreen(
     val context = LocalContext.current
     // Sign in with Google (M3-02): the browser's answer comes back through the redirect activity.
     LaunchedEffect(viewModel) { OAuthSignIn.results.collect(viewModel::onGoogleResult) }
+    // Back from the browser with no redirect (the tab was closed): after a moment, stop waiting.
+    val scope = rememberCoroutineScope()
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
+        if (viewModel.state.value.waitingForGoogle) {
+            scope.launch {
+                delay(GOOGLE_RETURN_GRACE_MS)
+                viewModel.googleNotReturned()
+            }
+        }
+    }
     state.addedAccountId?.let { id ->
         LaunchedEffect(id) {
             onAccountAdded(id)

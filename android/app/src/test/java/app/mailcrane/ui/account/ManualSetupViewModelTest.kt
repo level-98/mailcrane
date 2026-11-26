@@ -203,4 +203,22 @@ class ManualSetupViewModelTest {
             SetupError(SetupFailure.ALREADY_ADDED).message(),
         )
     }
+
+    @Test
+    fun closingTheBrowserTabLeavesSigningInButAReturnStaysWaiting() {
+        // #376: back in the app with nothing from the browser means the tab was closed.
+        val vm = ManualSetupViewModel(FakeSetupCore({ 9 }))
+        vm.onEmailChange("ann@gmail.com")
+        vm.startGoogleSignIn()
+        assertEquals(true, vm.state.value.waitingForGoogle)
+        vm.googleNotReturned()
+        assertFalse(vm.state.value.checking)
+        assertNull(vm.state.value.error)
+
+        // A redirect that arrived: the code is being exchanged, so don't give up.
+        vm.startGoogleSignIn()
+        vm.onGoogleResult(app.mailcrane.oauth.OAuthResult.Returned)
+        vm.googleNotReturned()
+        assertEquals(true, vm.state.value.checking)
+    }
 }
