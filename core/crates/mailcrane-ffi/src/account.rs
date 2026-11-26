@@ -96,6 +96,9 @@ pub enum AddAccountError {
     Timeout { server: MailServer },
     #[error("the account could not be saved")]
     SaveFailed,
+    /// The same account is already in the app (#346). Nothing was saved.
+    #[error("this account is already added")]
+    AlreadyAdded,
     /// The app has not called `install_secret_store` yet. A bug in the app,
     /// not something the user can fix.
     #[error("the core is not ready")]
@@ -198,6 +201,7 @@ impl From<core::AddAccountError> for AddAccountError {
                 server: server.into(),
             },
             E::SaveFailed => Self::SaveFailed,
+            E::AlreadyAdded => Self::AlreadyAdded,
         }
     }
 }
@@ -319,6 +323,17 @@ async fn add_with(
 ) -> Result<i64, AddAccountError> {
     let config: core::ManualAccountConfig = config.into();
     let password = Secret::from_string(password);
+    // A duplicate is refused before any server is contacted (#346). The
+    // store is dropped before the await: it isn't `Sync`.
+    {
+        let store = Store::open(db_path).map_err(|_| AddAccountError::SaveFailed)?;
+        core::ensure_not_added(
+            &store,
+            core::IncomingServer::Imap(config.imap.host.trim()),
+            config.username.trim(),
+            config.email.trim(),
+        )?;
+    }
     core::check_account(&config, &password, options).await?;
     // Opened only after the checks, so the future holds no `Store` (which is
     // not `Sync`) across an await.
@@ -457,6 +472,34 @@ mod tests {
             Ok(Some(mailcrane_store::Protocol::Jmap { .. }))
         ));
         assert_eq!(secrets.keys(), vec![format!("account/{id}/password")]);
+    }
+
+    #[tokio::test]
+    async fn a_duplicate_is_refused_before_any_server_is_contacted() {
+        // #346: the account is already in the database; its servers don't
+        // exist, so reaching them would fail with CannotConnect instead.
+        let secrets = mailcrane_testkit::MemorySecretStore::new();
+        let dir = tempfile::tempdir().expect("temp dir");
+        let db = dir.path().join("mail.db").to_string_lossy().into_owned();
+        let core_config: core::ManualAccountConfig = config().into();
+        let store = Store::open(&db).expect("store");
+        core::save_account(
+            &store,
+            &secrets,
+            &core_config,
+            &Secret::from_string("pw".into()),
+        )
+        .expect("first");
+        drop(store);
+        let got = add_with(
+            &db,
+            &secrets,
+            config(),
+            "pw".into(),
+            &core::SetupOptions::default(),
+        )
+        .await;
+        assert_eq!(got, Err(AddAccountError::AlreadyAdded));
     }
 
     #[tokio::test]
