@@ -109,7 +109,11 @@ class UnifiedPushTest {
         }
         compose.onNodeWithText(context.getString(R.string.push_no_distributor)).assertIsDisplayed()
         compose.onNodeWithText(context.getString(R.string.push_title)).assertIsDisplayed()
-        compose.onNode(androidx.compose.ui.test.isToggleable()).assertIsNotEnabled()
+        compose
+            .onNode(
+                androidx.compose.ui.test
+                    .isToggleable(),
+            ).assertIsNotEnabled()
     }
 
     @Test

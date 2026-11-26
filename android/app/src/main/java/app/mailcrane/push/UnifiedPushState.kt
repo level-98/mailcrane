@@ -85,11 +85,16 @@ class UnifiedPushState private constructor(
         if (!prefs.getBoolean(KEY_ENABLED, false)) return PushStatus.Off
         return when (prefs.getString(KEY_KIND, null)) {
             KIND_READY ->
-                prefs.getString(KEY_ENDPOINT, null)?.let { PushStatus.Ready(it, prefs.getBoolean(KEY_TEMPORARY, false)) }
+                prefs
+                    .getString(
+                        KEY_ENDPOINT,
+                        null,
+                    )?.let { PushStatus.Ready(it, prefs.getBoolean(KEY_TEMPORARY, false)) }
                     ?: PushStatus.Registering
             KIND_FAILED ->
                 PushStatus.Failed(
-                    FailureKind.entries.firstOrNull { it.name == prefs.getString(KEY_FAILURE, null) } ?: FailureKind.OTHER,
+                    FailureKind.entries.firstOrNull { it.name == prefs.getString(KEY_FAILURE, null) }
+                        ?: FailureKind.OTHER,
                 )
             KIND_NO_DISTRIBUTOR -> PushStatus.NoDistributor
             else -> PushStatus.Registering

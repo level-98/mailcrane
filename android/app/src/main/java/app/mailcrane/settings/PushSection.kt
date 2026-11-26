@@ -86,7 +86,13 @@ fun PushSettings(
                 )
             },
             trailingContent = { Switch(checked = on, onCheckedChange = null, enabled = canToggle) },
-            modifier = Modifier.toggleable(value = on, enabled = canToggle, role = Role.Switch, onValueChange = onToggle),
+            modifier =
+                Modifier.toggleable(
+                    value = on,
+                    enabled = canToggle,
+                    role = Role.Switch,
+                    onValueChange = onToggle,
+                ),
         ) {
             Text(stringResource(R.string.push_title))
         }
