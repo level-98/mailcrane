@@ -43,7 +43,10 @@ permissions:
   contents: read
 
 concurrency:
-  group: release-${{ github.ref }}
+  # The calling workflow's name too: when nightly.yml calls this, github.workflow
+  # is "Nightly test build", so a nightly never queues behind (or cancels) a
+  # release started on the same ref (#425).
+  group: release-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: false
 
 env:
@@ -57,6 +60,10 @@ jobs:
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 75
+    # Read-only, however much a caller grants (nightly.yml grants contents:
+    # write only so this workflow's skipped sign job passes GitHub's check).
+    permissions:
+      contents: read
     outputs:
       version: ${{ steps.version.outputs.version }}
     steps:

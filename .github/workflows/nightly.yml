@@ -72,6 +72,13 @@ jobs:
     needs: check
     if: needs.check.outputs.changed == 'true'
     uses: ./.github/workflows/release.yml
+    # GitHub checks every job of a called workflow against what the caller
+    # grants before anything runs, skipped ones included, and release.yml's sign
+    # job asks for contents: write (build_only skips it). The build job itself
+    # declares contents: read, and a called workflow can only lower what it is
+    # given, so the build never holds a token that can write. No secrets pass.
+    permissions:
+      contents: write
     with:
       build_only: true
 
@@ -207,8 +214,10 @@ jobs:
         run: |
           set -eu
           tag="test-build-$(date -u +%Y%m%d)-nightly"
-          # A second run on the same day (Run workflow) gets the time too.
-          if gh release view "$tag" > /dev/null 2>&1; then
+          # A second run on the same day (Run workflow) gets the time too. The tag
+          # is checked as well: a release deleted by hand leaves its tag, and
+          # `gh release create` would reuse it, pointing at an older commit.
+          if gh release view "$tag" > /dev/null 2>&1 || gh api "repos/$GH_REPO/git/ref/tags/$tag" > /dev/null 2>&1; then
             tag="test-build-$(date -u +%Y%m%d-%H%M)-nightly"
           fi
           short=$(git rev-parse --short=7 HEAD)
