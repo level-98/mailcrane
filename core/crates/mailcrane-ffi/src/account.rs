@@ -580,6 +580,10 @@ pub fn remove_account(db_path: String, account_id: i64) -> Result<(), RemoveAcco
     {
         return Err(RemoveAccountFailure::NotFound);
     }
+    // While its password is still there: stop the server pushing to this
+    // phone for an account it no longer has (M4-27). Best effort; a
+    // subscription the server isn't told about expires there.
+    destroy_push_subscription(&store, id, None);
     let secrets = crate::secrets::secret_store().map_err(|_| RemoveAccountFailure::Storage)?;
     mailcrane_core::secrets::delete_account_secrets(secrets.as_ref(), account_id)
         .map_err(|_| RemoveAccountFailure::Storage)?;
@@ -587,5 +591,39 @@ pub fn remove_account(db_path: String, account_id: i64) -> Result<(), RemoveAcco
         Ok(true) => Ok(()),
         Ok(false) => Err(RemoveAccountFailure::NotFound),
         Err(_) => Err(RemoveAccountFailure::Storage),
+    }
+}
+
+/// Destroys the account's JMAP push subscription on its server, if it has
+/// one, within a few seconds; failures are only logged. `extra_root` is a
+/// test server's certificate.
+pub(crate) fn destroy_push_subscription(
+    store: &mailcrane_store::Store,
+    id: mailcrane_store::AccountId,
+    extra_root: Option<Vec<u8>>,
+) {
+    let Ok(Some(_)) = store.push_subscription(id) else {
+        return;
+    };
+    let Ok(Some(mailcrane_store::Protocol::Jmap { session_url })) = store.account_protocol(id)
+    else {
+        return;
+    };
+    let Ok(auth) = crate::sync::jmap_auth(store, id) else {
+        return;
+    };
+    let config = mailcrane_jmap::ClientConfig {
+        timeout: std::time::Duration::from_secs(5),
+        extra_roots: extra_root.into_iter().collect(),
+    };
+    let Ok(runtime) = crate::sync::runtime() else {
+        return;
+    };
+    let done = runtime.block_on(async {
+        let session = mailcrane_jmap::discover(&session_url, &auth, &config).await?;
+        mailcrane_core::sync::push::teardown(store, id, &session, &auth, &config).await
+    });
+    if let Err(e) = done {
+        tracing::info!(account = id.0, kind = ?e.kind(), "push subscription left to expire");
     }
 }
