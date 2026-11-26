@@ -16,6 +16,8 @@ The project is **pre-alpha**. Some of the layout below is planned rather than bu
 
 ## 2. Picking up work
 
+**Current focus: finish and fix before adding features** ([#344](https://github.com/level-98/mailcrane/issues/344)). Pick issues labelled `release-blocker` first, then `bug`. Don't claim issues labelled `post-1.0`. Don't start new feature work unless a maintainer has assigned it to you.
+
 - **Issues are the to-do list.** Work only on an issue that is assigned to you (or your human), or that you have just claimed by commenting `/claim`. If it's assigned to someone else, or has an open PR (`gh pr list --search "<issue number>"`), stop and tell your human.
 - If you can't read GitHub, say so. Don't assume an issue is free.
 - Issues labelled `agent-ready` have a goal, files, acceptance criteria and test steps. Meet every acceptance criterion; don't add unrequested features.
@@ -88,6 +90,8 @@ It runs `fmt`, `clippy -D warnings`, the tests, `cargo deny`, the no-panic lint,
 - Add a file to `docs/changelog.d/`. Don't edit shared tables.
 - Fill in the PR template, including **AI-assisted: yes** with the tool and model, and what you actually tested.
 - Open it as a **draft** until `cargo xtask ci` passes.
+- Never mark a PR ready, or merge it, with a `wip` title or unfinished work. Finish it, split it into smaller PRs, or leave it as a draft.
+- Say plainly in the PR whether the change was run on a real device, an emulator, or neither. UI and sync changes that were only unit-tested are fine, but say so.
 - Anything touching sign-in, credentials, TLS, encryption or the sanitiser: add the `security` label and never merge it yourself.
 
 ## 9. Conventions

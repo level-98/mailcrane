@@ -34,8 +34,8 @@
 | Rust core: storage and accounts | 🟢 SQLite store with migrations; credentials in Android Keystore / iOS Keychain; manual and automatic account setup (autoconfig, SRV, bundled ISPDB) |
 | Rust core: reading mail (IMAP, MIME) | 🟢 TLS, initial and incremental sync (CONDSTORE/QRESYNC), IDLE, MIME parsing, HTML sanitiser, message actions synced back to the server |
 | Rust core: sending mail (SMTP) | 🟢 SMTP over implicit TLS or STARTTLS; reply and forward, attachments, drafts, offline outbox, save to Sent |
-| JMAP | 🟡 Protocol client built (M3-04); not yet connected to sync and the app |
-| OAuth sign-in (Gmail, Microsoft) | ⚪ Not started (M3) |
+| JMAP | 🟢 Client built and connected: JMAP accounts sync, send, take actions and manage folders in the app (M3-04, M4-26) |
+| OAuth sign-in (Gmail, Microsoft) | 🟡 OAuth 2.0 + PKCE framework built (M3-01); Gmail and Microsoft sign-in still to do (M3-02, M3-03) |
 | Android app (Kotlin + Jetpack Compose) | 🟡 Message list and view, folders, compose, multiple accounts, threads, search, swipe actions, snooze, scheduled and undo send, rules, widget, tablet layouts, app lock, new-mail notifications (periodic or always-on). Much of it not yet tested on a real device. UnifiedPush and the rest of M4-05 to come |
 | Privacy features | 🟡 Remote content and tracking pixels blocked, tracking parameters stripped from links, one-tap unsubscribe. OpenPGP and S/MIME to come (M5) |
 | Website and user docs | 🟢 [mailcrane.app](https://mailcrane.app) (M6-07) |
@@ -43,6 +43,8 @@
 | Brand and design | 🟢 v1 done (see below) |
 
 The plan is in [ROADMAP.md](ROADMAP.md). The live to-do list is the [issues](../../issues).
+
+**Current focus:** making the Android app work day to day on a real phone, before adding more features. Issues labelled [`release-blocker`](../../labels/release-blocker) come first; see [#344](../../issues/344).
 
 ## How it works
 
