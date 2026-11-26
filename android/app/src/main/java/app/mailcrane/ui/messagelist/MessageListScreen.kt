@@ -390,17 +390,20 @@ private fun Messages(
                         }
                     is ListEntry.Row ->
                         item(key = "t${entry.item.threadId}", contentType = "thread") {
-                            ThreadItem(
-                                entry.item,
-                                byId,
-                                now,
-                                locale,
-                                swipe,
-                                onOpenMessage,
-                                onOpenThread,
-                                state,
-                                selection,
-                            )
+                            // Rows that leave or arrive move the others smoothly (#341).
+                            Box(Modifier.animateItem()) {
+                                ThreadItem(
+                                    entry.item,
+                                    byId,
+                                    now,
+                                    locale,
+                                    swipe,
+                                    onOpenMessage,
+                                    onOpenThread,
+                                    state,
+                                    selection,
+                                )
+                            }
                         }
                 }
             }
@@ -414,18 +417,21 @@ private fun Messages(
                     is ListEntry.Row -> {
                         val message = entry.item
                         item(key = message.id, contentType = "message") {
-                            SwipeableRow(message, swipe) {
-                                MessageRow(
-                                    message = message,
-                                    now = now,
-                                    locale = locale,
-                                    modifier = Modifier.selectable(message.id, state, selection, onOpenMessage),
-                                    selecting = state.selecting,
-                                    selected = message.id in state.selectedMessages,
-                                    onAvatarClick = { selection.onToggleMessage(message.id) },
-                                )
+                            // Rows that leave or arrive move the others smoothly (#341).
+                            Column(Modifier.animateItem()) {
+                                SwipeableRow(message, swipe) {
+                                    MessageRow(
+                                        message = message,
+                                        now = now,
+                                        locale = locale,
+                                        modifier = Modifier.selectable(message.id, state, selection, onOpenMessage),
+                                        selecting = state.selecting,
+                                        selected = message.id in state.selectedMessages,
+                                        onAvatarClick = { selection.onToggleMessage(message.id) },
+                                    )
+                                }
+                                RowDivider()
                             }
-                            RowDivider()
                         }
                     }
                 }
@@ -548,9 +554,19 @@ internal fun errorText(kind: SyncErrorKind): Int =
         SyncErrorKind.BUSY -> R.string.sync_error_busy
     }
 
+/** Whether swiping [action] takes the message out of the list it's in (archive, delete). */
+internal fun swipeRemovesRow(action: SwipeAction): Boolean =
+    action == SwipeAction.ARCHIVE || action == SwipeAction.DELETE
+
+/** How long a row swiped away waits for the list to drop it before it comes back: the action didn't take. */
+internal const val SWIPE_REMOVE_TIMEOUT_MS = 3_000L
+
 /**
- * A row that runs the swipe settings' actions, with the same actions in TalkBack's actions menu. The row
- * springs back after a swipe: the list changes when the core says so, never by itself.
+ * A row that runs the swipe settings' actions, with the same actions in TalkBack's actions menu. The list
+ * changes when the core says so, never by itself. A row swiped to archive or delete stays swiped away until
+ * then, and the rows below close the gap ([animateItem]); it used to spring back first and then vanish in
+ * one frame (#341). If the list keeps it (the action failed), it comes back after [SWIPE_REMOVE_TIMEOUT_MS].
+ * Other actions (read, flag, move) spring back at once: the row stays.
  */
 @Composable
 private fun SwipeableRow(
@@ -576,7 +592,10 @@ private fun SwipeableRow(
         onDismiss = { value ->
             val action = if (value == SwipeToDismissBoxValue.StartToEnd) swipe.right else swipe.left
             swipe.onSwipe(message, action)
-            scope.launch { state.reset() }
+            scope.launch {
+                if (swipeRemovesRow(action)) delay(SWIPE_REMOVE_TIMEOUT_MS)
+                state.reset()
+            }
         },
         backgroundContent = {
             val action =
