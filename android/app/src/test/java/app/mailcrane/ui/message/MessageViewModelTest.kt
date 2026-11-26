@@ -24,11 +24,15 @@ import app.mailcrane.core.UnsubscribeFailure
 import app.mailcrane.core.UnsubscribeInfo
 import app.mailcrane.core.UnsubscribeMailto
 import app.mailcrane.settings.FakeAppSettings
+import app.mailcrane.settings.MarkReadMode
 import app.mailcrane.ui.compose.ComposePrefill
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
+import kotlinx.coroutines.test.advanceTimeBy
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
@@ -554,5 +558,89 @@ class MessageViewModelTest {
             vm.toggleFlag()
             assertFalse(ready(vm).message.isFlagged)
             assertEquals(MessageEffect.ActionRefused(ActionRefusal.FAILED), vm.effects.first())
+        }
+
+    // M4-15: "Mark as read".
+
+    @Test
+    fun whenOpenedIsTheDefaultAndShowsTheMessageAsRead() =
+        runTest {
+            val core = FakeMessageCore()
+            val vm = messageViewModel(core)
+            assertTrue("markRead" in core.calls)
+            assertTrue(ready(vm).message.isSeen)
+        }
+
+    @Test
+    fun afterTwoSecondsLeavesAMessageClosedSoonerUnread() =
+        runTest {
+            val core = FakeMessageCore()
+            val settings = FakeAppSettings().apply { markRead.value = MarkReadMode.AFTER_DELAY }
+            val vm = messageViewModel(core, settings)
+            assertFalse("not on open", "markRead" in core.calls)
+
+            // The screen runs the delay while the message is shown; leaving cancels it.
+            val shortVisit = launch { vm.markReadAfterDelay() }
+            advanceTimeBy(1_999)
+            runCurrent()
+            shortVisit.cancel()
+            assertFalse("left after 1.999 s", "markRead" in core.calls)
+            assertFalse(ready(vm).message.isSeen)
+
+            launch { vm.markReadAfterDelay() }
+            advanceTimeBy(2_001)
+            runCurrent()
+            assertEquals(1, core.calls.count { it == "markRead" })
+            assertTrue(ready(vm).message.isSeen)
+        }
+
+    @Test
+    fun onlyByHandNeverMarksOnOpenButTheButtonDoes() =
+        runTest {
+            val core = FakeMessageCore()
+            val settings = FakeAppSettings().apply { markRead.value = MarkReadMode.MANUAL }
+            val vm = messageViewModel(core, settings)
+            assertFalse("markRead" in core.calls)
+            assertFalse(ready(vm).message.isSeen)
+
+            vm.markReadByHand()
+            assertTrue("markRead" in core.calls)
+            assertTrue(ready(vm).message.isSeen)
+        }
+
+    @Test
+    fun aFailedMarkReadKeepsTheMessageUnread() =
+        runTest {
+            val core = FakeMessageCore().apply { markReadFailure = SyncErrorKind.NETWORK }
+            val settings = FakeAppSettings().apply { markRead.value = MarkReadMode.MANUAL }
+            val vm = messageViewModel(core, settings)
+            vm.markReadByHand()
+            assertFalse(ready(vm).message.isSeen)
+        }
+
+    // M4-15: archive, delete and move hand over to "After deleting or moving"; mark unread still closes.
+
+    @Test
+    fun archiveDeleteAndMoveLeaveAndMarkUnreadCloses() =
+        runTest {
+            val vm = messageViewModel()
+            vm.archive()
+            assertEquals(MessageEffect.Left, vm.effects.first())
+            vm.delete()
+            assertEquals(MessageEffect.Left, vm.effects.first())
+            vm.moveTo(9)
+            assertEquals(MessageEffect.Left, vm.effects.first())
+            vm.markUnread()
+            assertEquals(MessageEffect.Close, vm.effects.first())
+        }
+
+    @Test
+    fun aRefusedMoveStaysOnTheMessage() =
+        runTest {
+            val core = FakeMessageCore().apply { actionFailure = ActionFailure.NotFound() }
+            val vm = messageViewModel(core)
+            vm.archive()
+            assertEquals(MessageEffect.ActionRefused(ActionRefusal.FAILED), vm.effects.first())
+            assertTrue(vm.state.value is MessageState.Ready)
         }
 }

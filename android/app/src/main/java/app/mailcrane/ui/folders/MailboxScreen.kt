@@ -158,6 +158,13 @@ fun MailboxScreen(
             val layout = mailLayoutFor(LocalConfiguration.current.screenWidthDp.dp)
             // Next and previous message (J/K, ↓/↑) follow the order the list shows.
             var listOrder by remember { mutableStateOf<List<Long>>(emptyList()) }
+            // The open conversation's messages, oldest first, for "After deleting or moving" (M4-15).
+            var threadOrder by remember { mutableStateOf<List<Long>>(emptyList()) }
+            val leaveOrder = if (openThread != null) threadOrder else listOrder
+            // Where the open message was in its list when it opened (-1: not in it, e.g. from search).
+            val openedIndex = remember(messageId) { leaveOrder.indexOf(messageId) }
+            val afterMove: AfterMoveViewModel = hiltViewModel()
+            val afterMoveAction by afterMove.action.collectAsStateWithLifecycle()
             val openMessageAt: (Int) -> Unit = { delta ->
                 val i = listOrder.indexOf(messageId)
                 val next = if (i < 0) listOrder.firstOrNull() else listOrder.getOrNull(i + delta)
@@ -169,6 +176,7 @@ fun MailboxScreen(
                         messageId = messageId,
                         onBack = { openMessage = null },
                         folders = state.folders,
+                        onLeft = { openMessage = messageAfterLeaving(leaveOrder, messageId, openedIndex, afterMoveAction) },
                         onReply = onReply,
                         onComposeTo = onComposeTo,
                         onCreateRule = {
@@ -200,6 +208,7 @@ fun MailboxScreen(
                         title = thread.second,
                         onBack = { openThread = null },
                         onOpenMessage = { openMessage = it },
+                        onShownMessages = { threadOrder = it },
                     )
                     return
                 }
@@ -288,6 +297,7 @@ fun MailboxScreen(
                             title = thread.second,
                             onBack = { openThread = null },
                             onOpenMessage = { openMessage = it },
+                            onShownMessages = { threadOrder = it },
                         )
                     else ->
                         saved.SaveableStateProvider("folder-${selected.id}") {

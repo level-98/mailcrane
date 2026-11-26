@@ -34,6 +34,8 @@ data class MessageActions(
     val onArchive: () -> Unit = {},
     val onDelete: () -> Unit = {},
     val onMarkUnread: () -> Unit = {},
+    /** "Mark as read", for an unread message (M4-15); when set it takes the place of "Mark as unread". */
+    val onMarkRead: (() -> Unit)? = null,
     val onToggleFlag: () -> Unit = {},
     val onMove: (Long) -> Unit = {},
     /** Opens the snooze picker; null hides the button. */
@@ -60,10 +62,12 @@ fun RowScope.MessageToolbarActions(
     IconButton(onClick = actions.onDelete) {
         Icon(painterResource(R.drawable.ic_mc_trash), contentDescription = stringResource(R.string.message_delete))
     }
-    IconButton(onClick = actions.onMarkUnread) {
+    val markRead = actions.onMarkRead
+    IconButton(onClick = markRead ?: actions.onMarkUnread) {
         Icon(
             painter = painterResource(R.drawable.ic_mc_mail),
-            contentDescription = stringResource(R.string.message_mark_unread),
+            contentDescription =
+                stringResource(if (markRead != null) R.string.message_mark_read else R.string.message_mark_unread),
         )
     }
     actions.onSnooze?.let { snooze ->
