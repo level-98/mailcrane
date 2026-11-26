@@ -123,6 +123,12 @@ pub fn save_jmap_account(
         smtp_security: Security::Tls,
         username: config.username.trim().to_owned(),
     };
+    super::setup::ensure_not_added(
+        store,
+        super::setup::IncomingServer::Jmap(session_url),
+        &account.username,
+        &account.email,
+    )?;
     let id = store
         .insert_jmap_account(&account, session_url)
         .map_err(|_| AddAccountError::SaveFailed)?;

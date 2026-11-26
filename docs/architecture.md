@@ -7,13 +7,13 @@
 Mailcrane has one shared engine and two native apps.
 
 - **`core/` (Rust)** does all the mail work: accounts, IMAP/JMAP sync, SMTP sending, MIME parsing, HTML sanitising, the SQLite store and search.
-- **`android/` (Kotlin, Jetpack Compose, Material 3)** and **`ios/` (Swift, SwiftUI)** are the user interfaces. They call the core and draw screens. They don't speak mail protocols themselves. Android ships first; the iOS app stays a shell until after the Android 1.0 release (M7, [decision 0002](decisions/0002-android-first-ios-after-release.md)), but the core and its FFI stay platform-neutral so it can catch up without core changes.
-- **UniFFI** generates the Kotlin and Swift bindings from `mailcrane-ffi`.
+- **`android/` (Kotlin, Jetpack Compose, Material 3)** is the user interface. It calls the core and draws screens; it doesn't speak mail protocols itself. There's no iOS app before 1.0 ([decision 0005](decisions/0005-no-ios-before-1-0.md)), but the core and its FFI stay platform-neutral so one could be added later without core changes.
+- **UniFFI** generates the Kotlin bindings from `mailcrane-ffi` (and could generate Swift ones again).
 
 ## Why this design
 
 - **Write the hard part once.** Sync, threading, MIME and search are most of the work in an email client, and they are the same on both platforms.
-- **Native UI on each platform.** Email is used all day, so it should feel right: Material 3 on Android, SwiftUI on iOS.
+- **Native UI.** Email is used all day, so it should feel right: Material 3 on Android.
 - **Rust is memory-safe.** Parsing untrusted email is a classic place for security bugs.
 - **Tested precedent.** Other apps already ship Rust cores with UniFFI on both mobile platforms.
 
@@ -35,12 +35,12 @@ Mailcrane has one shared engine and two native apps.
 
 ## Portability
 
-The same core code runs on every platform. It is compiled separately for each: a `.so` for Android, an XCFramework for iOS, and a `.dll` for Windows. There is no Windows app and none is planned, but the core must keep building and passing its tests on Windows so that one (or another desktop app) could be added later without changing the core. CI checks this on every PR (task M0-17). The iOS build is checked by hand until M7-02 puts it back on every PR.
+The same core code runs on every platform. It is compiled separately for each: a `.so` for Android and a `.dll` for Windows. There is no Windows app and none is planned, but the core must keep building and passing its tests on Windows so that one (or another desktop app) could be added later without changing the core. CI checks this on every PR (task M0-17).
 
 To keep it portable, the core never reaches into the operating system for anything that differs between platforms. The app passes it in instead:
 
 - **File locations:** the app gives the core the folders for the database and cache.
-- **Secrets:** the core defines one interface for storing credentials, and each app implements it with the Android Keystore, the iOS Keychain, or the Windows Credential Manager.
+- **Secrets:** the core defines one interface for storing credentials, and each app implements it with the Android Keystore (tests use an in-memory one).
 - **OAuth sign-in:** the core builds the sign-in URL and does the PKCE exchange. The app opens the system browser and returns the redirect.
 - **Background work and notifications:** the core exposes "sync now" and change events. Each app decides when to call it and how to notify.
 
@@ -52,11 +52,10 @@ Platform-specific code (`#[cfg(target_os = …)]`, `std::os::unix`, crates that 
 
 1. The app asks the core to sync an account.
 2. The core talks to the server, writes changes to SQLite, and emits change events.
-3. The app watches those events (as a Kotlin `Flow` or Swift `AsyncSequence`) and updates the screen.
+3. The app watches those events (as a Kotlin `Flow`) and updates the screen.
 4. User actions (archive, send) go to the core, which applies them locally straight away, queues them, and replays them on the server when online.
 
 ## Open questions
 
-- **Push notifications on iOS.** iOS doesn't allow a permanent IMAP connection in the background. Options are background fetch only, or an optional self-hostable push relay. Needs an ADR (M7-10).
 - **Network calls beyond the user's mail server.** AGENTS.md §4.7 allows them only with an accepted decision. The bundled ISPDB has one ([ADR 0003](decisions/0003-bundled-ispdb.md)). These don't yet: one-click unsubscribe (M4-10) sends an HTTPS POST to the sender's unsubscribe URL, and automatic setup fetches autoconfig files from the domain of the address's MX provider.
 - **JMAP storage.** The store is built around IMAP (integer UIDs, one folder per message). Connecting `mailcrane-jmap` needs a maintainer decision on the schema before its migration ships, because migrations can't be undone once released.

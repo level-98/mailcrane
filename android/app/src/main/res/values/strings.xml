@@ -57,6 +57,7 @@
     <string name="setup_error_auth_smtp">The outgoing mail server didn’t accept the username or password.</string>
     <string name="setup_error_timeout_imap">The incoming mail server took too long to answer. Check the server name and port, or try again later.</string>
     <string name="setup_error_timeout_smtp">The outgoing mail server took too long to answer. Check the server name and port, or try again later.</string>
+    <string name="setup_error_already_added">This account is already added.</string>
     <string name="setup_error_save_failed">Both servers accepted the sign-in, but the account couldn’t be saved on this device. Try again.</string>
     <string name="setup_error_unexpected">Something went wrong while checking the settings. Nothing was saved.</string>
 
@@ -691,6 +692,21 @@
     <string name="settings_notifications_blocked">Notifications are turned off for Mailcrane in your phone’s settings</string>
     <string name="settings_always_on">Always-on sync</string>
     <string name="settings_always_on_summary">Notify within a minute of new mail by keeping a connection open. Uses more battery and shows a permanent notification. When off, Mailcrane checks about every 15 minutes.</string>
+    <!-- Battery optimisation and always-on sync (M4-05). -->
+    <string name="settings_battery_warning">Battery optimisation may delay notifications</string>
+    <string name="settings_battery_warning_summary">Tap to see why and how to turn it off for Mailcrane</string>
+    <string name="settings_battery_exempt">Battery optimisation is off for Mailcrane</string>
+    <string name="battery_explain_title">Let always-on sync keep running</string>
+    <string name="battery_explain_body">Android saves battery by pausing apps in the background. While Mailcrane is paused, its connection to your mail server can drop, and new mail notifications may come many minutes late.
+
+To get notified within a minute, turn off battery optimisation for Mailcrane: on the next screen, choose “All apps”, find Mailcrane and select “Don’t optimise” (the wording differs between phones).
+
+Some phones have a further setting of their own, often called “Allow background activity” or “Auto-launch”, in the app’s battery settings. Turn that on too if notifications still come late.
+
+Mailcrane uses the connection only to wait for new mail, so the extra battery use is small.</string>
+    <string name="battery_explain_open">Open battery settings</string>
+    <string name="battery_explain_later">Not now</string>
+    <string name="battery_explain_failed">Your phone has no battery optimisation screen Mailcrane can open. Look for Mailcrane under Settings → Apps → Battery.</string>
     <!-- JMAP accounts (M3-04) -->
     <string name="setup_section_type">Type of account</string>
     <string name="setup_type_imap">IMAP</string>
@@ -698,4 +714,19 @@
     <string name="setup_section_jmap">JMAP server</string>
     <string name="setup_jmap_server">Server</string>
     <string name="setup_jmap_server_hint">Your provider’s domain (such as example.org) or its JMAP session URL. Use an app password if your provider has them.</string>
+    <!-- Push wake-ups (UnifiedPush, M4-05). -->
+    <string name="push_title">Push wake-ups (UnifiedPush)</string>
+    <string name="push_summary">Let a UnifiedPush distributor app wake Mailcrane to check for mail, without a permanent connection. Your mail server doesn’t send these itself: it needs a push gateway on your side that watches your mailbox and sends to the address below.</string>
+    <string name="push_no_distributor">Needs a UnifiedPush distributor app on this phone</string>
+    <string name="push_registering">Asking the distributor for an address…</string>
+    <string name="push_ready">Ready. Give this address to your push gateway:</string>
+    <string name="push_temporary">The distributor’s own server is unavailable; this stand-in address may change.</string>
+    <string name="push_copy">Copy address</string>
+    <string name="push_failed_network">No network. Turn this off and on again once you’re online.</string>
+    <string name="push_failed_action">The distributor app needs your attention (for example to sign in). Open it, then turn this off and on again.</string>
+    <string name="push_failed_vapid">This distributor only accepts servers that identify themselves, and Mailcrane has no server key to give it. Choose another distributor.</string>
+    <string name="push_failed_other">The distributor couldn’t register Mailcrane. Turn this off and on again to retry.</string>
+    <string name="push_failed_unregistered">The distributor ended the registration. Turn this off and on again to register anew.</string>
+    <string name="push_check_channel">Push checks</string>
+    <string name="push_check_notification">Checking for new mail</string>
 </resources>

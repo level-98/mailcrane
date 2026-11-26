@@ -10,7 +10,7 @@ Mailcrane is meant to be on F-Droid, built from source by F-Droid with no propri
 - **No Google signing block.** `dependenciesInfo` is off, so AGP doesn't add its encrypted dependency-metadata block, which F-Droid's scanner flags.
 - **No git metadata in the APK.** `vcsInfo` is off for release builds. The only trace of git is the short commit hash shown in Settings → About (`BuildConfig.GIT_COMMIT`), which is the same for every checkout of a commit, so it doesn't break reproducibility. A build without git says "unknown" there, so build from a git checkout when comparing.
 - **Only the ABIs the core is built for.** `abiFilters` limits the APK to arm64-v8a and x86_64, the targets `cargo-ndk` builds. Before, JNA added armeabi-v7a, armeabi and mips folders, so the app would have installed on 32-bit phones and crashed there.
-- **Unsigned release builds work.** `./gradlew assembleRelease` needs no signing secrets: the release build type has no signing config, so it produces an unsigned APK for F-Droid to sign, or to compare with ours.
+- **Unsigned release builds work.** `./gradlew assembleRelease` needs no signing secrets: the release build type has no signing config, so it produces an unsigned APK for F-Droid to sign, or to compare with ours. Our signed builds are signed outside Gradle, by the release workflow ([docs/releasing.md](releasing.md)), so this stays true.
 - **No anti-features.** No tracking, no ads, no non-free network services: the app talks only to the user's own mail servers. The OAuth sign-in planned in M3 will use the providers' own servers, which F-Droid's NonFreeNet rule doesn't cover for a user's own account.
 
 ## Reproducible builds
@@ -24,7 +24,7 @@ F-Droid can publish our own signed APK if its build from the same tag produces t
 
 | What | Version | Where it's set | Also update |
 |---|---|---|---|
-| Rust | 1.100.0 | `rust-toolchain.toml` (rustup reads it for every `cargo` run) | `toolchain:` in `.github/workflows/ci.yml` (both jobs) and `ios.yml`; the recipe's `--default-toolchain` |
+| Rust | 1.100.0 | `rust-toolchain.toml` (rustup reads it for every `cargo` run) | `toolchain:` in `.github/workflows/ci.yml` (both jobs); the recipe's `--default-toolchain` |
 | Android NDK | 30.0.16248370 | `ndkVersion` in `android/app/build.gradle.kts`; `cargoNdkBuild` passes the same NDK to cargo-ndk | `NDK_VERSION` in `ci.yml`; the recipe's `ndk:`; `android/README.md` |
 | cargo-ndk | 4.1.2 | `cargo-ndk@4.1.2` in `ci.yml` | the recipe's `cargo install`; `android/README.md` |
 

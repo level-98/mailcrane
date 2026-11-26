@@ -18,6 +18,7 @@ Passwords and sign-in tokens are kept in Android's secure storage (Android Keyst
 - **Links.** Tapping a link in a message opens it in your browser, after showing where it goes (unless you turn that off).
 - **About Mailcrane.** In Settings, the links to this website, this policy, the source code and the licence open in your browser, only when you tap one.
 - **Signing in with Google or Microsoft** (when the app adds it) opens their sign-in page, and their privacy policies apply. The app then talks to their mail servers like any other provider.
+- **Push wake-ups** (optional, off unless you turn them on). Mailcrane registers with the UnifiedPush distributor app you chose, and that distributor's push server can then wake the app to check your mail. No mail content, address or password goes through it: a wake-up only makes Mailcrane check your own mail servers. Who runs the push server depends on the distributor you pick, and their policy applies.
 - **Downloads and updates** through Google Play, F-Droid or GitHub are covered by those services' own policies.
 
 Nothing else. If a future version adds a connection, for example for push notifications, this policy will name it before that version is released.
@@ -35,7 +36,7 @@ You can remove an account in the app, which deletes its mail and passwords from 
 
 ## Contact and changes
 
-Questions: *[contact to be decided by the maintainer: a project email or GitHub issues]*.
+Questions: ask the maintainers in [GitHub Discussions](https://github.com/level-98/mailcrane/discussions). Don't post account details there, and report security problems [privately](https://github.com/level-98/mailcrane/security/advisories/new).
 
 Changes to this policy are listed below and in the repository history at <https://github.com/level-98/mailcrane/commits/main/docs/privacy.md>.
 

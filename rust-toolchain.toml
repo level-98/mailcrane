@@ -1,7 +1,7 @@
 # The Rust compiler every build uses: developers, CI and F-Droid. Release
 # builds must be reproducible (docs/fdroid.md), and a different compiler makes
 # different machine code. To update, change the version here and in the
-# `toolchain:` lines of .github/workflows/ci.yml and ios.yml, in one PR.
+# `toolchain:` lines of .github/workflows/ci.yml, in one PR.
 [toolchain]
 channel = "1.100.0"
 components = ["rustfmt", "clippy"]
