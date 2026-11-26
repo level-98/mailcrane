@@ -445,7 +445,11 @@ pub fn parse_internal_date(text: &str) -> Option<i64> {
     // Days since 1970-01-01 (days-from-civil, Howard Hinnant). The year is
     // bounded above, but each step is checked anyway, so a wider bound
     // later can't bring the overflow back (#410).
-    let y = if month <= 2 { year.checked_sub(1)? } else { year };
+    let y = if month <= 2 {
+        year.checked_sub(1)?
+    } else {
+        year
+    };
     let era = y.div_euclid(400);
     let yoe = y.checked_sub(era.checked_mul(400)?)?;
     let mp = (month + 9) % 12;
