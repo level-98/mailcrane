@@ -112,7 +112,12 @@ The agent runs on a maintainer's Claude token, so:
 
 - **Try it with your own provider** and fill in a [provider test report](../../issues/new?template=provider_report.yml), even when everything works. Results are collected in [docs/providers.md](docs/providers.md). Never share your account details.
 - **Design**: mockups and UX feedback, following Material 3 and Apple's guidelines.
-- **Write docs**, and later **translate** (once Weblate is set up).
+- **Write docs.**
+- **Translate** the app on Weblate. See [Translations](#translations).
+
+## Translations
+
+Translations are done on Weblate, not in pull requests. Weblate opens a pull request with its changes, and CI checks it like any other. The Weblate project is being set up; [docs/translations.md](docs/translations.md) will link it and has the guide for translators (placeholders, plurals, licence) and for developers adding strings. Please don't edit `values-*/strings.xml` by hand.
 
 ## Code of conduct
 
