@@ -191,16 +191,29 @@ pub(crate) async fn complete_with(
     .unwrap_or(Err(OAuthFailure::Network))
 }
 
-/// Keeps a finished sign-in's tokens for `account_id`: the refresh token in
-/// secure storage, the access token in memory. The sign-in id is then used up.
+/// Keeps a finished sign-in's tokens for `account_id` in the database at
+/// `db_path`: the refresh token in secure storage, the access token in
+/// memory. The sign-in id is then used up.
 #[uniffi::export]
-pub fn oauth_attach(sign_in_id: String, account_id: i64) -> Result<(), OAuthFailure> {
+pub fn oauth_attach(
+    db_path: String,
+    sign_in_id: String,
+    account_id: i64,
+) -> Result<(), OAuthFailure> {
     let secrets = secrets::secret_store().map_err(|_| OAuthFailure::Storage)?;
-    attach_with(secrets.as_ref(), &sign_in_id, account_id)
+    attach_with(
+        secrets.as_ref(),
+        &mailcrane_store::Store::scope_of(&db_path),
+        &sign_in_id,
+        account_id,
+    )
 }
 
+/// [`oauth_attach`] with the secret store given, and the database named by
+/// its `Store::cache_scope`.
 pub(crate) fn attach_with(
     secrets: &dyn mailcrane_core::secrets::SecretStore,
+    scope: &str,
     sign_in_id: &str,
     account_id: i64,
 ) -> Result<(), OAuthFailure> {
@@ -208,7 +221,7 @@ pub(crate) fn attach_with(
         .finished
         .remove(sign_in_id)
         .ok_or(OAuthFailure::NoSuchSignIn)?;
-    token_cache().save(secrets, account_id, &tokens, now())?;
+    token_cache().save(secrets, scope, account_id, &tokens, now())?;
     Ok(())
 }
 
@@ -301,13 +314,13 @@ mod tests {
         );
 
         let secrets = MemorySecretStore::new();
-        attach_with(&secrets, &id, 42).expect("attach");
+        attach_with(&secrets, "file:test.db", &id, 42).expect("attach");
         assert_eq!(
             secrets.keys(),
             vec![SecretKey::oauth_refresh_token(42).as_str().to_owned()]
         );
         assert_eq!(
-            attach_with(&secrets, &id, 42),
+            attach_with(&secrets, "file:test.db", &id, 42),
             Err(OAuthFailure::NoSuchSignIn)
         );
     }

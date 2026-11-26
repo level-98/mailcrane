@@ -383,7 +383,7 @@ async fn add_oauth_with(
     core::check_oauth_account(config, &token, options).await?;
     let store = Store::open(db_path).map_err(|_| AddAccountError::SaveFailed)?;
     let id = core::save_oauth_account(&store, config, provider)?;
-    if crate::oauth::attach_with(secrets, sign_in_id, id.0).is_err() {
+    if crate::oauth::attach_with(secrets, &Store::scope_of(db_path), sign_in_id, id.0).is_err() {
         let _ = store.delete_account(id);
         return Err(AddAccountError::SaveFailed);
     }
@@ -808,8 +808,9 @@ pub fn remove_account(db_path: String, account_id: i64) -> Result<(), RemoveAcco
     let secrets = crate::secrets::secret_store().map_err(|_| RemoveAccountFailure::Storage)?;
     mailcrane_core::secrets::delete_account_secrets(secrets.as_ref(), account_id)
         .map_err(|_| RemoveAccountFailure::Storage)?;
-    // An OAuth account's access token (M3-02) goes from memory too.
-    mailcrane_core::oauth::token_cache().forget(account_id);
+    // An OAuth account's access token (M3-02) goes from memory too: this
+    // database's only, never another's account with the same ID (#434).
+    mailcrane_core::oauth::token_cache().forget(store.cache_scope(), account_id);
     match store.delete_account(id) {
         Ok(true) => Ok(()),
         Ok(false) => Err(RemoveAccountFailure::NotFound),

@@ -32,6 +32,9 @@ pub struct Store {
     /// The path this store was opened with, which names it for
     /// [`urgent_writes`]; `None` in memory.
     urgent_key: Option<String>,
+    /// Names this database for caches kept outside it (#434): its path, or
+    /// a name of its own for each in-memory store.
+    scope: String,
 }
 
 impl Store {
@@ -39,6 +42,7 @@ impl Store {
     /// the newest schema. A file with a newer schema is left untouched and
     /// reported as [`StoreError::NewerSchema`].
     pub fn open(path: impl AsRef<Path>) -> Result<Self, StoreError> {
+        let scope = Self::scope_of(&path);
         let urgent_key = Some(path.as_ref().to_string_lossy().into_owned());
         let mut conn = Connection::open(path)?;
         conn.busy_timeout(std::time::Duration::from_millis(5000))?;
@@ -47,7 +51,11 @@ impl Store {
         conn.pragma_update(None, "journal_mode", "WAL")?;
         conn.pragma_update(None, "foreign_keys", "ON")?;
         migrate::run(&mut conn, migrate::MIGRATIONS)?;
-        Ok(Store { conn, urgent_key })
+        Ok(Store {
+            conn,
+            urgent_key,
+            scope,
+        })
     }
 
     /// Opens a fresh in-memory database at the newest schema.
@@ -56,10 +64,26 @@ impl Store {
         conn.busy_timeout(std::time::Duration::from_millis(5000))?;
         conn.pragma_update(None, "foreign_keys", "ON")?;
         migrate::run(&mut conn, migrate::MIGRATIONS)?;
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+        let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         Ok(Store {
             conn,
             urgent_key: None,
+            scope: format!("memory:{n}"),
         })
+    }
+
+    /// The name of the database at `path` for caches kept outside it, the
+    /// same as [`Store::cache_scope`] of a store opened there (#434).
+    pub fn scope_of(path: impl AsRef<Path>) -> String {
+        format!("file:{}", path.as_ref().to_string_lossy())
+    }
+
+    /// Names this database for caches kept outside it, such as the
+    /// in-memory OAuth tokens (#434). Account IDs start at 1 in every
+    /// database, so such a cache keys by this as well as the account.
+    pub fn cache_scope(&self) -> &str {
+        &self.scope
     }
 
     /// How long a statement waits for another connection's write lock
