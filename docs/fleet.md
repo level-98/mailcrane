@@ -1,6 +1,6 @@
 # The agent fleet
 
-A maintainer can run five Claude Code sessions on their own machine that work through the issues together. They talk over Synapse, a message bus that runs only on that machine, and act on GitHub through the maintainer's own account, marking their work with the `fleet` label. This page is the rulebook every seat reads first. [AGENTS.md](../AGENTS.md) still applies in full; nothing here relaxes it.
+A maintainer can run up to six Claude Code sessions on their own machine that work through the issues together. They talk over Synapse, a message bus that runs only on that machine, and act on GitHub through the maintainer's own account, marking their work with the `fleet` label. This page is the rulebook every seat reads first. [AGENTS.md](../AGENTS.md) still applies in full; nothing here relaxes it.
 
 ## The seats
 
@@ -8,6 +8,7 @@ A maintainer can run five Claude Code sessions on their own machine that work th
 |---|---|---|---|
 | `mailbot.lead` | `.claude/agents/mailcrane-lead.md` | the main checkout (read-only) | Watches GitHub, triages, decides, dispatches, merges, writes the hourly report |
 | `mailbot.dev1`, `mailbot.dev2` | `.claude/agents/mailcrane-dev.md` | `.worktrees/dev1`, `.worktrees/dev2` | One issue at a time, from claim to ready PR |
+| `mailbot.dev3` | `.claude/agents/mailcrane-dev.md` | `.worktrees/dev3` | Like dev1 and dev2, but only issues that need no emulator or device (see rule 12). Not in the default seats: start it with `-Seats dev3` (only dev3, alongside a running fleet) or a list such as `-Seats lead,dev1,dev2,dev3,review,qa` |
 | `mailbot.review` | `.claude/agents/mailcrane-review.md` | `.worktrees/review` | Code review of every `fleet` PR marked ready |
 | `mailbot.qa` | `.claude/agents/mailcrane-qa.md` | `.worktrees/qa` | Emulator checks and screenshots of UI PRs; exploratory passes that file bugs |
 
@@ -59,9 +60,11 @@ Only these still go to the maintainer, as a `dev_ask` card:
 5. **One issue per dev seat, one PR per issue.** Claims are made as the maintainer, who has no claim limit (`claim.yml`).
 6. **Lock before editing a file another seat might touch** (`dev_sync_will_edit`, `dev_sync_lock`), release when the PR is pushed. Lock keys are relative to the worktree root, so `core/crates/x/src/lib.rs` is the same lock in every worktree.
 7. **Never claim a check passed that you didn't run.** Say what you skipped and why.
-8. **At most four agent PRs open at once.** At four, the lead stops dispatching new issues and puts its effort into getting the open ones finished.
+8. **At most six agent PRs open at once.** At six, the lead stops dispatching new issues and puts its effort into getting the open ones finished.
 9. **Pace with `ScheduleWakeup`**: 1200–1800 s when idle; a direct message or `dev_wake` wakes a seat sooner. Never poll in a tight loop.
 10. **Stuck for more than an hour** on the same failure: post in `alerts`, update the board task to `blocked`, and move on or go idle.
+11. **One heavy job on the machine at a time.** Memory is the real limit. A heavy job is a full cargo workspace build or test (`cargo test --workspace`, a full `cargo xtask ci`), a Gradle build, the emulator, or a long under-load test loop. Take the Synapse lock `locks/heavy-job` (`dev_sync_lock`) before starting one and release it as soon as it ends. Without the lock, run the targeted checks you can (`cargo test -p <crate>`, clippy on the crates you touched, `cargo fmt --all --check`), push, and keep the PR a **draft** until `ci-ok` is green on its head: CI runs `cargo xtask ci --strict`, the command [AGENTS.md §7](../AGENTS.md#7-checks) asks for, and §7 already says to state what you couldn't run. The PR body says what ran locally and what was left to CI.
+12. **Emulator work goes to dev1, dev2 and QA.** dev3 takes only issues that need no emulator or device: core and Rust, testkit, CI and workflows, docs and the website, and Android changes fully covered by JVM unit tests. QA's emulator is off by default. QA starts it only (a) to verify an open PR that touches `android/`, (b) for a post-merge device check, or (c) for an exploratory pass when no PR needs it; always while holding `locks/heavy-job` with nothing else heavy running, and always shut down (`adb emu kill`) as soon as it's done.
 
 ## Merging
 
@@ -84,7 +87,7 @@ When the maintainer's phone is plugged in with USB debugging on, QA uses it as a
 - Before every tap or key event, check the foreground app (`adb shell dumpsys window | grep mCurrentFocus`) is `app.mailcrane.debug`. If it isn't, stop.
 - In the debug app, use only **Load test mail** (synthetic, never connects). Never add a real account, never type a real address, never send anything. The dev mail CA (`cargo xtask dev-mail`) never goes on the phone.
 - Screenshots from the phone are only of the debug app, and are deleted from the phone afterwards.
-- **Keep it current:** after each merge to `main`, QA builds the debug APK from `origin/main` and installs it on the phone with `adb -s <serial> install -r` (replace only, never uninstall first). If the install fails, say so in `qa`; don't work around it.
+- **Keep it current:** after each merge to `main`, QA builds the debug APK from `origin/main` (a Gradle build, so under `locks/heavy-job`, rule 11) and installs it on the phone with `adb -s <serial> install -r` (replace only, never uninstall first). If the install fails, say so in `qa`; don't work around it.
 
 ## GitHub identity
 
@@ -92,7 +95,7 @@ Every seat acts as the maintainer, through their existing `gh` and git sign-in o
 
 - every PR a seat opens gets the **`fleet`** label (add it with `gh pr create --label fleet`, or `gh pr edit --add-label fleet` straight after);
 - every issue a seat opens gets the `fleet` label too;
-- every comment a seat posts starts with its seat name in bold, for example **mailbot.review:**.
+- every comment a seat posts starts with its seat name in bold, for example **mailbot.review:**. The only exceptions are `/claim` and `/unclaim`: `claim.yml` acts only on a comment whose whole body is that command, so post exactly `/claim` with no prefix. In Git Bash, `MSYS_NO_PATHCONV=1 gh issue comment <n> --body "/claim"` (otherwise Git Bash rewrites `/claim` into a Windows path); in PowerShell, the plain `gh issue comment <n> --body "/claim"`. Then check `gh issue view <n> --json assignees` shows the maintainer before starting work.
 
 Never print or log a token, and never change the maintainer's git or `gh` configuration.
 
@@ -112,7 +115,7 @@ Then, from the repository root:
 scripts/fleet/start-fleet.ps1
 ```
 
-It creates the worktrees, wires each one to Synapse, and opens one terminal window per seat. Close a window to stop that seat. `-Seats lead,dev1` starts only some.
+It creates the worktrees, wires each one to Synapse, and opens one terminal window per seat. Close a window to stop that seat. By default it starts `lead`, `dev1`, `dev2`, `review` and `qa`. `-Seats` replaces that list: `-Seats lead,dev1` starts only those two, and `-Seats dev3` starts only the third dev seat (for a fleet that's already running). `-DryRun` checks everything and prints what it would start, without creating worktrees or opening windows. Worktrees get the main checkout's `.claude/settings.local.json` without Synapse's own hooks (any other hooks are kept): the Synapse registry binds the project to the main checkout only, so those hooks would always refuse there. Seats call `dev_sync_will_edit`, `dev_sync_did_edit` and the locks themselves.
 
 ## Known gaps
 
