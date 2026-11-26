@@ -2,6 +2,8 @@
 {% block content %}
 {% set dl = config.extra.download %}
 {% set any_live = dl.fdroid_url or dl.play_url or dl.github_url %}
+{#- Written at build time by scripts/update_nightly.py (#425): the page never calls GitHub. -#}
+{% set nightly = load_data(path="data/nightly.json", required=false) %}
 <main class="page-wrap section-wrap" id="main">
   <p class="eyebrow">Download</p>
   <h1 class="page-title">Get <span>Mailcrane.</span></h1>
@@ -15,6 +17,17 @@
     {{<store_button name="Google Play" detail="Automatic updates through Play" url={dl.play_url} />}}
     {{<store_button name="GitHub Releases" detail="Signed APK, straight from the project" url={dl.github_url} />}}
   </div>
+
+  <section class="info-card nightly-card" aria-labelledby="nightly-title">
+    <h2 id="nightly-title">{{<icon name="clock" />}} Nightly test build (unofficial)</h2>
+    {% if nightly and nightly.available and nightly.apk_url %}
+    <p>An automatic build of the latest code, for testing. It’s signed with a development key, isn’t meant for daily use, and installs only over earlier test builds, not over a store version.</p>
+    <a class="button button-outline nightly-download" href="{{ nightly.apk_url }}">Download the test build{% if nightly.commit %} ({{ nightly.commit }}){% endif %}</a>
+    <p class="nightly-meta">Built {{ nightly.date | default(value="recently") }}{% if nightly.commit and nightly.commit_url %} from commit <a href="{{ nightly.commit_url }}">{{ nightly.commit }}</a>{% endif %}.{% if nightly.release_url %} <a href="{{ nightly.release_url }}">Release notes</a> ·{% endif %} <a href="{{ config.extra.github_url }}/releases">All releases</a></p>
+    {% else %}
+    <p>There’s no test build right now. Earlier ones are on the <a href="{{ config.extra.github_url }}/releases">releases page</a>.</p>
+    {% endif %}
+  </section>
 
   <section class="info-grid" aria-label="Before you install">
     <div class="info-card">

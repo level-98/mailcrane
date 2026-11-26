@@ -1,0 +1,11 @@
+{
+  "available": true,
+  "tag": "test-build-20261126-2030",
+  "date": "2026-11-26",
+  "commit": "122ae81",
+  "commit_url": "https://github.com/level-98/mailcrane/commit/122ae81f120eadde468e544808d54150ec15b1b5",
+  "apk_name": "mailcrane-122ae81-release-debugsigned.apk",
+  "apk_url": "https://github.com/level-98/mailcrane/releases/download/test-build-20261126-2030/mailcrane-122ae81-release-debugsigned.apk",
+  "release_url": "https://github.com/level-98/mailcrane/releases/tag/test-build-20261126-2030",
+  "releases_url": "https://github.com/level-98/mailcrane/releases"
+}

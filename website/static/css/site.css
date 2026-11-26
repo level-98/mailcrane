@@ -1103,6 +1103,29 @@ a.store-button:hover {
   color: var(--muted);
 }
 
+/* Download page: the nightly test build (#425). */
+.nightly-card {
+  margin-block: 0 24px;
+}
+
+.nightly-card .nightly-download {
+  margin-block: 14px 10px;
+  overflow-wrap: anywhere;
+  /* .info-card a colours and underlines links; a button isn't one. */
+  color: var(--ink);
+  text-decoration: none;
+}
+
+.nightly-card .nightly-meta {
+  font-size: 0.9rem;
+}
+
+.nightly-card a:not(.button) {
+  color: var(--blue);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
 /* ---------- Roadmap page ---------- */
 
 .progress-overview {

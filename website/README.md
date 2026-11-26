@@ -16,7 +16,7 @@ Install Zola 0.23.6 or later, then:
 zola serve
 ```
 
-Open the local address printed by Zola. The checked-in `data/roadmap.json` is the latest generated progress snapshot. To refresh it from the public GitHub issues before building:
+Open the local address printed by Zola. The checked-in `data/roadmap.json` is the latest generated progress snapshot, and `data/nightly.json` the latest nightly test build for the Download page (#425; `scripts/update_nightly.py`, run by `update_roadmap.py`). To refresh both from GitHub before building:
 
 ```sh
 python scripts/update_roadmap.py

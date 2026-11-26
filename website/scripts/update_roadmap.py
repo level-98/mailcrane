@@ -193,6 +193,16 @@ def main() -> int:
         f"Wrote {snapshot['completed']}/{snapshot['total']} roadmap tasks "
         f"across {len(snapshot['groups'])} groups to {output_path}"
     )
+    # The Download page's nightly test build (#425) comes with the same
+    # refresh, so every workflow that builds the site updates it. It never
+    # fails the roadmap: without GitHub it keeps the saved snapshot.
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    try:
+        import update_nightly  # noqa: E402
+
+        update_nightly.refresh()
+    except Exception as error:  # noqa: BLE001 - whatever goes wrong, the roadmap and the site still build
+        print(f"nightly: skipped ({error})", file=sys.stderr)
     return 0
 
 
