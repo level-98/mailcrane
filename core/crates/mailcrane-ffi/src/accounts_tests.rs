@@ -194,11 +194,11 @@ fn removing_an_account_deletes_its_secrets_and_data() {
 #[test]
 fn removing_account_1_elsewhere_keeps_this_databases_oauth_token() {
     // #434: tests run side by side in one process, each with its own database whose first account is 1. One
-    // removing its account 1 dropped every database's cached token for account 1, so a parallel OAuth test got
-    // ReauthRequired.
+    // removing its account 1 dropped every database's cached access token for account 1, so a parallel OAuth
+    // test got ReauthRequired. (Secrets are still keyed by account ID alone: #437.) Its own secret store, never
+    // the process-wide one, which parallel tests share.
+    use crate::account::remove_account_with;
     use mailcrane_core::account::credentials::{credential, Credential};
-    let install = Arc::new(Platform::default());
-    install_secret_store(install);
     let dir = tempfile::tempdir().expect("tempdir");
     let a_path = dir.path().join("a.db").to_string_lossy().into_owned();
     let b_path = dir.path().join("b.db").to_string_lossy().into_owned();
@@ -227,7 +227,8 @@ fn removing_account_1_elsewhere_keeps_this_databases_oauth_token() {
     mailcrane_core::oauth::token_cache()
         .save(&secrets, a_store.cache_scope(), a.0, &tokens, now)
         .expect("save");
-    remove_account(b_path, b.0).expect("remove b's account 1");
+    let b_secrets = mailcrane_testkit::MemorySecretStore::new();
+    remove_account_with(&b_path, &b_secrets, b.0).expect("remove b's account 1");
 
     match credential(&a_store, &secrets, a).expect("a's token is still there") {
         Credential::OAuth(token) => assert_eq!(token.as_str(), "token-a"),

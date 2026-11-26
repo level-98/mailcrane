@@ -143,7 +143,8 @@ async fn invalid_grant_on_refresh_asks_to_sign_in_again() {
 #[tokio::test]
 async fn the_same_account_id_in_two_databases_never_shares_a_token() {
     // #434: account IDs start at 1 in every database; tests running side by side (or two profiles) each have
-    // an account 1, and one removing or replacing its token must not touch the other's.
+    // an account 1, and one removing or replacing its cached access token must not touch the other's. (The
+    // refresh tokens in the secret store are still keyed by account ID alone: #437.)
     let server = FakeTokenEndpoint::start().await.expect("server");
     let secrets = MemorySecretStore::new();
     let cache = TokenCache::new();
