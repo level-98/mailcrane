@@ -136,36 +136,6 @@ fn a_local_account_creates_renames_moves_and_deletes_folders() {
 }
 
 #[test]
-fn jmap_accounts_are_not_supported_yet() {
-    let dir = tempfile::tempdir().expect("tempdir");
-    let path = dir.path().join("j.db").to_string_lossy().into_owned();
-    let store = Store::open(&path).expect("store");
-    let account = store
-        .insert_jmap_account(
-            &NewAccount {
-                display_name: "J".into(),
-                email: "j@example.org".into(),
-                imap_host: String::new(),
-                imap_port: 0,
-                imap_security: Security::Tls,
-                smtp_host: String::new(),
-                smtp_port: 0,
-                smtp_security: Security::Tls,
-                username: "j@example.org".into(),
-            },
-            "https://jmap.example.org/session",
-        )
-        .expect("account");
-    drop(store);
-    let engine = SyncEngine::new(path.clone(), Arc::new(Quiet));
-    assert_eq!(can_manage_folders(path, account.0), Ok(false));
-    assert_eq!(
-        engine.create_folder(account.0, None, "X".into()),
-        Err(FolderFailure::Unsupported)
-    );
-}
-
-#[test]
 fn an_inbox_namespace_is_the_top_level() {
     // #325: every personal folder under INBOX., "." as delimiter.
     let (_dir, path, account) = local_account();

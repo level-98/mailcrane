@@ -116,6 +116,7 @@ Goal: add an IMAP account and read your inbox, online and offline.
 - [x] **M4-23** Server-side rules through ManageSieve (RFC 5804), so rules run when the phone is off; local rules (M4-09) stay for servers without it 🤖
 - [x] **M4-24** Sender pictures in the message list (initials on a stable colour, contact photos only after opting in, never from the network), and a Compact mailbox density without them 🤖
 - [x] **M4-25** Download recent inbox messages in the background after each sync (unmetered network by default, not in Battery Saver, last 14 days, newest 200, up to 1 MB each), so they open at once and offline; setting under Advanced 🤖
+- [x] **M4-26** Manage folders on JMAP accounts (create, rename, move, delete through Mailbox/set) 🤖
 
 ## M5 — Privacy and security
 
