@@ -170,6 +170,112 @@ mod account {
         }
 
         #[tokio::test]
+        async fn the_same_account_cannot_be_added_twice() {
+            // #346: added once, then again with the same details.
+            let servers = servers(&[], &[]).await;
+            let store = Store::open_in_memory().expect("store");
+            let secrets = MemorySecretStore::new();
+            let config = config_for(&servers, Security::Tls, Security::Tls);
+            let options = options_for(&servers);
+            let first = add(&store, &secrets, &config, PASSWORD, &options)
+                .await
+                .expect("first add");
+            let connections = servers.imap.connections_accepted();
+            assert_eq!(
+                add(&store, &secrets, &config, PASSWORD, &options).await,
+                Err(AddAccountError::AlreadyAdded)
+            );
+            // Refused before any server was contacted, and nothing more saved.
+            assert_eq!(servers.imap.connections_accepted(), connections);
+            assert_eq!(store.list_accounts().expect("list").len(), 1);
+            assert_eq!(
+                secrets.keys(),
+                vec![SecretKey::account_password(first.0).as_str().to_owned()]
+            );
+        }
+
+        #[test]
+        fn duplicates_match_the_server_and_the_username_or_address_ignoring_case() {
+            let store = Store::open_in_memory().expect("store");
+            let secrets = MemorySecretStore::new();
+            let mut config = good_config();
+            save_account(&store, &secrets, &config, &pw(PASSWORD)).expect("saved");
+
+            // Same mailbox, typed differently.
+            config.imap.host = "IMAP.Example.org.".into();
+            config.username = "Alice@Example.ORG".into();
+            assert_eq!(
+                save_account(&store, &secrets, &config, &pw(PASSWORD)),
+                Err(AddAccountError::AlreadyAdded)
+            );
+            // The same address with another username on that server.
+            config.username = "alice".into();
+            assert_eq!(
+                save_account(&store, &secrets, &config, &pw(PASSWORD)),
+                Err(AddAccountError::AlreadyAdded)
+            );
+            // Another mailbox on the same server is fine.
+            let mut other = good_config();
+            other.email = "bob@example.org".into();
+            other.username = "bob@example.org".into();
+            save_account(&store, &secrets, &other, &pw(PASSWORD)).expect("another user");
+            // So is the same address on another server.
+            let mut elsewhere = good_config();
+            elsewhere.imap.host = "imap.example.net".into();
+            save_account(&store, &secrets, &elsewhere, &pw(PASSWORD)).expect("another server");
+            assert_eq!(store.list_accounts().expect("list").len(), 3);
+        }
+
+        #[test]
+        fn a_local_only_account_is_not_a_duplicate() {
+            // The debug fixtures account (#289) uses whatever address it likes.
+            let store = Store::open_in_memory().expect("store");
+            let secrets = MemorySecretStore::new();
+            let config = good_config();
+            store
+                .insert_local_account(&mailcrane_store::NewAccount {
+                    display_name: String::new(),
+                    email: config.email.clone(),
+                    imap_host: config.imap.host.clone(),
+                    imap_port: 993,
+                    imap_security: mailcrane_store::Security::Tls,
+                    smtp_host: config.smtp.host.clone(),
+                    smtp_port: 465,
+                    smtp_security: mailcrane_store::Security::Tls,
+                    username: config.username.clone(),
+                })
+                .expect("local");
+            save_account(&store, &secrets, &config, &pw(PASSWORD)).expect("not a duplicate");
+        }
+
+        #[test]
+        fn the_same_jmap_account_cannot_be_added_twice() {
+            use mailcrane_core::account::jmap::{save_jmap_account, JmapAccountConfig};
+            let store = Store::open_in_memory().expect("store");
+            let secrets = MemorySecretStore::new();
+            let config = JmapAccountConfig {
+                email: "alice@example.org".into(),
+                display_name: String::new(),
+                server: "example.org".into(),
+                username: "alice@example.org".into(),
+            };
+            let url = "https://jmap.example.org/session";
+            save_jmap_account(&store, &secrets, &config, url, &pw(PASSWORD)).expect("first");
+            assert_eq!(
+                save_jmap_account(
+                    &store,
+                    &secrets,
+                    &config,
+                    "HTTPS://jmap.example.org/session",
+                    &pw(PASSWORD)
+                ),
+                Err(AddAccountError::AlreadyAdded)
+            );
+            // An IMAP account with that address isn't the same mailbox.
+            save_account(&store, &secrets, &good_config(), &pw(PASSWORD)).expect("imap");
+        }
+
+        #[tokio::test]
         async fn wrong_password_is_auth_failed_and_nothing_saved() {
             let servers = servers(&[], &[]).await;
             let store = Store::open_in_memory().expect("store");
