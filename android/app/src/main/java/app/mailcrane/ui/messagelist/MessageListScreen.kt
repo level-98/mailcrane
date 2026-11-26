@@ -50,7 +50,12 @@ import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.CustomAccessibilityAction
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.customActions
+import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -277,7 +282,16 @@ fun MessageListContent(
                     text = { Text(label) },
                     // Collapses to the icon while scrolling down, so it covers less of the list.
                     expanded = !listState.canScrollBackward,
-                    modifier = fabModifier,
+                    // One label whether expanded or not: collapsed, the icon alone said nothing (M6-01).
+                    modifier =
+                        fabModifier.clearAndSetSemantics {
+                            contentDescription = label
+                            role = Role.Button
+                            onClick {
+                                onCompose()
+                                true
+                            }
+                        },
                 )
             }
         },
