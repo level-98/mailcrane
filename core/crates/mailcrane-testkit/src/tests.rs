@@ -744,6 +744,88 @@ mod suite {
         server.shutdown().await;
     }
 
+    /// Sends `command` and returns every line up to and including the
+    /// tagged reply for `tag`.
+    async fn imap_exchange(
+        stream: &mut tokio_rustls::client::TlsStream<TcpStream>,
+        tag: &str,
+        command: &[u8],
+    ) -> String {
+        stream.write_all(command).await.expect("IMAP command");
+        let mut out = String::new();
+        loop {
+            let line = imap_read_line(stream).await;
+            out.push_str(&line);
+            if line.starts_with(&format!("{tag} ")) {
+                return out;
+            }
+        }
+    }
+
+    /// #416: ENVELOPE describes each stored message from its own headers,
+    /// for fixtures and for mail APPENDed later (the copy in Sent).
+    #[tokio::test]
+    async fn imap_envelope_comes_from_each_messages_headers() {
+        let fixture = b"Date: Tue, 03 Mar 2026 09:15:00 +0100\r\n\
+            From: Ana <ana@example.org>\r\n\
+            To: Bo <bo@example.net>\r\n\
+            Cc: carl@example.com\r\n\
+            Subject: Lunch\r\n\
+            Message-ID: <m1@example.org>\r\n\r\nBody\r\n"
+            .to_vec();
+        let server = FakeImap::builder()
+            .folder("INBOX", vec![fixture])
+            .folder("Sent", Vec::new())
+            .start()
+            .await
+            .expect("server starts");
+        let mut stream = open_tls(server.addr(), server.root_cert_der()).await;
+        let _ = imap_read_line(&mut stream).await;
+
+        let _ = imap_exchange(&mut stream, "a1", b"a1 EXAMINE INBOX\r\n").await;
+        let inbox = imap_exchange(&mut stream, "a2", b"a2 UID FETCH 1:* (ENVELOPE)\r\n").await;
+        assert!(
+            inbox.contains(
+                "ENVELOPE (\"Tue, 03 Mar 2026 09:15:00 +0100\" \"Lunch\" \
+                 ((\"Ana\" NIL \"ana\" \"example.org\")) ((\"Ana\" NIL \"ana\" \"example.org\")) \
+                 ((\"Ana\" NIL \"ana\" \"example.org\")) ((\"Bo\" NIL \"bo\" \"example.net\")) \
+                 ((NIL NIL \"carl\" \"example.com\")) NIL NIL \"<m1@example.org>\")"
+            ),
+            "{inbox}"
+        );
+        assert!(!inbox.contains("Alice"), "{inbox}");
+
+        let sent = b"Date: Thu, 26 Nov 2026 19:00:00 +0000\r\n\
+            From: Test <test@example.org>\r\n\
+            To: ana@example.org\r\n\
+            Subject: Re: Lunch\r\n\
+            In-Reply-To: <m1@example.org>\r\n\r\nYes\r\n";
+        let append = format!("a3 APPEND Sent (\\Seen) {{{}}}\r\n", sent.len());
+        stream.write_all(append.as_bytes()).await.expect("APPEND");
+        assert!(imap_read_line(&mut stream).await.starts_with('+'));
+        let mut literal = sent.to_vec();
+        literal.extend_from_slice(b"\r\n");
+        let appended = imap_exchange(&mut stream, "a3", &literal).await;
+        assert!(appended.contains("a3 OK"), "{appended}");
+
+        let _ = imap_exchange(&mut stream, "a4", b"a4 EXAMINE Sent\r\n").await;
+        let copy = imap_exchange(&mut stream, "a5", b"a5 UID FETCH 1:* (ENVELOPE)\r\n").await;
+        assert!(
+            copy.contains(
+                "ENVELOPE (\"Thu, 26 Nov 2026 19:00:00 +0000\" \"Re: Lunch\" \
+                 ((\"Test\" NIL \"test\" \"example.org\"))"
+            ),
+            "{copy}"
+        );
+        assert!(
+            copy.contains("\"<m1@example.org>\" \"<Sent.1@example.org>\")"),
+            "{copy}"
+        );
+
+        stream.write_all(b"a6 LOGOUT\r\n").await.expect("LOGOUT");
+        server.shutdown().await;
+    }
+
     #[tokio::test]
     async fn imap_command_matrix_and_quirks_are_tested() {
         let server = FakeImap::builder()
