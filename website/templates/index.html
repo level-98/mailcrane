@@ -4,6 +4,10 @@
 {% set screens = load_data(path="data/screens.json") %}
 {% set roadmap = load_data(path="data/roadmap.json") %}
 {% set dl = config.extra.download %}
+{% set shown_ids = [...config.extra.roadmap.done, ...config.extra.roadmap.now, ...config.extra.roadmap.next, ...config.extra.roadmap.later] %}
+{% set_global shown_done = 0 %}
+{% set_global shown_total = 0 %}
+{% for group in roadmap.groups %}{% if group.id in shown_ids %}{% set_global shown_done = shown_done + group.completed %}{% set_global shown_total = shown_total + group.total %}{% endif %}{% endfor %}
 {% set download_url = get_url(path='@/download.md') %}
 {% set roadmap_url = get_url(path='@/roadmap.md') %}
 {% set features_url = get_url(path='@/features.md') %}
@@ -83,7 +87,7 @@
       <div class="section-heading">
         <p class="eyebrow">What’s coming next</p>
         <h2 id="coming-title">Built in the open, <span>one step at a time.</span></h2>
-        <p class="section-intro">{{ roadmap.completed }} of {{ roadmap.total }} roadmap tasks are done. Here’s what we’re working on now.</p>
+        <p class="section-intro">{{ shown_done }} of {{ shown_total }} roadmap tasks are done. Here’s what we’re working on now.</p>
       </div>
       <ul class="coming-list">
         {% for id in config.extra.roadmap.now %}

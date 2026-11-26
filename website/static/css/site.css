@@ -335,8 +335,14 @@ h1 span,
   display: block;
 }
 
-.header-cta {
+.site-header .header-cta {
   display: none;
+}
+
+@media (min-width: 420px) {
+  .site-header .header-cta {
+    display: inline-flex;
+  }
 }
 
 /* ---------- Buttons and links ---------- */
@@ -1327,10 +1333,6 @@ a.store-button:hover {
 
   .mobile-nav {
     display: none;
-  }
-
-  .header-cta {
-    display: inline-flex;
   }
 
   .hero {

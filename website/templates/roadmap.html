@@ -2,15 +2,19 @@
 {% block content %}
 {% set roadmap = load_data(path="data/roadmap.json") %}
 {% set stages = config.extra.roadmap %}
+{% set shown_ids = [...config.extra.roadmap.done, ...config.extra.roadmap.now, ...config.extra.roadmap.next, ...config.extra.roadmap.later] %}
+{% set_global shown_done = 0 %}
+{% set_global shown_total = 0 %}
+{% for group in roadmap.groups %}{% if group.id in shown_ids %}{% set_global shown_done = shown_done + group.completed %}{% set_global shown_total = shown_total + group.total %}{% endif %}{% endfor %}
 <main class="page-wrap section-wrap page-wide" id="main">
   <p class="eyebrow">Roadmap</p>
   <h1 class="page-title">What’s <span>coming.</span></h1>
   <div class="page-intro">{{ page.content | safe }}</div>
 
   <div class="progress-overview">
-    <p class="overview-copy"><strong>{{ roadmap.completed }} of {{ roadmap.total }} tasks done</strong> <span>Snapshot from {{ roadmap.generated_at | date(format="%-d %B %Y") }}</span></p>
-    <div class="progress-bar" role="progressbar" aria-label="Overall roadmap progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="{{ roadmap.percent }}" aria-valuetext="{{ roadmap.percent }}% complete">
-      <span style="width: {{ roadmap.percent }}%"></span>
+    <p class="overview-copy"><strong>{{ shown_done }} of {{ shown_total }} tasks done</strong> <span>Snapshot from {{ roadmap.generated_at | date(format="%-d %B %Y") }}</span></p>
+    <div class="progress-bar" role="progressbar" aria-label="Overall roadmap progress" aria-valuemin="0" aria-valuemax="100" {% set shown_percent = (shown_done * 100) // shown_total if shown_total > 0 else 0 %}aria-valuenow="{{ shown_percent }}" aria-valuetext="{{ shown_percent }}% complete">
+      <span style="width: {{ shown_percent }}%"></span>
     </div>
   </div>
 
