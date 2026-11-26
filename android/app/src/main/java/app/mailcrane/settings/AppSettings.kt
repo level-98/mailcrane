@@ -18,7 +18,10 @@ import dagger.hilt.InstallIn
 import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.components.SingletonComponent
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import java.io.IOException
 import javax.inject.Singleton
@@ -291,11 +294,26 @@ class DataStoreAppSettings(
         dataStore.edit { it[CONTACT_PHOTOS] = enabled }
     }
 
+    /**
+     * The theme just chosen, shown before the settings file has been written: the app used to wait for the
+     * write, so the switch lagged behind the tap (#339). Cleared once the file holds it.
+     */
+    private val pendingTheme = MutableStateFlow<ThemeMode?>(null)
+
     override val themeMode: Flow<ThemeMode> =
-        prefs.map { p -> ThemeMode.entries.firstOrNull { it.name == p[THEME] } ?: ThemeMode.SYSTEM }
+        combine(
+            prefs.map { p -> ThemeMode.entries.firstOrNull { it.name == p[THEME] } ?: ThemeMode.SYSTEM },
+            pendingTheme,
+        ) { stored, pending -> pending ?: stored }.distinctUntilChanged()
 
     override suspend fun setThemeMode(mode: ThemeMode) {
-        dataStore.edit { it[THEME] = mode.name }
+        pendingTheme.value = mode
+        try {
+            dataStore.edit { it[THEME] = mode.name }
+        } finally {
+            // Saved, or the write failed and the stored choice stands.
+            pendingTheme.compareAndSet(mode, null)
+        }
     }
 
     override val dynamicColor: Flow<Boolean> = prefs.map { it[DYNAMIC_COLOR] ?: true }

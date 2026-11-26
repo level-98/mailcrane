@@ -49,6 +49,7 @@ fun SafeWebView(
         modifier = modifier,
         factory = { context ->
             WebView(context).apply {
+                fitToWidth(this)
                 layoutParams =
                     ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
                 // Mail is designed for a white page, whatever the app theme.
@@ -77,6 +78,19 @@ fun SafeWebView(
         },
         onRelease = { it.destroy() },
     )
+}
+
+/**
+ * Shows mail laid out wider than the screen (fixed-width newsletters, often 600 px) zoomed out to the
+ * screen's width instead of cut off on the right (#342). Layout only: no setting that [lockDown]
+ * applies changes, and zooming by hand stays off.
+ */
+fun fitToWidth(view: WebView) {
+    view.settings.apply {
+        // Honour the document's viewport (the device width) and shrink wider content to fit it.
+        useWideViewPort = true
+        loadWithOverviewMode = true
+    }
 }
 
 /**

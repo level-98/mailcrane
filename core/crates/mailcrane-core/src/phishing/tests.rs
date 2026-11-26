@@ -164,6 +164,7 @@ fn fixtures_show_the_expected_chip() {
         ("auth-forged-below", Some(NotVerified)),
         ("auth-forged-foreign", Some(Failed)),
         ("auth-no-received", None),
+        ("auth-malformed", Some(NotVerified)),
         ("auth-forged-no-provider", None),
         ("plain-ascii", None),
     ] {
@@ -175,5 +176,66 @@ fn fixtures_show_the_expected_chip() {
         let check = sender_check(&parse_message(&raw).expect("parses"));
         assert_eq!(check.verdict, want, "{name}");
         assert_eq!(check.trusted, want.is_some(), "{name}");
+    }
+}
+
+fn display_name_check(from: &str) -> Option<DisplayNameWarning> {
+    let m = format!("From: {from}\r\nTo: a@example.org\r\nSubject: Hi\r\n\r\nHello\r\n");
+    sender_check(&parse_message(m.as_bytes()).expect("parses")).display_name_warning
+}
+
+#[test]
+fn display_name_warnings_come_with_the_sender_check() {
+    let w = display_name_check("\"ceo@example.com\" <attacker@example.net>").expect("warns");
+    assert_eq!(w.claimed, "ceo@example.com");
+    assert_eq!(w.actual, "attacker@example.net");
+    assert_eq!(
+        display_name_check("\"Support (support@example.com)\" <noreply@mail.example.com>"),
+        None
+    );
+    assert_eq!(display_name_check("Ann Example <ann@example.org>"), None);
+    assert_eq!(display_name_check("ann@example.org"), None);
+}
+
+#[test]
+fn encoded_display_names_are_checked_after_decoding() {
+    // RFC 2047: "ceo＠example.com" (fullwidth @), Q and B encodings.
+    for from in [
+        "=?UTF-8?Q?ceo=EF=BC=A0example.com?= <x@example.net>",
+        "=?UTF-8?B?Y2Vv77ygZXhhbXBsZS5jb20=?= <x@example.net>",
+        // A zero-width space inside the address.
+        "=?UTF-8?Q?ceo@exa=E2=80=8Bmple.com?= <x@example.net>",
+    ] {
+        let w = display_name_check(from).unwrap_or_else(|| panic!("warns: {from}"));
+        assert_eq!(w.claimed, "ceo@example.com", "{from}");
+    }
+}
+
+#[test]
+fn display_name_fixtures() {
+    for (name, want) in [
+        (
+            "display-name-spoof",
+            Some(("ceo@example.com", "x@example.net")),
+        ),
+        ("display-name-same-org", None),
+        (
+            "display-name-encoded",
+            Some(("ceo@example.com", "x@example.net")),
+        ),
+        ("auth-pass", None),
+        ("plain-ascii", None),
+    ] {
+        let path = format!(
+            "{}/../../../tests/fixtures/mime/{name}.eml",
+            env!("CARGO_MANIFEST_DIR")
+        );
+        let raw = std::fs::read(&path).expect("fixture");
+        let w = sender_check(&parse_message(&raw).expect("parses")).display_name_warning;
+        assert_eq!(
+            w.as_ref().map(|w| (w.claimed.as_str(), w.actual.as_str())),
+            want,
+            "{name}"
+        );
     }
 }

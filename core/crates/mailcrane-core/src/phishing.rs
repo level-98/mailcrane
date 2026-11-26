@@ -1,5 +1,6 @@
 //! Helping people spot phishing (M5-07): what the user's provider found
-//! when it checked who sent a message.
+//! when it checked who sent a message, and From names that pretend to be
+//! someone else.
 //!
 //! Only the `Authentication-Results` header the provider added is read
 //! (RFC 8601 §5, the same rule one-click unsubscribe uses): it must name
@@ -10,6 +11,9 @@
 use mailcrane_mime::auth::{summarize, trusted_results, AuthSummary};
 use mailcrane_mime::ParsedMessage;
 
+mod display_name;
+
+pub use display_name::{display_name_warning, DisplayNameWarning};
 pub use mailcrane_mime::auth::AuthResult;
 
 /// What the authentication chip says.
@@ -34,13 +38,16 @@ pub struct SenderCheck {
     pub auth: AuthSummary,
     /// What to show; `None` when `trusted` is `false` (show nothing).
     pub verdict: Option<AuthVerdict>,
+    /// The From name shows an address or domain from another organisation
+    /// than the real From address (rule C). Independent of `trusted`.
+    pub display_name_warning: Option<DisplayNameWarning>,
 }
 
-/// Reads the trusted authentication results of `parsed`.
+/// Reads the trusted authentication results of `parsed` and checks the
+/// display name of its first From address.
 pub fn sender_check(parsed: &ParsedMessage) -> SenderCheck {
-    let from_domain = parsed
-        .from
-        .first()
+    let from = parsed.from.first();
+    let from_domain = from
         .and_then(|a| a.email.rsplit_once('@'))
         .map(|(_, d)| d)
         .unwrap_or_default();
@@ -50,6 +57,8 @@ pub fn sender_check(parsed: &ParsedMessage) -> SenderCheck {
         trusted: trusted.is_some(),
         verdict: trusted.map(|_| verdict(&auth)),
         auth,
+        display_name_warning: from
+            .and_then(|a| display_name_warning(a.name.as_deref().unwrap_or_default(), &a.email)),
     }
 }
 

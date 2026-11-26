@@ -322,3 +322,46 @@ fn hostile_received_headers_never_panic() {
     let long = format!("from {} by mx2.example.org", "(".repeat(70_000));
     assert_eq!(trusted_results(&[rcv(&long), ar(FORGED_PASS)]), None);
 }
+
+mod props {
+    use super::*;
+    use proptest::prelude::*;
+
+    proptest! {
+        #[test]
+        fn parse_never_panics(header in "\\PC{0,400}") {
+            let parsed = parse(&header);
+            prop_assert!(parsed.results.len() <= MAX_RESULTS);
+            let _ = summarize(&header, "example.net");
+        }
+
+        #[test]
+        fn header_shaped_input_never_panics(
+            header in "[a-z0-9 ;=()\"\\\\./@-]{0,200}",
+            from in "[a-z.@-]{0,30}",
+        ) {
+            let _ = summarize(&header, &from);
+            let _ = received_by(&header);
+        }
+
+        #[test]
+        fn trusted_results_never_panics(
+            trace in proptest::collection::vec(
+                (any::<bool>(), "[a-z0-9 ;=()\\[\\]./-]{0,80}"),
+                0..12,
+            ),
+        ) {
+            let trace: Vec<TraceHeader> = trace
+                .into_iter()
+                .map(|(received, v)| {
+                    if received {
+                        TraceHeader::Received(v)
+                    } else {
+                        TraceHeader::AuthenticationResults(v)
+                    }
+                })
+                .collect();
+            let _ = trusted_results(&trace);
+        }
+    }
+}

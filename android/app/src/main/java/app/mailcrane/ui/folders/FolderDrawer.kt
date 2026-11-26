@@ -2,6 +2,7 @@ package app.mailcrane.ui.folders
 
 import androidx.annotation.DrawableRes
 import androidx.annotation.StringRes
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
@@ -70,40 +71,49 @@ fun FolderDrawer(
             { content -> ModalDrawerSheet(modifier = modifier, content = content) }
         }
     sheet {
-        // With several accounts (M4-01): switch between them, or see every inbox together.
-        if (accounts.size > 1) {
-            Text(
-                text = stringResource(R.string.accounts_title),
-                style = MaterialTheme.typography.titleSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(horizontal = 28.dp, vertical = 12.dp).semantics { heading() },
-            )
-            accounts.forEach { account ->
-                NavigationDrawerItem(
-                    label = { Text(account.email, maxLines = 1) },
-                    icon = { AccountDot(account.color.toInt()) },
-                    selected = account.id == currentAccountId && selectedFolderId != UNIFIED_FOLDER_ID,
-                    onClick = { onSwitchAccount(account.id) },
-                    modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding),
+        // One scrolling list for everything. The folders used to get only the height left over by
+        // the rows around them, which in landscape (several accounts, a short window) was none, so
+        // the permanent pane showed "Folders" with nothing under it (#336).
+        LazyColumn(Modifier.fillMaxSize().testTag("drawer-list")) {
+            // With several accounts (M4-01): switch between them, or see every inbox together.
+            if (accounts.size > 1) {
+                item(key = "accounts-title") {
+                    Text(
+                        text = stringResource(R.string.accounts_title),
+                        style = MaterialTheme.typography.titleSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 28.dp, vertical = 12.dp).semantics { heading() },
+                    )
+                }
+                items(items = accounts, key = { "account-${it.id}" }) { account ->
+                    NavigationDrawerItem(
+                        label = { Text(account.email, maxLines = 1) },
+                        icon = { AccountDot(account.color.toInt()) },
+                        selected = account.id == currentAccountId && selectedFolderId != UNIFIED_FOLDER_ID,
+                        onClick = { onSwitchAccount(account.id) },
+                        modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding),
+                    )
+                }
+                item(key = "all-inboxes") {
+                    NavigationDrawerItem(
+                        label = { Text(stringResource(R.string.all_inboxes)) },
+                        icon = { Icon(painterResource(R.drawable.ic_mc_inbox), contentDescription = null) },
+                        badge = { if (unifiedUnread > 0) Text(unifiedUnread.toString()) },
+                        selected = selectedFolderId == UNIFIED_FOLDER_ID,
+                        onClick = { onSelect(UNIFIED_FOLDER_ID) },
+                        modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding),
+                    )
+                    HorizontalDivider(Modifier.padding(horizontal = 28.dp, vertical = 8.dp))
+                }
+            }
+            item(key = "folders-title") {
+                Text(
+                    text = stringResource(R.string.folders_title),
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 28.dp, vertical = 16.dp).semantics { heading() },
                 )
             }
-            NavigationDrawerItem(
-                label = { Text(stringResource(R.string.all_inboxes)) },
-                icon = { Icon(painterResource(R.drawable.ic_mc_inbox), contentDescription = null) },
-                badge = { if (unifiedUnread > 0) Text(unifiedUnread.toString()) },
-                selected = selectedFolderId == UNIFIED_FOLDER_ID,
-                onClick = { onSelect(UNIFIED_FOLDER_ID) },
-                modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding),
-            )
-            HorizontalDivider(Modifier.padding(horizontal = 28.dp, vertical = 8.dp))
-        }
-        Text(
-            text = stringResource(R.string.folders_title),
-            style = MaterialTheme.typography.titleSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(horizontal = 28.dp, vertical = 16.dp).semantics { heading() },
-        )
-        LazyColumn(Modifier.weight(1f)) {
             items(items = folders, key = { it.id }) { folder ->
                 FolderItem(
                     folder = folder,
@@ -111,46 +121,55 @@ fun FolderDrawer(
                     onClick = { onSelect(folder.id) },
                 )
             }
-        }
-        if (onOpenSettings != null || onOpenLocalDrafts != null) {
-            HorizontalDivider(Modifier.padding(horizontal = 28.dp))
-        }
-        if (onOpenOutbox != null && outboxCount > 0) {
-            NavigationDrawerItem(
-                label = { Text(stringResource(R.string.outbox_title)) },
-                icon = { Icon(painterResource(R.drawable.ic_mc_sent), contentDescription = null) },
-                badge = { Text(outboxCount.toString()) },
-                selected = false,
-                onClick = onOpenOutbox,
-                modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding),
-            )
-        }
-        if (onManageFolders != null) {
-            NavigationDrawerItem(
-                label = { Text(stringResource(R.string.folders_manage)) },
-                icon = { Icon(painterResource(R.drawable.ic_mc_folder), contentDescription = null) },
-                selected = false,
-                onClick = onManageFolders,
-                modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding).testTag("manage-folders-item"),
-            )
-        }
-        if (onOpenLocalDrafts != null) {
-            NavigationDrawerItem(
-                label = { Text(stringResource(R.string.local_drafts_title)) },
-                icon = { Icon(painterResource(R.drawable.ic_mc_drafts), contentDescription = null) },
-                selected = false,
-                onClick = onOpenLocalDrafts,
-                modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding),
-            )
-        }
-        if (onOpenSettings != null) {
-            NavigationDrawerItem(
-                label = { Text(stringResource(R.string.settings_title)) },
-                icon = { Icon(painterResource(R.drawable.ic_mc_settings), contentDescription = null) },
-                selected = false,
-                onClick = onOpenSettings,
-                modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding).padding(vertical = 8.dp),
-            )
+            if (onOpenSettings != null || onOpenLocalDrafts != null) {
+                item(key = "actions-divider") { HorizontalDivider(Modifier.padding(horizontal = 28.dp)) }
+            }
+            if (onOpenOutbox != null && outboxCount > 0) {
+                item(key = "outbox") {
+                    NavigationDrawerItem(
+                        label = { Text(stringResource(R.string.outbox_title)) },
+                        icon = { Icon(painterResource(R.drawable.ic_mc_sent), contentDescription = null) },
+                        badge = { Text(outboxCount.toString()) },
+                        selected = false,
+                        onClick = onOpenOutbox,
+                        modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding),
+                    )
+                }
+            }
+            if (onManageFolders != null) {
+                item(key = "manage-folders") {
+                    NavigationDrawerItem(
+                        label = { Text(stringResource(R.string.folders_manage)) },
+                        icon = { Icon(painterResource(R.drawable.ic_mc_folder), contentDescription = null) },
+                        selected = false,
+                        onClick = onManageFolders,
+                        modifier =
+                            Modifier.padding(NavigationDrawerItemDefaults.ItemPadding).testTag("manage-folders-item"),
+                    )
+                }
+            }
+            if (onOpenLocalDrafts != null) {
+                item(key = "local-drafts") {
+                    NavigationDrawerItem(
+                        label = { Text(stringResource(R.string.local_drafts_title)) },
+                        icon = { Icon(painterResource(R.drawable.ic_mc_drafts), contentDescription = null) },
+                        selected = false,
+                        onClick = onOpenLocalDrafts,
+                        modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding),
+                    )
+                }
+            }
+            if (onOpenSettings != null) {
+                item(key = "settings") {
+                    NavigationDrawerItem(
+                        label = { Text(stringResource(R.string.settings_title)) },
+                        icon = { Icon(painterResource(R.drawable.ic_mc_settings), contentDescription = null) },
+                        selected = false,
+                        onClick = onOpenSettings,
+                        modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding).padding(vertical = 8.dp),
+                    )
+                }
+            }
         }
     }
 }

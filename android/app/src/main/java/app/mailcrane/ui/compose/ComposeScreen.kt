@@ -17,15 +17,16 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenu
 import androidx.compose.material3.ExposedDropdownMenuAnchorType
 import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
+import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -43,6 +44,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -51,10 +53,12 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.KeyboardCapitalization
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -164,7 +168,15 @@ fun ComposeContent(
         modifier = modifier,
         topBar = {
             TopAppBar(
-                title = { Text(stringResource(R.string.compose_title), modifier = Modifier.semantics { heading() }) },
+                title = {
+                    // One line, shortened if it must be: never broken mid-word under the actions (#340).
+                    Text(
+                        stringResource(R.string.compose_title),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.semantics { heading() },
+                    )
+                },
                 navigationIcon = {
                     IconButton(onClick = actions.onClose, enabled = !state.sending) {
                         Icon(
@@ -173,6 +185,8 @@ fun ComposeContent(
                         )
                     }
                 },
+                // Attach and Send stay in the bar; scheduling and discarding are in "More options", so
+                // a phone-width bar leaves the title room for one line (#340).
                 actions = {
                     IconButton(onClick = actions.onAttach, enabled = !state.sending) {
                         Icon(
@@ -180,14 +194,8 @@ fun ComposeContent(
                             contentDescription = stringResource(R.string.compose_attach),
                         )
                     }
-                    IconButton(onClick = actions.onDiscard, enabled = !state.sending) {
-                        Icon(
-                            painter = painterResource(R.drawable.ic_mc_trash),
-                            contentDescription = stringResource(R.string.compose_discard),
-                        )
-                    }
-                    ScheduleButton(enabled = state.canSend, onSchedule = actions.onSchedule)
                     SendButton(state, actions.onSend)
+                    ComposeMoreMenu(state, actions)
                 },
             )
         },
@@ -264,27 +272,59 @@ private fun SendButton(
     state: ComposeUiState,
     onSend: () -> Unit,
 ) {
-    val sendLabel = stringResource(R.string.compose_send)
-    Button(
+    // A filled icon button, the most prominent action in the bar; its label is read by TalkBack.
+    val label = stringResource(if (state.sending) R.string.compose_sending else R.string.compose_send)
+    FilledIconButton(
         onClick = onSend,
         enabled = state.canSend,
-        contentPadding = ButtonDefaults.ButtonWithIconContentPadding,
-        modifier = Modifier.padding(end = 8.dp),
+        modifier = Modifier.semantics { contentDescription = label },
     ) {
         if (state.sending) {
             CircularProgressIndicator(modifier = Modifier.size(ButtonDefaults.IconSize), strokeWidth = 2.dp)
-            Text(
-                stringResource(R.string.compose_sending),
-                modifier = Modifier.padding(start = ButtonDefaults.IconSpacing),
-            )
         } else {
-            Icon(
-                painterResource(R.drawable.ic_mc_sent),
-                contentDescription = null,
-                modifier = Modifier.size(ButtonDefaults.IconSize),
-            )
-            Text(sendLabel, modifier = Modifier.padding(start = ButtonDefaults.IconSpacing))
+            Icon(painterResource(R.drawable.ic_mc_sent), contentDescription = null)
         }
+    }
+}
+
+/** "More options": schedule send (needs a valid recipient, as Send does) and discard. */
+@Composable
+private fun ComposeMoreMenu(
+    state: ComposeUiState,
+    actions: ComposeActions,
+) {
+    var open by remember { mutableStateOf(false) }
+    var scheduling by rememberSaveable { mutableStateOf(false) }
+    IconButton(onClick = { open = true }, enabled = !state.sending) {
+        Icon(painterResource(R.drawable.ic_mc_more), contentDescription = stringResource(R.string.message_more))
+    }
+    DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+        DropdownMenuItem(
+            text = { Text(stringResource(R.string.schedule_send)) },
+            leadingIcon = { Icon(painterResource(R.drawable.ic_mc_snooze), contentDescription = null) },
+            enabled = state.canSend,
+            onClick = {
+                open = false
+                scheduling = true
+            },
+        )
+        DropdownMenuItem(
+            text = { Text(stringResource(R.string.compose_discard)) },
+            leadingIcon = { Icon(painterResource(R.drawable.ic_mc_trash), contentDescription = null) },
+            onClick = {
+                open = false
+                actions.onDiscard()
+            },
+        )
+    }
+    if (scheduling) {
+        ScheduleDialog(
+            onPick = {
+                scheduling = false
+                actions.onSchedule(it)
+            },
+            onDismiss = { scheduling = false },
+        )
     }
 }
 

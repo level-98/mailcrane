@@ -371,6 +371,21 @@ pub struct SenderCheck {
     pub dmarc: AuthResult,
     /// The From domain DMARC checked.
     pub dmarc_domain: Option<String>,
+    /// The From name shows an address or domain from another organisation
+    /// than the real From address; show a warning banner above the body.
+    /// Set whether or not `trusted` is.
+    #[uniffi(default = None)]
+    pub display_name_warning: Option<DisplayNameWarning>,
+}
+
+/// A From name that claims to be someone the message isn't from, such as
+/// `"ceo@example.com" <x@example.net>`.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct DisplayNameWarning {
+    /// The address or domain the name shows (lowercase, tricks removed).
+    pub claimed: String,
+    /// The address the message is really from.
+    pub actual: String,
 }
 
 impl From<phishing::SenderCheck> for SenderCheck {
@@ -389,6 +404,10 @@ impl From<phishing::SenderCheck> for SenderCheck {
             dkim_domain: domain(c.auth.dkim_domain),
             dmarc: c.auth.dmarc.into(),
             dmarc_domain: domain(c.auth.dmarc_domain),
+            display_name_warning: c.display_name_warning.map(|w| DisplayNameWarning {
+                claimed: one_line(&w.claimed),
+                actual: one_line(&w.actual),
+            }),
         }
     }
 }
@@ -448,6 +467,11 @@ fn cid_url(content_id: &str) -> String {
 /// Wraps sanitised HTML in a document whose Content-Security-Policy allows
 /// nothing but inline styles, `cid:` and `data:` images, and, only when
 /// `allow_remote`, `https:` images. No referrer is ever sent.
+///
+/// The viewport is the device width with no `initial-scale`, so the app's
+/// web view can zoom a fixed-width (often 600 px) newsletter out to fit the
+/// screen; `initial-scale=1` kept it at full size, cut off on the right
+/// (#342).
 fn html_document(body: &str, allow_remote: bool) -> String {
     let remote = if allow_remote { " https:" } else { "" };
     format!(
@@ -456,7 +480,7 @@ fn html_document(body: &str, allow_remote: bool) -> String {
          <meta name=\"referrer\" content=\"no-referrer\">\
          <meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; \
          img-src {CID_SCHEME}: data:{remote}; style-src 'unsafe-inline'\">\
-         <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\
+         <meta name=\"viewport\" content=\"width=device-width\">\
          <style>body{{margin:16px;overflow-wrap:break-word}}\
          img{{max-width:100%;height:auto}}</style>\
          </head><body>{body}</body></html>"
@@ -877,6 +901,9 @@ mod tests {
         );
         assert_eq!(blocked, 1);
         assert!(html.contains("<meta name=\"referrer\" content=\"no-referrer\">"));
+        // #342: no initial-scale, so wide mail can be zoomed out to fit.
+        assert!(html.contains("<meta name=\"viewport\" content=\"width=device-width\">"));
+        assert!(!html.contains("initial-scale"));
         assert!(html.contains(
             "content=\"default-src 'none'; img-src mailcrane-cid: data:; \
              style-src 'unsafe-inline'\""
@@ -932,6 +959,7 @@ mod tests {
                 dkim_domain: Some("example.net".into()),
                 dmarc: AuthResult::Fail,
                 dmarc_domain: Some("example.net".into()),
+                display_name_warning: None,
             }
         );
         // The provider added nothing: the sender's header is not trusted.
@@ -942,6 +970,27 @@ mod tests {
             .expect("checked");
         assert!(!check.trusted);
         assert_eq!(check.verdict, None);
+    }
+
+    #[test]
+    fn display_name_warning_reaches_the_apps() {
+        let (_dir, path, folder) = setup();
+        let raw = b"From: \"ceo@example.com\" <attacker@example.net>\r\nTo: bob@example.org\r\n\
+                    Subject: Hi\r\n\r\nHello\r\n";
+        let id = with_body(&path, folder, 1, raw);
+        let check = get_message(path, id, false)
+            .expect("message")
+            .sender_check
+            .expect("checked");
+        // No Authentication-Results: no chip, but the name is still checked.
+        assert_eq!(check.verdict, None);
+        assert_eq!(
+            check.display_name_warning,
+            Some(DisplayNameWarning {
+                claimed: "ceo@example.com".into(),
+                actual: "attacker@example.net".into(),
+            })
+        );
     }
 
     #[test]
