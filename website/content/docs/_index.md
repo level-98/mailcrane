@@ -5,4 +5,4 @@ template = "section.html"
 sort_by = "weight"
 +++
 
-Mailcrane is not available to download yet; a beta is planned for December 2026. These pages explain the current project status and point to the work underway; setup steps will be expanded as provider support is implemented and verified.
+Mailcrane isn’t in the stores yet: the first public release is being prepared. The [download page](@/download.md) will have the store links on release day, and shows how to get notified. These guides cover setting up an account and what works with which provider.
