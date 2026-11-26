@@ -16,6 +16,14 @@ scripts/fleet/start-fleet.ps1
 
 .EXAMPLE
 scripts/fleet/start-fleet.ps1 -Seats lead,dev1
+
+.EXAMPLE
+scripts/fleet/start-fleet.ps1 -Seats dev3
+Starts the third dev seat, which only takes issues that need no emulator (docs/fleet.md).
+
+.EXAMPLE
+scripts/fleet/start-fleet.ps1 -Seats dev3 -DryRun
+Checks everything and prints what it would start, without creating worktrees or opening windows.
 #>
 # No positional binding: under 'powershell -File', '-Seats lead, dev1' would
 # otherwise bind the stray 'dev1' to -PermissionMode.
@@ -23,7 +31,9 @@ scripts/fleet/start-fleet.ps1 -Seats lead,dev1
 param(
     [string[]] $Seats = @('lead', 'dev1', 'dev2', 'review', 'qa'),
     [string] $PermissionMode = 'auto',
-    [string] $Model = ''
+    [string] $Model = '',
+    # Check and print the plan only: no fetch, no worktrees, no windows.
+    [switch] $DryRun
 )
 
 $ErrorActionPreference = 'Stop'
@@ -32,6 +42,8 @@ $roles = @{
     lead   = 'mailcrane-lead'
     dev1   = 'mailcrane-dev'
     dev2   = 'mailcrane-dev'
+    # Not in the default -Seats: only for issues that need no emulator.
+    dev3   = 'mailcrane-dev'
     review = 'mailcrane-review'
     qa     = 'mailcrane-qa'
 }
@@ -65,6 +77,31 @@ foreach ($f in $wiring) {
     if (-not (Test-Path (Join-Path $root $f))) { Stop-Fleet "$f is missing. Run 'synapse add-project' for this repository first." }
 }
 
+# The main checkout's settings for a worktree, minus Synapse's own hooks: the Synapse registry binds the project to the
+# main checkout only, so they always refuse in a worktree and just print noise. Other hooks, the MCP server and env stay.
+# Read and checked here, before any window opens.
+function Get-WorktreeSettings([string] $Path) {
+    try { $settings = Get-Content -Raw -Encoding UTF8 $Path | ConvertFrom-Json } catch { $settings = $null }
+    if ($null -eq $settings -or $settings -isnot [System.Management.Automation.PSCustomObject]) {
+        Stop-Fleet ".claude\settings.local.json isn't a JSON object. Run 'synapse add-project' for this repository again."
+    }
+    $hooks = $settings.PSObject.Properties['hooks']
+    if ($hooks -and $hooks.Value -is [System.Management.Automation.PSCustomObject]) {
+        foreach ($event in @($hooks.Value.PSObject.Properties.Name)) {
+            $groups = @(foreach ($group in @($hooks.Value.$event)) {
+                $kept = @(@($group.hooks) | Where-Object {
+                    $_ -and -not (((@($_.command) + @($_.args)) -join ' ') -match '[\\/]\.synapse[\\/]app[\\/]hooks[\\/]')
+                })
+                if ($kept.Count -gt 0) { $group.hooks = $kept; $group }
+            })
+            if ($groups.Count -gt 0) { $hooks.Value.$event = $groups } else { $hooks.Value.PSObject.Properties.Remove($event) }
+        }
+        if (@($hooks.Value.PSObject.Properties).Count -eq 0) { $settings.PSObject.Properties.Remove('hooks') }
+    }
+    return ($settings | ConvertTo-Json -Depth 32)
+}
+$worktreeSettings = Get-WorktreeSettings (Join-Path $root '.claude\settings.local.json')
+
 foreach ($tool in @('claude', 'gh', 'git')) {
     if (-not (Get-Command $tool -ErrorAction SilentlyContinue)) { Stop-Fleet "'$tool' is not on PATH." }
 }
@@ -72,6 +109,15 @@ foreach ($tool in @('claude', 'gh', 'git')) {
 $login = (& gh api user --jq .login 2>$null)
 if (-not $login) { Stop-Fleet "gh isn't signed in. Run 'gh auth login' first." }
 Write-Host "Fleet will act on GitHub as $login."
+
+if ($DryRun) {
+    foreach ($seat in $Seats) {
+        $dir = if ($seat -eq 'lead') { $root } else { Join-Path $root ".worktrees\$seat" }
+        $state = if ($seat -eq 'lead' -or (Test-Path $dir)) { 'exists' } else { 'would be created' }
+        Write-Host "  would start mailbot.$seat ($($roles[$seat])) in $dir ($state)"
+    }
+    exit 0
+}
 
 # --- Worktrees ---------------------------------------------------------------
 
@@ -88,7 +134,12 @@ function Initialize-Worktree([string] $Seat) {
     foreach ($f in $wiring) {
         $dest = Join-Path $wt $f
         New-Item -ItemType Directory -Force (Split-Path $dest -Parent) | Out-Null
-        Copy-Item (Join-Path $root $f) $dest -Force
+        if ($f -eq '.claude\settings.local.json') {
+            # Without Synapse's hooks (see Get-WorktreeSettings).
+            [IO.File]::WriteAllText($dest, $worktreeSettings, (New-Object Text.UTF8Encoding $false))
+        } else {
+            Copy-Item (Join-Path $root $f) $dest -Force
+        }
     }
     return $wt
 }
