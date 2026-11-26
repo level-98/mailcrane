@@ -79,12 +79,15 @@ internal fun EmailStepContent(
                 label = R.string.setup_auto_continue,
                 onClick = actions.onDiscover,
             )
-            // Google Workspace accounts on their own domain.
-            OutlinedButton(
-                onClick = actions.onSignInWithGoogle,
-                enabled = enabled && !state.checking,
-                modifier = Modifier.fillMaxWidth(),
-            ) { Text(stringResource(R.string.setup_google_sign_in)) }
+            // Google Workspace accounts on their own domain, where this build offers Google
+            // sign-in at all (not in debug builds, #405).
+            if (state.googleSignIn) {
+                OutlinedButton(
+                    onClick = actions.onSignInWithGoogle,
+                    enabled = enabled && !state.checking,
+                    modifier = Modifier.fillMaxWidth(),
+                ) { Text(stringResource(R.string.setup_google_sign_in)) }
+            }
         }
         state.error?.let { ErrorCard(it) }
         TextButton(

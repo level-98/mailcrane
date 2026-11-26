@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import androidx.browser.customtabs.CustomTabsIntent
+import app.mailcrane.BuildConfig
 import app.mailcrane.core.OAuthFailure
 import app.mailcrane.core.OAuthProviderConfig
 import app.mailcrane.core.oauthBegin
@@ -33,8 +34,15 @@ sealed interface OAuthResult {
  * The redirect comes back to [OAuthRedirectActivity], which reports on [results].
  */
 object OAuthSignIn {
-    /** The redirect URI every provider is registered with: a private-use scheme (RFC 8252 §7.1). */
+    /**
+     * The redirect URI every provider is registered with: a private-use scheme (RFC 8252 §7.1), the
+     * release package. A literal, the same as the core's (`providers/google.rs`): the build's
+     * CheckOAuthRedirect compares the two and checks that only release builds route it.
+     */
     const val REDIRECT_URI = "app.mailcrane:/oauth2redirect"
+
+    /** Whether this build offers Sign in with Google: release only, see [REDIRECT_URI] (#405). */
+    val AVAILABLE: Boolean = BuildConfig.GOOGLE_SIGN_IN
 
     private val resultsFlow = MutableSharedFlow<OAuthResult>(extraBufferCapacity = 4)
     val results: SharedFlow<OAuthResult> = resultsFlow.asSharedFlow()
@@ -72,5 +80,6 @@ object OAuthSignIn {
     }
 
     /** Whether [uri] is a redirect to us at all (the core checks the rest, `state` first). */
-    fun isRedirect(uri: Uri?): Boolean = uri != null && uri.scheme == "app.mailcrane" && uri.path == "/oauth2redirect"
+    fun isRedirect(uri: Uri?): Boolean =
+        uri != null && uri.scheme == REDIRECT_URI.substringBefore(':') && uri.path == REDIRECT_URI.substringAfter(':')
 }
