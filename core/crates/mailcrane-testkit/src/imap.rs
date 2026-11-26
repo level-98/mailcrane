@@ -26,6 +26,8 @@ struct Shared {
     received: Arc<Mutex<Vec<String>>>,
     /// The folder names SELECT and EXAMINE asked for, in order.
     selected: Arc<Mutex<Vec<String>>>,
+    /// The `DropAfterCommandOnce` faults that have fired.
+    fired: std::sync::Mutex<Vec<String>>,
 }
 use tokio::task::JoinHandle;
 
@@ -209,6 +211,7 @@ impl FakeImapBuilder {
             namespace: self.namespace,
             received: received.clone(),
             selected: selected.clone(),
+            fired: std::sync::Mutex::new(Vec::new()),
         });
         let connections = Arc::new(std::sync::Mutex::new(Vec::<AbortHandle>::new()));
         let accepted = Arc::new(AtomicUsize::new(0));
@@ -532,6 +535,26 @@ async fn handle_imap_command(
     let count = command_count.fetch_add(1, Ordering::SeqCst) + 1;
     let tag = parts.first().copied().unwrap_or("*");
     let command = parts.get(1).copied().unwrap_or("").to_ascii_uppercase();
+    let line = parts
+        .get(1..)
+        .unwrap_or_default()
+        .join(" ")
+        .to_ascii_uppercase();
+    for fault in faults {
+        if let Fault::RefuseCommand { folder, text } = fault {
+            let in_folder = folder
+                .as_ref()
+                .is_none_or(|f| state.selected.as_deref() == Some(f.as_str()));
+            if in_folder && line.contains(&text.to_ascii_uppercase()) {
+                stream
+                    .write_all(format!("{tag} NO refused by the test\r\n").as_bytes())
+                    .await
+                    .map_err(|error| error.to_string())?;
+                stream.flush().await.map_err(|error| error.to_string())?;
+                return Ok(());
+            }
+        }
+    }
     for fault in faults {
         if let Fault::Delay(duration) = fault {
             tokio::time::sleep(*duration).await;
@@ -890,6 +913,21 @@ async fn handle_imap_command(
             if count >= *limit {
                 // Close the connection without answering this command.
                 return Err("dropped after commands".into());
+            }
+        }
+        if let Fault::DropAfterCommandOnce(text) = fault {
+            if line.contains(&text.to_ascii_uppercase()) {
+                let first = match shared.fired.lock() {
+                    Ok(mut fired) if !fired.contains(text) => {
+                        fired.push(text.clone());
+                        true
+                    }
+                    _ => false,
+                };
+                if first {
+                    // Carried out above; the reply never arrives.
+                    return Err("dropped after the command".into());
+                }
             }
         }
     }
