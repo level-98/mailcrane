@@ -2,6 +2,7 @@ package app.mailcrane.settings
 
 import android.Manifest
 import android.content.pm.PackageManager
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
@@ -26,6 +27,9 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
@@ -157,6 +161,12 @@ fun SettingsScreen(
     onAccountsChanged: () -> Unit = {},
     viewModel: SettingsViewModel = hiltViewModel(),
 ) {
+    var showAbout by rememberSaveable { mutableStateOf(false) }
+    if (showAbout) {
+        BackHandler { showAbout = false }
+        AboutScreen(onBack = { showAbout = false })
+        return
+    }
     val cleanLinks by viewModel.cleanLinks.collectAsStateWithLifecycle()
     val confirmLinks by viewModel.confirmLinks.collectAsStateWithLifecycle()
     val undoSend by viewModel.undoSendSeconds.collectAsStateWithLifecycle()
@@ -243,6 +253,11 @@ fun SettingsScreen(
             )
         }
         AdvancedSection()
+        ListItem(
+            headlineContent = { Text(stringResource(R.string.about_title)) },
+            supportingContent = { Text(stringResource(R.string.about_settings_summary)) },
+            modifier = Modifier.clickable { showAbout = true },
+        )
     }
 }
 

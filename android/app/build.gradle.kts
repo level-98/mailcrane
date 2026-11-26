@@ -6,6 +6,26 @@ plugins {
     alias(libs.plugins.ktlint)
 }
 
+// The short commit hash of the checkout, or "unknown" (no git, or not a
+// checkout, as in a source tarball). Only hex digits get through.
+val gitCommit: String =
+    try {
+        providers
+            .exec {
+                // The full hash, cut to 7 here: `--short` may print more digits in
+                // a clone with more objects, which would break reproducibility.
+                commandLine("git", "rev-parse", "HEAD")
+                isIgnoreExitValue = true
+            }.standardOutput.asText
+            .get()
+            .trim()
+            .takeIf { it.length >= 40 && it.all { c -> c in '0'..'9' || c in 'a'..'f' } }
+            ?.take(7)
+            ?: "unknown"
+    } catch (e: Exception) {
+        "unknown"
+    }
+
 // The one place the application ID lives (it may change; see issue #79).
 val mailcraneApplicationId = "app.mailcrane"
 
@@ -32,6 +52,10 @@ android {
         targetSdk = 37
         versionCode = 1
         versionName = "0.0.0"
+        // The commit this build comes from, shown in Settings → About. The same
+        // commit gives the same value on any machine, so release builds stay
+        // reproducible (docs/fdroid.md); without git it is "unknown".
+        buildConfigField("String", "GIT_COMMIT", "\"$gitCommit\"")
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         // Only the ABIs the Rust core is built for (cargoNdkBuild). Without this,
         // libraries such as JNA bring armeabi-v7a, armeabi and mips folders, and
@@ -63,6 +87,8 @@ android {
 
     buildFeatures {
         compose = true
+        // BuildConfig.GIT_COMMIT for Settings → About (#75).
+        buildConfig = true
     }
 
     // Per-app language (Android 13+, M6-02): AGP lists every values-<locale>
@@ -329,6 +355,263 @@ val copyFixtureAssets by tasks.registering(CopyFixtures::class) {
 androidComponents {
     onVariants(selector().withBuildType("debug")) { variant ->
         variant.sources.assets?.addGeneratedSourceDirectory(copyFixtureAssets, CopyFixtures::outputDir)
+    }
+}
+
+// Open-source licences (#366): Settings → About → Open-source licences reads
+// assets/licences.json, built here from two sources, with no network at run time:
+//   - the Rust core: licences/rust-licences.txt, written by `cargo xtask licences`
+//     (cargo-about over mailcrane-ffi) and checked for freshness by `cargo xtask ci`;
+//   - the Android libraries: each module of the release runtime classpath (the one
+//     checkFreeDependencies reads) with the licence in its Maven POM.
+// The build fails when a library's licence is missing, unknown or not on the
+// allowed list in core/deny.toml, so nothing reaches a release unlisted.
+
+// Libraries whose POM lists several licences as alternatives, and the one we use.
+val dualLicensed =
+    mapOf(
+        "net.java.dev.jna:jna" to "Apache-2.0",
+        "net.java.dev.jna:jna-platform" to "Apache-2.0",
+    )
+
+// Libraries whose POM names no licence, with the licence from their own source.
+val licenceWithoutPom =
+    mapOf(
+        // Built from the rustls-platform-verifier-android crate: "MIT OR Apache-2.0".
+        "org.rustls:rustls-platform-verifier" to "Apache-2.0",
+    )
+
+// The SPDX id for a POM <license>, or null when it isn't recognised.
+fun spdxFor(
+    name: String,
+    url: String,
+    allowed: List<String>,
+): String? {
+    val n = name.trim().lowercase()
+    val u = url.trim().lowercase()
+    allowed.firstOrNull { it.lowercase() == n }?.let { return it }
+    return when {
+        "apache.org/licenses/license-2.0" in u || ("apache" in n && "2" in n) -> "Apache-2.0"
+        n == "mit" || "mit license" in n || "opensource.org/licenses/mit" in u -> "MIT"
+        "bsd-3-clause" in n ||
+            "bsd 3" in n ||
+            "new bsd" in n ||
+            "revised bsd" in n ||
+            "opensource.org/licenses/bsd-3-clause" in u -> "BSD-3-Clause"
+        "bsd-2-clause" in n || "bsd 2" in n || "simplified bsd" in n -> "BSD-2-Clause"
+        "mozilla public license" in n && "2.0" in n -> "MPL-2.0"
+        "lgpl" in n || "lesser general public" in n -> "LGPL"
+        "gpl" in n || "general public license" in n -> "GPL"
+        else -> null
+    }
+}
+
+// <licenses> of the POM for group:name:version, following <parent> when the POM
+// has none (up to 5 levels). Uses the repositories the build already uses.
+fun pomLicences(
+    group: String,
+    name: String,
+    version: String,
+    depth: Int = 0,
+): List<Pair<String, String>> {
+    if (depth > 5) return emptyList()
+    val result =
+        dependencies
+            .createArtifactResolutionQuery()
+            .forModule(group, name, version)
+            .withArtifacts(MavenModule::class.java, MavenPomArtifact::class.java)
+            .execute()
+    val pom =
+        result.resolvedComponents
+            .flatMap { it.getArtifacts(MavenPomArtifact::class.java) }
+            .filterIsInstance<org.gradle.api.artifacts.result.ResolvedArtifactResult>()
+            .firstOrNull()
+            ?.file ?: return emptyList()
+    val factory =
+        javax.xml.parsers.DocumentBuilderFactory
+            .newInstance()
+    // POMs are data: no DOCTYPEs, no external entities.
+    factory.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true)
+    factory.isExpandEntityReferences = false
+    val root = factory.newDocumentBuilder().parse(pom).documentElement
+
+    fun children(
+        parent: org.w3c.dom.Element,
+        tag: String,
+    ): List<org.w3c.dom.Element> =
+        (0 until parent.childNodes.length)
+            .map { parent.childNodes.item(it) }
+            .filterIsInstance<org.w3c.dom.Element>()
+            .filter { it.tagName == tag }
+
+    fun text(
+        parent: org.w3c.dom.Element,
+        tag: String,
+    ) = children(parent, tag)
+        .firstOrNull()
+        ?.textContent
+        ?.trim()
+        .orEmpty()
+
+    val licences =
+        children(root, "licenses").flatMap { children(it, "license") }.map { text(it, "name") to text(it, "url") }
+    if (licences.isNotEmpty()) return licences
+    val parent = children(root, "parent").firstOrNull() ?: return emptyList()
+    return pomLicences(text(parent, "groupId"), text(parent, "artifactId"), text(parent, "version"), depth + 1)
+}
+
+// The `allow` list in core/deny.toml, which cargo deny enforces for Rust.
+val allowedLicences: List<String> =
+    coreDir
+        .file("deny.toml")
+        .asFile
+        .readLines()
+        .dropWhile { !it.trim().startsWith("allow = [") }
+        .drop(1)
+        .takeWhile { !it.trim().startsWith("]") }
+        .mapNotNull { Regex("^\\s*\"([^\"]+)\"").find(it)?.groupValues?.get(1) }
+
+// "group:name:version<TAB>SPDX id", or "<TAB>!problem" for a licence that can't be used.
+// Lazy: AGP creates the configuration after this script runs.
+val androidLibraryLicences: Provider<List<String>> =
+    providers.provider {
+        configurations
+            .getByName("releaseRuntimeClasspath")
+            .incoming.resolutionResult.allComponents
+            .mapNotNull { it.id as? org.gradle.api.artifacts.component.ModuleComponentIdentifier }
+            .sortedBy { "${it.group}:${it.module}" }
+            .map { id ->
+                val key = "${id.group}:${id.module}"
+                val found = pomLicences(id.group, id.module, id.version)
+                val ids = found.map { (n, u) -> spdxFor(n, u, allowedLicences) }
+                val dual = dualLicensed[key]
+                val chosen =
+                    when {
+                        found.isEmpty() && key in licenceWithoutPom -> licenceWithoutPom.getValue(key)
+                        found.isEmpty() -> "!no licence in its POM"
+                        dual != null && dual in ids -> dual
+                        ids.any { it == null } -> "!unrecognised licence ${found.map { it.first }}"
+                        ids.all { it in allowedLicences } -> ids.filterNotNull().first()
+                        else -> "!not allowed: ${ids.filterNot { it in allowedLicences }} (AGENTS.md §5)"
+                    }
+                "${id.group}:${id.module}:${id.version}\t$chosen"
+            }
+    }
+
+@CacheableTask
+abstract class GenerateLicences : DefaultTask() {
+    @get:InputFile
+    @get:PathSensitive(PathSensitivity.RELATIVE)
+    abstract val rustNotices: RegularFileProperty
+
+    @get:InputDirectory
+    @get:PathSensitive(PathSensitivity.RELATIVE)
+    abstract val texts: DirectoryProperty
+
+    @get:Input
+    abstract val androidLibraries: ListProperty<String>
+
+    @get:OutputDirectory
+    abstract val outputDir: DirectoryProperty
+
+    @TaskAction
+    fun generate() {
+        val textMap = linkedMapOf<String, Map<String, String>>()
+        val libraries = mutableListOf<Map<String, String>>()
+        readRust(textMap, libraries)
+        if (libraries.isEmpty()) {
+            throw GradleException("licences/rust-licences.txt lists no crates; run `cargo xtask licences`")
+        }
+        val problems = mutableListOf<String>()
+        for (entry in androidLibraries.get()) {
+            val (coordinates, licence) = entry.split('\t', limit = 2)
+            if (licence.startsWith("!")) {
+                problems += "$coordinates: ${licence.drop(1)}"
+                continue
+            }
+            val textFile = texts.get().file("$licence.txt").asFile
+            if (!textFile.isFile) {
+                problems += "$coordinates: $licence has no text; add android/app/licences/texts/$licence.txt"
+                continue
+            }
+            val key = "spdx-$licence"
+            textMap.getOrPut(key) { mapOf("id" to licence, "text" to textFile.readText().trimEnd()) }
+            val parts = coordinates.split(':')
+            libraries +=
+                mapOf(
+                    "name" to "${parts[0]}:${parts.getOrElse(1) { "" }}",
+                    "version" to parts.getOrElse(2) { "" },
+                    "kind" to "android",
+                    "licence" to licence,
+                    "text" to key,
+                    "url" to "",
+                )
+        }
+        if (problems.isNotEmpty()) {
+            throw GradleException(
+                "Open-source licences (#366): these release libraries can't be listed:\n" +
+                    problems.joinToString("\n") { "  $it" },
+            )
+        }
+        libraries.sortWith(compareBy({ it.getValue("name").lowercase() }, { it.getValue("version") }))
+        val json = groovy.json.JsonOutput.toJson(mapOf("texts" to textMap, "libraries" to libraries))
+        val out = outputDir.get().asFile
+        out.deleteRecursively()
+        out.mkdirs()
+        out.resolve("licences.json").writeText(json + "\n")
+        logger.lifecycle("Open-source licences: ${libraries.size} libraries, ${textMap.size} licence texts.")
+    }
+
+    // Blocks of "@@licence <id>", "@@crate <name> <version> [<repository>]"…, "@@text",
+    // the licence text, then "@@end" (written by licences/rust-licences.hbs).
+    private fun readRust(
+        textMap: MutableMap<String, Map<String, String>>,
+        libraries: MutableList<Map<String, String>>,
+    ) {
+        var id = ""
+        var crates = mutableListOf<List<String>>()
+        var inText = false
+        val body = StringBuilder()
+        rustNotices.get().asFile.readLines().forEach { line ->
+            when {
+                inText && line == "@@end" -> {
+                    val key = "rust-${textMap.size}"
+                    textMap[key] = mapOf("id" to id, "text" to body.toString().trimEnd())
+                    crates.forEach { c ->
+                        libraries +=
+                            mapOf(
+                                "name" to c[0],
+                                "version" to c.getOrElse(1) { "" },
+                                "kind" to "rust",
+                                "licence" to id,
+                                "text" to key,
+                                "url" to c.getOrElse(2) { "" },
+                            )
+                    }
+                    inText = false
+                }
+                inText -> body.append(line).append('\n')
+                line.startsWith("@@licence ") -> {
+                    id = line.removePrefix("@@licence ").trim()
+                    crates = mutableListOf()
+                    body.clear()
+                }
+                line.startsWith("@@crate ") -> crates += line.removePrefix("@@crate ").trim().split(' ')
+                line == "@@text" -> inText = true
+            }
+        }
+    }
+}
+
+val generateLicences by tasks.registering(GenerateLicences::class) {
+    rustNotices.set(layout.projectDirectory.file("licences/rust-licences.txt"))
+    texts.set(layout.projectDirectory.dir("licences/texts"))
+    androidLibraries.set(androidLibraryLicences)
+}
+
+androidComponents {
+    onVariants { variant ->
+        variant.sources.assets?.addGeneratedSourceDirectory(generateLicences, GenerateLicences::outputDir)
     }
 }
 
