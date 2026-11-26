@@ -115,7 +115,7 @@ Then, from the repository root:
 scripts/fleet/start-fleet.ps1
 ```
 
-It creates the worktrees, wires each one to Synapse, and opens one terminal window per seat. Close a window to stop that seat. By default it starts `lead`, `dev1`, `dev2`, `review` and `qa`; `-Seats lead,dev1` starts only some, and `-Seats dev3` adds the third dev seat. `-DryRun` checks everything and prints what it would start, without creating worktrees or opening windows.
+It creates the worktrees, wires each one to Synapse, and opens one terminal window per seat. Close a window to stop that seat. By default it starts `lead`, `dev1`, `dev2`, `review` and `qa`; `-Seats lead,dev1` starts only some, and `-Seats dev3` adds the third dev seat. `-DryRun` checks everything and prints what it would start, without creating worktrees or opening windows. Worktrees get the main checkout's `.claude/settings.local.json` without its Synapse hooks: the Synapse registry binds the project to the main checkout only, so the hooks would always refuse there. Seats call `dev_sync_will_edit`, `dev_sync_did_edit` and the locks themselves.
 
 ## Known gaps
 

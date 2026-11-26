@@ -109,7 +109,15 @@ function Initialize-Worktree([string] $Seat) {
     foreach ($f in $wiring) {
         $dest = Join-Path $wt $f
         New-Item -ItemType Directory -Force (Split-Path $dest -Parent) | Out-Null
-        Copy-Item (Join-Path $root $f) $dest -Force
+        if ($f -eq '.claude\settings.local.json') {
+            # The Synapse registry binds the project to the main checkout only, so its hooks always refuse in a
+            # worktree and just print noise; keep everything else (the MCP server, env).
+            $settings = Get-Content -Raw (Join-Path $root $f) | ConvertFrom-Json
+            $settings.PSObject.Properties.Remove('hooks')
+            [IO.File]::WriteAllText($dest, ($settings | ConvertTo-Json -Depth 32), (New-Object Text.UTF8Encoding $false))
+        } else {
+            Copy-Item (Join-Path $root $f) $dest -Force
+        }
     }
     return $wt
 }
