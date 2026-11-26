@@ -108,6 +108,7 @@ fun ComposeScreen(
                 onShowCcBcc = viewModel::showCcBcc,
                 onSubjectChange = viewModel::onSubjectChange,
                 onBodyChange = viewModel::onBodyChange,
+                currentState = { viewModel.state.value },
                 onSend = viewModel::send,
                 onSchedule = viewModel::schedule,
                 onClose = viewModel::requestClose,
@@ -141,7 +142,10 @@ data class ComposeActions(
     val onEditLastRecipient: (RecipientField) -> Unit = {},
     val onShowCcBcc: () -> Unit = {},
     val onSubjectChange: (String) -> Unit = {},
-    val onBodyChange: (String) -> Unit = {},
+    /** The body text, and the body revision it was typed against (#419). */
+    val onBodyChange: (String, Long) -> Unit = { _, _ -> },
+    /** The view model's state right now, ahead of the composed state while edits are in flight (#419). */
+    val currentState: (() -> ComposeUiState)? = null,
     val onSend: () -> Unit = {},
     val onSchedule: (Long) -> Unit = {},
     val onClose: () -> Unit = {},
@@ -247,6 +251,7 @@ fun ComposeContent(
                 actions = actions.rich,
                 enabled = editable,
                 colors = plainFieldColors(),
+                currentState = actions.currentState,
             )
         }
     }

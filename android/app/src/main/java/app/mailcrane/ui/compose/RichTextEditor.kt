@@ -16,8 +16,10 @@ import androidx.compose.material3.TextField
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -53,25 +55,60 @@ data class RichTextActions(
 @Composable
 internal fun RichBodyField(
     state: ComposeUiState,
-    onBodyChange: (String) -> Unit,
+    /** The field's text, and the [ComposeUiState.bodyRevision] it was based on. */
+    onBodyChange: (String, Long) -> Unit,
     actions: RichTextActions,
     enabled: Boolean,
     colors: androidx.compose.material3.TextFieldColors,
+    /**
+     * The view model's state right now, which can be a revision ahead of [state] (composition lags behind).
+     * Null in previews and tests that drive [state] alone.
+     */
+    currentState: (() -> ComposeUiState)? = null,
 ) {
-    var value by remember { mutableStateOf(TextFieldValue(state.body)) }
-    // Text set from outside (reply, draft, signature, list toggles) replaces the field's text.
-    LaunchedEffect(state.body) {
-        if (value.text != state.body) {
-            value =
-                value.copy(
-                    text = state.body,
-                    selection = TextRange(value.selection.end.coerceAtMost(state.body.length)),
-                )
-        }
+    val composed by rememberUpdatedState(state)
+    var value by remember {
+        mutableStateOf(TextFieldValue(state.body, TextRange(if (state.bodyCursorAtEnd) state.body.length else 0)))
+    }
+    // The body revision this field's text is based on (#419). state.body moves on with every edit the field
+    // sends, but often a frame or two behind the typing; only a new revision, an outside change (reply, draft,
+    // signature, From swap, list toggle, reset), may replace the field's text. Its own edits never do.
+    var appliedRevision by remember { mutableLongStateOf(state.bodyRevision) }
+    // The selection a list toggle asked for, applied with its new text.
+    var selectionForNextText by remember { mutableStateOf<TextRange?>(null) }
+    LaunchedEffect(state.bodyRevision) {
+        // The newest revision there is, not the one this effect was launched for: a late keystroke may already
+        // have been merged into a newer one, and applying the older text would drop it.
+        val now = currentState?.invoke()?.takeIf { it.bodyRevision >= composed.bodyRevision } ?: composed
+        if (now.bodyRevision <= appliedRevision) return@LaunchedEffect
+        appliedRevision = now.bodyRevision
+        val incoming = now.body
+        val cursor = now.bodyCursor
+        val selection =
+            selectionForNextText
+                ?: when {
+                    cursor != null -> TextRange(cursor)
+                    value.text.isEmpty() && now.bodyCursorAtEnd -> TextRange(incoming.length)
+                    else -> value.selection
+                }
+        selectionForNextText = null
+        // A new value without the old composition: its offsets belonged to the replaced text.
+        value =
+            TextFieldValue(
+                text = incoming,
+                selection =
+                    TextRange(
+                        selection.start.coerceIn(0, incoming.length),
+                        selection.end.coerceIn(0, incoming.length),
+                    ),
+            )
     }
     var askingLink by remember { mutableStateOf(false) }
     val linkColor = MaterialTheme.colorScheme.primary
-    val styles = state.bodyStyles
+    // The styles follow state.body, which can be an edit or two behind the field: moved onto the field's own
+    // text so spans and links line up with what is shown.
+    val styles =
+        if (value.text == state.body) state.bodyStyles else restyle(state.body, value.text, state.bodyStyles)
     val sel = value.selection
     if (!state.plainTextOnly) {
         Row(
@@ -90,13 +127,15 @@ internal fun RichBodyField(
             ToolbarButton("I", R.string.rich_italic, enabled, italic = true) {
                 actions.onFormat(sel.min, sel.max, InlineFormat.ITALIC)
             }
+            // The new selection refers to the toggled text, which arrives through state.body; set
+            // now, it would be cut down to the old text's length.
             ToolbarButton("•", R.string.rich_bullets, enabled) {
                 val (s, e) = actions.onList(sel.min, sel.max, ListKind.BULLET)
-                value = value.copy(selection = TextRange(s, e))
+                selectionForNextText = TextRange(s, e)
             }
             ToolbarButton("1.", R.string.rich_numbers, enabled) {
                 val (s, e) = actions.onList(sel.min, sel.max, ListKind.NUMBERED)
-                value = value.copy(selection = TextRange(s, e))
+                selectionForNextText = TextRange(s, e)
             }
             ToolbarButton("🔗", R.string.rich_link, enabled && !sel.collapsed) { askingLink = true }
         }
@@ -112,6 +151,10 @@ internal fun RichBodyField(
     TextField(
         value = value,
         onValueChange = { new ->
+            val before = value.text
+            // Typing after a list toggle: its selection is no longer wanted. Not for a change of selection or
+            // composition only, which the toggle itself can cause.
+            if (new.text != before) selectionForNextText = null
             // Enter at the end of a list line starts the next item.
             val continued = continueList(value.text, new.text, new.selection.end)
             value =
@@ -122,7 +165,9 @@ internal fun RichBodyField(
                 } else {
                     new
                 }
-            if (value.text != state.body) onBodyChange(value.text)
+            // Compared with the field's own previous text, not with state.body, which may be behind: deleting
+            // back to a text it still shows must be sent too.
+            if (value.text != before) onBodyChange(value.text, appliedRevision)
         },
         enabled = enabled,
         minLines = 8,
@@ -141,7 +186,7 @@ internal fun RichBodyField(
     )
     if (askingLink) {
         LinkDialog(
-            initial = fitStyles(state.body, styles).getOrNull(sel.min)?.link.orEmpty(),
+            initial = fitStyles(value.text, styles).getOrNull(sel.min)?.link.orEmpty(),
             onDone = { url ->
                 askingLink = false
                 actions.onLink(sel.min, sel.max, url)
