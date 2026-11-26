@@ -2,43 +2,43 @@
   {
     "file": "inbox-light.png",
     "theme": "light",
-    "caption": "Unified inbox",
-    "alt": "Mailcrane's unified inbox in light mode: messages from two accounts under date headers, each with the sender's initials on a coloured circle, a preview line and the time"
+    "caption": "Inbox",
+    "alt": "Mailcrane's inbox in light mode: messages under a “This week” header, each with the sender's initials on a coloured circle, the subject, a preview line and the day, with unread dots and attachment markers"
   },
   {
     "file": "message-light.png",
     "theme": "light",
     "caption": "Trackers blocked",
-    "alt": "An open newsletter with remote images hidden, a “Load remote images” button and a note saying three trackers were blocked"
+    "alt": "An open newsletter showing “1 tracker blocked” under the sender, and a “Remote images are hidden” bar with a “Load remote images” button"
   },
   {
     "file": "phishing-light.png",
     "theme": "light",
     "caption": "Phishing warnings",
-    "alt": "A message showing a “Failed” sender check chip and a warning that the sender's name looks like a different email address"
+    "alt": "A message whose sender name is ceo@example.com but whose address is x@example.net, with a red “Check who sent this” warning that names both addresses"
   },
   {
     "file": "compose-light.png",
     "theme": "light",
-    "caption": "Compose and schedule",
-    "alt": "The New message screen with To, Subject and a formatted message body, and the formatting toolbar above the keyboard"
+    "caption": "Compose",
+    "alt": "The New message screen replying “Re: Lunch on Friday?” to Ana Example, with the formatting toolbar for bold, italic, lists and links, and a Plain text switch"
   },
   {
     "file": "folders-light.png",
     "theme": "light",
     "caption": "Accounts and folders",
-    "alt": "The folder drawer with All inboxes at the top, two accounts with coloured dots, and folders such as Inbox, Drafts, Sent and Archive with unread counts"
+    "alt": "The navigation drawer with two accounts marked by coloured dots, All inboxes, the Inbox folder with its unread count, Manage folders and Settings"
   },
   {
     "file": "inbox-dark.png",
     "theme": "dark",
     "caption": "Dark mode",
-    "alt": "The same inbox in dark mode, with light text on a deep navy background"
+    "alt": "The same inbox in dark mode, with light text on a dark background"
   },
   {
     "file": "settings-dark.png",
     "theme": "dark",
     "caption": "Settings",
-    "alt": "Settings in dark mode, listing accounts, appearance, notifications, privacy and app lock"
+    "alt": "Settings in dark mode: switches to remove tracking from links and to confirm links before opening, the choice of Follow the system, Light or Dark, wallpaper colours, and mailbox density"
   }
 ]
