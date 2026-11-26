@@ -116,6 +116,7 @@ pub(crate) async fn refresh_oauth(
     if let Some(provider) = provider {
         let _ = refresh_token(
             secrets,
+            &mailcrane_store::Store::scope_of(db_path),
             account,
             &provider,
             &[],
