@@ -1,4 +1,6 @@
 User-agent: *
 Allow: /
+# The live maintainer dashboard (#417): not for search engines.
+Disallow: /admin
 
 Sitemap: https://mailcrane.app/sitemap.xml

@@ -56,6 +56,7 @@
       })();
     </script>
     <script src="{{ get_url(path='js/site.js', cachebust=true) }}" defer></script>
+    {% block head_extra %}{% endblock head_extra %}
   </head>
   <body>
     <a class="skip-link" href="#main">Skip to content</a>

@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{#- /admin (#417): the one page that calls GitHub from the browser, an
+    exception to the site's no-runtime-requests rule (see README.md). It is
+    not linked, not in the sitemap, and robots.txt and the meta tag below
+    keep it out of search engines. Everything on it is filled in by
+    js/admin.js from GitHub's public API; the markup here is only the frame. -#}
+{% block head_extra %}
+    <meta name="robots" content="noindex,nofollow">
+    <link rel="stylesheet" href="{{ get_url(path='css/admin.css', cachebust=true) }}">
+    <script src="{{ get_url(path='js/admin.js', cachebust=true) }}" defer></script>
+{% endblock head_extra %}
+{% block content %}
+<main class="page-wrap section-wrap admin" id="main">
+  <p class="eyebrow">Maintainer</p>
+  <h1 class="page-title">{{ page.title }}</h1>
+  <p class="admin-note">This page loads live data from GitHub’s public API in your browser. No other page on this site does.</p>
+
+  <div class="admin-bar">
+    <p class="admin-status" id="admin-status" role="status" aria-live="polite">Loading…</p>
+    <button class="button button-small button-outline" id="admin-refresh" type="button">Refresh</button>
+  </div>
+  <p class="admin-error" id="admin-error" role="alert" hidden></p>
+
+  <section class="admin-card" aria-labelledby="admin-build-title">
+    <h2 id="admin-build-title">Latest test build</h2>
+    <div id="admin-build"><p class="admin-empty">Loading…</p></div>
+  </section>
+
+  <section class="admin-card" aria-labelledby="admin-prs-title">
+    <h2 id="admin-prs-title">Open fleet pull requests</h2>
+    <div id="admin-prs"><p class="admin-empty">Loading…</p></div>
+  </section>
+
+  <section class="admin-card" aria-labelledby="admin-merged-title">
+    <h2 id="admin-merged-title">Merged in the last 24 hours</h2>
+    <div id="admin-merged"><p class="admin-empty">Loading…</p></div>
+  </section>
+
+  <section class="admin-card" aria-labelledby="admin-ci-title">
+    <h2 id="admin-ci-title"><code>main</code> CI</h2>
+    <div id="admin-ci"><p class="admin-empty">Loading…</p></div>
+  </section>
+
+  <section class="admin-card" aria-labelledby="admin-release-title">
+    <h2 id="admin-release-title">Release workflow</h2>
+    <div id="admin-release"><p class="admin-empty">Loading…</p></div>
+  </section>
+
+  <section class="admin-card" aria-labelledby="admin-issues-title">
+    <h2 id="admin-issues-title">Issue queue</h2>
+    <div id="admin-issues"><p class="admin-empty">Loading…</p></div>
+  </section>
+</main>
+{% endblock content %}
