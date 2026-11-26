@@ -1,0 +1,234 @@
+# Nightly test builds of the Android app (#425). docs/releasing.md has the
+# maintainer's setup; read it before changing this file.
+#
+#   check    no secrets. Skips the night when main hasn't moved since the
+#            newest test-build-* release.
+#   build    release.yml's build job, called as a reusable workflow: the same
+#            `cargo xtask ci --strict` and Gradle release build as a release.
+#   sign     the `nightly` environment, which holds the development key (never
+#            the release key, #70). Only downloads the APK, then zipaligns and
+#            signs it: no build script runs where the key is. Without the
+#            secrets it says so and stops; nothing is published.
+#   publish  no secrets. Publishes a test-build-* pre-release (never a v* tag,
+#            never a normal release, never "latest") and prunes test builds
+#            beyond the newest 7. Only on main, and only after a signature.
+#
+# No agent publishes anything: this runs on GitHub's schedule once the
+# maintainer has added the nightly environment and its secrets.
+#
+# Third-party actions are pinned to a commit SHA, the same ones as ci.yml.
+name: Nightly test build
+
+on:
+  schedule:
+    - cron: "30 2 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nightly
+  cancel-in-progress: false
+
+env:
+  # For zipalign and apksigner, as in release.yml.
+  BUILD_TOOLS_VERSION: "36.0.0"
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      changed: ${{ steps.check.outputs.changed }}
+      previous: ${{ steps.check.outputs.previous }}
+    steps:
+      - name: Has the branch moved since the last test build?
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -eu
+          previous=$(gh api "repos/$GH_REPO/releases?per_page=50" \
+            --jq '[.[] | select(.prerelease and (.draft | not) and (.tag_name | startswith("test-build-")))][0].tag_name // ""')
+          echo "previous=$previous" >> "$GITHUB_OUTPUT"
+          if [ -z "$previous" ]; then
+            echo "No test build yet: building."
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          built=$(gh api "repos/$GH_REPO/commits/refs/tags/$previous" --jq .sha)
+          if [ "$built" = "$SHA" ]; then
+            echo "::notice title=Nothing new::$previous already has ${SHA:0:7}; no test build tonight."
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "Last test build $previous is ${built:0:7}; this is ${SHA:0:7}: building."
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  build:
+    needs: check
+    if: needs.check.outputs.changed == 'true'
+    uses: ./.github/workflows/release.yml
+    with:
+      build_only: true
+
+  sign:
+    needs: build
+    # The development key is for main's builds only. The environment is
+    # also restricted to main in the repository settings.
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: nightly
+    outputs:
+      signed: ${{ steps.secrets.outputs.present }}
+    env:
+      VERSION: ${{ needs.build.outputs.version }}
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-unsigned
+          path: dist
+
+      - name: Check for the signing secrets
+        id: secrets
+        env:
+          KS_B64: ${{ secrets.NIGHTLY_KEYSTORE_B64 }}
+          KS_PASS: ${{ secrets.NIGHTLY_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.NIGHTLY_KEY_ALIAS }}
+          KEY_PASS: ${{ secrets.NIGHTLY_KEY_PASSWORD }}
+        # Only whether each one is set is printed, never a value.
+        run: |
+          missing=""
+          [ -n "$KS_B64" ] || missing="$missing NIGHTLY_KEYSTORE_B64"
+          [ -n "$KS_PASS" ] || missing="$missing NIGHTLY_KEYSTORE_PASSWORD"
+          [ -n "$KEY_ALIAS" ] || missing="$missing NIGHTLY_KEY_ALIAS"
+          [ -n "$KEY_PASS" ] || missing="$missing NIGHTLY_KEY_PASSWORD"
+          if [ -n "$missing" ]; then
+            echo "::notice title=No test build published::Missing secrets in the nightly environment:$missing. The build passed, but nothing is signed or published. See docs/releasing.md."
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
+        if: steps.secrets.outputs.present == 'true'
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4.0.4
+        if: steps.secrets.outputs.present == 'true'
+
+      - name: Install zipalign and apksigner
+        if: steps.secrets.outputs.present == 'true'
+        run: sdkmanager "build-tools;${BUILD_TOOLS_VERSION}"
+
+      - name: Sign the APK with the development key
+        if: steps.secrets.outputs.present == 'true'
+        env:
+          KS_B64: ${{ secrets.NIGHTLY_KEYSTORE_B64 }}
+          NIGHTLY_KEYSTORE_PASSWORD: ${{ secrets.NIGHTLY_KEYSTORE_PASSWORD }}
+          NIGHTLY_KEY_ALIAS: ${{ secrets.NIGHTLY_KEY_ALIAS }}
+          NIGHTLY_KEY_PASSWORD: ${{ secrets.NIGHTLY_KEY_PASSWORD }}
+        # No `set -x`. The keystore goes to a private temp file; the passwords
+        # reach apksigner through environment variables (`env:`), never on a
+        # command line, where they could show in a process list.
+        run: |
+          set -eu
+          bt="$ANDROID_HOME/build-tools/$BUILD_TOOLS_VERSION"
+          ks="$RUNNER_TEMP/nightly.keystore"
+          umask 077
+          printf '%s' "$KS_B64" | tr -d ' \r\n' | base64 --decode > "$ks"
+
+          cd dist
+          "$bt/zipalign" -f -p 4 "mailcrane-$VERSION-unsigned.apk" aligned.apk
+          "$bt/apksigner" sign --ks "$ks" --ks-pass env:NIGHTLY_KEYSTORE_PASSWORD \
+            --ks-key-alias "$NIGHTLY_KEY_ALIAS" --key-pass env:NIGHTLY_KEY_PASSWORD \
+            --out "mailcrane-$VERSION-test.apk" aligned.apk
+          rm -f "$ks" aligned.apk "mailcrane-$VERSION-test.apk.idsig"
+          # Only the signed APK goes on: no AAB, no unsigned files.
+          find . -type f ! -name "mailcrane-$VERSION-test.apk" ! -name release-notes.md -delete
+
+          # The certificate's public digests, so testers can check them.
+          "$bt/apksigner" verify --print-certs "mailcrane-$VERSION-test.apk" | grep -E 'SHA-256|DN'
+          sha256sum "mailcrane-$VERSION-test.apk" > SHA256SUMS
+          cat SHA256SUMS
+
+      # Runs even if signing failed half-way, so no key is left on the runner.
+      - name: Remove the keystore
+        if: always()
+        run: rm -f "$RUNNER_TEMP/nightly.keystore"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: steps.secrets.outputs.present == 'true'
+        with:
+          name: nightly-signed
+          path: dist/
+          retention-days: 7
+          if-no-files-found: error
+
+  publish:
+    needs: [check, build, sign]
+    if: github.ref == 'refs/heads/main' && needs.sign.outputs.signed == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      # To create the pre-release and delete old test builds. Nothing else writes.
+      contents: write
+    env:
+      VERSION: ${{ needs.build.outputs.version }}
+      PREVIOUS: ${{ needs.check.outputs.previous }}
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # History, for the list of changes since the last test build.
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: nightly-signed
+          path: dist
+
+      - name: Publish the test build
+        run: |
+          set -eu
+          tag="test-build-$(date -u +%Y%m%d)-nightly"
+          # A second run on the same day (Run workflow) gets the time too.
+          if gh release view "$tag" > /dev/null 2>&1; then
+            tag="test-build-$(date -u +%Y%m%d-%H%M)-nightly"
+          fi
+          short=$(git rev-parse --short=7 HEAD)
+          {
+            echo "**Unofficial nightly test build** of \`main\` at $short. Signed with the development key, not the release key: it installs over earlier test builds, not over a store or release version. Not for daily use."
+            echo
+            echo "Changes since ${PREVIOUS:-the start}:"
+            echo
+            echo '```'
+            if [ -n "$PREVIOUS" ] && git rev-parse -q --verify "refs/tags/$PREVIOUS" > /dev/null; then
+              git log --oneline --no-decorate "$PREVIOUS..HEAD" | head -n 100
+            else
+              git log --oneline --no-decorate -n 30
+            fi
+            echo '```'
+            echo
+            echo "SHA-256:"
+            echo
+            echo '```'
+            cat dist/SHA256SUMS
+            echo '```'
+          } > notes.md
+          gh release create "$tag" "dist/mailcrane-$VERSION-test.apk" dist/SHA256SUMS \
+            --prerelease --latest=false --target "$GITHUB_SHA" \
+            --title "Test build $short (nightly, development key)" --notes-file notes.md
+          echo "::notice title=Published::$tag"
+
+      # Only test-build-* pre-releases can go (scripts/test_prune_test_builds.py).
+      - name: Keep the newest 7 test builds
+        run: python3 scripts/prune_test_builds.py --keep 7
