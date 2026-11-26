@@ -461,6 +461,17 @@ fn new_mail_is_notified_once_through_background_sync() {
     // Never again, even after another sync.
     assert_eq!(engine.background_sync(60), Ok(vec![]));
     assert_eq!(engine.take_new_mail(), Ok(vec![]));
+
+    // #315: a bidi override in the subject ("Pay <RLO>fdp.exe<PDF> now")
+    // never reaches the notification, so it can't reverse what it shows.
+    let disguised = "Subject: =?utf-8?B?UGF5IOKArmZkcC5leGXigKwgbm93?=\r\nFrom: Carol <carol@example.net>\r\nMessage-ID: <bidi@example.net>\r\n\r\nPay\r\n";
+    runtime.block_on(
+        imap.mailbox()
+            .deliver("INBOX", disguised.as_bytes().to_vec()),
+    );
+    let got = engine.background_sync(60).expect("sync");
+    assert_eq!(got.len(), 1, "{got:?}");
+    assert_eq!(got[0].subject, "Pay fdp.exe now");
     let _ = std::fs::remove_file(&path);
 }
 
