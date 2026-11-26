@@ -86,9 +86,10 @@ pub(crate) struct AccountGate {
     write_lock: WriteLock,
     /// How many calls the user waits for want the lock.
     waiting: AtomicUsize,
-    /// How many times a call has announced itself, ever (tests).
+    /// Runs inside [`AccountGate::announce`], once the call counts as
+    /// waiting (tests).
     #[cfg(test)]
-    announced: AtomicUsize,
+    on_announce: Mutex<Option<AnnounceHook>>,
 }
 
 impl AccountGate {
@@ -110,9 +111,16 @@ impl AccountGate {
     /// is dropped, so background downloads give way from the start of the
     /// call rather than only once it reaches the lock.
     pub(crate) fn announce(&self) -> Waiting<'_> {
-        #[cfg(test)]
-        self.announced.fetch_add(1, Ordering::SeqCst);
         step(&self.waiting, |n| n.checked_add(1));
+        #[cfg(test)]
+        if let Some(hook) = self
+            .on_announce
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .as_ref()
+        {
+            hook();
+        }
         Waiting(&self.waiting)
     }
 
@@ -128,10 +136,11 @@ impl AccountGate {
         self.waiting.load(Ordering::SeqCst) > 0
     }
 
-    /// How many times a call has announced itself so far (tests).
+    /// Sets (or with `None` clears) what runs at each announcement, at the
+    /// moment the call starts counting as waiting (tests).
     #[cfg(test)]
-    pub(crate) fn announcements(&self) -> usize {
-        self.announced.load(Ordering::SeqCst)
+    pub(crate) fn set_on_announce(&self, hook: Option<AnnounceHook>) {
+        *self.on_announce.lock().unwrap_or_else(|p| p.into_inner()) = hook;
     }
 
     /// Whether the lock is free right now (tests).
@@ -140,6 +149,10 @@ impl AccountGate {
         self.write_lock.try_lock().is_ok()
     }
 }
+
+/// What [`AccountGate::set_on_announce`] runs (tests).
+#[cfg(test)]
+pub(crate) type AnnounceHook = Box<dyn Fn() + Send + Sync>;
 
 /// Counts a waiting call while it lives; see [`AccountGate::announce`].
 pub(crate) struct Waiting<'a>(&'a AtomicUsize);

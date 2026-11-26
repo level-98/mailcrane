@@ -221,7 +221,9 @@ fn opening_a_message_during_a_slow_download_waits_for_at_most_one_batch() {
     let dir = tempfile::tempdir().expect("tempdir");
     let (engine, path, folder) = imap_engine(&dir, &imap);
     assert_eq!(engine.sync_folder(folder.0), Ok(200));
-    // The message the download would reach last.
+    // The message the download would reach last, and the account's gate:
+    // looked up now, so no store read after the download starts lets more
+    // batches run before the open.
     let store = Store::open(&path).expect("store");
     let last = mailcrane_core::sync::prefetch::candidates(
         &store,
@@ -233,13 +235,24 @@ fn opening_a_message_during_a_slow_download_waits_for_at_most_one_batch() {
     .expect("candidates")
     .pop()
     .expect("a candidate");
+    let account = store
+        .get_folder(folder)
+        .expect("read")
+        .expect("folder")
+        .details
+        .account_id;
     drop(store);
+    let gate = engine.account_lock(account);
 
-    let synced_fetches = runtime
-        .block_on(imap.received_commands())
-        .iter()
-        .filter(|c| c.as_str() == "UID FETCH")
-        .count();
+    // Since the sync, every UID FETCH is a download batch, or the open's.
+    let uid_fetches = |imap: &FakeImap, runtime: &tokio::runtime::Handle| {
+        runtime
+            .block_on(imap.received_commands())
+            .iter()
+            .filter(|c| c.as_str() == "UID FETCH")
+            .count()
+    };
+    let synced_fetches = uid_fetches(&imap, runtime.handle());
     engine.set_device_conditions(on_wifi());
     engine.prefetch_after_sync(folder);
     // Polled often, so the open below comes soon after the first batch. The
@@ -251,42 +264,41 @@ fn opening_a_message_during_a_slow_download_waits_for_at_most_one_batch() {
         || 0,
         || cached(&path, folder) >= 20,
     );
-    // Since the sync, every UID FETCH is a download batch, or the open's.
-    let fetches = || {
-        runtime
-            .block_on(imap.received_commands())
-            .iter()
-            .filter(|c| c.as_str() == "UID FETCH")
-            .count()
-    };
-    // Opening announces itself on the account's gate before anything else
-    // it does on the network, and from then on the download starts no new
-    // batch. Announce here too, so the count below starts from that point:
-    // on a loaded runner the open's local reads before its announcement can
-    // take as long as several batches (#388).
-    let account = Store::open(&path)
-        .expect("store")
-        .get_folder(folder)
-        .expect("read")
-        .expect("folder")
-        .details
-        .account_id;
-    let gate = engine.account_lock(account);
-    let waiting = gate.announce();
-    let announced = gate.announcements();
-    let before = fetches().saturating_sub(synced_fetches);
-    assert!(before < 10, "the download is still running");
+
+    // Opening announces itself on the account's gate, and from then on the
+    // download starts no new batch. Count the batches at that very moment,
+    // from inside the announcement: on a loaded runner the open's local reads
+    // before it can take as long as several batches (#388), and an open that
+    // announced late, or not at all, must fail here.
+    let at_announce = Arc::new(std::sync::Mutex::new(None::<usize>));
+    {
+        let at_announce = at_announce.clone();
+        let imap = imap.clone();
+        let handle = runtime.handle().clone();
+        gate.set_on_announce(Some(Box::new(move || {
+            let count = uid_fetches(&imap, &handle);
+            at_announce
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .get_or_insert(count);
+        })));
+    }
     assert_eq!(engine.fetch_body(last.id.0), Ok(()));
-    assert!(gate.announcements() > announced, "opening didn't give way");
+    gate.set_on_announce(None);
+    let before = at_announce
+        .lock()
+        .expect("lock")
+        .expect("opening didn't announce itself")
+        .saturating_sub(synced_fetches);
+    assert!(before < 10, "the download is still running");
     // At most the batch that had just been sent, then the open's own fetch.
-    let after = fetches().saturating_sub(synced_fetches);
+    let after = uid_fetches(&imap, runtime.handle()).saturating_sub(synced_fetches);
     assert!(
         after <= before + 2,
-        "{before} fetches before opening, {after} after"
+        "{before} fetches when opening announced itself, {after} after"
     );
     assert!(cached(&path, folder) < 200);
     // The download then carries on to the end.
-    drop(waiting);
     wait_for_downloads(&engine, &path, folder);
     assert_eq!(cached(&path, folder), 200);
 }
