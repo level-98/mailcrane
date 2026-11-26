@@ -54,6 +54,25 @@ impl Loopback {
         Err("no port free on both 127.0.0.1 and ::1".into())
     }
 
+    /// Binds `127.0.0.1` and, when it is free, `::1` to `port` (for
+    /// `cargo xtask dev-mail`, which needs ports the emulator setup can name).
+    pub(crate) async fn bind_port(port: u16) -> Result<Self, String> {
+        let v4 = TcpListener::bind((Ipv4Addr::LOCALHOST, port))
+            .await
+            .map_err(|error| format!("127.0.0.1:{port}: {error}"))?;
+        let addr = v4.local_addr().map_err(|error| error.to_string())?;
+        let v6 = TcpListener::bind((Ipv6Addr::LOCALHOST, port)).await.ok();
+        Ok(Self { v4, v6, addr })
+    }
+
+    /// Binds a fixed port when one is given, otherwise any free one.
+    pub(crate) async fn bind_or_any(port: Option<u16>) -> Result<Self, String> {
+        match port {
+            Some(port) => Self::bind_port(port).await,
+            None => Self::bind().await,
+        }
+    }
+
     /// The `127.0.0.1` address; the port is the same on `::1`.
     pub(crate) fn addr(&self) -> SocketAddr {
         self.addr

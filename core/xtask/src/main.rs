@@ -5,6 +5,7 @@
 #![forbid(unsafe_code)]
 
 mod apk;
+mod devmail;
 mod ispdb;
 mod licences;
 mod release;
@@ -89,6 +90,10 @@ Commands:
   release-check <tag>
             check that a release tag (vMAJOR.MINOR.PATCH[-pre]) matches versionName and
             versionCode in android/app/build.gradle.kts (docs/releasing.md). Not part of ci.
+  dev-mail [--new-mail-every <seconds>]
+            run a fake IMAP and SMTP server for the Android emulator at 10.0.2.2, seeded with
+            tests/fixtures, and copy its CA certificate to running emulators (docs/dev-mail.md).
+            Not part of ci.
   ispdb <checkout>
             import the ISPDB snapshot from a thunderbird/autoconfig checkout into
             mailcrane-core/data/ispdb/ and regenerate its index (ADR 0003). Not part of ci.
@@ -148,6 +153,9 @@ fn real_main() -> Result<ExitCode, Error> {
     if command == "release-check" {
         release::run(&context()?, args)?;
         return Ok(ExitCode::SUCCESS);
+    }
+    if command == "dev-mail" {
+        return devmail::run_server(&context()?, args);
     }
     if command == "ispdb" {
         ispdb::import(&context()?, args)?;

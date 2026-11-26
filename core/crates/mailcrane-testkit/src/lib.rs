@@ -23,6 +23,7 @@ pub use oauth::FakeTokenEndpoint;
 pub use secrets::MemorySecretStore;
 pub use sieve::{FakeSieve, FakeSieveBuilder, SieveFault};
 pub use smtp::{FakeSmtp, SentMessage};
+pub use tls::{DevCertificates, TestTls};
 
 /// Start a fake IMAP server, deliver a synthetic message, and inspect the mailbox.
 ///

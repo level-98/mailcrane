@@ -31,6 +31,47 @@ mod suite {
             .expect("TLS handshake")
     }
 
+    /// `cargo xtask dev-mail` (#403): a client that trusts only the dev CA
+    /// accepts both servers under the emulator's name for the host, and the
+    /// CA is what `root_cert_der()` reports.
+    #[tokio::test]
+    async fn dev_certificates_are_trusted_through_their_ca_for_the_emulator_host() {
+        use crate::{DevCertificates, TestTls};
+        let dev = DevCertificates::generate(&["10.0.2.2", "localhost"]).expect("certs");
+        let imap = FakeImap::builder()
+            .folder("INBOX", Vec::new())
+            .tls(TestTls::from_chain(&dev).expect("tls"))
+            .start()
+            .await
+            .expect("imap");
+        let smtp = FakeSmtp::builder()
+            .tls(TestTls::from_chain(&dev).expect("tls"))
+            .start()
+            .await
+            .expect("smtp");
+        assert_eq!(imap.root_cert_der(), dev.ca_der.as_slice());
+        for addr in [imap.addr(), smtp.addr()] {
+            let stream = TcpStream::connect(addr).await.expect("connect");
+            let name = ServerName::try_from("10.0.2.2".to_string()).expect("server name");
+            let mut tls = tokio_rustls::TlsConnector::from(client_config(&dev.ca_der))
+                .connect(name, stream)
+                .await
+                .expect("TLS handshake through the dev CA");
+            let mut greeting = [0u8; 4];
+            tls.read_exact(&mut greeting).await.expect("greeting");
+            assert!(greeting.starts_with(b"* OK") || greeting.starts_with(b"220"));
+        }
+        // A name the certificate doesn't cover is refused.
+        let stream = TcpStream::connect(imap.addr()).await.expect("connect");
+        let name = ServerName::try_from("example.org".to_string()).expect("server name");
+        assert!(tokio_rustls::TlsConnector::from(client_config(&dev.ca_der))
+            .connect(name, stream)
+            .await
+            .is_err());
+        imap.shutdown().await;
+        smtp.shutdown().await;
+    }
+
     async fn imap_read_line(stream: &mut tokio_rustls::client::TlsStream<TcpStream>) -> String {
         let mut line = Vec::new();
         loop {

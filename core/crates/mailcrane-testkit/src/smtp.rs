@@ -20,6 +20,8 @@ pub struct SentMessage {
 pub struct FakeSmtpBuilder {
     faults: Vec<Fault>,
     quirks: Vec<Quirk>,
+    tls: Option<tls::TestTls>,
+    ports: Option<(u16, u16)>,
 }
 
 #[derive(Debug, Clone)]
@@ -42,17 +44,31 @@ impl FakeSmtpBuilder {
         self.quirks.push(quirk);
         self
     }
+    /// Serves this certificate instead of the shared self-signed one.
+    pub fn tls(mut self, tls: tls::TestTls) -> Self {
+        self.tls = Some(tls);
+        self
+    }
+    /// Listens on these ports (implicit TLS, then STARTTLS) instead of free
+    /// ones picked at random.
+    pub fn ports(mut self, tls_port: u16, starttls_port: u16) -> Self {
+        self.ports = Some((tls_port, starttls_port));
+        self
+    }
     pub async fn start(self) -> Result<FakeSmtp, String> {
         // The certificate is made once per process (see tls::generate).
         // Starting is quick (see `servers_start_in_under_100_ms`), but it is
         // not timed here: a busy machine would fail unrelated tests (#268).
-        let tls = tls::generate()?;
+        let tls = match self.tls {
+            Some(tls) => tls,
+            None => tls::generate()?,
+        };
         // Like a real server (465 and 587), one port is implicit TLS and the
         // other starts in plain text for STARTTLS. Guessing the mode from
         // whether a TLS hello arrives in time fails when the client is slow
         // to build its TLS config (Windows' verifier often is).
-        let tls_listener = Loopback::bind().await?;
-        let plain_listener = Loopback::bind().await?;
+        let tls_listener = Loopback::bind_or_any(self.ports.map(|p| p.0)).await?;
+        let plain_listener = Loopback::bind_or_any(self.ports.map(|p| p.1)).await?;
         let addr = tls_listener.addr();
         let starttls_addr = plain_listener.addr();
         let sent = Arc::new(RwLock::new(Vec::new()));
@@ -100,6 +116,8 @@ impl FakeSmtp {
         FakeSmtpBuilder {
             faults: Vec::new(),
             quirks: Vec::new(),
+            tls: None,
+            ports: None,
         }
     }
     /// The implicit TLS port (like 465).
