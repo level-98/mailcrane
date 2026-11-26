@@ -216,12 +216,16 @@ fun avatarInitials(
     address: String,
 ): String? {
     val cleanName = name.trim().trim('"', '\'').trim()
-    val source =
-        when {
-            cleanName.isNotEmpty() && '@' !in cleanName -> cleanName
-            else -> address.substringBefore('@').ifBlank { cleanName.substringBefore('@') }
+    val fromName = cleanName.isNotEmpty() && '@' !in cleanName
+    val source = if (fromName) cleanName else address.substringBefore('@').ifBlank { cleanName.substringBefore('@') }
+    // A display name that reads as a domain ("Amazon.co.uk", "Booking.com") is one word, not "AU" or "BC" (#389).
+    // Only a display name: an address's local part ("ana.lopez") has no domain in it and keeps both initials.
+    val words =
+        if (fromName && looksLikeHostname(source)) {
+            listOf(source)
+        } else {
+            source.split(Regex("[\\s._+,;()\\-]+")).filter { it.isNotEmpty() }
         }
-    val words = source.split(Regex("[\\s._+,;()\\-]+")).filter { it.isNotEmpty() }
     val first = words.firstOrNull()?.let(::firstGrapheme) ?: return null
     if (!Character.isLetterOrDigit(first.codePointAt(0))) return null
     val latin = Character.UnicodeScript.of(first.codePointAt(0)) == Character.UnicodeScript.LATIN
@@ -229,6 +233,19 @@ fun avatarInitials(
     val last = firstGrapheme(words.last())
     val lastOk = last != null && Character.isLetter(last.codePointAt(0))
     return (first + if (lastOk) last else "").uppercase(Locale.ROOT)
+}
+
+/**
+ * Whether a display name reads as a hostname: no whitespace, and a dot followed by a last label of two or more
+ * letters ("Amazon.co.uk", "Booking.com", "Example.org"). So "jane.doe" counts too and gives "J": the rule can't
+ * tell a surname from a top-level domain, and one initial is the safer guess for a dotted name with no spaces.
+ */
+private fun looksLikeHostname(name: String): Boolean {
+    if (name.any { it.isWhitespace() }) return false
+    val dot = name.lastIndexOf('.')
+    if (dot <= 0) return false
+    val last = name.substring(dot + 1)
+    return last.length >= 2 && last.all { it.isLetter() }
 }
 
 /** The first user-perceived character of [text] (a letter with its accents, a whole emoji), or null. */
