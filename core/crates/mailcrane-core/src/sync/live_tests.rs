@@ -179,12 +179,27 @@ fn exact() -> LiveConfig {
 /// Runs the loop, asks it to stop at `stop_at`, and returns when it
 /// returned.
 async fn run_mock(mock: &Rc<Mock>, config: LiveConfig, stop_at: Duration) -> (Duration, Events) {
+    run_mock_reconnecting(mock, config, stop_at, &[]).await
+}
+
+/// Like [`run_mock`], also asking for a reconnect at each of `reconnect_at`
+/// (from the start, in order).
+async fn run_mock_reconnecting(
+    mock: &Rc<Mock>,
+    config: LiveConfig,
+    stop_at: Duration,
+    reconnect_at: &[Duration],
+) -> (Duration, Events) {
     let (stop, signal) = live_stop();
     let events = Events::default();
     let mut source = MockSource(mock.clone());
     let started = Instant::now();
     let stopper = async {
-        tokio::time::sleep(stop_at).await;
+        for at in reconnect_at {
+            tokio::time::sleep_until(started + *at).await;
+            stop.reconnect();
+        }
+        tokio::time::sleep_until(started + stop_at).await;
         stop.stop();
         std::future::pending::<()>().await;
     };
@@ -214,18 +229,74 @@ async fn a_refused_login_is_reported_once_and_not_retried() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn idle_is_reissued_every_25_minutes() {
+async fn idle_is_reissued_every_10_minutes() {
     let mock = Rc::new(Mock::new());
-    let (returned, _) = run_mock(&mock, exact(), 60 * MINUTE).await;
+    let (returned, _) = run_mock(&mock, exact(), 35 * MINUTE).await;
     assert_eq!(mock.times(Ev::Connect), [Duration::ZERO]);
     assert_eq!(mock.times(Ev::Sync), [Duration::ZERO]);
-    // RFC 2177 §3: well before the 29-minute limit.
+    // RFC 2177 §3: well before the 29-minute limit, and often enough to
+    // keep a mobile network's mapping alive.
     assert_eq!(
         mock.times(Ev::Idle),
-        [Duration::ZERO, 25 * MINUTE, 50 * MINUTE]
+        [Duration::ZERO, 10 * MINUTE, 20 * MINUTE, 30 * MINUTE]
     );
-    assert_eq!(mock.times(Ev::Close), [60 * MINUTE]);
-    assert_eq!(returned, 60 * MINUTE);
+    assert_eq!(mock.times(Ev::Close), [35 * MINUTE]);
+    assert_eq!(returned, 35 * MINUTE);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_reconnect_drops_the_idling_connection_and_connects_at_once() {
+    let mock = Rc::new(Mock::new());
+    run_mock_reconnecting(&mock, exact(), 10 * MINUTE, &[3 * MINUTE]).await;
+    // No back-off and no LOGOUT on the old socket: connect, sync, IDLE
+    // again straight away.
+    assert_eq!(mock.times(Ev::Connect), [Duration::ZERO, 3 * MINUTE]);
+    assert_eq!(mock.times(Ev::Sync), [Duration::ZERO, 3 * MINUTE]);
+    assert_eq!(mock.times(Ev::Idle), [Duration::ZERO, 3 * MINUTE]);
+    // Only the stop at the end logs out.
+    assert_eq!(mock.times(Ev::Close), [10 * MINUTE]);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_reconnect_skips_the_back_off_wait() {
+    let mock = Rc::new(Mock::new());
+    // Offline: attempts at 0, 2, 6 … 254, 510 s; the next would be at
+    // 810 s. The network comes back at 600 s, in the middle of that wait.
+    mock.connect_failures.set(9);
+    run_mock_reconnecting(&mock, exact(), 20 * MINUTE, &[10 * MINUTE]).await;
+    let failed = mock.times(Ev::ConnectFailed);
+    assert_eq!(failed.len(), 9);
+    assert!(failed.iter().all(|t| *t < 10 * MINUTE), "{failed:?}");
+    assert_eq!(mock.times(Ev::Connect), [10 * MINUTE]);
+}
+
+#[tokio::test(start_paused = true)]
+async fn the_back_off_starts_over_after_a_reconnect() {
+    let mock = Rc::new(Mock::new());
+    mock.connect_failures.set(usize::MAX);
+    run_mock_reconnecting(&mock, exact(), 4 * MINUTE, &[3 * MINUTE]).await;
+    let after: Vec<Duration> = mock
+        .times(Ev::ConnectFailed)
+        .into_iter()
+        .filter(|t| *t >= 3 * MINUTE)
+        .collect();
+    // At once, then 2, 4, 8, 16 s … again.
+    let expected: Vec<Duration> = [0, 2, 6, 14, 30]
+        .into_iter()
+        .map(|s| 3 * MINUTE + Duration::from_secs(s))
+        .collect();
+    assert_eq!(after.get(..5), Some(&expected[..]));
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_reconnect_after_a_refused_login_does_not_revive_the_loop() {
+    let mock = Rc::new(Mock::new());
+    mock.connect_failures.set(usize::MAX);
+    mock.connect_error.set(SyncErrorKind::Auth);
+    let (returned, events) = run_mock_reconnecting(&mock, exact(), 10 * MINUTE, &[MINUTE]).await;
+    assert_eq!(mock.times(Ev::ConnectFailed), [Duration::ZERO]);
+    assert_eq!(events.sync_errors(), 1);
+    assert_eq!(returned, Duration::ZERO);
 }
 
 #[tokio::test(start_paused = true)]

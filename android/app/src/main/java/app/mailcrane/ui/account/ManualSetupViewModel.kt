@@ -31,6 +31,9 @@ enum class SetupFailure {
     TIMEOUT,
     SAVE_FAILED,
 
+    /** The same account is already in the app (#346). */
+    ALREADY_ADDED,
+
     /** Anything the core did not classify, including an app set-up bug. */
     UNEXPECTED,
 }
@@ -302,5 +305,6 @@ internal fun Throwable.toSetupError(): SetupError =
         is AddAccountException.AuthFailed -> SetupError(SetupFailure.AUTH_FAILED, server)
         is AddAccountException.Timeout -> SetupError(SetupFailure.TIMEOUT, server)
         is AddAccountException.SaveFailed -> SetupError(SetupFailure.SAVE_FAILED)
+        is AddAccountException.AlreadyAdded -> SetupError(SetupFailure.ALREADY_ADDED)
         else -> SetupError(SetupFailure.UNEXPECTED)
     }

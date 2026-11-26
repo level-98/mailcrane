@@ -227,6 +227,7 @@ fun SettingsScreen(
         }
         if (accounts.isNotEmpty()) StartViewSection(accounts)
         NotificationsSection()
+        PushSection()
         AppLockSection()
         SwitchRow(
             title = R.string.settings_hide_outside,
