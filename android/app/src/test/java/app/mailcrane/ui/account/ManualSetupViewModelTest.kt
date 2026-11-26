@@ -5,10 +5,7 @@ import app.mailcrane.core.ConnectionSecurity
 import app.mailcrane.core.Field
 import app.mailcrane.core.FieldError
 import app.mailcrane.core.FieldProblem
-import app.mailcrane.core.JmapAccountSetup
 import app.mailcrane.core.MailServer
-import app.mailcrane.core.MailcraneCore
-import app.mailcrane.core.ManualAccountConfig
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
@@ -23,41 +20,6 @@ import org.junit.Test
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class ManualSetupViewModelTest {
-    private class FakeCore(
-        private val result: () -> Long,
-    ) : MailcraneCore {
-        var lastConfig: ManualAccountConfig? = null
-        var lastJmap: JmapAccountSetup? = null
-
-        override fun hello() = ""
-
-        override fun defaultPort(
-            protocol: MailServer,
-            security: ConnectionSecurity,
-        ) = when (protocol to security) {
-            MailServer.IMAP to ConnectionSecurity.TLS -> 993
-            MailServer.IMAP to ConnectionSecurity.START_TLS -> 143
-            MailServer.SMTP to ConnectionSecurity.TLS -> 465
-            else -> 587
-        }
-
-        override suspend fun addAccountManual(
-            config: ManualAccountConfig,
-            password: String,
-        ): Long {
-            lastConfig = config
-            return result()
-        }
-
-        override suspend fun addAccountJmap(
-            setup: JmapAccountSetup,
-            password: String,
-        ): Long {
-            lastJmap = setup
-            return result()
-        }
-    }
-
     @Before
     fun setUp() = Dispatchers.setMain(UnconfinedTestDispatcher())
 
@@ -66,7 +28,7 @@ class ManualSetupViewModelTest {
 
     @Test
     fun startsWithDefaultPortsAndSecurityChangeFillsPort() {
-        val vm = ManualSetupViewModel(FakeCore { 1 })
+        val vm = ManualSetupViewModel(FakeSetupCore { 1 })
         assertEquals("993", vm.state.value.imapPort)
         assertEquals("465", vm.state.value.smtpPort)
         vm.onImapSecurityChange(ConnectionSecurity.START_TLS)
@@ -77,7 +39,7 @@ class ManualSetupViewModelTest {
 
     @Test
     fun successReportsAccountIdAndSendsTrimmedConfig() {
-        val core = FakeCore { 42 }
+        val core = FakeSetupCore { 42 }
         val vm = ManualSetupViewModel(core)
         vm.onEmailChange(" alice@example.org ")
         vm.onImapHostChange("imap.example.org")
@@ -92,7 +54,7 @@ class ManualSetupViewModelTest {
     fun fieldErrorsAreShownAndClearedOnEdit() {
         val vm =
             ManualSetupViewModel(
-                FakeCore {
+                FakeSetupCore {
                     throw AddAccountException.Invalid(listOf(FieldError(Field.EMAIL, FieldProblem.MALFORMED_EMAIL)))
                 },
             )
@@ -123,7 +85,7 @@ class ManualSetupViewModelTest {
                 IllegalStateException("boom") to SetupError(SetupFailure.UNEXPECTED),
             )
         for ((thrown, expected) in cases) {
-            val vm = ManualSetupViewModel(FakeCore { throw thrown })
+            val vm = ManualSetupViewModel(FakeSetupCore { throw thrown })
             vm.onPasswordChange("pw")
             vm.submit()
             assertEquals(expected, vm.state.value.error)
@@ -134,7 +96,7 @@ class ManualSetupViewModelTest {
 
     @Test
     fun jmapSetupSendsTheServerInsteadOfImapAndSmtp() {
-        val core = FakeCore { 7 }
+        val core = FakeSetupCore { 7 }
         val vm = ManualSetupViewModel(core)
         vm.setUpManually()
         vm.onJmapChange(true)
@@ -153,7 +115,7 @@ class ManualSetupViewModelTest {
     fun aBadJmapServerIsShownOnItsField() {
         val vm =
             ManualSetupViewModel(
-                FakeCore {
+                FakeSetupCore {
                     throw AddAccountException.Invalid(listOf(FieldError(Field.IMAP_HOST, FieldProblem.EMPTY)))
                 },
             )
@@ -162,5 +124,21 @@ class ManualSetupViewModelTest {
         assertEquals(FieldProblem.EMPTY, vm.state.value.fieldErrors[Field.IMAP_HOST])
         vm.onJmapServerChange("example.org")
         assertNull(vm.state.value.fieldErrors[Field.IMAP_HOST])
+    }
+
+    @Test
+    fun handlingTheNewAccountEmptiesTheForm() {
+        // #343: the activity keeps this view model, so the next "Add account" must start empty.
+        val vm = ManualSetupViewModel(FakeSetupCore { 42 })
+        vm.onEmailChange("alice@example.org")
+        vm.onPasswordChange("secret")
+        vm.submit()
+        assertEquals(42L, vm.state.value.addedAccountId)
+        vm.accountHandled()
+        assertNull(vm.state.value.addedAccountId)
+        assertEquals("", vm.state.value.email)
+        assertEquals("", vm.state.value.password)
+        assertEquals(SetupStep.EMAIL, vm.state.value.step)
+        assertEquals("993", vm.state.value.imapPort)
     }
 }
