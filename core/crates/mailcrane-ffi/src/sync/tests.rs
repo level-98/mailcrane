@@ -415,8 +415,8 @@ fn new_mail_is_notified_once_through_background_sync() {
     let account = store
         .insert_account(&NewAccount {
             display_name: "Me".into(),
-            // Not alice@: the fake server reports every message as from Alice,
-            // and mail from the account's own address is never notified.
+            // Mail from the account's own address is never notified, so the
+            // account isn't any of the senders below.
             email: "me@example.org".into(),
             imap_host: "localhost".into(),
             imap_port: imap.addr().port(),
@@ -453,7 +453,8 @@ fn new_mail_is_notified_once_through_background_sync() {
     runtime.block_on(imap.mailbox().deliver("INBOX", arrived.as_bytes().to_vec()));
     let got = engine.background_sync(60).expect("sync");
     assert_eq!(got.len(), 1, "{got:?}");
-    assert_eq!(got[0].sender, "Alice");
+    // The sender comes from the message's own From (#416).
+    assert_eq!(got[0].sender, "Carol");
     assert_eq!(got[0].subject, "Lunch?");
     assert_eq!(got[0].account_id, account.0);
     assert_eq!(got[0].account_email, "me@example.org");
