@@ -570,6 +570,72 @@ class ComposeViewModelTest {
     }
 
     @Test
+    fun onlyOutsideChangesMoveTheBodyRevision() {
+        // #419: the field takes the body over its own text only when this moves.
+        val core = FakeCore().apply { signatures = mapOf(1L to "Ann") }
+        val vm = started(core)
+        val signed = vm.state.value.bodyRevision
+        assertTrue("the signature is an outside change", signed > 0)
+        vm.onBodyChange("Hi" + vm.state.value.body, signed)
+        assertEquals("typing doesn't", signed, vm.state.value.bodyRevision)
+        vm.list(0, 0, ListKind.BULLET)
+        assertTrue("a list toggle does", vm.state.value.bodyRevision > signed)
+        val listed = vm.state.value.bodyRevision
+        vm.reset()
+        assertTrue("so does a reset", vm.state.value.bodyRevision > listed)
+        assertEquals("", vm.state.value.body)
+    }
+
+    @Test
+    fun anEditTypedAgainstAnOlderBodyIsMovedOntoTheNewOne() {
+        // Review of #426: the field typed "H", then "Hi", but the signature landed in between; neither is lost.
+        val core = FakeCore()
+        val vm = started(core)
+        val base = vm.state.value.bodyRevision
+        vm.onBodyChange("H", base)
+        // An outside change lands (as the signature would) while the field still shows "H".
+        vm.list(0, 1, ListKind.BULLET)
+        val listed = vm.state.value.body
+        assertTrue(listed.endsWith("H"))
+        vm.onBodyChange("Hi", base)
+        assertEquals(listed.dropLast(1) + "Hi", vm.state.value.body)
+        // A second late keystroke against the same old revision builds on the first, not on "H" again.
+        vm.onBodyChange("Hi!", base)
+        assertEquals(listed.dropLast(1) + "Hi!", vm.state.value.body)
+        // The field is told to take the merged text over: a new revision.
+        assertTrue(vm.state.value.bodyRevision > base + 1)
+    }
+
+    @Test
+    fun aLateEditCantRefillABodyClearedFromOutside() {
+        val vm = started(FakeCore())
+        val base = vm.state.value.bodyRevision
+        vm.onBodyChange("abc", base)
+        vm.reset()
+        vm.onBodyChange("abcd", base)
+        assertEquals("", vm.state.value.body)
+    }
+
+    @Test
+    fun rebaseEditPlacesTheEditAtTheSamePlace() {
+        // Typed at the end, a signature added below.
+        assertEquals("Hi\n\n-- \nBea", rebaseEdit("H", "Hi", "H\n\n-- \nBea"))
+        // Typed before the signature arrived, into an empty body: both kept.
+        assertEquals("Hello\n\n-- \nAnn", rebaseEdit("", "Hello", "\n\n-- \nAnn"))
+        // A word replaced in the middle, a line added at the top.
+        assertEquals("Top\nsee you Friday", rebaseEdit("see you Monday", "see you Friday", "Top\nsee you Monday"))
+        // Nothing typed: theirs as it is.
+        assertEquals("theirs", rebaseEdit("same", "same", "theirs"))
+        // The text around the edit is gone (a reset): can't be placed.
+        assertNull(rebaseEdit("abc", "abcd", ""))
+        // The text it deleted was changed from outside: can't be placed.
+        assertNull(rebaseEdit("one two", "one", "one three"))
+        // Typed at the end while something was put in front; typed at the start while something was added after.
+        assertEquals("• Hi", rebaseEdit("H", "Hi", "• H"))
+        assertEquals("Xabc\n-- \nAnn", rebaseEdit("abc", "Xabc", "abc\n-- \nAnn"))
+    }
+
+    @Test
     fun changingFromSwapsAnUneditedSignatureOnly() {
         val accounts = listOf(AccountSummary(1, "a@example.org", "A"), AccountSummary(2, "b@example.org", "B"))
         val core = FakeCore(accounts).apply { signatures = mapOf(1L to "Ann", 2L to "Bea") }

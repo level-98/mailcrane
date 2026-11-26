@@ -141,7 +141,8 @@ data class ComposeActions(
     val onEditLastRecipient: (RecipientField) -> Unit = {},
     val onShowCcBcc: () -> Unit = {},
     val onSubjectChange: (String) -> Unit = {},
-    val onBodyChange: (String) -> Unit = {},
+    /** The body text, and the body revision it was typed against (#419). */
+    val onBodyChange: (String, Long) -> Unit = { _, _ -> },
     val onSend: () -> Unit = {},
     val onSchedule: (Long) -> Unit = {},
     val onClose: () -> Unit = {},
