@@ -49,10 +49,6 @@ MILESTONES = {
         "title": "Release",
         "description": "Test, package, and bring Mailcrane to its first users on Android.",
     },
-    "M7": {
-        "title": "iOS app",
-        "description": "Bring the iOS app up to the Android release and ship it on the App Store.",
-    },
     "M8": {
         "title": "After 1.0",
         "description": "Good ideas that wait until the Android 1.0 release is out.",
@@ -63,16 +59,11 @@ MILESTONES = {
     },
 }
 
-# Tasks that moved milestone keep their ID (and issue title), so they are
-# placed by this map instead: task ID -> (new milestone, position). The
-# position sorts the task among the new milestone's own numbered tasks, in the
-# order ROADMAP.md on `main` lists them. Keep the two in step.
-MOVED_TASKS = {
-    # Android first; the iOS work follows after the release (decision 0002).
-    "M0-16": ("M7", 2.1),
-    "M1-11": ("M7", 2.2),
-    "M6-06": ("M7", 99.0),
-}
+# No iOS app before 1.0 (decision 0005): its milestone, M7, isn't on the
+# roadmap, and neither are the iOS tasks that kept an older ID when they
+# moved there.
+SKIPPED_GROUPS = {"M7"}
+SKIPPED_TASKS = {"M0-16", "M1-11", "M6-06"}
 
 
 def fetch_issues() -> list[dict]:
@@ -140,7 +131,9 @@ def build_snapshot(issues: list[dict]) -> dict:
         group_id, sequence, task_title = match.groups()
         group_id = group_id.upper()
         task_id = f"{group_id}-{sequence}"
-        group_id, position = MOVED_TASKS.get(task_id, (group_id, float(sequence)))
+        if group_id in SKIPPED_GROUPS or task_id in SKIPPED_TASKS:
+            continue
+        position = float(sequence)
         tasks_by_group[group_id].append(
             {
                 "id": task_id,
