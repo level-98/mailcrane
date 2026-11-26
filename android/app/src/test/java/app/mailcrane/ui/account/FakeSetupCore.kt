@@ -9,8 +9,8 @@ import app.mailcrane.core.ManualAccountConfig
 
 /** A core for the account setup tests: adding an account returns [result]'s id or throws. */
 internal class FakeSetupCore(
-    private val result: () -> Long,
     private val guides: Map<String, AppPasswordGuide> = emptyMap(),
+    private val result: () -> Long,
 ) : MailcraneCore {
     override fun appPasswordGuide(email: String): AppPasswordGuide? = guides[email]
 

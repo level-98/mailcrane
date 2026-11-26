@@ -36,7 +36,8 @@ class AppPasswordGuideTest {
     @get:Rule
     val compose = createComposeRule()
 
-    private val icloud = AppPasswordGuide(AppPasswordProvider.ICLOUD, "iCloud Mail", "https://account.apple.com/account/manage")
+    private val icloud =
+        AppPasswordGuide(AppPasswordProvider.ICLOUD, "iCloud Mail", "https://account.apple.com/account/manage")
 
     @Before
     fun setUp() = Dispatchers.setMain(UnconfinedTestDispatcher())
@@ -46,7 +47,7 @@ class AppPasswordGuideTest {
 
     @Test
     fun typingAListedAddressShowsItsGuide() {
-        val vm = ManualSetupViewModel(FakeSetupCore({ 1 }, mapOf("ann@icloud.com" to icloud)))
+        val vm = ManualSetupViewModel(FakeSetupCore(mapOf("ann@icloud.com" to icloud)) { 1 })
         vm.onEmailChange("ann@icloud.com ")
         assertEquals(icloud, vm.state.value.guide)
         vm.onEmailChange("ann@example.com")
@@ -56,7 +57,7 @@ class AppPasswordGuideTest {
     @Test
     fun theGuideShowsStepsAndOpensTheProvidersPage() {
         val opened = mutableListOf<String>()
-        val vm = ManualSetupViewModel(FakeSetupCore({ 1 }, mapOf("ann@icloud.com" to icloud)))
+        val vm = ManualSetupViewModel(FakeSetupCore(mapOf("ann@icloud.com" to icloud)) { 1 })
         vm.onEmailChange("ann@icloud.com")
         compose.setContent {
             CompositionLocalProvider(
@@ -80,7 +81,7 @@ class AppPasswordGuideTest {
 
     @Test
     fun otherAddressesShowNoGuide() {
-        val vm = ManualSetupViewModel(FakeSetupCore({ 1 }))
+        val vm = ManualSetupViewModel(FakeSetupCore { 1 })
         vm.onEmailChange("ann@example.com")
         compose.setContent { MailcraneTheme { EmailStepContent(vm.state.value, ManualSetupActions()) } }
         compose.onNodeWithTag("app-password-guide").assertDoesNotExist()

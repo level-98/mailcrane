@@ -2,8 +2,8 @@ package app.mailcrane.ui.account
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import app.mailcrane.core.AppPasswordGuide
 import app.mailcrane.core.AddAccountException
+import app.mailcrane.core.AppPasswordGuide
 import app.mailcrane.core.ConnectionSecurity
 import app.mailcrane.core.DiscoverException
 import app.mailcrane.core.DiscoveredSettings
