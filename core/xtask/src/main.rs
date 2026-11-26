@@ -520,16 +520,19 @@ fn android(ctx: &Ctx) -> Result<Outcome, Error> {
     };
     // assembleDebug cross-compiles the core for both ABIs (the buildRust task)
     // and proves the app really builds, not only that it lints and tests.
+    // checkFreeDependencies (M6-04): the release build is free software
+    // only, as F-Droid requires.
     let args = [
         "ktlintCheck",
         "lintDebug",
         "testDebugUnitTest",
         "assembleDebug",
+        "checkFreeDependencies",
     ];
     let ok = run(&dir, &wrapper.display().to_string(), &args)?;
     Ok(outcome(
         ok,
-        "./gradlew ktlintCheck lintDebug testDebugUnitTest assembleDebug",
+        "./gradlew ktlintCheck lintDebug testDebugUnitTest assembleDebug checkFreeDependencies",
     ))
 }
 

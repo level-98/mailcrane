@@ -113,6 +113,50 @@ class ReleaseNotesTest(unittest.TestCase):
         self.add("1.fix.md", "Good.")
         self.assert_fails_untouched("0.1.0", "--date", "nope", expect="date")
 
+    def fastlane_file(self, code):
+        return self.root / "fastlane" / "metadata" / "android" / "en-US" / "changelogs" / f"{code}.txt"
+
+    def test_fastlane_notes_are_plain_user_facing_text(self):
+        self.sample()
+        code, _, err = self.run_main("0.1.0", "--fastlane", "3")
+        self.assertEqual(code, 0, err)
+        text = self.fastlane_file(3).read_text(encoding="utf-8")
+        self.assertEqual(
+            text,
+            "• Closed a hole.\n• Slug entry.\n• Changed it.\n• Fixed a thing.\n",
+        )
+        self.assertNotIn("Refactor", text)
+        self.assertNotIn("#", text)
+        # A dry run otherwise: fragments stay, no CHANGELOG.md.
+        self.assertIn("4.internal.md", self.files())
+        self.assertFalse((self.root / "CHANGELOG.md").exists())
+
+    def test_fastlane_notes_stay_within_500_characters(self):
+        for n in range(1, 30):
+            self.add(f"{n}.feature.md", f"Feature number {n} does something useful for people.")
+        code, _, err = self.run_main("0.1.0", "--fastlane", "7")
+        self.assertEqual(code, 0, err)
+        text = self.fastlane_file(7).read_text(encoding="utf-8")
+        self.assertLessEqual(len(text.rstrip("\n")), release_notes.FASTLANE_LIMIT)
+        self.assertTrue(text.rstrip("\n").endswith(release_notes.FASTLANE_MORE))
+        self.assertTrue(text.startswith("• Feature number 1 does"))
+
+    def test_one_long_fragment_is_cut_at_a_word(self):
+        self.add("1.feature.md", "word " * 200)
+        code, _, err = self.run_main("0.1.0", "--fastlane", "1")
+        self.assertEqual(code, 0, err)
+        text = self.fastlane_file(1).read_text(encoding="utf-8").rstrip("\n")
+        self.assertLessEqual(len(text), release_notes.FASTLANE_LIMIT)
+        self.assertIn("word…", text)
+
+    def test_fastlane_needs_a_version_code_and_user_facing_notes(self):
+        self.add("1.fix.md", "Good.")
+        self.assert_fails_untouched("0.1.0", "--fastlane", "abc", expect="versionCode")
+        self.assert_fails_untouched("0.1.0", "--fastlane", "0", expect="versionCode")
+        (self.dir / "1.fix.md").unlink()
+        self.add("2.internal.md", "Only internal.")
+        self.assert_fails_untouched("0.1.0", "--fastlane", "2", expect="user-facing")
+
 
 if __name__ == "__main__":
     unittest.main()

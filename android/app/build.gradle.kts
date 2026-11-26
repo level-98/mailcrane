@@ -27,12 +27,27 @@ android {
         versionCode = 1
         versionName = "0.0.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        // Only the ABIs the Rust core is built for (cargoNdkBuild). Without this,
+        // libraries such as JNA bring armeabi-v7a, armeabi and mips folders, and
+        // Android would install the app on 32-bit phones, where it can't load the
+        // core and crashes at once (found while preparing F-Droid, M6-04).
+        ndk { abiFilters += listOf("arm64-v8a", "x86_64") }
     }
 
     buildTypes {
         release {
             isMinifyEnabled = false
+            // No git commit in the APK, so builds from any checkout match (F-Droid
+            // reproducible builds, M6-04).
+            vcsInfo { include = false }
         }
+    }
+
+    // AGP otherwise adds a dependency-metadata block encrypted with a Google key;
+    // F-Droid flags it as a non-free blob (M6-04).
+    dependenciesInfo {
+        includeInApk = false
+        includeInBundle = false
     }
 
     compileOptions {
@@ -97,6 +112,19 @@ val cargoNdkBuild by tasks.registering(Exec::class) {
     // disk with several builds running at once.
     environment("CARGO_INCREMENTAL", "0")
     environment("CARGO_PROFILE_DEV_DEBUG", "line-tables-only")
+    // Release builds don't embed this machine's paths (the checkout and the
+    // cargo registry), so the same source builds the same library anywhere
+    // (F-Droid reproducible builds, M6-04; docs/fdroid.md). Debug builds are
+    // left alone: a changed RUSTFLAGS would rebuild every shared build folder.
+    if (rustRelease) {
+        val cargoHome = System.getenv("CARGO_HOME") ?: "${System.getProperty("user.home")}/.cargo"
+        val remap =
+            listOf(
+                "--remap-path-prefix=${coreDir.asFile.path}=/mailcrane/core",
+                "--remap-path-prefix=$cargoHome=/cargo",
+            )
+        environment("RUSTFLAGS", (listOfNotNull(System.getenv("RUSTFLAGS")) + remap).joinToString(" "))
+    }
     commandLine(
         listOf(
             "cargo",
@@ -134,6 +162,65 @@ val checkNoDebugCoreInRelease by tasks.registering {
 tasks.matching { it.name == "mergeReleaseNativeLibs" || it.name == "mergeReleaseJniLibFolders" }.configureEach {
     dependsOn(checkNoDebugCoreInRelease)
 }
+
+// F-Droid (M6-04, #71): the release build must contain only free software and
+// talk to no proprietary service. These groups are Google Play Services,
+// Firebase, ML Kit, Play Core and billing, and common closed analytics or
+// crash SDKs. The check reads the resolved release classpath, so a banned
+// library pulled in by another one is caught too.
+val nonFreeGroups =
+    listOf(
+        "com.google.android.gms",
+        "com.google.firebase",
+        "com.google.mlkit",
+        "com.google.android.play",
+        "com.android.billingclient",
+        "com.google.android.datatransport",
+        "com.google.android.libraries.places",
+        "com.google.ads",
+        "com.crashlytics",
+        "io.fabric",
+        "com.huawei.hms",
+        "com.facebook",
+        "com.appsflyer",
+        "io.sentry",
+        "com.amplitude",
+        "com.mixpanel",
+    )
+
+val checkFreeDependencies by tasks.registering {
+    group = "verification"
+    description =
+        "Fails when the release build depends on non-free libraries or ships prebuilt binaries in the sources."
+    val classpath = configurations.named("releaseRuntimeClasspath")
+    val sources = layout.projectDirectory.dir("src")
+    val banned = nonFreeGroups
+    doLast {
+        val modules =
+            classpath
+                .get()
+                .incoming.resolutionResult.allComponents
+                .mapNotNull { it.moduleVersion }
+        val found =
+            modules.filter { m -> banned.any { m.group == it || m.group.startsWith("$it.") } }
+        // Binaries in the sources would be blobs F-Droid can't build. Native
+        // code comes only from the Rust core (built by cargoNdkBuild into
+        // build/), and Java libraries only from Maven.
+        val blobs =
+            sources.asFileTree
+                .matching { include("**/*.jar", "**/*.aar", "**/*.so", "**/*.dex", "**/*.apk") }
+                .files
+        val problems =
+            found.map { "non-free dependency: ${it.group}:${it.name}:${it.version}" } +
+                blobs.map { "prebuilt binary in the sources: ${it.relativeTo(sources.asFile)}" }
+        if (problems.isNotEmpty()) {
+            throw GradleException("F-Droid check failed:\n" + problems.joinToString("\n") { "  $it" })
+        }
+        logger.lifecycle("F-Droid check: ${modules.size} release dependencies, all free; no prebuilt binaries.")
+    }
+}
+
+tasks.named("check") { dependsOn(checkFreeDependencies) }
 
 // Debug builds carry tests/fixtures (`.eml` and `.html`) as assets under
 // `fixtures/`, for "Load test mail" (#289). Release builds don't.
