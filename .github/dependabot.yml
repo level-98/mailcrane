@@ -34,25 +34,6 @@ updates:
           - "minor"
           - "patch"
 
-  # Swift updates are paused with the iOS app until M7 (ROADMAP.md); nobody
-  # can check them while the iOS workflow only runs by hand. Uncomment in M7-02.
-  # - package-ecosystem: "swift"
-  #   directory: "/ios/MailcraneCore"
-  #   schedule:
-  #     interval: "weekly"
-  #     day: "monday"
-  #   open-pull-requests-limit: 5
-  #   labels:
-  #     - "dependencies"
-  #     - "area:ci"
-  #   commit-message:
-  #     prefix: "chore(deps)"
-  #   groups:
-  #     swift-minor-patch:
-  #       update-types:
-  #         - "minor"
-  #         - "patch"
-
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:

@@ -23,6 +23,6 @@ Everything you need
 • New-mail notifications, a home-screen widget, dark mode with dynamic colour, and layouts for tablets.
 
 Free software
-Mailcrane is licensed under the MPL-2.0 and built in the open. Its engine is written in Rust and shared with the iOS app to come.
+Mailcrane is licensed under the MPL-2.0 and built in the open. Its engine is written in Rust.
 
 Mailcrane is still young: please report problems on the project's issue tracker.

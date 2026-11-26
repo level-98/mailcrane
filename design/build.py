@@ -148,14 +148,6 @@ def icon_svg(size=1024, rounded=False):
 master = write("app-icon/icon-master.svg", icon_svg())
 write("app-icon/icon-preview-rounded.svg", icon_svg(rounded=True))
 
-# iOS: single 1024 icon (Xcode 14+), no alpha allowed
-ios = png(master, "app-icon/ios/AppIcon.appiconset/AppIcon-1024.png", 1024)
-strip_alpha(ios, C["primary"])
-write("app-icon/ios/AppIcon.appiconset/Contents.json", json.dumps({
-    "images": [{"filename": "AppIcon-1024.png", "idiom": "universal",
-                "platform": "ios", "size": "1024x1024"}],
-    "info": {"author": "xcode", "version": 1}}, indent=2))
-
 # Android adaptive: foreground (108dp canvas), background colour, monochrome
 def fg_svg(variant, px=108):
     return svg(px, px, crane_group(variant, px / 2, px / 2 + 1, px / 100 * 0.60))
@@ -215,9 +207,7 @@ strip_alpha(ps, C["primary"])
 # Android 12+ splash: icon on 288dp canvas, keep content inside 192dp circle.
 sp = write("splash/splash-icon.svg", svg(288, 288, crane_group("white", 144, 146, 288 / 100 * 0.62)))
 png(sp, "splash/android/splash_icon_xxxhdpi.png", 1152)
-spc = write("splash/splash-icon-color.svg", svg(288, 288, crane_group("color", 144, 146, 288 / 100 * 0.62)))
-for k, px in {"": 120, "@2x": 240, "@3x": 360}.items():
-    png(spc, f"splash/ios/LaunchLogo{k}.png", px)
+write("splash/splash-icon-color.svg", svg(288, 288, crane_group("color", 144, 146, 288 / 100 * 0.62)))
 write("splash/README.txt",
       f"Splash background: {C['primary']} with splash-icon.svg (white),\n"
       f"or white/{C['surface']} with splash-icon-color.svg. Dark mode: {C['darkSurface']} + white icon.\n")

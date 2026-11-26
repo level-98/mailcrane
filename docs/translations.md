@@ -64,4 +64,4 @@ Unfinished languages are fine. Missing strings show in English, and a language a
    Put the project link in step 1 of "For translators" above, and in CONTRIBUTING.md.
 8. Test it: translate one string into a new language, check that the PR builds, install the build, and pick the language under *Settings → Apps → Mailcrane → Language* on Android 13 or newer.
 
-The store listing (`fastlane/metadata`), the website and the iOS strings can become further components later (the iOS ones in M7).
+The store listing (`fastlane/metadata`) and the website can become further components later.
