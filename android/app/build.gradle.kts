@@ -6,6 +6,26 @@ plugins {
     alias(libs.plugins.ktlint)
 }
 
+// The short commit hash of the checkout, or "unknown" (no git, or not a
+// checkout, as in a source tarball). Only hex digits get through.
+val gitCommit: String =
+    try {
+        providers
+            .exec {
+                // The full hash, cut to 7 here: `--short` may print more digits in
+                // a clone with more objects, which would break reproducibility.
+                commandLine("git", "rev-parse", "HEAD")
+                isIgnoreExitValue = true
+            }.standardOutput.asText
+            .get()
+            .trim()
+            .takeIf { it.length >= 40 && it.all { c -> c in '0'..'9' || c in 'a'..'f' } }
+            ?.take(7)
+            ?: "unknown"
+    } catch (e: Exception) {
+        "unknown"
+    }
+
 // The one place the application ID lives (it may change; see issue #79).
 val mailcraneApplicationId = "app.mailcrane"
 
@@ -32,6 +52,10 @@ android {
         targetSdk = 37
         versionCode = 1
         versionName = "0.0.0"
+        // The commit this build comes from, shown in Settings → About. The same
+        // commit gives the same value on any machine, so release builds stay
+        // reproducible (docs/fdroid.md); without git it is "unknown".
+        buildConfigField("String", "GIT_COMMIT", "\"$gitCommit\"")
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         // Only the ABIs the Rust core is built for (cargoNdkBuild). Without this,
         // libraries such as JNA bring armeabi-v7a, armeabi and mips folders, and
@@ -63,6 +87,8 @@ android {
 
     buildFeatures {
         compose = true
+        // BuildConfig.GIT_COMMIT for Settings → About (#75).
+        buildConfig = true
     }
 
     // Robolectric (Compose UI tests on the JVM) needs the app's resources.
