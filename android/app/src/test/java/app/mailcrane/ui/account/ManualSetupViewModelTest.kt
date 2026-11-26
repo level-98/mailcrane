@@ -228,18 +228,33 @@ class ManualSetupViewModelTest {
         // address takes the password path (an app password) and no sign-in starts.
         val core = FakeSetupCore({ 9 })
         val vm = ManualSetupViewModel(core, googleSignIn = false)
+        // No Google button at all, Workspace one included.
+        assertFalse(vm.state.value.googleSignIn)
         vm.onEmailChange("ann@gmail.com")
         assertEquals(false, vm.state.value.gmail)
         assertNull(vm.startGoogleSignIn())
         assertFalse(vm.state.value.checking)
         assertFalse(vm.state.value.waitingForGoogle)
         assertNull(core.lastGoogle)
+        // A new form after an account was added still offers none.
+        vm.accountHandled()
+        assertFalse(vm.state.value.googleSignIn)
+    }
+
+    @Test
+    fun withGoogleSignInTheFormOffersIt() {
+        val vm = ManualSetupViewModel(FakeSetupCore({ 9 }), googleSignIn = true)
+        assertEquals(true, vm.state.value.googleSignIn)
+        vm.accountHandled()
+        assertEquals(true, vm.state.value.googleSignIn)
     }
 
     @Test
     fun onlyReleaseBuildsOfferGoogleSignIn() {
-        // Unit tests run against the debug build.
-        assertFalse(app.mailcrane.oauth.OAuthSignIn.AVAILABLE)
+        assertEquals(
+            app.mailcrane.BuildConfig.BUILD_TYPE == "release",
+            app.mailcrane.oauth.OAuthSignIn.AVAILABLE,
+        )
         assertEquals("app.mailcrane:/oauth2redirect", app.mailcrane.oauth.OAuthSignIn.REDIRECT_URI)
     }
 }

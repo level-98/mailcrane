@@ -87,6 +87,8 @@ data class ManualSetupUiState(
     val step: SetupStep = SetupStep.EMAIL,
     val discovering: Boolean = false,
     val found: DiscoveredSettings? = null,
+    /** This build offers Sign in with Google at all: release builds only (#405). */
+    val googleSignIn: Boolean = false,
     /** A gmail.com or googlemail.com address: Sign in with Google is the way in (M3-02). */
     val gmail: Boolean = false,
     /** Sign in with Google is open in the browser and nothing has come back yet. */
@@ -117,6 +119,7 @@ class ManualSetupViewModel
             ManualSetupUiState(
                 imapPort = port(MailServer.IMAP, ConnectionSecurity.TLS),
                 smtpPort = port(MailServer.SMTP, ConnectionSecurity.TLS),
+                googleSignIn = googleSignIn,
             )
 
         /**

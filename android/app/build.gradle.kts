@@ -345,7 +345,7 @@ tasks.named("check") { dependsOn(checkFreeDependencies) }
 // and its scheme is the release package. The debug app installs beside the
 // release app, so exactly one of them may route that scheme: the release app,
 // to OAuthRedirectActivity. Checked on each variant's merged manifest before
-// it is assembled.
+// it is assembled, packaged or bundled, and by `check`.
 abstract class CheckOAuthRedirect : DefaultTask() {
     @get:InputFile
     @get:PathSensitive(PathSensitivity.NONE)
@@ -428,7 +428,8 @@ androidComponents {
                 receivesRedirect.set(variant.buildType == "release")
                 report.set(layout.buildDirectory.file("reports/oauthRedirect/${variant.name}.txt"))
             }
-        tasks.matching { it.name == "assemble$variantName" }.configureEach { dependsOn(check) }
+        val guarded = setOf("assemble$variantName", "package$variantName", "bundle$variantName", "check")
+        tasks.matching { it.name in guarded }.configureEach { dependsOn(check) }
     }
 }
 
