@@ -129,6 +129,11 @@ data class ComposeUiState(
      * when this has moved, so its own edits coming back late can't be mistaken for an outside change.
      */
     val bodyRevision: Long = 0,
+    /**
+     * Where the field's cursor goes with this [bodyRevision], when the view model knows better than the field:
+     * right after a late keystroke it moved onto newer text (#419). Null for every other change.
+     */
+    val bodyCursor: Int? = null,
     val sending: Boolean = false,
     val error: ComposeError? = null,
     /** Addresses named in [error], for "all recipients were refused". */
@@ -197,7 +202,8 @@ class ComposeViewModel
 
         /**
          * The body as each recent revision left it, newest last, for edits the field typed against an older
-         * revision (#419). Only the last few: the field catches up within a frame or two.
+         * revision (#419). Only the last few: the field catches up within a frame or two. Like [_state], only
+         * touched on the main thread: the `_state.update` blocks that change it never run concurrently.
          */
         private val bodyByRevision = ArrayDeque<Pair<Long, String>>()
 
@@ -216,7 +222,12 @@ class ComposeViewModel
             cursorAtEnd: Boolean = false,
         ): ComposeUiState {
             rememberBody(bodyRevision, body)
-            return copy(body = newBody, bodyRevision = bodyRevision + 1, bodyCursorAtEnd = cursorAtEnd)
+            return copy(
+                body = newBody,
+                bodyRevision = bodyRevision + 1,
+                bodyCursorAtEnd = cursorAtEnd,
+                bodyCursor = null,
+            )
         }
 
         /**
@@ -541,7 +552,8 @@ class ComposeViewModel
          * Text typed into the body field. [baseRevision] is the [ComposeUiState.bodyRevision] the field's text
          * was based on. When an outside change landed since (a signature arriving while the user types), the
          * edit is moved onto the current body rather than replacing it, so neither is lost (#419, #430); if it
-         * can't be placed, the outside change stays and the field takes it over.
+         * can't be placed, the outside change stays and the field takes it over. Main thread only (see
+         * [bodyByRevision]).
          */
         fun onBodyChange(
             value: String,
@@ -558,7 +570,11 @@ class ComposeViewModel
                 if (merged == null) {
                     it.withOutsideBody(it.body)
                 } else {
-                    it.withOutsideBody(merged).copy(bodyStyles = restyle(it.body, merged, it.bodyStyles))
+                    it.withOutsideBody(merged.text).copy(
+                        bodyStyles = restyle(it.body, merged.text, it.bodyStyles),
+                        // The cursor follows the keystroke, not the offset it had in the older text.
+                        bodyCursor = merged.cursor,
+                    )
                 }
             }
             scheduleSave()
@@ -902,20 +918,27 @@ fun ComposeUiState.richDoc(): app.mailcrane.core.RichDoc? =
 /** How many recent body revisions [ComposeViewModel] keeps for late field edits. */
 private const val KEPT_REVISIONS = 16
 
+/** A late edit moved onto newer text: the result, and where the cursor goes (right after the edit). */
+internal data class Rebased(
+    val text: String,
+    val cursor: Int,
+)
+
 /**
  * Moves the field's edit of [base] (giving [mine]) onto [theirs], the body after an outside change (#419). The
  * edit is the one span where [base] and [mine] differ (common prefix and suffix). It goes back in at the same
  * place, found from the unchanged text before it, or else after it, and only when that anchor still reads the
  * same in [theirs]. An empty anchor counts only when [base] was empty: typing before a signature arrives keeps
- * both, but a body cleared from outside (a reset) isn't refilled by a stray late keystroke. Null when the edit
- * can't be placed.
+ * both, but a body cleared from outside (a reset) isn't refilled by a stray late keystroke. An edit that replaced
+ * all of [base] (select all, then type or paste) replaces the span of [theirs] that still reads as [base]. Null
+ * when the edit can't be placed.
  */
 internal fun rebaseEdit(
     base: String,
     mine: String,
     theirs: String,
-): String? {
-    if (mine == base) return theirs
+): Rebased? {
+    if (mine == base) return Rebased(theirs, theirs.length)
     var prefix = 0
     val shortest = minOf(base.length, mine.length)
     while (prefix < shortest && base[prefix] == mine[prefix]) prefix++
@@ -929,21 +952,31 @@ internal fun rebaseEdit(
     val inserted = mine.substring(prefix, mine.length - suffix)
     val before = base.substring(0, prefix)
     val after = base.substring(base.length - suffix)
+
+    // `inserted` replaces `removed` at `at` in theirs.
+    fun place(at: Int) =
+        Rebased(theirs.substring(0, at) + inserted + theirs.substring(at + removed.length), at + inserted.length)
+
     val anchorOk = { anchor: String -> anchor.isNotEmpty() || base.isEmpty() }
     if (anchorOk(before) && theirs.startsWith(before) && theirs.startsWith(removed, before.length)) {
-        return theirs.substring(0, before.length) + inserted + theirs.substring(before.length + removed.length)
+        return place(before.length)
     }
     val end = theirs.length - after.length - removed.length
     if (anchorOk(after) && end >= 0 && theirs.endsWith(after) && theirs.startsWith(removed, end)) {
-        return theirs.substring(0, end) + inserted + theirs.substring(end + removed.length)
+        return place(end)
     }
     // An edit at the very end, with text added in front of it ("H" typed on, "• " put before it).
     if (before.isNotEmpty() && after.isEmpty() && theirs.endsWith(before + removed)) {
-        return theirs.substring(0, theirs.length - removed.length) + inserted
+        return place(theirs.length - removed.length)
     }
     // An edit at the very start, with text added after it (a signature below).
     if (after.isNotEmpty() && before.isEmpty() && theirs.startsWith(removed + after)) {
-        return inserted + theirs.substring(removed.length)
+        return place(0)
+    }
+    // All of base replaced (select all, then type or paste): replace it where theirs still has it.
+    if (before.isEmpty() && after.isEmpty() && base.isNotEmpty()) {
+        val at = theirs.indexOf(base)
+        if (at >= 0) return place(at)
     }
     return null
 }

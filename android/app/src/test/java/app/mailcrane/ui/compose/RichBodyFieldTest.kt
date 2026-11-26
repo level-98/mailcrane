@@ -38,6 +38,9 @@ class RichBodyFieldTest {
     /** What the field sent: its text and the body revision it was based on. */
     private val sent = mutableListOf<Pair<String, Long>>()
 
+    /** The view model's state right now, when a test makes it run ahead of the composed [state]. */
+    private var live: ComposeUiState? = null
+
     private fun show(actions: RichTextActions = RichTextActions()) =
         compose.setContent {
             MailcraneTheme {
@@ -49,6 +52,7 @@ class RichBodyFieldTest {
                         actions = actions,
                         enabled = true,
                         colors = TextFieldDefaults.colors(),
+                        currentState = { live ?: state },
                     )
                 }
             }
@@ -142,6 +146,38 @@ class RichBodyFieldTest {
         field().performTextInput("i")
         assertEquals("H" to 0L, sent.first())
         assertEquals(1L, sent.last().second)
+    }
+
+    @Test
+    fun aRebasedKeystrokeBringsItsCursor() {
+        // Review of #426: the field showed "H"; the view model merged a late "i" into "• Hi" and says where the
+        // cursor goes, so the next key lands after "Hi", not before it.
+        show()
+        field().performTextInput("H")
+        state = state.copy(body = "• Hi", bodyRevision = 2, bodyCursor = 4)
+        compose.waitForIdle()
+        assertEquals("• Hi", text())
+        assertEquals(TextRange(4), selection())
+        field().performTextInput("!")
+        assertEquals("• Hi!", text())
+    }
+
+    @Test
+    fun onlyTheNewestRevisionIsApplied() {
+        // Review of #426: the view model is already at revision 3 (a late "!" merged in) when the effect for
+        // revision 2 runs; applying 2's text would drop the "!".
+        show()
+        live = state.copy(body = "Hi!\n\n-- \nAnn", bodyRevision = 3, bodyCursor = 3)
+        state = state.copy(body = "Hi\n\n-- \nAnn", bodyRevision = 2)
+        compose.waitForIdle()
+        assertEquals("Hi!\n\n-- \nAnn", text())
+        assertEquals(TextRange(3), selection())
+        // Revision 3 reaching the composition later changes nothing.
+        state = checkNotNull(live)
+        live = null
+        compose.waitForIdle()
+        assertEquals("Hi!\n\n-- \nAnn", text())
+        assertEquals(TextRange(3), selection())
     }
 
     @Test

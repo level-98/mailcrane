@@ -619,20 +619,44 @@ class ComposeViewModelTest {
     @Test
     fun rebaseEditPlacesTheEditAtTheSamePlace() {
         // Typed at the end, a signature added below.
-        assertEquals("Hi\n\n-- \nBea", rebaseEdit("H", "Hi", "H\n\n-- \nBea"))
+        assertEquals("Hi\n\n-- \nBea", rebaseEdit("H", "Hi", "H\n\n-- \nBea")?.text)
         // Typed before the signature arrived, into an empty body: both kept.
-        assertEquals("Hello\n\n-- \nAnn", rebaseEdit("", "Hello", "\n\n-- \nAnn"))
+        assertEquals("Hello\n\n-- \nAnn", rebaseEdit("", "Hello", "\n\n-- \nAnn")?.text)
         // A word replaced in the middle, a line added at the top.
-        assertEquals("Top\nsee you Friday", rebaseEdit("see you Monday", "see you Friday", "Top\nsee you Monday"))
+        assertEquals("Top\nsee you Friday", rebaseEdit("see you Monday", "see you Friday", "Top\nsee you Monday")?.text)
         // Nothing typed: theirs as it is.
-        assertEquals("theirs", rebaseEdit("same", "same", "theirs"))
+        assertEquals("theirs", rebaseEdit("same", "same", "theirs")?.text)
         // The text around the edit is gone (a reset): can't be placed.
         assertNull(rebaseEdit("abc", "abcd", ""))
         // The text it deleted was changed from outside: can't be placed.
         assertNull(rebaseEdit("one two", "one", "one three"))
         // Typed at the end while something was put in front; typed at the start while something was added after.
-        assertEquals("• Hi", rebaseEdit("H", "Hi", "• H"))
-        assertEquals("Xabc\n-- \nAnn", rebaseEdit("abc", "Xabc", "abc\n-- \nAnn"))
+        assertEquals("• Hi", rebaseEdit("H", "Hi", "• H")?.text)
+        assertEquals("Xabc\n-- \nAnn", rebaseEdit("abc", "Xabc", "abc\n-- \nAnn")?.text)
+        // Select all, then paste: the span that still reads as the old text is replaced, the signature kept.
+        assertEquals("Dear team\n\n-- \nAnn", rebaseEdit("Hello", "Dear team", "Hello\n\n-- \nAnn")?.text)
+        assertNull(rebaseEdit("Hello", "Dear team", "Goodbye"))
+    }
+
+    @Test
+    fun aRebasedEditPutsTheCursorRightAfterIt() {
+        // Review of #426: offsets in the older text would put the cursor before "Hi" in "• Hi".
+        assertEquals(Rebased("• Hi", 4), rebaseEdit("H", "Hi", "• H"))
+        assertEquals(
+            Rebased("Top\nsee you Friday", 15),
+            rebaseEdit("see you Monday", "see you Friday", "Top\nsee you Monday"),
+        )
+        assertEquals(Rebased("Dear team\n-- \nAnn", 9), rebaseEdit("Hello", "Dear team", "Hello\n-- \nAnn"))
+        // The view model publishes it with the merged revision; any other outside change clears it.
+        val vm = started(FakeCore())
+        val base = vm.state.value.bodyRevision
+        vm.onBodyChange("H", base)
+        vm.list(0, 1, ListKind.BULLET)
+        assertNull(vm.state.value.bodyCursor)
+        vm.onBodyChange("Hi", base)
+        assertEquals(vm.state.value.body.length, vm.state.value.bodyCursor)
+        vm.list(0, 0, ListKind.BULLET)
+        assertNull(vm.state.value.bodyCursor)
     }
 
     @Test

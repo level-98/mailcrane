@@ -19,6 +19,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -59,7 +60,13 @@ internal fun RichBodyField(
     actions: RichTextActions,
     enabled: Boolean,
     colors: androidx.compose.material3.TextFieldColors,
+    /**
+     * The view model's state right now, which can be a revision ahead of [state] (composition lags behind).
+     * Null in previews and tests that drive [state] alone.
+     */
+    currentState: (() -> ComposeUiState)? = null,
 ) {
+    val composed by rememberUpdatedState(state)
     var value by remember {
         mutableStateOf(TextFieldValue(state.body, TextRange(if (state.bodyCursorAtEnd) state.body.length else 0)))
     }
@@ -70,26 +77,38 @@ internal fun RichBodyField(
     // The selection a list toggle asked for, applied with its new text.
     var selectionForNextText by remember { mutableStateOf<TextRange?>(null) }
     LaunchedEffect(state.bodyRevision) {
-        if (state.bodyRevision == appliedRevision) return@LaunchedEffect
-        appliedRevision = state.bodyRevision
-        val incoming = state.body
+        // The newest revision there is, not the one this effect was launched for: a late keystroke may already
+        // have been merged into a newer one, and applying the older text would drop it.
+        val now = currentState?.invoke()?.takeIf { it.bodyRevision >= composed.bodyRevision } ?: composed
+        if (now.bodyRevision <= appliedRevision) return@LaunchedEffect
+        appliedRevision = now.bodyRevision
+        val incoming = now.body
+        val cursor = now.bodyCursor
         val selection =
             selectionForNextText
-                ?: if (value.text.isEmpty() && state.bodyCursorAtEnd) TextRange(incoming.length) else value.selection
+                ?: when {
+                    cursor != null -> TextRange(cursor)
+                    value.text.isEmpty() && now.bodyCursorAtEnd -> TextRange(incoming.length)
+                    else -> value.selection
+                }
         selectionForNextText = null
+        // A new value without the old composition: its offsets belonged to the replaced text.
         value =
-            value.copy(
+            TextFieldValue(
                 text = incoming,
                 selection =
                     TextRange(
-                        selection.start.coerceAtMost(incoming.length),
-                        selection.end.coerceAtMost(incoming.length),
+                        selection.start.coerceIn(0, incoming.length),
+                        selection.end.coerceIn(0, incoming.length),
                     ),
             )
     }
     var askingLink by remember { mutableStateOf(false) }
     val linkColor = MaterialTheme.colorScheme.primary
-    val styles = state.bodyStyles
+    // The styles follow state.body, which can be an edit or two behind the field: moved onto the field's own
+    // text so spans and links line up with what is shown.
+    val styles =
+        if (value.text == state.body) state.bodyStyles else restyle(state.body, value.text, state.bodyStyles)
     val sel = value.selection
     if (!state.plainTextOnly) {
         Row(
@@ -167,7 +186,7 @@ internal fun RichBodyField(
     )
     if (askingLink) {
         LinkDialog(
-            initial = fitStyles(state.body, styles).getOrNull(sel.min)?.link.orEmpty(),
+            initial = fitStyles(value.text, styles).getOrNull(sel.min)?.link.orEmpty(),
             onDone = { url ->
                 askingLink = false
                 actions.onLink(sel.min, sel.max, url)
