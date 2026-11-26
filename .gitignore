@@ -11,3 +11,6 @@ build/
 
 # cargo xtask dev-mail: the local dev CA and server certificate (docs/dev-mail.md)
 /.dev-mail/
+
+# Agent fleet worktrees and their build output (docs/fleet.md)
+/.worktrees/
