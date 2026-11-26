@@ -297,6 +297,11 @@ fn opening_a_message_during_a_slow_download_waits_for_at_most_one_batch() {
         after <= before + 2,
         "{before} fetches when opening announced itself, {after} after"
     );
+    // The open's own fetch comes after its announcement.
+    assert!(
+        after > before,
+        "the open fetched before it announced itself"
+    );
     assert!(cached(&path, folder) < 200);
     // The download then carries on to the end.
     wait_for_downloads(&engine, &path, folder);
