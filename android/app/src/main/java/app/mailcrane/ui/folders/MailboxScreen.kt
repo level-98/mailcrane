@@ -176,7 +176,10 @@ fun MailboxScreen(
                         messageId = messageId,
                         onBack = { openMessage = null },
                         folders = state.folders,
-                        onLeft = { openMessage = messageAfterLeaving(leaveOrder, messageId, openedIndex, afterMoveAction) },
+                        onLeft = {
+                            openMessage =
+                                messageAfterLeaving(leaveOrder, messageId, openedIndex, afterMoveAction)
+                        },
                         onReply = onReply,
                         onComposeTo = onComposeTo,
                         onCreateRule = {

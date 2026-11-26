@@ -80,9 +80,9 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.repeatOnLifecycle
 import app.mailcrane.R
 import app.mailcrane.core.AttachmentInfo
@@ -94,9 +94,9 @@ import app.mailcrane.core.MessageDetail
 import app.mailcrane.core.ReplyKind
 import app.mailcrane.core.TrackerInfo
 import app.mailcrane.core.sanitizeFilename
+import app.mailcrane.settings.MarkReadMode
 import app.mailcrane.ui.compose.ComposePrefill
 import app.mailcrane.ui.compose.ReplyRequest
-import app.mailcrane.settings.MarkReadMode
 import app.mailcrane.ui.messagelist.errorText
 import app.mailcrane.ui.theme.LocalDarkMessageBodies
 import app.mailcrane.ui.theme.LocalDarkTheme

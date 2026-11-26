@@ -32,8 +32,8 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.advanceTimeBy
-import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.resetMain
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import org.junit.After
@@ -434,16 +434,17 @@ class MessageViewModelTest {
         }
 
     @Test
-    fun archiveDeleteMoveAndUnreadCloseTheMessage() =
+    fun archiveDeleteAndMoveLeaveAndMarkUnreadCloses() =
         runTest {
+            // M4-15: leaving the folder hands over to "After deleting or moving"; mark unread just closes.
             val core = FakeMessageCore()
             val vm = messageViewModel(core)
             vm.archive()
-            assertEquals(MessageEffect.Close, vm.effects.first())
+            assertEquals(MessageEffect.Left, vm.effects.first())
             vm.delete()
-            assertEquals(MessageEffect.Close, vm.effects.first())
+            assertEquals(MessageEffect.Left, vm.effects.first())
             vm.moveTo(9)
-            assertEquals(MessageEffect.Close, vm.effects.first())
+            assertEquals(MessageEffect.Left, vm.effects.first())
             vm.markUnread()
             assertEquals(MessageEffect.Close, vm.effects.first())
             assertEquals(
@@ -616,22 +617,6 @@ class MessageViewModelTest {
             val vm = messageViewModel(core, settings)
             vm.markReadByHand()
             assertFalse(ready(vm).message.isSeen)
-        }
-
-    // M4-15: archive, delete and move hand over to "After deleting or moving"; mark unread still closes.
-
-    @Test
-    fun archiveDeleteAndMoveLeaveAndMarkUnreadCloses() =
-        runTest {
-            val vm = messageViewModel()
-            vm.archive()
-            assertEquals(MessageEffect.Left, vm.effects.first())
-            vm.delete()
-            assertEquals(MessageEffect.Left, vm.effects.first())
-            vm.moveTo(9)
-            assertEquals(MessageEffect.Left, vm.effects.first())
-            vm.markUnread()
-            assertEquals(MessageEffect.Close, vm.effects.first())
         }
 
     @Test

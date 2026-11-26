@@ -1,10 +1,15 @@
 package app.mailcrane.settings
 
 import android.app.Application
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.emptyPreferences
@@ -63,12 +68,17 @@ class ReadingSettingsTest {
         var markRead = MarkReadMode.ON_OPEN
         var afterMove = AfterMoveAction.LIST
         compose.setContent {
-            MailcraneTheme { ReadingContent(markRead, { markRead = it }, afterMove, { afterMove = it }) }
+            MailcraneTheme {
+                // Scrollable, as in Settings: both groups don't fit the test screen.
+                Column(Modifier.verticalScroll(rememberScrollState())) {
+                    ReadingContent(markRead, { markRead = it }, afterMove, { afterMove = it })
+                }
+            }
         }
         compose.onNodeWithText("When opened").assertIsSelected()
-        compose.onNodeWithText("Back to the list").assertIsSelected()
-        compose.onNodeWithText("Only by hand").performClick()
-        compose.onNodeWithText("Show next message").performClick()
+        compose.onNodeWithText("Back to the list").performScrollTo().assertIsSelected()
+        compose.onNodeWithText("Only by hand").performScrollTo().performClick()
+        compose.onNodeWithText("Show next message").performScrollTo().performClick()
         assertEquals(MarkReadMode.MANUAL, markRead)
         assertEquals(AfterMoveAction.NEXT, afterMove)
     }
