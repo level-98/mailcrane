@@ -440,6 +440,11 @@ fn cid_url(content_id: &str) -> String {
 /// Wraps sanitised HTML in a document whose Content-Security-Policy allows
 /// nothing but inline styles, `cid:` and `data:` images, and, only when
 /// `allow_remote`, `https:` images. No referrer is ever sent.
+///
+/// The viewport is the device width with no `initial-scale`, so the app's
+/// web view can zoom a fixed-width (often 600 px) newsletter out to fit the
+/// screen; `initial-scale=1` kept it at full size, cut off on the right
+/// (#342).
 fn html_document(body: &str, allow_remote: bool) -> String {
     let remote = if allow_remote { " https:" } else { "" };
     format!(
@@ -448,7 +453,7 @@ fn html_document(body: &str, allow_remote: bool) -> String {
          <meta name=\"referrer\" content=\"no-referrer\">\
          <meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; \
          img-src {CID_SCHEME}: data:{remote}; style-src 'unsafe-inline'\">\
-         <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\
+         <meta name=\"viewport\" content=\"width=device-width\">\
          <style>body{{margin:16px;overflow-wrap:break-word}}\
          img{{max-width:100%;height:auto}}</style>\
          </head><body>{body}</body></html>"
@@ -866,6 +871,9 @@ mod tests {
         );
         assert_eq!(blocked, 1);
         assert!(html.contains("<meta name=\"referrer\" content=\"no-referrer\">"));
+        // #342: no initial-scale, so wide mail can be zoomed out to fit.
+        assert!(html.contains("<meta name=\"viewport\" content=\"width=device-width\">"));
+        assert!(!html.contains("initial-scale"));
         assert!(html.contains(
             "content=\"default-src 'none'; img-src mailcrane-cid: data:; \
              style-src 'unsafe-inline'\""
