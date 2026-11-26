@@ -826,6 +826,11 @@ mod suite {
             Fault::TempFailure,
             Fault::PermFailure,
             Fault::NoStartTls,
+            Fault::DropAfterCommandOnce("UID COPY".into()),
+            Fault::RefuseCommand {
+                folder: None,
+                text: "\\Deleted".into(),
+            },
         ];
         for fault in fault_cases {
             let server = FakeImap::builder()
@@ -836,5 +841,95 @@ mod suite {
             assert!(!server.root_cert_der().is_empty());
             server.shutdown().await;
         }
+    }
+
+    /// Reads lines up to and including the tagged reply for `tag`; `None`
+    /// if the connection closes first.
+    async fn imap_until_tagged(
+        stream: &mut tokio_rustls::client::TlsStream<TcpStream>,
+        tag: &str,
+    ) -> Option<String> {
+        let mut out = String::new();
+        loop {
+            let mut line = Vec::new();
+            loop {
+                let mut byte = [0u8; 1];
+                stream.read_exact(&mut byte).await.ok()?;
+                line.push(byte[0]);
+                if line.ends_with(b"\r\n") {
+                    break;
+                }
+            }
+            let line = String::from_utf8_lossy(&line).into_owned();
+            out.push_str(&line);
+            if line.starts_with(&format!("{tag} ")) {
+                return Some(out);
+            }
+        }
+    }
+
+    /// #423: `DropAfterCommandOnce` carries the command out, then closes
+    /// without the reply, once per server; `RefuseCommand` answers NO only
+    /// in its folder and changes nothing.
+    #[tokio::test]
+    async fn targeted_drop_and_refusal_faults() {
+        let server = FakeImap::builder()
+            .folder("INBOX", vec![b"From: a@example.org\r\n\r\nA".to_vec()])
+            .folder("Snoozed", Vec::new())
+            .fault(Fault::DropAfterCommandOnce("UID COPY".into()))
+            .fault(Fault::RefuseCommand {
+                folder: Some("INBOX".into()),
+                text: "\\Deleted".into(),
+            })
+            .start()
+            .await
+            .expect("server starts");
+        for attempt in 1..=2 {
+            let mut stream = open_tls(server.addr(), server.root_cert_der()).await;
+            let _ = imap_read_line(&mut stream).await;
+            stream
+                .write_all(b"a1 SELECT INBOX\r\n")
+                .await
+                .expect("SELECT");
+            assert!(imap_until_tagged(&mut stream, "a1").await.is_some());
+            stream
+                .write_all(b"a2 UID COPY 1 Snoozed\r\n")
+                .await
+                .expect("COPY");
+            let reply = imap_until_tagged(&mut stream, "a2").await;
+            if attempt == 1 {
+                assert!(reply.is_none(), "first COPY: no reply");
+            } else {
+                assert!(
+                    reply.is_some_and(|r| r.contains("a2 OK")),
+                    "second COPY answered"
+                );
+                stream
+                    .write_all(b"a3 UID STORE 1 +FLAGS.SILENT (\\Deleted)\r\n")
+                    .await
+                    .expect("STORE");
+                let refused = imap_until_tagged(&mut stream, "a3").await.expect("reply");
+                assert!(refused.contains("a3 NO"), "{refused}");
+                stream
+                    .write_all(b"a4 SELECT Snoozed\r\n")
+                    .await
+                    .expect("SELECT");
+                assert!(imap_until_tagged(&mut stream, "a4").await.is_some());
+                stream
+                    .write_all(b"a5 UID STORE 1 +FLAGS.SILENT (\\Deleted)\r\n")
+                    .await
+                    .expect("STORE");
+                let other = imap_until_tagged(&mut stream, "a5").await.expect("reply");
+                assert!(other.contains("a5 OK"), "other folder not refused: {other}");
+            }
+        }
+        // Both COPYs were carried out, the dropped one included.
+        assert_eq!(server.mailbox().messages("Snoozed").await.len(), 2);
+        let inbox = server.mailbox().messages("INBOX").await;
+        assert!(
+            !inbox[0].flags.contains(&"\\Deleted".to_owned()),
+            "refused STORE changed nothing"
+        );
+        server.shutdown().await;
     }
 }
