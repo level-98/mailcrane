@@ -279,6 +279,10 @@ fn display_name_fixtures() {
         ),
         ("display-name-same-org", None),
         (
+            "display-name-bidi",
+            Some(("ceo@example.com", "x@example.net")),
+        ),
+        (
             "display-name-encoded",
             Some(("ceo@example.com", "x@example.net")),
         ),

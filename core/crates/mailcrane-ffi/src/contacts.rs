@@ -40,7 +40,7 @@ pub fn suggest_contacts(
         .into_iter()
         .map(|s| ContactSuggestion {
             email: s.email,
-            name: crate::messages::one_line(&s.name),
+            name: crate::messages::display_line(&s.name),
         })
         .collect())
 }
