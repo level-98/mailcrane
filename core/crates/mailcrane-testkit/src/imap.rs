@@ -1236,13 +1236,12 @@ fn header_fields(raw: &[u8], wanted: &[&str]) -> Vec<u8> {
 }
 
 /// The first `name` header of `raw`, unfolded (RFC 5322 §2.2.3) and
-/// trimmed, with CR, LF and NUL removed; `None` when absent or empty.
-/// Accepts LF-only line ends too, since fixtures and appended mail vary.
+/// trimmed, with CR, LF and NUL removed; `None` when absent or empty. Lines
+/// end in CRLF, as `header_fields` and `body_structure` expect too.
 fn header_value(raw: &[u8], name: &str) -> Option<String> {
     let text = String::from_utf8_lossy(raw);
     let mut found: Option<String> = None;
-    for line in text.split('\n') {
-        let line = line.strip_suffix('\r').unwrap_or(line);
+    for line in text.split("\r\n") {
         if line.is_empty() {
             break;
         }
@@ -1263,13 +1262,19 @@ fn header_value(raw: &[u8], name: &str) -> Option<String> {
         }
     }
     found
-        .map(|v| v.replace(['\r', '\n', '\0'], ""))
+        .map(|v| v.replace(['\r', '\n', '\0'], "").trim().to_string())
         .filter(|v| !v.is_empty())
 }
 
-/// `"text"`, escaped, or `NIL` (RFC 9051 §4.5 nstring).
+/// RFC 9051 §4.5 nstring: `NIL`, a quoted string, or for 8-bit text a
+/// literal (`{n}` then the bytes), since a quoted string may only hold
+/// 7-bit text without UTF8=ACCEPT (§4.3), as a real server sends it.
 fn nstring(value: Option<&str>) -> String {
-    value.map_or_else(|| "NIL".to_string(), |v| format!("\"{}\"", quoted(v)))
+    match value {
+        None => "NIL".to_string(),
+        Some(v) if !v.is_ascii() => format!("{{{}}}\r\n{v}", v.len()),
+        Some(v) => format!("\"{}\"", quoted(v)),
+    }
 }
 
 /// Splits an address list at commas outside quotes, angle brackets and
@@ -1312,16 +1317,83 @@ fn split_addresses(value: &str) -> Vec<String> {
         .collect()
 }
 
-/// Text outside `(comments)`, trimmed.
+/// `text` without its `(comments)`, trimmed. Inside a quoted string,
+/// parentheses are plain text (RFC 5322 §3.2.4), so they're kept there.
 fn without_comments(text: &str) -> String {
-    let mut depth = 0u32;
+    let (mut depth, mut in_quote, mut escaped) = (0u32, false, false);
     let mut out = String::new();
     for c in text.chars() {
+        if escaped {
+            escaped = false;
+            if depth == 0 {
+                out.push(c);
+            }
+            continue;
+        }
         match c {
-            '(' => depth = depth.saturating_add(1),
-            ')' => depth = depth.saturating_sub(1),
-            _ if depth == 0 => out.push(c),
+            '\\' if in_quote || depth > 0 => {
+                escaped = true;
+                if depth == 0 {
+                    out.push(c);
+                }
+                continue;
+            }
+            '"' if depth == 0 => in_quote = !in_quote,
+            '(' if !in_quote => {
+                depth = depth.saturating_add(1);
+                continue;
+            }
+            ')' if !in_quote && depth > 0 => {
+                depth = depth.saturating_sub(1);
+                continue;
+            }
             _ => {}
+        }
+        if depth == 0 {
+            out.push(c);
+        }
+    }
+    out.trim().to_string()
+}
+
+/// The byte offsets of the angle-addr `<...>` in a name-addr: the last `<`
+/// outside quotes and comments, and the last `>` after it.
+fn angle_addr(entry: &str) -> Option<(usize, usize)> {
+    let (mut in_quote, mut escaped, mut comment) = (false, false, 0u32);
+    let mut open = None;
+    for (i, c) in entry.char_indices() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        match c {
+            '\\' if in_quote || comment > 0 => escaped = true,
+            '"' if comment == 0 => in_quote = !in_quote,
+            '(' if !in_quote => comment = comment.saturating_add(1),
+            ')' if !in_quote => comment = comment.saturating_sub(1),
+            '<' if !in_quote && comment == 0 => open = Some(i),
+            _ => {}
+        }
+    }
+    let open = open?;
+    let close = entry.rfind('>').filter(|close| *close > open)?;
+    Some((open, close))
+}
+
+/// A display name with its surrounding quotes removed and every
+/// quoted-pair (`\x`, RFC 5322 §3.2.1) unescaped.
+fn unquoted(name: &str) -> String {
+    let Some(inner) = name.strip_prefix('"').and_then(|n| n.strip_suffix('"')) else {
+        return name.to_string();
+    };
+    let mut out = String::new();
+    let mut escaped = false;
+    for c in inner.chars() {
+        if escaped || c != '\\' {
+            out.push(c);
+            escaped = false;
+        } else {
+            escaped = true;
         }
     }
     out.trim().to_string()
@@ -1329,9 +1401,11 @@ fn without_comments(text: &str) -> String {
 
 /// One envelope address, `(name NIL mailbox host)` (RFC 9051 §7.5.2), from
 /// `Name <local@host>`, `"Name" <local@host>` or a bare `local@host`.
-fn envelope_address(entry: &str) -> String {
-    let (name, address) = match (entry.find('<'), entry.rfind('>')) {
-        (Some(open), Some(close)) if open < close => (
+/// `None` for an empty `<>`. A missing mailbox or host gets a placeholder,
+/// as Dovecot does, since a NIL host would mark a group (§7.5.2).
+fn envelope_address(entry: &str) -> Option<String> {
+    let (name, address) = match angle_addr(entry) {
+        Some((open, close)) => (
             entry.get(..open).map(without_comments).unwrap_or_default(),
             entry
                 .get(open + 1..close)
@@ -1339,23 +1413,29 @@ fn envelope_address(entry: &str) -> String {
                 .trim()
                 .to_string(),
         ),
-        _ => (String::new(), without_comments(entry)),
+        None => (String::new(), without_comments(entry)),
     };
-    let name = name
-        .strip_prefix('"')
-        .and_then(|n| n.strip_suffix('"'))
-        .map(|n| n.replace("\\\"", "\"").replace("\\\\", "\\"))
-        .unwrap_or(name);
+    let name = unquoted(&name);
+    if address.is_empty() && name.is_empty() {
+        return None;
+    }
     let (mailbox, host) = match address.rsplit_once('@') {
-        Some((local, host)) => (local.to_string(), Some(host.to_string())),
-        None => (address, None),
+        Some((local, host)) => (local.to_string(), host.to_string()),
+        None => (address, String::new()),
     };
-    format!(
+    let or = |value: String, placeholder: &str| {
+        if value.is_empty() {
+            placeholder.to_string()
+        } else {
+            value
+        }
+    };
+    Some(format!(
         "({} NIL {} {})",
         nstring(Some(name.as_str()).filter(|n| !n.is_empty())),
-        nstring(Some(mailbox.as_str()).filter(|m| !m.is_empty())),
-        nstring(host.as_deref().filter(|h| !h.is_empty()))
-    )
+        nstring(Some(or(mailbox, "MISSING_MAILBOX").as_str())),
+        nstring(Some(or(host, "MISSING_DOMAIN").as_str()))
+    ))
 }
 
 /// An envelope address list, `((...)(...))`, or `NIL` when the header is
@@ -1365,7 +1445,7 @@ fn envelope_addresses(value: Option<&str>) -> String {
         .map(split_addresses)
         .unwrap_or_default()
         .iter()
-        .map(|entry| envelope_address(entry))
+        .filter_map(|entry| envelope_address(entry))
         .collect();
     if list.is_empty() {
         "NIL".to_string()
@@ -1378,14 +1458,20 @@ fn envelope_addresses(value: Option<&str>) -> String {
 /// as a real server does: date, subject, from, sender, reply-to, to, cc,
 /// bcc, in-reply-to, message-id. Values are sent as written (encoded words
 /// stay encoded). Sender and Reply-To default to From when absent. A
-/// message without a Message-ID gets `<uid@example.org>`, so fixtures
-/// without one still have a stable id (#416).
-fn envelope(raw: &[u8], uid: u32) -> String {
+/// message without a Message-ID gets `<folder.uid@example.org>`, stable and
+/// different in every folder (#416).
+fn envelope(raw: &[u8], folder: &str, uid: u32) -> String {
     let field = |name: &str| header_value(raw, name);
     let from = field("From");
     let sender = field("Sender").or_else(|| from.clone());
     let reply_to = field("Reply-To").or_else(|| from.clone());
-    let message_id = field("Message-ID").unwrap_or_else(|| format!("<{uid}@example.org>"));
+    let message_id = field("Message-ID").unwrap_or_else(|| {
+        let folder: String = folder
+            .chars()
+            .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
+            .collect();
+        format!("<{folder}.{uid}@example.org>")
+    });
     format!(
         "({} {} {} {} {} {} {} {} {} {})",
         nstring(field("Date").as_deref()),
@@ -1487,7 +1573,7 @@ async fn handle_uid_command(
                         line.push_str(" ENVELOPE (\"only\" \"two\")");
                     } else {
                         line.push_str(" ENVELOPE ");
-                        line.push_str(&envelope(&message.raw, message.uid));
+                        line.push_str(&envelope(&message.raw, folder, message.uid));
                     }
                 }
                 if items.contains("BODYSTRUCTURE") {
@@ -1704,7 +1790,7 @@ mod envelope_tests {
             Message-ID: <m1@example.org>\r\n\
             \r\nBody\r\n";
         assert_eq!(
-            envelope(raw, 7),
+            envelope(raw, "INBOX", 7),
             "(\"Tue, 03 Mar 2026 09:15:00 +0100\" \"Lunch plans\" \
              ((\"Ana B.\" NIL \"ana\" \"example.org\")) \
              ((\"Ana B.\" NIL \"ana\" \"example.org\")) \
@@ -1720,22 +1806,22 @@ mod envelope_tests {
     #[test]
     fn missing_fields_are_nil_and_sender_and_reply_to_default_to_from() {
         assert_eq!(
-            envelope(b"From: ana@example.org\r\n\r\nx", 3),
+            envelope(b"From: ana@example.org\r\n\r\nx", "INBOX", 3),
             "(NIL NIL ((NIL NIL \"ana\" \"example.org\")) ((NIL NIL \"ana\" \"example.org\")) \
-             ((NIL NIL \"ana\" \"example.org\")) NIL NIL NIL NIL \"<3@example.org>\")"
+             ((NIL NIL \"ana\" \"example.org\")) NIL NIL NIL NIL \"<INBOX.3@example.org>\")"
         );
         let raw = b"From: ana@example.org\r\nSender: list@example.net\r\n\
             Reply-To: Team <team@example.com>\r\nBcc: undisclosed-recipients:;\r\n\r\n";
-        let env = envelope(raw, 1);
+        let env = envelope(raw, "INBOX", 1);
         assert!(env.contains(" ((NIL NIL \"list\" \"example.net\")) ((\"Team\" NIL \"team\" \"example.com\")) NIL NIL NIL NIL "), "{env}");
     }
 
-    /// Quotes and backslashes in names are escaped; groups, comments and
-    /// LF-only line ends work; odd input never panics.
+    /// Quotes and backslashes in names are escaped; groups and comments
+    /// work; odd input never panics.
     #[test]
     fn odd_headers_are_escaped_and_never_panic() {
-        let raw = b"From: \"A \\\"Q\\\" B\" <a@example.org>\nTo: Team: x@example.org, (c) y@example.net;\n\nz";
-        let env = envelope(raw, 1);
+        let raw = b"From: \"A \\\"Q\\\" B\" <a@example.org>\r\nTo: Team: x@example.org, (c) y@example.net;\r\n\r\nz";
+        let env = envelope(raw, "INBOX", 1);
         assert!(
             env.contains("((\"A \\\"Q\\\" B\" NIL \"a\" \"example.org\"))"),
             "{env}"
@@ -1752,12 +1838,96 @@ mod envelope_tests {
             b"From: >a@b<\r\n",
             b"From: \"unterminated <a@b>\r\n",
             b"From: a@b@c, ,,, ;;; ::: ((((\r\n",
-            b"To: \xff\xfe@\xff\r\n",
             b"\tcontinuation without a header\r\nFrom: x@y\r\n",
+            b"From: \"\\\r\n",
+            b"From: ((\"<\r\n",
         ] {
-            let env = envelope(raw, 9);
+            let env = envelope(raw, "INBOX", 9);
             assert!(env.starts_with('(') && env.ends_with(')'), "{env}");
             assert!(!env.contains('\r') && !env.contains('\n'), "{env}");
         }
+        // 8-bit text (here, invalid UTF-8 made lossy) goes out as a literal.
+        let env = envelope(b"To: \xff\xfe@\xff\r\n", "INBOX", 9);
+        assert!(env.contains("{3}\r\n\u{fffd}"), "{env}");
+    }
+
+    /// #424 review: a `<` or parentheses inside a quoted display name are
+    /// part of the name, and every quoted-pair is unescaped.
+    #[test]
+    fn quoted_names_keep_angle_brackets_and_parentheses() {
+        let env = envelope(b"From: \"Sales <EU>\" <s@example.org>\r\n", "INBOX", 1);
+        assert!(
+            env.contains("((\"Sales <EU>\" NIL \"s\" \"example.org\"))"),
+            "{env}"
+        );
+        let env = envelope(b"From: (a <comment>) Ana <ana@example.org>\r\n", "INBOX", 1);
+        assert!(
+            env.contains("((\"Ana\" NIL \"ana\" \"example.org\"))"),
+            "{env}"
+        );
+        let env = envelope(
+            b"From: \"Jane Doe (Acme)\" <jane@example.org>\r\n",
+            "INBOX",
+            1,
+        );
+        assert!(
+            env.contains("((\"Jane Doe (Acme)\" NIL \"jane\" \"example.org\"))"),
+            "{env}"
+        );
+        let env = envelope(b"From: \"A \\(B\\) \\a\" <a@example.org>\r\n", "INBOX", 1);
+        assert!(
+            env.contains("((\"A (B) a\" NIL \"a\" \"example.org\"))"),
+            "{env}"
+        );
+    }
+
+    /// #424 review: a missing mailbox or host gets a placeholder, never NIL,
+    /// which would read as an RFC 9051 §7.5.2 group marker; `<>` is left out.
+    #[test]
+    fn missing_parts_get_placeholders_not_group_markers() {
+        let env = envelope(b"From: root\r\nTo: <>, b@example.org\r\n", "INBOX", 1);
+        assert!(
+            env.contains("((NIL NIL \"root\" \"MISSING_DOMAIN\"))"),
+            "{env}"
+        );
+        assert!(env.contains(" ((NIL NIL \"b\" \"example.org\")) "), "{env}");
+        let env = envelope(b"From: Ana <@example.org>\r\n", "INBOX", 1);
+        assert!(
+            env.contains("((\"Ana\" NIL \"MISSING_MAILBOX\" \"example.org\"))"),
+            "{env}"
+        );
+    }
+
+    /// #424 review: folded values carry no stray spaces, and the fallback
+    /// Message-ID differs between folders.
+    #[test]
+    fn folded_values_are_trimmed_and_fallback_ids_differ_by_folder() {
+        let env = envelope(
+            b"Subject:\r\n Lunch\r\n \r\nTo:\r\n  a@example.org,\r\n  b@example.org\r\n\r\n",
+            "INBOX",
+            1,
+        );
+        assert!(env.contains(" \"Lunch\" "), "{env}");
+        assert!(
+            env.contains("((NIL NIL \"a\" \"example.org\")(NIL NIL \"b\" \"example.org\"))"),
+            "{env}"
+        );
+        assert!(envelope(b"From: a@example.org\r\n\r\n", "INBOX", 1)
+            .contains("\"<INBOX.1@example.org>\""));
+        assert!(envelope(b"From: a@example.org\r\n\r\n", "Sent Items", 1)
+            .contains("\"<Sent-Items.1@example.org>\""));
+    }
+
+    /// #424 review: 8-bit header text is sent as a literal, as RFC 9051
+    /// §4.3 requires without UTF8=ACCEPT.
+    #[test]
+    fn eight_bit_values_are_literals() {
+        let raw = "Subject: Grüße\r\nFrom: Zoë <zoe@example.org>\r\n\r\n".as_bytes();
+        let env = envelope(raw, "INBOX", 1);
+        assert!(env.contains(" {7}\r\nGrüße "), "{env}");
+        assert!(
+            env.contains("(({4}\r\nZoë NIL \"zoe\" \"example.org\"))"),
+            "{env}"
+        );
     }
 }

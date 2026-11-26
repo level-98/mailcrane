@@ -818,7 +818,7 @@ mod suite {
             "{copy}"
         );
         assert!(
-            copy.contains("\"<m1@example.org>\" \"<1@example.org>\")"),
+            copy.contains("\"<m1@example.org>\" \"<Sent.1@example.org>\")"),
             "{copy}"
         );
 
