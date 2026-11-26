@@ -62,6 +62,7 @@ Mailcrane may have only one maintainer, so review is set up not to block:
 |---|---|
 | Docs, tests, UI, most code | CI green + one maintainer approval. A maintainer may merge their own PR once CI is green and it has been open 24 hours. |
 | Labelled `security` (sign-in, OAuth, credential storage, TLS, the HTML sanitiser, encryption) | CI green + a maintainer's review. If there is a second maintainer, they must approve too. Never self-merged in under 72 hours. |
+| Opened by the maintainer's agent fleet (the bot account) | The fleet lead merges on the maintainer's behalf when CI is green on the exact commit, its review seat's findings are resolved, QA has checked UI changes, and it has been open 24 hours (72 if labelled `security`). See [docs/fleet.md](docs/fleet.md#merging). |
 
 ## Decisions that only maintainers make
 
