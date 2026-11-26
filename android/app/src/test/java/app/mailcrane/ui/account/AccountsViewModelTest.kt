@@ -6,9 +6,9 @@ import app.mailcrane.core.MailServer
 import app.mailcrane.core.MailcraneCore
 import app.mailcrane.core.ManualAccountConfig
 import app.mailcrane.core.RemoveAccountFailure
+import app.mailcrane.core.UNIFIED_FOLDER_ID
 import app.mailcrane.settings.FakeAppSettings
 import app.mailcrane.settings.StartView
-import app.mailcrane.core.UNIFIED_FOLDER_ID
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.UnconfinedTestDispatcher

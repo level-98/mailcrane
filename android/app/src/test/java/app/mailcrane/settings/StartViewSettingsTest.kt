@@ -1,10 +1,15 @@
 package app.mailcrane.settings
 
 import android.app.Application
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import app.mailcrane.core.AccountSummary
 import app.mailcrane.ui.theme.MailcraneTheme
 import org.junit.Assert.assertEquals
@@ -46,11 +51,18 @@ class StartViewSettingsTest {
     @Test
     fun picksAChoice() {
         var picked: StartView = StartView.Last
-        compose.setContent { MailcraneTheme { StartViewContent(listOf(ann, bob), picked) { picked = it } } }
-        compose.onNodeWithText("Last used").assertIsSelected()
-        compose.onNodeWithText("bob@example.com inbox").performClick()
+        compose.setContent {
+            MailcraneTheme {
+                // Scrollable, as in Settings, in case the rows don't fit the test screen.
+                Column(Modifier.verticalScroll(rememberScrollState())) {
+                    StartViewContent(listOf(ann, bob), picked) { picked = it }
+                }
+            }
+        }
+        compose.onNodeWithText("Last used").performScrollTo().assertIsSelected()
+        compose.onNodeWithText("bob@example.com inbox").performScrollTo().performClick()
         assertEquals(StartView.Account(2), picked)
-        compose.onNodeWithText("All inboxes").performClick()
+        compose.onNodeWithText("All inboxes").performScrollTo().performClick()
         assertEquals(StartView.Unified, picked)
     }
 
