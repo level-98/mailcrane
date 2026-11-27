@@ -57,6 +57,17 @@ jobs:
         run: python3 scripts/update_roadmap.py
       - name: Test roadmap generator
         run: python3 -m unittest discover -s tests -v
+      # content/privacy.md is generated. A PR may change it only to what the
+      # script builds from main's policy, never by hand.
+      - name: Refuse hand edits to the generated privacy page
+        if: github.event_name == 'pull_request'
+        env:
+          BASE: ${{ github.base_ref }}
+        run: |
+          git fetch --no-tags --depth=1 origin "$BASE"
+          if [ -n "$(git diff --name-only FETCH_HEAD HEAD -- content/privacy.md)" ]; then
+            python3 scripts/build_privacy.py .policy/docs/privacy.md --check
+          fi
       - name: Build the privacy page from docs/privacy.md
         run: python3 scripts/build_privacy.py .policy/docs/privacy.md
       - name: Build site

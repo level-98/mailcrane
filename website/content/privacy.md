@@ -15,7 +15,7 @@ The site is hosted with GitHub Pages. When your browser requests a page, GitHub 
 
 ## The app
 
-> **Draft:** Mailcrane is not released yet, and the maintainer hasn't approved this policy. It describes what the app does today; it takes effect, with a date in the table at the end, when the first release is published.
+**Draft for the maintainer to approve (#75). Not in effect yet.**
 
 Mailcrane is an email app. It collects nothing: no account with us, no analytics, no crash reports, no ads. The project has no servers of its own, so there is nowhere for your data to go.
 
@@ -32,11 +32,11 @@ Passwords and sign-in tokens are kept in Android's secure storage (Android Keyst
 - **Unsubscribe.** If you confirm a one-tap unsubscribe, the app contacts the sender's server to remove you from the list. Other unsubscribe options open an email for you to send or the sender's web page.
 - **Links.** Tapping a link in a message opens it in your browser, after showing where it goes (unless you turn that off).
 - **About Mailcrane.** In Settings, the links to this website, this policy, the source code and the licence open in your browser, only when you tap one.
-- **Signing in with Google.** Choosing "Sign in with Google" for a Gmail account opens Google's sign-in page in your browser, and Google's privacy policy applies. The app then gets and renews its sign-in tokens from Google's sign-in servers, and talks to Gmail's mail servers like any other provider. Sign in with Google is built and is waiting for Google to verify the app; Gmail also works with an app password. Signing in with Microsoft isn't built yet, and this policy will name it before it is.
+- **Signing in with Google or Microsoft** (when the app adds it) opens their sign-in page, and their privacy policies apply. The app then talks to their mail servers like any other provider.
 - **Push wake-ups** (optional, off unless you turn them on). Mailcrane registers with the UnifiedPush distributor app you chose, and that distributor's push server can then wake the app to check your mail. No mail content, address or password goes through it: a wake-up only makes Mailcrane check your own mail servers. Who runs the push server depends on the distributor you pick, and their policy applies. For JMAP accounts, Mailcrane also gives your JMAP mail server the push address and the keys to encrypt what it sends there, so the server can wake the app itself when mail arrives.
 - **Downloads and updates** through Google Play, F-Droid or GitHub are covered by those services' own policies.
 
-Nothing else. If a future version adds a connection, this policy will name it before that version is released.
+Nothing else. If a future version adds a connection, for example for push notifications, this policy will name it before that version is released.
 
 ### Permissions
 

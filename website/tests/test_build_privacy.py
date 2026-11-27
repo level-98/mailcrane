@@ -56,8 +56,61 @@ class PolicyBodyTest(unittest.TestCase):
     def test_hashtag_without_space_is_not_a_heading(self):
         self.assertIn("#475 is text", policy_body("# T\n\n#475 is text\n"))
 
+    def test_a_comment_never_joins_the_lines_around_it(self):
+        body = policy_body("# T\n\nPara one.\n<!-- note -->\n\nPara two.\n<!-- a -->\n## Contact\n")
+        self.assertEqual(body, "Para one.\n\nPara two.\n### Contact")
+
+    def test_multi_line_comments_are_dropped(self):
+        self.assertEqual(policy_body("# T\n\n<!-- one\ntwo -->\n\nText.\n"), "Text.")
+
+    def test_comments_inside_code_blocks_stay(self):
+        self.assertIn("<!-- shown -->", policy_body("# T\n\n```\n<!-- shown -->\n```\n"))
+
+    def test_refuses_what_zola_or_a_browser_would_run(self):
+        for bad in (
+            "Text {{ name() }} here",
+            "{% name() %}x{% end %}",
+            "```\n{{ even_in_code() }}\n```",
+            "<script>alert(1)</script>",
+            "Inline <iframe src=x>",
+            "text <!-- todo --> more",
+            "<!-- note --> trailing",
+            "</div>",
+        ):
+            with self.subTest(bad=bad), self.assertRaises(PolicyError):
+                policy_body("# T\n\n" + bad + "\n")
+
+    def test_autolinks_and_comparisons_are_not_html(self):
+        body = policy_body("# T\n\nSee <https://example.org/a> or <help@example.org>; 1 < 2.\n")
+        self.assertIn("<https://example.org/a>", body)
+
+    def test_a_longer_fence_is_closed_only_by_its_own_length(self):
+        body = policy_body("# T\n\n````\n```\n## inside\n````\n\n## After\n")
+        self.assertIn("\n## inside\n", body)
+        self.assertIn("### After", body)
+
+    def test_indented_headings_move_down_too(self):
+        self.assertEqual(policy_body("# T\n\n  ## Permissions\n"), "### Permissions")
+        with self.assertRaises(PolicyError):
+            policy_body("# T\n\n   # Second title\n")
+
+    def test_underlined_headings_are_refused(self):
+        for bad in ("Permissions\n---", "Title\n==="):
+            with self.subTest(bad=bad), self.assertRaises(PolicyError):
+                policy_body("# T\n\n" + bad + "\n")
+        # A rule after a blank line is a thematic break, not a heading.
+        self.assertIn("---", policy_body("# T\n\nText.\n\n---\n\nMore.\n"))
+
+    def test_a_byte_order_mark_is_ignored(self):
+        self.assertEqual(policy_body("﻿" + POLICY), policy_body(POLICY))
+
+    def test_unclosed_comment_or_fence_is_refused(self):
+        for bad in ("<!-- never closed\n", "```\nnever closed\n"):
+            with self.subTest(bad=bad), self.assertRaises(PolicyError):
+                policy_body("# T\n\nText.\n" + bad)
+
     def test_refuses_a_policy_it_cannot_place(self):
-        for bad in ("", "No title\n", "# T\n", "# T\n\n# Second title\n", "# T\n\n###### Too deep\n"):
+        for bad in ("", "No title\n", "# T\n", "# T\n\n# Second title\n", "# T\n\n###### Too deep\n", "Text first\n# T\n"):
             with self.subTest(bad=bad), self.assertRaises(PolicyError):
                 policy_body(bad)
 
@@ -110,6 +163,11 @@ class MainTest(unittest.TestCase):
         with mock.patch("sys.stderr"):
             self.assertEqual(build_privacy.main([str(self.policy.with_name("missing.md"))]), 1)
         self.assertFalse(self.output.exists())
+
+    def test_reads_a_policy_saved_with_a_bom(self):
+        self.policy.write_text("﻿" + POLICY, encoding="utf-8")
+        self.assertEqual(build_privacy.main([str(self.policy)]), 0)
+        self.assertEqual(self.output.read_text(encoding="utf-8"), build_page(POLICY, TEMPLATE))
 
     def test_usage(self):
         with mock.patch("sys.stderr"):
