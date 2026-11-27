@@ -3,6 +3,7 @@ package app.mailcrane.ui.message
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import app.mailcrane.core.ActionFailure
+import app.mailcrane.core.CoreEvent
 import app.mailcrane.core.InlinePart
 import app.mailcrane.core.LinkCheck
 import app.mailcrane.core.LinkChecker
@@ -28,6 +29,8 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -184,6 +187,17 @@ class MessageViewModel
                 // A provider server name was saved or cleared: read the sender check again at once.
                 senderTrust.version.drop(1).collect { refresh() }
             }
+            viewModelScope.launch {
+                // A wake moving the message lands with a change: "Waking…" and the disabled Snooze
+                // follow the snooze row, with no timer (#431).
+                core.events.filter { it is CoreEvent.MessagesChanged }.collect { refreshSnooze() }
+            }
+        }
+
+        /** Reads the message's snooze again and applies it to the state as it is now. */
+        private suspend fun refreshSnooze() {
+            val info = snoozeOf()
+            _state.update { (it as? MessageState.Ready)?.copy(snooze = info) ?: it }
         }
 
         /** Reads the shown message again without the loading state, for example after [SenderTrustChanges]. */
@@ -195,7 +209,11 @@ class MessageViewModel
                     try {
                         val message = core.getMessage(messageId, ready.remoteAllowed)
                         _state.value =
-                            ready.copy(message = message, unsubscribe = core.unsubscribeOptions(messageId))
+                            ready.copy(
+                                message = message,
+                                unsubscribe = core.unsubscribeOptions(messageId),
+                                snooze = snoozeOf(),
+                            )
                     } catch (e: SyncFailure.Failed) {
                         _state.value = MessageState.Failed(e.kind)
                     }
@@ -334,11 +352,7 @@ class MessageViewModel
                             else -> ActionRefusal.FAILED
                         }
                     // Waking: the message now shows as waking, with snoozing disabled until it lands.
-                    if (e is SnoozeFailure.Waking) {
-                        (_state.value as? MessageState.Ready)?.let { ready ->
-                            _state.value = ready.copy(snooze = snoozeOf())
-                        }
-                    }
+                    if (e is SnoozeFailure.Waking) refreshSnooze()
                     _effects.send(MessageEffect.ActionRefused(reason))
                 }
             }

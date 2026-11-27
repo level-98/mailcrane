@@ -61,15 +61,67 @@ fn unsnoozing_mid_move_keeps_the_row_and_wakes_it_at_once() -> R {
         (2, 1_795_500_000, false)
     );
 
-    // Before any server step it is simply dropped, as before.
+    // Snoozed from the Inbox, before any server step: simply dropped, and
+    // shown again.
+    let inbox = store.upsert_folder(&NewFolder {
+        account_id: a,
+        remote_name: "INBOX".into(),
+        display_name: "INBOX".into(),
+        delimiter: Some("/".into()),
+        role: Some(FolderRole::Inbox),
+        uidvalidity: Some(1),
+        uidnext: Some(100),
+        highestmodseq: None,
+        is_subscribed: true,
+        selectable: true,
+    })?;
+    let row = store.upsert_message_header(&NewMessageHeader {
+        folder_id: inbox,
+        uid: 5,
+        message_id_header: Some("m2@example.org".into()),
+        in_reply_to: None,
+        references_json: "[]".into(),
+        thread_id: None,
+        subject: "Plans".into(),
+        from_name: Some("Bob".into()),
+        from_addr: Some("bob@example.org".into()),
+        to_json: "[]".into(),
+        cc_json: "[]".into(),
+        date: 1_795_000_000,
+        internal_date: 1_795_000_000,
+        size: 10,
+        flags: Flags::default(),
+        keywords_json: "[]".into(),
+        has_attachments: false,
+        snippet: String::new(),
+    })?;
     let other = store
         .snooze_message(&NewSnooze {
             message_id_header: "m2@example.org".into(),
+            original_folder_id: Some(inbox),
+            hide_message: Some(row),
             ..new(a)
         })?
         .ok_or("waking")?;
     assert!(store.request_unsnooze(a, "m2@example.org", 1_795_500_000)?);
     assert!(store.get_snooze_by_id(other)?.is_none());
+    assert_eq!(store.list_messages(inbox, 10, 0)?.len(), 1, "shown again");
+
+    // Snoozed from the Snoozed folder (no hidden row): the message is in
+    // Snoozed already, so unsnoozing wakes it rather than dropping the row
+    // and leaving it there (review of #455).
+    let third = store
+        .snooze_message(&NewSnooze {
+            message_id_header: "m3@example.org".into(),
+            ..new(a)
+        })?
+        .ok_or("waking")?;
+    assert!(store.request_unsnooze(a, "m3@example.org", 1_795_500_000)?);
+    let s = store.get_snooze_by_id(third)?.ok_or("kept")?;
+    assert_eq!(
+        (s.state, s.wake_at, s.mark_unread),
+        (SnoozeState::ToWake, 1_795_500_000, false)
+    );
     Ok(())
 }
 
@@ -172,16 +224,24 @@ fn a_move_starts_only_while_the_row_is_unchanged() -> R {
             ..new(a)
         })?
         .is_some());
-    assert!(!store.start_snooze_move(id, SnoozeState::ToWake, 9)?);
+    assert!(!store.start_snooze_move(id, SnoozeState::ToWake, 1_795_600_000, 9)?);
     let s = store.get_snooze_by_id(id)?.ok_or("snooze")?;
     assert_eq!(
         (s.state, s.step, s.wake_at),
         (SnoozeState::ToSnooze, 0, 1_797_000_000)
     );
+    // Another time than the sync read: not started either.
+    assert!(!store.start_snooze_move(id, SnoozeState::ToSnooze, 1_795_600_000, 9)?);
     // Unchanged, it starts; and a resumed start at step 1 too.
-    assert!(store.start_snooze_move(id, SnoozeState::ToSnooze, 9)?);
-    assert!(store.start_snooze_move(id, SnoozeState::ToSnooze, 9)?);
+    assert!(store.start_snooze_move(id, SnoozeState::ToSnooze, 1_797_000_000, 9)?);
+    assert!(store.start_snooze_move(id, SnoozeState::ToSnooze, 1_797_000_000, 9)?);
+    assert!(store.snooze_unchanged(id, SnoozeState::ToSnooze, 1, 1_797_000_000)?);
     store.set_snooze_step(id, 2, None)?;
-    assert!(!store.start_snooze_move(id, SnoozeState::ToSnooze, 9)?);
+    assert!(!store.start_snooze_move(id, SnoozeState::ToSnooze, 1_797_000_000, 9)?);
+    assert!(!store.snooze_unchanged(id, SnoozeState::ToSnooze, 1, 1_797_000_000)?);
+    // A wake's row goes only while it is the step the sync left it at.
+    assert!(!store.delete_snooze_if(id, SnoozeState::ToWake, 2)?);
+    assert!(store.delete_snooze_if(id, SnoozeState::ToSnooze, 2)?);
+    assert!(store.get_snooze_by_id(id)?.is_none());
     Ok(())
 }

@@ -3,6 +3,7 @@ package app.mailcrane.ui.message
 import app.mailcrane.core.ActionFailure
 import app.mailcrane.core.AuthResult
 import app.mailcrane.core.AuthVerdict
+import app.mailcrane.core.CoreEvent
 import app.mailcrane.core.InlinePart
 import app.mailcrane.core.LinkCheck
 import app.mailcrane.core.LinkChecker
@@ -27,6 +28,7 @@ import app.mailcrane.settings.FakeAppSettings
 import app.mailcrane.ui.compose.ComposePrefill
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.resetMain
@@ -98,6 +100,8 @@ private class FakeMessageCore(
     var remoteBlocked: UInt = 2u,
     var plain: Boolean = false,
 ) : MessageCore {
+    override val events = MutableSharedFlow<CoreEvent>(extraBufferCapacity = 8)
+
     val calls = mutableListOf<String>()
     var fetchFailure: SyncErrorKind? = null
     var markReadFailure: SyncErrorKind? = null
@@ -539,6 +543,10 @@ class MessageViewModelTest {
             vm.snooze(1_900_000_000)
             assertEquals(MessageEffect.ActionRefused(ActionRefusal.WAKING), vm.effects.first())
             assertEquals(true, ready(vm).snooze?.waking)
+            // The wake lands: the change re-enables snoozing, with no timer.
+            core.snoozeInfo = null
+            core.events.emit(CoreEvent.MessagesChanged(folderId = 1L))
+            assertEquals(null, ready(vm).snooze)
         }
 
     @Test

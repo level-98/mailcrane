@@ -129,15 +129,16 @@ pub async fn sync_snoozes(
         if s.state == SnoozeState::Snoozed {
             continue;
         }
-        // `None`: a refused move was rolled back on the server. Each move
-        // runs boxed, so this loop's future stays small however much a move
-        // holds across its awaits.
+        // Each move runs boxed, so this loop's future stays small however
+        // much a move holds across its awaits.
         let result = if s.step == STEP_ROLLBACK {
-            Box::pin(roll_back(store, session, s)).await.map(|()| None)
+            Box::pin(roll_back(store, session, s))
+                .await
+                .map(|()| Outcome::RolledBack)
         } else if s.state == SnoozeState::ToSnooze {
-            Box::pin(snooze_one(store, session, s)).await.map(Some)
+            Box::pin(snooze_one(store, session, s)).await
         } else {
-            Box::pin(wake_one(store, session, s)).await.map(Some)
+            Box::pin(wake_one(store, session, s)).await
         };
         let result = match result {
             // Refused after the COPY started: remove the copy, then undo.
@@ -152,12 +153,16 @@ pub async fn sync_snoozes(
                     // The row as stored now: this sync may have recorded
                     // the target's UIDNEXT on it.
                     let fresh = store.get_snooze_by_id(s.id)?.unwrap_or_else(|| s.clone());
-                    carry_forward(store, session, &fresh).await.map(Some)
+                    carry_forward(store, session, &fresh)
+                        .await
+                        .map(Outcome::Done)
                 } else if matches!(step, STEP_COPY_STARTED | STEP_COPIED | STEP_ROLLBACK) {
                     tracing::warn!(snooze = s.id.0, state = ?s.state, step, "refused after the copy: rolling back");
                     store.start_snooze_rollback(s.id, now)?;
                     let fresh = store.get_snooze_by_id(s.id)?.unwrap_or_else(|| s.clone());
-                    roll_back(store, session, &fresh).await.map(|()| None)
+                    roll_back(store, session, &fresh)
+                        .await
+                        .map(|()| Outcome::RolledBack)
                 } else {
                     Err(e)
                 }
@@ -166,14 +171,10 @@ pub async fn sync_snoozes(
         };
         match result {
             // Changed by the user during this sync before anything was
-            // sent (`start_move`): not counted; the next sync carries the
-            // row out as it is now.
-            Ok(Some(changed))
-                if changed.is_empty()
-                    && store
-                        .get_snooze_by_id(s.id)?
-                        .is_some_and(|now| now.state != s.state) => {}
-            Ok(Some(changed)) => {
+            // sent: not counted; the next sync carries the row out as it is
+            // now, if it is still there.
+            Ok(Outcome::Changed) => {}
+            Ok(Outcome::Done(changed)) => {
                 match s.state {
                     SnoozeState::ToSnooze => report.snoozed += 1,
                     _ => report.woken += 1,
@@ -182,12 +183,12 @@ pub async fn sync_snoozes(
                     listener.on_event(CoreEvent::MessagesChanged { folder_id });
                 }
             }
-            Ok(None) if s.state == SnoozeState::ToWake => {
+            Ok(Outcome::RolledBack) if s.state == SnoozeState::ToWake => {
                 tracing::warn!(snooze = s.id.0, "wake rolled back on the server");
                 let outcome = refused_wake(store, session, s, now, listener).await;
                 tally(store, s, now, outcome, &mut report)?;
             }
-            Ok(None) => {
+            Ok(Outcome::RolledBack) => {
                 tracing::warn!(snooze = s.id.0, state = ?s.state, "rolled back on the server");
                 undo(store, s, listener)?;
                 report.failed += 1;
@@ -243,6 +244,21 @@ pub async fn sync_snoozes(
         }
     }
     Ok(report)
+}
+
+#[cfg(test)]
+mod race_tests;
+
+/// How carrying out one snooze row went, short of an error.
+enum Outcome {
+    /// Done; these folders changed.
+    Done(Vec<FolderId>),
+    /// A refused move was rolled back on the server.
+    RolledBack,
+    /// The user changed the row during this sync, before anything was
+    /// sent: nothing done; the next sync carries the row out as it is now
+    /// (#431, review of #455).
+    Changed,
 }
 
 fn store_err(e: StoreError) -> ChangeError {
@@ -510,7 +526,7 @@ fn old_keywords(store: &Store, folder: &Folder, s: &Snooze) -> Result<Vec<String
 /// row as it is now.
 fn start_move(store: &Store, s: &Snooze, uidnext: u32) -> Result<bool, ChangeError> {
     let started = store
-        .start_snooze_move(s.id, s.state, uidnext)
+        .start_snooze_move(s.id, s.state, s.wake_at, uidnext)
         .map_err(store_err)?;
     if !started {
         tracing::info!(
@@ -736,7 +752,7 @@ async fn snooze_one(
     store: &Store,
     session: &mut Session,
     s: &Snooze,
-) -> Result<Vec<FolderId>, ChangeError> {
+) -> Result<Outcome, ChangeError> {
     let snoozed = ensure_snoozed_folder(store, session, s.account_id).await?;
     // Where the message is now: its hidden row's folder, or (re-snoozing)
     // the Snoozed folder.
@@ -792,10 +808,23 @@ async fn snooze_one(
             store
                 .finish_snooze(s.id, info.custom_keywords && new.is_some())
                 .map_err(store_err)?;
-            return Ok(vec![source.id, snoozed.id]);
+            return Ok(Outcome::Done(vec![source.id, snoozed.id]));
         }
         // The message is gone from the server.
         return Err(ChangeError::Refused { transient: false });
+    }
+    let moving = source.id != snoozed.id;
+    // Nothing is sent for a row the user changed during this sync: a move
+    // records step 1 first, only while the row is unchanged (`start_move`;
+    // a drop after that resumes at step 1, where the copy gets its keyword
+    // after the move); a keyword change in place checks just before.
+    if s.step == STEP_NONE
+        && !Box::pin(still_unchanged(
+            store, session, s, moving, &source, &snoozed,
+        ))
+        .await?
+    {
+        return Ok(Outcome::Changed);
     }
     // Keywords go on before the COPY, so the copy carries them; a resumed
     // move doesn't set them again.
@@ -808,7 +837,7 @@ async fn snooze_one(
             session.uid_store_keyword(&uids, k, true).await?;
         }
     }
-    if source.id != snoozed.id {
+    if moving {
         let moved = move_uids(
             store,
             session,
@@ -819,47 +848,107 @@ async fn snooze_one(
         )
         .await?;
         if !moved {
-            return Ok(Vec::new());
+            return Ok(Outcome::Changed);
         }
-        if s.step != STEP_NONE && info.custom_keywords {
-            // A resumed move: the wake time may have changed since the
-            // keyword went on before the COPY (#432). Put the current one
-            // on the copy.
-            fix_copy_keyword(session, s, &snoozed, new.as_deref()).await?;
+        // A resumed move, or a new time picked during this one (#432,
+        // review of #455): the copy gets the keyword of the time stored now.
+        let now = store
+            .get_snooze_by_id(s.id)
+            .map_err(store_err)?
+            .map_or(s.wake_at, |fresh| fresh.wake_at);
+        let current = format_keyword(now);
+        if info.custom_keywords && (s.step != STEP_NONE || now != s.wake_at) {
+            fix_copy_keyword(session, s, &snoozed, current.as_deref()).await?;
         }
+        store
+            .finish_snooze(s.id, info.custom_keywords && current.is_some())
+            .map_err(store_err)?;
+        return Ok(Outcome::Done(vec![source.id, snoozed.id]));
     }
-    store
-        .finish_snooze(s.id, info.custom_keywords && new.is_some())
-        .map_err(store_err)?;
-    Ok(vec![source.id, snoozed.id])
+    // A keyword change in place: kept only if the row still has this time;
+    // otherwise the keyword just set goes again, and the next sync sets the
+    // one for the row as it is now (invariant 2).
+    let on_server = info.custom_keywords && new.is_some();
+    if !store
+        .finish_snooze_at(s.id, s.wake_at, on_server)
+        .map_err(store_err)?
+    {
+        if let (true, Some(k)) = (info.custom_keywords, &new) {
+            best_effort(s, session.uid_store_keyword(&uids, k, false).await)?;
+        }
+        return Ok(Outcome::Changed);
+    }
+    Ok(Outcome::Done(vec![source.id, snoozed.id]))
 }
 
 /// `uids` in the selected folder without those flagged `\Deleted`.
-async fn live_uids(session: &mut Session, uids: Vec<u32>) -> Result<Vec<u32>, ChangeError> {
-    let mut live = Vec::with_capacity(uids.len());
-    for uid in uids {
-        let fetched = session.uid_fetch_flags(uid, uid, None).await?;
-        let deleted = fetched
-            .updates
-            .iter()
-            .filter(|u| u.uid == uid)
-            .any(|u| u.flags.iter().any(|f| f.eq_ignore_ascii_case(r"\Deleted")));
-        if !deleted {
-            live.push(uid);
-        }
+/// Whether the snooze row is still what this sync read, just before its
+/// first server change: for a move, step 1 is recorded now (`start_move`),
+/// with `source` selected again afterwards; for a keyword change in place,
+/// the row is checked.
+async fn still_unchanged(
+    store: &Store,
+    session: &mut Session,
+    s: &Snooze,
+    moving: bool,
+    source: &Folder,
+    snoozed: &Folder,
+) -> Result<bool, ChangeError> {
+    if !moving {
+        return store
+            .snooze_unchanged(s.id, s.state, s.step, s.wake_at)
+            .map_err(store_err);
     }
-    Ok(live)
+    let target = session.select(&snoozed.details.remote_name).await?;
+    let started = start_move(store, s, target.uidnext)?;
+    session.select(&source.details.remote_name).await?;
+    Ok(started)
+}
+
+/// A UID counts only if the server answers for it without `\Deleted`: one
+/// that went between the SEARCH and this FETCH isn't the message.
+async fn live_uids(session: &mut Session, uids: Vec<u32>) -> Result<Vec<u32>, ChangeError> {
+    let (Some(&low), Some(&high)) = (uids.iter().min(), uids.iter().max()) else {
+        return Ok(uids);
+    };
+    let fetched = session.uid_fetch_flags(low, high, None).await?;
+    Ok(uids
+        .into_iter()
+        .filter(|uid| {
+            fetched.updates.iter().any(|u| {
+                u.uid == *uid && !u.flags.iter().any(|f| f.eq_ignore_ascii_case(r"\Deleted"))
+            })
+        })
+        .collect())
+}
+
+/// Drops a wake's row, only if it is still the `to_wake` at `step` this
+/// sync left it at: `Changed` if the user replaced it meanwhile (a
+/// re-snooze at step 0 is allowed, #431), so the new snooze is kept.
+fn finish_wake_row(
+    store: &Store,
+    s: &Snooze,
+    step: u8,
+    changed: Vec<FolderId>,
+) -> Result<Outcome, ChangeError> {
+    if store
+        .delete_snooze_if(s.id, SnoozeState::ToWake, step)
+        .map_err(store_err)?
+    {
+        Ok(Outcome::Done(changed))
+    } else {
+        Ok(Outcome::Changed)
+    }
 }
 
 async fn wake_one(
     store: &Store,
     session: &mut Session,
     s: &Snooze,
-) -> Result<Vec<FolderId>, ChangeError> {
+) -> Result<Outcome, ChangeError> {
     let Some(snoozed) = snoozed_folder(store, s.account_id).map_err(store_err)? else {
         // No Snoozed folder: nothing to move back.
-        store.delete_snooze(s.id, false).map_err(store_err)?;
-        return Ok(Vec::new());
+        return finish_wake_row(store, s, s.step, Vec::new());
     };
     let local = store
         .find_message_by_header(snoozed.id, &s.message_id_header)
@@ -888,11 +977,16 @@ async fn wake_one(
                 changed.push(dest.id);
             }
         }
+        if !store
+            .delete_snooze_if(s.id, SnoozeState::ToWake, s.step)
+            .map_err(store_err)?
+        {
+            return Ok(Outcome::Changed);
+        }
         if let Some(id) = local {
             store.delete_message_row(id).map_err(store_err)?;
         }
-        store.delete_snooze(s.id, false).map_err(store_err)?;
-        return Ok(changed);
+        return Ok(Outcome::Done(changed));
     }
     let dest = wake_destination(store, s)?;
     // Nothing on the server changes before the move (#436): the keyword
@@ -912,7 +1006,7 @@ async fn wake_one(
     )
     .await?;
     if !moved {
-        return Ok(Vec::new());
+        return Ok(Outcome::Changed);
     }
     let s = store
         .get_snooze_by_id(s.id)
@@ -927,6 +1021,5 @@ async fn wake_one(
     if let Some(id) = local {
         store.delete_message_row(id).map_err(store_err)?;
     }
-    store.delete_snooze(s.id, false).map_err(store_err)?;
-    Ok(vec![snoozed.id, dest.id])
+    finish_wake_row(store, &s, STEP_FLAGGED_DELETED, vec![snoozed.id, dest.id])
 }

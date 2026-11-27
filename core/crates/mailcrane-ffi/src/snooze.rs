@@ -48,7 +48,9 @@ pub struct SnoozeInfo {
     /// The wake time is known to this device only: the server can't store
     /// it, so other installs won't wake it.
     pub device_only: bool,
-    /// It is being moved back (woken or unsnoozed).
+    /// It is being moved back on the server right now (a wake past its
+    /// first step): it can't be snoozed again until it lands (#431). Not
+    /// set for a wake that hasn't started or is waiting to retry.
     pub waking: bool,
 }
 
@@ -57,7 +59,7 @@ impl From<&Snooze> for SnoozeInfo {
         Self {
             wake_at: s.wake_at,
             device_only: s.device_only(),
-            waking: s.state == SnoozeState::ToWake,
+            waking: s.state == SnoozeState::ToWake && s.step > 0,
         }
     }
 }
