@@ -37,11 +37,13 @@ import app.mailcrane.ui.MailHome
 import app.mailcrane.ui.account.AccountsViewModel
 import app.mailcrane.ui.account.ManualSetupScreen
 import app.mailcrane.ui.components.WelcomeState
+import app.mailcrane.ui.theme.FollowSystemBars
 import app.mailcrane.ui.theme.LocalDarkMessageBodies
 import app.mailcrane.ui.theme.LocalDarkTheme
 import app.mailcrane.ui.theme.LocalMailboxDensity
 import app.mailcrane.ui.theme.MailcraneTheme
 import app.mailcrane.ui.theme.ThemeViewModel
+import app.mailcrane.ui.theme.applySystemBarStyle
 import app.mailcrane.widget.EXTRA_ACCOUNT_ID
 import app.mailcrane.widget.EXTRA_MESSAGE_ID
 import app.mailcrane.work.SnoozeWaker
@@ -75,6 +77,12 @@ class MainActivity : FragmentActivity() {
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        // Edge to edge from the first frame, with the system's night mode as the best guess until the app's
+        // own theme (which may differ) is known below (#412).
+        val systemDark =
+            resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK ==
+                android.content.res.Configuration.UI_MODE_NIGHT_YES
+        applySystemBarStyle(systemDark)
         super.onCreate(savedInstanceState)
         if (savedInstanceState == null) readOpenRequest(intent)
         // With the app lock on, no screenshots and a blank app-switcher preview (M5-03), unless the
@@ -108,6 +116,9 @@ class MainActivity : FragmentActivity() {
                     ThemeMode.LIGHT -> false
                     ThemeMode.DARK -> true
                 }
+            // Status and navigation bar icons readable on the theme actually shown, including the in-app
+            // Light/Dark choice (#412).
+            FollowSystemBars(dark)
             MailcraneTheme(darkTheme = dark, dynamicColor = appearance.dynamicColor) {
                 CompositionLocalProvider(
                     LocalDarkTheme provides dark,
