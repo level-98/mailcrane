@@ -409,3 +409,4 @@ mod tests {
         assert_eq!(CRATE_NAME, "mailcrane-mime");
     }
 }
+// Throwaway line for #530's core-only CI run.
