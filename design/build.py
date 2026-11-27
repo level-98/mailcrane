@@ -6,11 +6,14 @@ Needs rsvg-convert, ImageMagick (`convert`) and fontTools.
 DM Sans is read from $DMSANS_TTF, or the Google Fonts path below.
 Only the generated folders next to this script are deleted and rebuilt.
 """
-import json, os, shutil, subprocess
+import os, shutil, subprocess, sys
 from fontTools.ttLib import TTFont
 from fontTools.varLib import instancer
 from fontTools.pens.svgPathPen import SVGPathPen
 from fontTools.pens.boundsPen import BoundsPen
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import palette  # noqa: E402
 
 OUT = os.path.dirname(os.path.abspath(__file__))
 GENERATED = ["brand", "app-icon", "splash", "ui-icons", "illustrations"]
@@ -18,22 +21,8 @@ for d in GENERATED:
     shutil.rmtree(os.path.join(OUT, d), ignore_errors=True)
 
 # ---------------------------------------------------------------- palette
-C = {
-    "primary": "#2B57D9",      # Crane blue
-    "primaryDark": "#1E44B8",
-    "primaryContainer": "#E3EAFF",
-    "tint": "#BFD0FF",
-    "ink": "#141A2E",          # text on light
-    "inkMuted": "#5A6380",
-    "surface": "#FFFFFF",
-    "surfaceDim": "#F4F6FB",
-    "outline": "#D5DBEA",
-    "darkSurface": "#0F1424",
-    "darkSurfaceHigh": "#1A2138",
-    "darkPrimary": "#8FA8FF",
-    "error": "#D93B3B",
-    "success": "#1F9D63",
-}
+# Read from colors.json, the single source (#495): edit the colours there.
+C = palette.load()
 
 # ---------------------------------------------------------------- crane mark
 # Origami crane on a 100-unit grid. Content bbox x 4..96, y 8..76 (centre 50,42).
@@ -305,9 +294,4 @@ illo("welcome", bg + "\n  " + crane_group("color", 120, 100, 1.25) +
      f'\n  <path d="M40 150q20-10 40 0t40 0 40 0 40 0" fill="none" stroke="{C["tint"]}" '
      f'stroke-width="4" stroke-linecap="round"/>')
 
-# ---------------------------------------------------------------- tokens
-write("colors.json", json.dumps({"light": {k: v for k, v in C.items() if not k.startswith("dark")},
-                                 "dark": {"surface": C["darkSurface"], "surfaceHigh": C["darkSurfaceHigh"],
-                                          "primary": C["darkPrimary"], "ink": "#E8ECF8",
-                                          "inkMuted": "#9AA3BF", "outline": "#2A3350"}}, indent=2))
 print("built", OUT, "wordmark", W, "x", H)

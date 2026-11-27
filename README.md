@@ -101,7 +101,7 @@ Mail logic is written in Rust; the app has a native UI on top. Details and reaso
 | inkMuted | `#5A6380` | `#9AA3BF` |
 | surface | `#FFFFFF` | `#0F1424` |
 | outline | `#D5DBEA` | `#2A3350` |
-| error / success | `#D93B3B` / `#1F9D63` | |
+| error / success | `#C62828` / `#157A4C` | `#F28B82` / `#3DBE83` |
 
 The colours live in [`design/colors.json`](design/colors.json), and apps read them from there. Never hard-code a colour.
 
