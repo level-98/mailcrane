@@ -21,6 +21,14 @@
   </div>
   <p class="admin-error" id="admin-error" role="alert" hidden></p>
 
+  <section class="admin-card" aria-labelledby="admin-reports-title">
+    <h2 id="admin-reports-title">Reports</h2>
+    {#- From issue #561's comments (#562). Without JavaScript nothing on this
+        page loads, so the panel says so rather than pre-rendering reports at
+        build time, which would be stale between deploys. -#}
+    <div id="admin-reports"><noscript><p class="admin-empty">Reports need JavaScript.</p></noscript></div>
+  </section>
+
   <section class="admin-card" aria-labelledby="admin-build-title">
     <h2 id="admin-build-title">Latest test build</h2>
     <div id="admin-build"><p class="admin-empty">Loading…</p></div>
