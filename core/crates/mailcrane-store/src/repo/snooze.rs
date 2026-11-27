@@ -722,7 +722,8 @@ impl Store {
         let mut stmt = self.conn.prepare(
             "SELECT m.id, m.message_id_header, j.value FROM messages m, \
              json_each(m.keywords_json) j \
-             WHERE m.folder_id = ?1 AND substr(j.value, 1, length(?2)) = ?2 ORDER BY m.id",
+             WHERE m.folder_id = ?1 AND m.deleted = 0 \
+             AND substr(j.value, 1, length(?2)) = ?2 ORDER BY m.id",
         )?;
         let rows = stmt.query_map(params![folder.0, prefix], |r| {
             Ok((
@@ -746,7 +747,10 @@ impl Store {
         Ok(out)
     }
 
-    /// The local row of the message with this `Message-ID` in `folder`.
+    /// The local row of the message with this `Message-ID` in `folder`. A
+    /// live row comes before one flagged `\Deleted` (the original a move
+    /// leaves on a server without MOVE or UIDPLUS), so hiding or showing the
+    /// result acts on what the user sees (#519 review).
     pub fn find_message_by_header(
         &self,
         folder: FolderId,
@@ -756,7 +760,7 @@ impl Store {
             .conn
             .query_row(
                 "SELECT id FROM messages WHERE folder_id = ?1 AND message_id_header = ?2 \
-                 ORDER BY id LIMIT 1",
+                 ORDER BY deleted, id LIMIT 1",
                 params![folder.0, message_id_header],
                 |r| r.get(0),
             )

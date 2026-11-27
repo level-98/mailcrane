@@ -353,8 +353,8 @@ impl Store {
             .flatten())
     }
 
-    /// Marks messages outside inbox folders as looked at (rules only act on
-    /// new mail in an inbox), and returns the inbox messages still to look
+    /// Marks messages outside inbox folders, and ones flagged `\Deleted`
+    /// (#519), as looked at (rules only act on new mail in an inbox), and returns the inbox messages still to look
     /// at, oldest row first, with their List-Id.
     pub fn take_rules_pending(
         &self,
@@ -362,13 +362,14 @@ impl Store {
     ) -> Result<Vec<(MessageHeader, Option<String>)>, StoreError> {
         self.conn.execute(
             "UPDATE messages SET rules_done = 1 WHERE rules_done = 0 AND folder_id IN \
-             (SELECT id FROM folders WHERE account_id = ?1 AND COALESCE(role, '') <> 'inbox')",
+             (SELECT id FROM folders WHERE account_id = ?1) AND (deleted = 1 OR folder_id IN \
+             (SELECT id FROM folders WHERE account_id = ?1 AND COALESCE(role, '') <> 'inbox'))",
             params![account.0],
         )?;
         let cols = prefixed_cols();
         let sql = format!(
             "SELECT {cols}, m.list_id FROM messages m JOIN folders f ON f.id = m.folder_id \
-             WHERE f.account_id = ?1 AND f.role = 'inbox' AND m.rules_done = 0 AND m.hidden = 0 \
+             WHERE f.account_id = ?1 AND f.role = 'inbox' AND m.rules_done = 0 AND m.hidden = 0 AND m.deleted = 0 \
              ORDER BY m.id"
         );
         let mut stmt = self.conn.prepare(&sql)?;
@@ -421,7 +422,8 @@ impl Store {
         Ok(())
     }
 
-    /// The messages of a folder (not hidden), with their List-Id, for
+    /// The messages of a folder (not hidden or flagged `\Deleted`, #519),
+    /// with their List-Id, for
     /// running a rule on existing mail.
     pub fn folder_messages_with_list_id(
         &self,
@@ -429,7 +431,7 @@ impl Store {
     ) -> Result<Vec<(MessageHeader, Option<String>)>, StoreError> {
         let cols = prefixed_cols();
         let sql = format!(
-            "SELECT {cols}, m.list_id FROM messages m WHERE m.folder_id = ?1 AND m.hidden = 0 \
+            "SELECT {cols}, m.list_id FROM messages m WHERE m.folder_id = ?1 AND m.hidden = 0 AND m.deleted = 0 \
              ORDER BY m.id"
         );
         let mut stmt = self.conn.prepare(&sql)?;

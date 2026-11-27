@@ -220,7 +220,8 @@ impl Store {
     }
 
     /// The conversations with messages in `folder`, newest first. Hidden
-    /// messages (queued moves or deletes) are left out.
+    /// messages (queued moves or deletes) and ones flagged `\Deleted` (#519)
+    /// are left out.
     pub fn list_threads(
         &self,
         folder: FolderId,
@@ -229,7 +230,7 @@ impl Store {
     ) -> Result<Vec<ThreadSummary>, StoreError> {
         let mut stmt = self.conn.prepare(
             "SELECT thread_id, count(*), sum(seen = 0), max(date), max(has_attachments), \
-             max(flagged) FROM messages WHERE folder_id = ?1 AND hidden = 0 \
+             max(flagged) FROM messages WHERE folder_id = ?1 AND hidden = 0 AND deleted = 0 \
              AND thread_id IS NOT NULL GROUP BY thread_id \
              ORDER BY max(date) DESC, thread_id DESC LIMIT ?2 OFFSET ?3",
         )?;
@@ -247,7 +248,7 @@ impl Store {
             .collect::<Result<Vec<_>, _>>()?;
         let mut people = self.conn.prepare_cached(
             "SELECT id, subject, from_name, from_addr FROM messages \
-             WHERE folder_id = ?1 AND thread_id = ?2 AND hidden = 0 ORDER BY date DESC, id DESC",
+             WHERE folder_id = ?1 AND thread_id = ?2 AND hidden = 0 AND deleted = 0 ORDER BY date DESC, id DESC",
         )?;
         let mut out = Vec::with_capacity(rows.len());
         for (thread, count, unread, last, attach, flagged) in rows {
@@ -294,7 +295,7 @@ impl Store {
         thread: ThreadId,
     ) -> Result<Vec<MessageId>, StoreError> {
         let mut stmt = self.conn.prepare_cached(
-            "SELECT id FROM messages WHERE folder_id = ?1 AND thread_id = ?2 AND hidden = 0 \
+            "SELECT id FROM messages WHERE folder_id = ?1 AND thread_id = ?2 AND hidden = 0 AND deleted = 0 \
              ORDER BY date DESC, id DESC",
         )?;
         let ids = stmt
@@ -305,13 +306,14 @@ impl Store {
     }
 
     /// Every message of a thread across its account's folders, oldest
-    /// first, leaving out hidden ones and those in Trash or Spam. A message
+    /// first, leaving out hidden ones, ones flagged `\Deleted` (#519) and
+    /// those in Trash or Spam. A message
     /// stored in several folders comes once (see `one_copy_each` in
     /// `repo/messages.rs`).
     pub fn thread_messages(&self, thread: ThreadId) -> Result<Vec<MessageHeader>, StoreError> {
         let sql = one_copy_each(
             "SELECT m.*, {RANK} FROM messages m JOIN folders f ON f.id = m.folder_id \
-             WHERE m.thread_id = ?1 AND m.hidden = 0 \
+             WHERE m.thread_id = ?1 AND m.hidden = 0 AND m.deleted = 0 \
              AND COALESCE(f.role, '') NOT IN ('trash', 'spam')",
             "ORDER BY m.date, m.id",
         );
