@@ -1,11 +1,13 @@
 {
-  "_comment": "Features merged on main. Claim only what is merged; set \"soon\": true for work in progress. \"highlight\": true puts a card on the home page (keep six to eight).",
+  "_comment": "Features merged on main. Claim only what is merged; set \"soon\": true for work in progress, or \"tag\" for a short label instead (\"Awaiting Google verification\"). \"highlight\": true puts a card on the home page (keep six to eight). Each group's \"status\" (works, partly or planned) and \"status_note\" is the one place the site says how far an area is; keep it in step with the README's project status table and ROADMAP.md.",
   "groups": [
     {
       "id": "privacy",
       "icon": "shield",
       "title": "Privacy and safety",
       "intro": "Mailcrane treats every message as untrusted and keeps what you read to yourself.",
+      "status": "works",
+      "status_note": "Encrypted mail (OpenPGP and S/MIME) comes later, in milestone M5.",
       "items": [
         {
           "title": "Trackers blocked",
@@ -44,6 +46,8 @@
       "icon": "at",
       "title": "Accounts",
       "intro": "Bring the email address you already have.",
+      "status": "partly",
+      "status_note": "IMAP, SMTP, JMAP and automatic setup are built. Sign in with Google waits for Google to verify the app, and Sign in with Microsoft is planned.",
       "items": [
         {
           "title": "IMAP and SMTP",
@@ -64,8 +68,8 @@
         },
         {
           "title": "Gmail sign-in",
-          "text": "Sign in to Gmail with your Google account in the system browser, without an app password.",
-          "soon": true
+          "text": "Sign in to Gmail with your Google account in the system browser, without an app password. It's built, and waiting for Google to verify the app.",
+          "tag": "Awaiting Google verification"
         }
       ]
     },
@@ -74,6 +78,7 @@
       "icon": "inbox",
       "title": "Inbox",
       "intro": "A fast, calm inbox that works offline.",
+      "status": "works",
       "items": [
         {
           "title": "Unified inbox",
@@ -124,6 +129,7 @@
       "icon": "pen",
       "title": "Write",
       "intro": "Sending just works, even without a signal.",
+      "status": "works",
       "items": [
         {
           "title": "Scheduled send and undo send",
@@ -149,6 +155,7 @@
       "icon": "folder",
       "title": "Organise",
       "intro": "Keep mail sorted the way you like.",
+      "status": "works",
       "items": [
         {
           "title": "Folders",
@@ -174,6 +181,8 @@
       "icon": "bell",
       "title": "Notifications",
       "intro": "New mail without Google services.",
+      "status": "works",
+      "status_note": "Push wake-ups still need a check on a real phone with a real distributor app.",
       "items": [
         {
           "title": "New-mail notifications",
@@ -189,8 +198,7 @@
         },
         {
           "title": "JMAP push",
-          "text": "Instant new mail from JMAP servers through UnifiedPush, without a separate gateway.",
-          "soon": true
+          "text": "Instant new mail from JMAP servers through UnifiedPush, without a separate gateway."
         }
       ]
     },
@@ -199,6 +207,8 @@
       "icon": "palette",
       "title": "Look and feel",
       "intro": "Comfortable to read, day and night.",
+      "status": "partly",
+      "status_note": "Dark mode and Material You are built. Translations wait for the Weblate project to open, and a full accessibility review comes before 1.0.",
       "items": [
         {
           "title": "Dark mode and Material You",
@@ -207,11 +217,11 @@
         },
         {
           "title": "Accessible",
-          "text": "Built for TalkBack and large text, with colour contrast that meets WCAG AA. A full accessibility review is under way before 1.0."
+          "text": "Designed for TalkBack and large text. A full accessibility review, including colour contrast, comes before 1.0."
         },
         {
           "title": "In your language",
-          "text": "Translations through Weblate, so anyone can help.",
+          "text": "Translations through Weblate, so anyone can help, once the Weblate project opens.",
           "soon": true
         }
       ]

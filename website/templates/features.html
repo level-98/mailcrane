@@ -19,12 +19,16 @@
       <div>
         <h2 id="{{ group.id }}-title">{{ group.title }}</h2>
         <p>{{ group.intro }}</p>
+        {%- if group.status == "works" %}{% set status_label = "Built" %}{% set status_class = "stage-done" %}
+        {%- elif group.status == "partly" %}{% set status_label = "Partly built" %}{% set status_class = "stage-now" %}
+        {%- else %}{% set status_label = "Planned" %}{% set status_class = "stage-later" %}{% endif %}
+        <p class="group-status"><span class="stage-tag {{ status_class }}">{{ status_label }}</span>{% if group.status_note %} {{ group.status_note }}{% endif %}</p>
       </div>
     </div>
     <ul class="card-grid">
       {% for item in group.items %}
-      <li class="feature-card{% if item.soon %} is-soon{% endif %}">
-        <h3>{{ item.title }}{% if item.soon %} <span class="stage-tag stage-next">Coming soon</span>{% endif %}</h3>
+      <li class="feature-card{% if item.soon or item.tag %} is-soon{% endif %}">
+        <h3>{{ item.title }}{% if item.tag %} <span class="stage-tag stage-next">{{ item.tag }}</span>{% elif item.soon %} <span class="stage-tag stage-next">Coming soon</span>{% endif %}</h3>
         <p>{{ item.text }}</p>
       </li>
       {% endfor %}

@@ -78,12 +78,12 @@
       </nav>
       <details class="mobile-nav">
         <summary class="mobile-nav-toggle">Menu</summary>
-        <nav class="mobile-nav-panel" aria-label="Main navigation">
-          <a href="{{ features_url }}">Features</a>
-          <a href="{{ roadmap_url }}">What’s coming</a>
-          <a href="{{ download_url }}">Download</a>
-          <a href="{{ docs_url }}">Docs</a>
-          <a href="{{ get_url(path='@/contribute.md') }}">Contribute</a>
+        <nav class="mobile-nav-panel" aria-label="Site menu">
+          <a href="{{ features_url }}"{% if here == "/features/" %} aria-current="page"{% endif %}>Features</a>
+          <a href="{{ roadmap_url }}"{% if here == "/roadmap/" %} aria-current="page"{% endif %}>What’s coming</a>
+          <a href="{{ download_url }}"{% if here == "/download/" %} aria-current="page"{% endif %}>Download</a>
+          <a href="{{ docs_url }}"{% if here is starting_with(pat="/docs/") %} aria-current="page"{% endif %}>Docs</a>
+          <a href="{{ get_url(path='@/contribute.md') }}"{% if here == "/contribute/" %} aria-current="page"{% endif %}>Contribute</a>
         </nav>
       </details>
       <button id="theme-toggle" class="theme-toggle" type="button" aria-label="Switch to dark theme" aria-pressed="false" title="Switch theme">
