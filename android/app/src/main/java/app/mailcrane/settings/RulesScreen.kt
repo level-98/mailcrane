@@ -167,6 +167,21 @@ data class RuleDraft(
         )
     }
 
+    /**
+     * This draft with every move into a folder that can't take messages (a virtual folder such as Gmail's
+     * Starred, #390) cleared, so the editor asks for a real folder (#465). A target missing from [folders]
+     * is kept: it may be another account's.
+     */
+    fun withoutVirtualTargets(folders: List<FolderSummary>): RuleDraft =
+        copy(
+            actions =
+                actions.map { a ->
+                    val target = folders.firstOrNull { it.id == a.folderId }
+                    val virtual = a.kind == ActionKind.MOVE && target != null && !target.takesMoves
+                    if (virtual) a.copy(folderId = null) else a
+                },
+        )
+
     companion object {
         /** "Create rule from this message": from this sender, move to … (the user picks). */
         fun fromSender(address: String): RuleDraft =
@@ -436,7 +451,7 @@ fun RulesScreen(
         snackbar = snackbar,
         onBack = onBack,
         onAdd = { editing = RuleDraft() },
-        onOpen = { editing = RuleDraft.of(it) },
+        onOpen = { editing = RuleDraft.of(it).withoutVirtualTargets(state.folders) },
         onEnabled = viewModel::setEnabled,
         onMove = viewModel::move,
         onUseServerRules = viewModel::useServerRules,
@@ -521,6 +536,15 @@ internal fun RulesList(
                                     modifier = Modifier.testTag("rule-missing-folder-${rule.id}"),
                                 )
                             }
+                            // Saved before #390 with a move into a folder that can't take messages (#465): its
+                            // other actions still run; the user picks a real folder.
+                            virtualTarget(rule, state.folders)?.let { folder ->
+                                Text(
+                                    text = stringResource(R.string.rules_virtual_target, folderName(folder)),
+                                    color = MaterialTheme.colorScheme.error,
+                                    modifier = Modifier.testTag("rule-virtual-target-${rule.id}"),
+                                )
+                            }
                             when (state.locations[rule.id]) {
                                 RuleRunsOn.SERVER -> Text(stringResource(R.string.rules_on_server))
                                 RuleRunsOn.DEVICE -> Text(stringResource(R.string.rules_on_device))
@@ -576,6 +600,17 @@ private fun ServerRulesNoticeRow(
         }
     }
 }
+
+/** The first folder [rule] moves mail into that can't take messages, such as Gmail's Starred (#465). */
+internal fun virtualTarget(
+    rule: RuleInfo,
+    folders: List<FolderSummary>,
+): FolderSummary? =
+    rule.rule.actions.firstNotNullOfOrNull { action ->
+        (action as? RuleActionInfo.Move)?.let { move ->
+            folders.firstOrNull { it.id == move.folderId && !it.takesMoves }
+        }
+    }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -692,7 +727,8 @@ internal fun RuleEditor(
                         onChange(draft.copy(actions = draft.actions.replace(i, a.copy(kind = it))))
                     }
                     if (a.kind == ActionKind.MOVE) {
-                        val current = folders.firstOrNull { it.id == a.folderId }?.let { folderName(it) }
+                        val current =
+                            folders.firstOrNull { it.id == a.folderId && it.takesMoves }?.let { folderName(it) }
                         KindMenu(
                             current ?: stringResource(R.string.rules_pick_folder),
                             folders.filter { it.takesMoves }.map {
