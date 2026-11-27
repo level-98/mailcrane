@@ -28,7 +28,7 @@ C = {
     "surface": "#FFFFFF",
     "surfaceDim": "#F4F6FB",
     "surfaceHighest": "#E8ECF5",
-    "outline": "#7F89A6",      # component boundaries: 3:1 non-text (#395)
+    "outline": "#78829F",      # component boundaries: 3:1 non-text (#395)
     "outlineVariant": "#D5DBEA",  # dividers
     "darkSurface": "#0F1424",
     "darkSurfaceHigh": "#1A2138",
@@ -311,6 +311,6 @@ write("colors.json", json.dumps({"light": {k: v for k, v in C.items() if not k.s
                                  "dark": {"surface": C["darkSurface"], "surfaceHigh": C["darkSurfaceHigh"],
                                           "surfaceHighest": "#252D47",
                                           "primary": C["darkPrimary"], "ink": "#E8ECF8",
-                                          "inkMuted": "#9AA3BF", "outline": "#6B7594",
+                                          "inkMuted": "#9AA3BF", "outline": "#707A99",
                                           "outlineVariant": "#2A3350"}}, indent=2))
 print("built", OUT, "wordmark", W, "x", H)

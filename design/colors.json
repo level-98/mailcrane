@@ -9,7 +9,7 @@
     "surface": "#FFFFFF",
     "surfaceDim": "#F4F6FB",
     "surfaceHighest": "#E8ECF5",
-    "outline": "#7F89A6",
+    "outline": "#78829F",
     "outlineVariant": "#D5DBEA",
     "error": "#C62828",
     "success": "#157A4C"
@@ -21,7 +21,7 @@
     "primary": "#8FA8FF",
     "ink": "#E8ECF8",
     "inkMuted": "#9AA3BF",
-    "outline": "#6B7594",
+    "outline": "#707A99",
     "outlineVariant": "#2A3350",
     "error": "#F28B82",
     "success": "#3DBE83"

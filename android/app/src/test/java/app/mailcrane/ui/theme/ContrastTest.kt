@@ -90,6 +90,8 @@ class ContrastTest {
                     "surface" to s.surface,
                     "surfaceContainer" to s.surfaceContainer,
                     "surfaceContainerHigh" to s.surfaceContainerHigh,
+                    // The off switch's track, under its outline-coloured thumb (#494 review).
+                    "surfaceContainerHighest" to s.surfaceContainerHighest,
                 ).mapNotNull { (name, bg) ->
                     val ratio = contrast(s.outline, bg)
                     if (ratio < 3.0) "$scheme: outline on $name is %.2f:1".format(ratio) else null

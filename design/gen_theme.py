@@ -126,8 +126,9 @@ def check_contrast(data):
 
 
 # What `outline` is drawn on: background and surface (Surface), surfaceContainer
-# (SurfaceDim) and surfaceContainerHigh (SurfaceHigh).
-NON_TEXT_BACKGROUNDS = ("Surface", "SurfaceDim", "SurfaceHigh")
+# (SurfaceDim), surfaceContainerHigh (SurfaceHigh), and surfaceContainerHighest
+# (SurfaceHighest), the off switch's track under its outline-coloured thumb (#494 review).
+NON_TEXT_BACKGROUNDS = ("Surface", "SurfaceDim", "SurfaceHigh", "SurfaceHighest")
 
 
 def kotlin_hex(value):

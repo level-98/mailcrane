@@ -51,6 +51,14 @@ class ThemeGeneratorTests(unittest.TestCase):
                     f"{theme} Outline/{background} not flagged: {failures}",
                 )
 
+    def test_off_switch_thumb_is_checked_on_its_track(self):
+        # #494 review: an off switch draws its thumb in outline on a surfaceContainerHighest track.
+        self.assertIn("SurfaceHighest", gen_theme.NON_TEXT_BACKGROUNDS)
+        bad = json.loads(json.dumps(self.data))
+        bad["light"]["outline"] = "#7F89A6"  # 2.94:1 on #E8ECF5
+        failures = gen_theme.check_contrast(bad)
+        self.assertTrue(any(f.startswith("light: Outline/SurfaceHighest=") for f in failures), failures)
+
     def test_dividers_stay_subtle_and_unchecked(self):
         # outlineVariant is for dividers; it keeps the old subtle colour and isn't held to 3:1.
         mapped = gen_theme.mapped_colours(self.data)
