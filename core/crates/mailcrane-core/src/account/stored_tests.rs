@@ -93,10 +93,11 @@ async fn a_stored_account_logs_in_and_its_folders_are_saved() {
     let mut session = connect(&store, &secrets, id, Some(imap.root_cert_der()))
         .await
         .expect("logs in");
-    let inbox = refresh_folders(&store, &mut session, id, &events)
+    refresh_folders(&store, &mut session, id, &events)
         .await
         .expect("refreshes");
     session.logout().await;
+    let inbox = inbox_of(&store, id).expect("inbox");
 
     let mut names: Vec<String> = store
         .list_folders(id)
@@ -106,8 +107,13 @@ async fn a_stored_account_logs_in_and_its_folders_are_saved() {
         .collect();
     names.sort();
     assert_eq!(names, ["Archive", "INBOX", "Work"]);
-    assert_eq!(inbox, inbox_of(&store, id).expect("inbox"));
-    assert!(inbox.is_some());
+    let inbox_name = store
+        .list_folders(id)
+        .expect("folders")
+        .into_iter()
+        .find(|f| Some(f.id) == inbox)
+        .map(|f| f.details.remote_name);
+    assert_eq!(inbox_name.as_deref(), Some("INBOX"));
 }
 
 #[tokio::test]
@@ -185,4 +191,48 @@ fn no_login_without_a_password_or_for_an_unknown_account() {
         imap_login(&store, &secrets, id, None),
         Err(SyncErrorKind::Auth)
     ));
+}
+
+/// Fails every read, so a test sees whether a secret was asked for.
+struct NoReads;
+
+impl SecretStore for NoReads {
+    fn put(&self, _: &SecretKey, _: &StoredSecret) -> Result<(), SecretError> {
+        panic!("no secret may be written");
+    }
+    fn get(&self, _: &SecretKey) -> Result<Option<StoredSecret>, SecretError> {
+        panic!("no secret may be read");
+    }
+    fn delete(&self, _: &SecretKey) -> Result<(), SecretError> {
+        panic!("no secret may be deleted");
+    }
+}
+
+#[tokio::test]
+async fn a_local_or_missing_account_never_reads_a_secret_or_connects() {
+    // #289, #550 review: refused before any secret is read.
+    let store = Store::open_in_memory().expect("store");
+    let local = store
+        .insert_local_account(&NewAccount {
+            display_name: "Alice".into(),
+            email: USER.into(),
+            imap_host: "imap.example.org".into(),
+            imap_port: 993,
+            imap_security: Security::Tls,
+            smtp_host: "smtp.example.org".into(),
+            smtp_port: 587,
+            smtp_security: Security::Starttls,
+            username: USER.into(),
+        })
+        .expect("account");
+    for account in [local, AccountId(99)] {
+        assert!(matches!(
+            connect(&store, &NoReads, account, None).await,
+            Err(SyncErrorKind::NotFound)
+        ));
+        assert!(matches!(
+            imap_login(&store, &NoReads, account, None),
+            Err(SyncErrorKind::NotFound)
+        ));
+    }
 }

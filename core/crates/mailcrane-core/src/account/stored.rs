@@ -71,15 +71,17 @@ pub fn remote_account(
     Ok(row)
 }
 
-/// Logs in to the account's IMAP server. An OAuth account (M3-02) gets a
-/// fresh access token first; if the token server can't be reached, the
-/// cached token is tried.
+/// Logs in to the account's IMAP server. A missing or local-only account is
+/// refused first, before any secret is read (#289). An OAuth account (M3-02)
+/// then gets a fresh access token; if the token server can't be reached,
+/// the cached token is tried.
 pub async fn connect(
     store: &Store,
     secrets: &dyn SecretStore,
     account: AccountId,
     extra_root_cert: Option<&[u8]>,
 ) -> Result<Session, SyncErrorKind> {
+    remote_account(store, account)?;
     match refresh_if_needed(store, secrets, account, &[], OAUTH_TIMEOUT).await {
         Err(CredentialError::ReauthRequired) => return Err(SyncErrorKind::Auth),
         Err(CredentialError::Storage) => return Err(SyncErrorKind::Storage),
@@ -99,14 +101,14 @@ pub async fn connect(
 /// Lists the account's folders on `session` and saves them, keeping each
 /// folder's sync state. Sends `FolderChanged` for each folder gone from the
 /// server (#323), so the apps re-read the list and leave it if it was open.
-/// Returns the inbox (see [`inbox_of`]). On failure the saved folders are
-/// unchanged. The caller logs out.
+/// On failure the saved folders are unchanged. The caller logs out, and
+/// finds the inbox with [`inbox_of`].
 pub async fn refresh_folders(
     store: &Store,
     session: &mut Session,
     account: AccountId,
     listener: &dyn EventListener,
-) -> Result<Option<FolderId>, SyncError> {
+) -> Result<(), SyncError> {
     let listed = session.list_folders().await;
     let command = session.last_command();
     let folders = listed.map_err(|e| {
@@ -122,7 +124,7 @@ pub async fn refresh_folders(
     for folder in saved.removed {
         listener.on_event(CoreEvent::FolderChanged { folder_id: folder });
     }
-    Ok(inbox_of(store, account)?)
+    Ok(())
 }
 
 /// The account's inbox: the folder with the inbox role, otherwise the one

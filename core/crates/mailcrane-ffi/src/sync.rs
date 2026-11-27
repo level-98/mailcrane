@@ -386,13 +386,14 @@ impl SyncEngine {
         let report = |kind| self.report(account, kind);
         let runtime = runtime().map_err(report)?;
         let listener = ListenerAdapter(self.listener.clone());
-        let inbox = runtime.block_on(async {
+        runtime.block_on(async {
             let mut session = self.connect(&store, account).await.map_err(report)?;
             let refreshed = stored::refresh_folders(&store, &mut session, account, &listener).await;
             session.logout().await;
             refreshed.map_err(|e| report(e.kind()))
         })?;
-        Ok(inbox.map(|f| f.0))
+        // As before #520: a failed lookup here is `Storage`, with no event.
+        Ok(inbox_of(&store, account)?.map(|f| f.0))
     }
 }
 
@@ -909,8 +910,8 @@ impl SyncEngine {
         store: &Store,
         account: AccountId,
     ) -> Result<Session, events::SyncErrorKind> {
-        // Same order as before #520: no connection for a missing or
-        // local-only account, whatever the secret store says.
+        // Same errors as before #520: a missing or local-only account is
+        // `NotFound` even when the secret store can't be opened.
         stored::remote_account(store, account)?;
         let secrets = crate::secrets::secret_store().map_err(|_| events::SyncErrorKind::Auth)?;
         stored::connect(
