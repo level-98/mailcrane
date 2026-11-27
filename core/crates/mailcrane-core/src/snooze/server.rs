@@ -113,12 +113,25 @@ pub async fn sync_snoozes(
     account: AccountId,
     now: i64,
 ) -> Result<SnoozeReport, SyncError> {
-    let mut report = SnoozeReport::default();
     let work: Vec<Snooze> = store
         .list_snoozes(Some(account))?
         .into_iter()
         .filter(|s| s.state != SnoozeState::Snoozed && s.next_attempt_at <= now)
         .collect();
+    sync_snooze_rows(store, session, listener, now, work).await
+}
+
+/// [`sync_snoozes`] on `work`, the rows as the caller read them. The fault
+/// table (#459) reads them, lets the user change one, then hands the old
+/// copy here: the race between a sync's read and its writes.
+pub(crate) async fn sync_snooze_rows(
+    store: &Store,
+    session: &mut Session,
+    listener: &dyn EventListener,
+    now: i64,
+    work: Vec<Snooze>,
+) -> Result<SnoozeReport, SyncError> {
+    let mut report = SnoozeReport::default();
     if work.is_empty() {
         return Ok(report);
     }
@@ -242,6 +255,8 @@ pub async fn sync_snoozes(
     Ok(report)
 }
 
+#[cfg(test)]
+mod fault_tests;
 #[cfg(test)]
 mod race_tests;
 

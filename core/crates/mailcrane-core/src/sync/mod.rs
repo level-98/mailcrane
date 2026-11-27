@@ -5,6 +5,7 @@ mod incremental;
 mod initial;
 mod jmap;
 mod live;
+mod local;
 pub mod prefetch;
 pub mod push;
 mod search;
@@ -12,6 +13,7 @@ mod search;
 pub use incremental::{Strategy, SyncReport};
 pub use initial::{log_failure, FailureLog, FolderSyncer, SyncConfig, SyncError};
 pub use jmap::JmapSyncer;
+pub use local::push_local_changes;
 /// One per account: whoever holds it is the only one writing that
 /// account's synced mail to the database, so two syncs (live updates and a
 /// refresh, say) never fight over the write lock (issue #282). Held across
