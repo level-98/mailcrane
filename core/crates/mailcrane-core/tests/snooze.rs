@@ -922,10 +922,7 @@ async fn run_case(dir: Dir, with_move_cap: bool, case: Case) {
     let rows = list_snoozed(&store, Some(account)).expect("list");
     let in_inbox = live(&base, "INBOX").await;
     let in_snoozed = live(&base, "Snoozed").await;
-    let lost = matches!(case, Case::MissingOriginal) && dir == Dir::Snooze;
-    if !lost {
-        assert_eq!(in_inbox + in_snoozed, 1, "{name}: one live place");
-    }
+    assert_eq!(in_inbox + in_snoozed, 1, "{name}: one live place");
     if rows.is_empty() {
         assert_eq!(
             live_with_keyword(&base, "Snoozed").await,

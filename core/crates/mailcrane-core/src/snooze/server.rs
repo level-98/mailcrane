@@ -15,8 +15,10 @@
 //! | `snoozed` | 0 | in Snoozed, with the wake keyword when allowed |
 //! | `to_wake` | 0 | due; still in Snoozed with its keyword (a wake changes nothing before its move) |
 //!
-//! Transitions, per server step: 0 → 1 (UIDNEXT recorded) → 2 (COPY) → 3
-//! (`\Deleted`, or a MOVE straight from 0) → done. A snooze sets its keyword
+//! Transitions, per server step: 0 → 1 (UIDNEXT recorded, just before the
+//! COPY or MOVE is sent) → 2 (COPY) → 3 (`\Deleted`, or the MOVE's reply)
+//! → done. Step ≥ 1 is what tells a later sync that *this* install may have
+//! moved the message. A snooze sets its keyword
 //! on the original before the COPY; a wake removes it, and clears `\Seen`
 //! when asked, on the copy after the move. Then:
 //!
@@ -33,8 +35,10 @@
 //!
 //! Invariants, after every completed step:
 //!
-//! 1. The server has the message in exactly one live (not `\Deleted`) place,
-//!    except after a given-up rollback, where a copy can be left.
+//! 1. Once a move is finished or undone, the server has the message in
+//!    exactly one live (not `\Deleted`) place, except after a given-up
+//!    rollback, where a copy can be left. (Mid-move, at step 2, there are
+//!    two until the move commits or rolls back.)
 //! 2. A snooze keyword is on a message in the Snoozed folder (where other
 //!    installs learn wake times from) only while a snooze row for it exists:
 //!    a finished wake strips it from the copy and from a flagged original,
@@ -129,7 +133,10 @@ pub async fn sync_snoozes(
                     // The copy is in the target and the original flagged
                     // \Deleted: carry the move forward, don't undo it.
                     tracing::warn!(snooze = s.id.0, state = ?s.state, "refused after the original was flagged: finishing the move");
-                    carry_forward(store, session, s).await.map(Some)
+                    // The row as stored now: this sync may have recorded
+                    // the target's UIDNEXT on it.
+                    let fresh = store.get_snooze_by_id(s.id)?.unwrap_or_else(|| s.clone());
+                    carry_forward(store, session, &fresh).await.map(Some)
                 } else if matches!(step, STEP_COPY_STARTED | STEP_COPIED | STEP_ROLLBACK) {
                     tracing::warn!(snooze = s.id.0, state = ?s.state, step, "refused after the copy: rolling back");
                     store.start_snooze_rollback(s.id, now)?;
@@ -153,12 +160,8 @@ pub async fn sync_snoozes(
             }
             Ok(None) if s.state == SnoozeState::ToWake => {
                 tracing::warn!(snooze = s.id.0, "wake rolled back on the server");
-                match refused_wake(store, session, s, now, listener).await {
-                    Ok(true) => report.failed += 1,
-                    Ok(false) => report.remaining = report.remaining.saturating_add(1),
-                    Err(ChangeError::Imap(ImapError::Store(e))) => return Err(SyncError::Store(e)),
-                    Err(_) => report.remaining = report.remaining.saturating_add(1),
-                }
+                let outcome = refused_wake(store, session, s, now, listener).await;
+                tally(store, s, now, outcome, &mut report)?;
             }
             Ok(None) => {
                 tracing::warn!(snooze = s.id.0, state = ?s.state, "rolled back on the server");
@@ -185,12 +188,10 @@ pub async fn sync_snoozes(
                         failures,
                         "rollback given up: the message is shown again"
                     );
-                    if let Err(ChangeError::Imap(ImapError::Store(e))) =
-                        give_up(store, session, &fresh, listener).await
-                    {
-                        return Err(SyncError::Store(e));
-                    }
-                    report.failed += 1;
+                    let outcome = give_up(store, session, &fresh, listener)
+                        .await
+                        .map(|()| true);
+                    tally(store, s, now, outcome, &mut report)?;
                 } else {
                     // Keep the row for the next sync rather than leave a
                     // copy behind silently.
@@ -207,12 +208,8 @@ pub async fn sync_snoozes(
                 // Nothing was changed on the server before the move (#436),
                 // so the message is still snoozed there, keyword and all.
                 tracing::warn!(snooze = s.id.0, "wake refused by the server");
-                match refused_wake(store, session, s, now, listener).await {
-                    Ok(true) => report.failed += 1,
-                    Ok(false) => report.remaining = report.remaining.saturating_add(1),
-                    Err(ChangeError::Imap(ImapError::Store(e))) => return Err(SyncError::Store(e)),
-                    Err(_) => report.remaining = report.remaining.saturating_add(1),
-                }
+                let outcome = refused_wake(store, session, s, now, listener).await;
+                tally(store, s, now, outcome, &mut report)?;
             }
             Err(_) => {
                 tracing::warn!(snooze = s.id.0, state = ?s.state, "snooze refused by the server");
@@ -289,6 +286,29 @@ fn keep_wake(
             listener.on_event(CoreEvent::MessagesChanged {
                 folder_id: folder.id,
             });
+        }
+    }
+    Ok(())
+}
+
+/// Counts what a refused wake or a give-up came to. A dropped connection
+/// on the way (the server calls of a give-up) leaves the row as it was,
+/// deferred with back-off, like any other transient failure (invariant 4).
+fn tally(
+    store: &Store,
+    s: &Snooze,
+    now: i64,
+    outcome: Result<bool, ChangeError>,
+    report: &mut SnoozeReport,
+) -> Result<(), SyncError> {
+    match outcome {
+        Ok(true) => report.failed += 1,
+        Ok(false) => report.remaining = report.remaining.saturating_add(1),
+        Err(ChangeError::Imap(ImapError::Store(e))) => return Err(SyncError::Store(e)),
+        Err(_) => {
+            let attempts = s.attempts.saturating_add(1);
+            store.defer_snooze(s.id, now.saturating_add(backoff_secs(attempts)))?;
+            report.remaining = report.remaining.saturating_add(1);
         }
     }
     Ok(())
@@ -496,6 +516,12 @@ async fn move_uids(
     // MOVE only for a fresh move: one the COPY fallback started (on a node
     // without MOVE) must be resumed, or the earlier copy would stay.
     if session.supports_move() && s.step == STEP_NONE {
+        // RFC 6851: atomic. The target's UIDNEXT and step 1 are recorded
+        // first, so a later sync that finds the original gone knows this
+        // install may have moved it, and where to find the copy (#444).
+        let target = session.select(to).await?;
+        set_step(store, s, STEP_COPY_STARTED, Some(target.uidnext))?;
+        session.select(from).await?;
         return session.uid_move(uids, to).await;
     }
     if s.step < STEP_COPIED {
@@ -781,7 +807,10 @@ async fn wake_one(
         // user. In the first case the copy still needs its keyword and
         // \Seen changes. A missing destination doesn't stop this.
         let mut changed = vec![snoozed.id];
-        if s.target_uidnext.is_some() {
+        // Only a move this install started (step ≥ 1) is cleaned up: an
+        // empty Snoozed with no step of ours means another install woke it,
+        // or the user moved it, and its copy isn't ours to change.
+        if s.target_uidnext.is_some() && s.step >= STEP_COPY_STARTED {
             best_effort(s, strip_original_keywords(session, s, &snoozed).await)?;
             if let Ok(dest) = wake_destination(store, s) {
                 best_effort(s, unsnooze_copy(session, s, &dest).await)?;
@@ -800,33 +829,21 @@ async fn wake_one(
     // it, so a refused or dropped wake leaves the message as it was. The
     // copy is found by Message-ID at or above `dest`'s UIDNEXT, recorded
     // here first (for MOVE too).
-    let s = match s.target_uidnext {
-        Some(_) => s.clone(),
-        None => {
-            let next = session.select(&dest.details.remote_name).await?.uidnext;
-            store
-                .set_snooze_step(s.id, s.step, Some(next))
-                .map_err(store_err)?;
-            session.select(&snoozed.details.remote_name).await?;
-            Snooze {
-                target_uidnext: Some(next),
-                ..s.clone()
-            }
-        }
-    };
-    if session.supports_move() && s.step == STEP_NONE {
-        session.uid_move(&uids, &dest.details.remote_name).await?;
-    } else {
-        move_uids(
-            store,
-            session,
-            &s,
-            &uids,
-            &snoozed.details.remote_name,
-            &dest.details.remote_name,
-        )
-        .await?;
-    }
+    // `move_uids` records the destination's UIDNEXT and step 1 before it
+    // sends the MOVE or COPY; the copy is found at or above that UIDNEXT.
+    move_uids(
+        store,
+        session,
+        s,
+        &uids,
+        &snoozed.details.remote_name,
+        &dest.details.remote_name,
+    )
+    .await?;
+    let s = store
+        .get_snooze_by_id(s.id)
+        .map_err(store_err)?
+        .unwrap_or_else(|| s.clone());
     // Committed: from here every exit finishes the wake (step 3).
     set_step(store, &s, STEP_FLAGGED_DELETED, None)?;
     // A flagged original that wasn't expunged must not keep its keyword
