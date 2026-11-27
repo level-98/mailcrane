@@ -20,6 +20,29 @@ Start them all with `scripts/fleet/start-fleet.ps1` (see [Running it](#running-i
 
 **GitHub is the record; Synapse is the live layer.** Issues, claims, PRs, reviews and CI stay on GitHub. The Synapse board, locks and channels say who is doing what *right now*. A seat that restarts rebuilds its picture from GitHub, not from memory.
 
+## The project board
+
+The [Mailcrane project](https://github.com/users/level-98/projects/1) shows every open issue and PR, for people more than for seats. It mirrors GitHub and the Synapse board; it's never the source of truth (#538).
+
+| Field | Values |
+|---|---|
+| Status | Backlog → Ready (`agent-ready`) → In progress → In review → QA → Done |
+| Seat | dev1, dev2, dev3, review, qa, lead, windows, human |
+| Group | text: the grouped dispatch, such as `G6` |
+| Phase | M3 … M8, post-1.0 (a select; the repository milestone shows in the built-in Milestone field) |
+| Priority | P1 … P4 |
+
+Views: **Board** (columns by Status), **By seat** (a table grouped by Seat) and **Needs Alex** (open items labelled `needs-human` or `needs-decision`).
+
+The project's own workflows add new issues and PRs from this repository and move closed or merged items to Done. The lead sets the rest on dispatch and at each hand-off:
+
+```powershell
+scripts/fleet/project-sync.ps1 -Item 538 -Status 'In progress' -Seat dev3
+scripts/fleet/project-sync.ps1 -Item 522 -Status QA -Group G6 -Phase M4
+```
+
+It adds the issue or PR if it isn't there yet, sets only the fields given (`-Group -` clears the group), and uses the maintainer's `gh` sign-in, which needs the `project` scope. Seats don't edit the board by hand.
+
 ## The flow
 
 ```
