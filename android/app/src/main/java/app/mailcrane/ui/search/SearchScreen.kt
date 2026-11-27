@@ -6,8 +6,10 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -293,7 +295,9 @@ fun SearchContent(
     LaunchedEffect(Unit) { focus.requestFocus() }
     // The field's own text and cursor. When the query changes from outside the field (a chip, a recent search),
     // the cursor goes to the end, so typing continues after the new term rather than at the old position.
-    var typed by remember { mutableStateOf(TextFieldValue(state.query, TextRange(state.query.length))) }
+    // Opened again with the last query still there (the view model outlives the screen), it starts selected,
+    // so typing replaces it instead of adding to it (#397).
+    var typed by remember { mutableStateOf(TextFieldValue(state.query, TextRange(0, state.query.length))) }
     val field = fieldValueFor(typed, state.query)
     // Remember the moved cursor too, so a later chip that restores an earlier query doesn't bring back an old cursor.
     SideEffect { if (typed != field) typed = field }
@@ -330,7 +334,15 @@ fun SearchContent(
             )
         },
     ) { padding ->
-        Column(Modifier.fillMaxSize().padding(padding)) {
+        // Above the keyboard, so "No results" centres in the space that's visible (#397). The Scaffold's
+        // padding already holds the navigation bar, so it's consumed first and not counted twice.
+        Column(
+            Modifier
+                .fillMaxSize()
+                .padding(padding)
+                .consumeWindowInsets(padding)
+                .imePadding(),
+        ) {
             SearchChips(
                 filters = state.filters,
                 actions =

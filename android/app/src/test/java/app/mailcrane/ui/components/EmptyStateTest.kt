@@ -1,13 +1,22 @@
 package app.mailcrane.ui.components
 
 import android.app.Application
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.height
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.dp
 import app.mailcrane.ui.theme.MailcraneTheme
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -54,6 +63,43 @@ class EmptyStateTest {
         compose.setContent { MailcraneTheme { WelcomeState(onAddAccount = {}) } }
         // Only text is read: no node carries a content description.
         compose.onAllNodes(hasContentDescription, useUnmergedTree = true).assertCountEquals(0)
+    }
+
+    private fun showNoResults(
+        height: Dp,
+        fontScale: Float = 1f,
+    ) {
+        compose.setContent {
+            val base = LocalDensity.current
+            CompositionLocalProvider(LocalDensity provides Density(base.density, fontScale)) {
+                MailcraneTheme { Box(Modifier.height(height)) { NoResultsState() } }
+            }
+        }
+    }
+
+    /** #397: with room for both, the picture shows above the text. */
+    @Test
+    fun withRoomTheIllustrationShows() {
+        showNoResults(height = 600.dp)
+        compose.onNodeWithTag(ILLUSTRATION_TAG).assertExists()
+        compose.onNodeWithText("No results").assertIsDisplayed()
+    }
+
+    /** #397: above the keyboard, short of room, the picture goes and the text stays fully visible. */
+    @Test
+    fun shortOfRoomTheIllustrationGoesAndTheTextStays() {
+        showNoResults(height = 300.dp)
+        compose.onNodeWithTag(ILLUSTRATION_TAG).assertDoesNotExist()
+        compose.onNodeWithText("No results").assertIsDisplayed()
+        compose.onNodeWithText("Try different words or check your spelling.").assertIsDisplayed()
+    }
+
+    /** #397: large text needs more room for the text, so the picture goes sooner. */
+    @Test
+    fun largeTextGivesUpTheIllustrationFirst() {
+        showNoResults(height = 460.dp, fontScale = 2f)
+        compose.onNodeWithTag(ILLUSTRATION_TAG).assertDoesNotExist()
+        compose.onNodeWithText("No results").assertIsDisplayed()
     }
 
     @Test

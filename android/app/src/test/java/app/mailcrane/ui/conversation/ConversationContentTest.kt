@@ -60,7 +60,8 @@ class ConversationContentTest {
             }
         }
         compose.onNodeWithContentDescription("Ana, Bob", substring = true).assertIsDisplayed()
-        compose.onNodeWithContentDescription("3 messages").assertIsDisplayed()
+        // Read as part of the row since #392, not as a node of its own.
+        compose.onNodeWithContentDescription("3 messages.", substring = true).assertIsDisplayed()
         compose.onNodeWithContentDescription("Plans", substring = true).performClick()
         assertEquals(true, clicked)
     }

@@ -1,6 +1,8 @@
 package app.mailcrane.ui.messagelist
 
 import android.content.res.Resources
+import android.icu.util.TimeZone
+import android.text.format.DateFormat
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -20,9 +22,11 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.SemanticsPropertyKey
 import androidx.compose.ui.semantics.SemanticsPropertyReceiver
@@ -58,6 +62,9 @@ import java.util.Locale
  * selects the row, and a selected row shows a check mark there. Compact has no picture, puts subject and
  * preview on one line and uses tighter padding; while [selecting] a checkbox replaces the unread dot.
  * [avatarName] is the name the picture's initials come from (a conversation passes its newest sender).
+ * A conversation's message [count] goes at the end of the second line, under the date, so it takes no
+ * width from the first line and the date lines up with every other row's (#392). [dateStyle] picks the
+ * list's short date or, inside a conversation, the date with its time (#399).
  */
 @Composable
 fun MessageRow(
@@ -69,13 +76,23 @@ fun MessageRow(
     selected: Boolean = false,
     onAvatarClick: (() -> Unit)? = null,
     avatarName: String = message.fromName,
+    count: Int? = null,
+    dateStyle: RowDateStyle = RowDateStyle.LIST,
 ) {
     val comfortable = LocalMailboxDensity.current == MailboxDensity.COMFORTABLE
     val resources = LocalResources.current
     val sender = senderLabel(message, resources)
     val subject = message.subject.ifBlank { stringResource(R.string.message_no_subject) }
-    val date = remember(message.date, now.toLocalDate(), now.zone, locale) { formatListDate(message.date, now, locale) }
-    val description = rowDescription(message, sender, subject, date, resources, selected)
+    val is24Hour = DateFormat.is24HourFormat(LocalContext.current)
+    val date =
+        remember(message.date, now.toLocalDate(), now.zone, locale, dateStyle, is24Hour) {
+            when (dateStyle) {
+                RowDateStyle.LIST -> formatListDate(message.date, now, locale)
+                RowDateStyle.CONVERSATION -> formatConversationDate(message.date, now, locale, is24Hour)
+            }
+        }
+    val countLabel = count?.let { pluralStringResource(R.plurals.thread_a11y_count, it, it) }
+    val description = rowDescription(message, sender, subject, date, resources, selected, countLabel)
     val unread = !message.isSeen
     val weight = if (unread) FontWeight.Bold else FontWeight.Normal
     val colors = MaterialTheme.colorScheme
@@ -222,6 +239,16 @@ fun MessageRow(
                         tint = colors.primary,
                     )
                 }
+                if (count != null) {
+                    // TalkBack reads it from the row's description, so it has none of its own.
+                    Text(
+                        text = count.toString(),
+                        modifier = Modifier.padding(start = 8.dp),
+                        style = MaterialTheme.typography.labelLarge,
+                        color = colors.onSurfaceVariant,
+                        maxLines = 1,
+                    )
+                }
             }
             if (comfortable && message.snippet.isNotBlank()) {
                 Text(
@@ -240,6 +267,9 @@ fun MessageRow(
 private val CORNER_DOT = 10.dp
 private val CORNER_DOT_RING = 14.dp
 private val CORNER_DOT_OFFSET = 4.dp
+
+/** Which date a row shows: the list's short one, or a conversation's with the time (#399). */
+enum class RowDateStyle { LIST, CONVERSATION }
 
 /** What leads a message row (M4-24); for tests only, since TalkBack reads the row as one item. */
 enum class RowLeading { PICTURE, CHECK_MARK, CHECKBOX, UNREAD_DOT }
@@ -264,6 +294,7 @@ internal fun rowDescription(
     date: String,
     resources: Resources,
     selected: Boolean = false,
+    countLabel: String? = null,
 ): String =
     buildList {
         if (selected) add(resources.getString(R.string.message_a11y_selected))
@@ -273,6 +304,7 @@ internal fun rowDescription(
         add(resources.getString(R.string.message_a11y_subject, subject))
         if (date.isNotEmpty()) add(resources.getString(R.string.message_a11y_date, date))
         if (message.hasAttachments) add(resources.getString(R.string.message_a11y_attachment))
+        if (countLabel != null) add(resources.getString(R.string.message_a11y_count, countLabel))
     }.joinToString(" ")
 
 /**
@@ -298,6 +330,41 @@ internal fun formatListDate(
                 else -> DateTimeFormatter.ofLocalizedDate(FormatStyle.SHORT)
             }
         formatter.withLocale(locale).format(time)
+    } catch (_: DateTimeException) {
+        ""
+    } catch (_: ArithmeticException) {
+        ""
+    }
+
+/**
+ * A message's date inside a conversation, with its time (#399): the time if it is today, the weekday
+ * and time in the last week, otherwise the short date and time, in [locale] and [now]'s time zone.
+ * [is24Hour] is the device's 12/24-hour setting; each pattern is the locale's own for an ICU skeleton
+ * (`Hm` or `hm`, with `EEE` or `yMd`), so nothing is hard-coded. Empty for a date outside the years
+ * 1 to 9999, as in [formatListDate].
+ */
+internal fun formatConversationDate(
+    epochSeconds: Long,
+    now: ZonedDateTime,
+    locale: Locale,
+    is24Hour: Boolean,
+): String =
+    try {
+        val seconds = epochSeconds.coerceIn(Instant.MIN.epochSecond, Instant.MAX.epochSecond)
+        val time = Instant.ofEpochSecond(seconds).atZone(now.zone)
+        if (time.year !in 1..9999) return ""
+        val day = time.toLocalDate()
+        val today = now.toLocalDate()
+        val clock = if (is24Hour) "Hm" else "hm"
+        val skeleton =
+            when {
+                day == today -> clock
+                day.isBefore(today) && day.isAfter(today.minusDays(7)) -> "EEE$clock"
+                else -> "yMd$clock"
+            }
+        val format = android.icu.text.DateFormat.getInstanceForSkeleton(skeleton, locale)
+        format.timeZone = TimeZone.getTimeZone(now.zone.id)
+        format.format(java.util.Date(time.toInstant().toEpochMilli()))
     } catch (_: DateTimeException) {
         ""
     } catch (_: ArithmeticException) {

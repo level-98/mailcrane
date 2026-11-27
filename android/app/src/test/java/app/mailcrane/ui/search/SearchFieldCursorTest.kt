@@ -63,4 +63,26 @@ class SearchFieldCursorTest {
         field.performTextInput("Ana")
         compose.runOnIdle { assertEquals("lunch has:attachment from:Ana", query) }
     }
+
+    /** #397: opened again with the last query still there, typing replaces it instead of adding to it. */
+    @Test
+    fun reopenedWithAnOldQueryTypingReplacesIt() {
+        var query by mutableStateOf("test")
+        compose.setContent {
+            MailcraneTheme {
+                SearchContent(
+                    state = SearchState(query = query),
+                    recent = emptyList(),
+                    onQueryChange = { query = it },
+                    onSubmit = {},
+                    onRecent = {},
+                    onClearRecent = {},
+                    onOpenMessage = {},
+                    onBack = {},
+                )
+            }
+        }
+        compose.onNode(hasSetTextAction()).performTextInput("Re Test")
+        compose.runOnIdle { assertEquals("Re Test", query) }
+    }
 }
