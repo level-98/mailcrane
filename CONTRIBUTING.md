@@ -46,13 +46,16 @@ Open a **feature request** first and wait for a maintainer to label it `accepted
 
 ## CI
 
-Every pull request and every push to `main` runs [`ci.yml`](.github/workflows/ci.yml), with no path filters, so docs-only PRs get the same checks. Each job only installs tools and runs `cargo xtask ci`:
+Every pull request, merge queue group and push to `main` runs [`ci.yml`](.github/workflows/ci.yml). Each job only installs tools and runs `cargo xtask ci`.
+
+A pull request runs only the jobs its files need (the `changes` job decides, #530): a docs-only change (`docs/`, `website/`, top-level `*.md`) skips `linux` and `windows`; an `android/`-only change runs `linux` with just the design and Android steps; a change only to `core/crates/` outside the FFI skips the Android step. Anything else, both Android and core, and every push to `main` run everything. `ci-ok` passes when every needed job passed.
 
 | Job | Runs on | Checks |
 |---|---|---|
 | `linux` | Ubuntu | Every step (`--strict`): fmt, clippy, tests, `cargo deny` and the open-source licences check (cargo-about; after changing Rust dependencies run `cargo xtask licences` and commit the result), the design check and the release-notes script tests, and the Android lint, unit tests, debug and release builds (the core cross-compiled for arm64-v8a and x86_64), with a check that each APK packages its own core. The debug APK is uploaded as the `android-debug-apk` artifact for 7 days, so you can install it with `adb install` without building. |
 | `windows` | Windows | fmt, clippy and tests of the core (`--strict --only fmt,lint,test`), so it stays portable. |
-| `ci-ok` | Ubuntu | Passes only if every job above passed. Look here first. |
+| `changes` | Ubuntu | Which jobs the change needs, from its files. |
+| `ci-ok` | Ubuntu | Passes only if every job the change needs passed. Look here first. |
 
 ## Review
 
