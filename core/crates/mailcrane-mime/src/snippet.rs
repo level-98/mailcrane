@@ -83,10 +83,12 @@ const BLOCK_TAGS: [&str; 40] = [
 /// which collapses whitespace (#391, #446). `mail_parser::html_to_text`
 /// alone decides what is text; block boundaries are marked before it runs
 /// and turned into line breaks after (#456 review). A blank line the
-/// sender made with `<br><br>` stays; runs of blank lines become one, and
-/// the text starts and ends with neither.
+/// sender made with `<br><br>` stays, but a `<br>` that only ends a
+/// paragraph (`<p>A<br></p>`) adds none (#460); runs of blank lines become
+/// one, and the text starts and ends with neither. Text in `<pre>` keeps
+/// its line breaks and spaces ([`pre_as_breaks`], #460).
 pub(crate) fn html_to_lines(html: &str) -> String {
-    let text = mail_parser::html_to_text(&mark_html_blocks(html));
+    let text = mail_parser::html_to_text(&mark_html_blocks(&pre_as_breaks(html)));
     tidy_lines(&lines_from_marks(&text))
 }
 
@@ -103,6 +105,11 @@ const MARK: char = '\u{1}';
 /// boundary.
 const MARK_BREAK: char = '\u{2}';
 
+/// Stands for a `</p>`, whose line break `html_to_text` writes itself, as
+/// [`MARK_BREAK`] does for a `<br>`; apart so that a `</p>` right after a
+/// `<br>` can add no blank line (#460).
+const MARK_PARA: char = '\u{5}';
+
 /// Stands before a space or tab the sender wrote as a character reference
 /// (`&#32;`, `&Tab;`): the next character is kept even right after a block
 /// boundary, where collapsed source whitespace is dropped (#456 review).
@@ -110,7 +117,7 @@ const MARK_KEEP: char = '\u{4}';
 
 /// Whether `c` is one of the marks.
 fn is_mark(c: char) -> bool {
-    matches!(c, MARK | MARK_BREAK | MARK_KEEP)
+    matches!(c, MARK | MARK_BREAK | MARK_PARA | MARK_KEEP)
 }
 
 /// What goes before a block tag: `<>`, which `html_to_text` reads as an
@@ -121,8 +128,11 @@ fn is_mark(c: char) -> bool {
 /// most doubles the input (a `<p>` per three bytes).
 const MARKER: &str = "<>\u{1}";
 
-/// The same before a `<br>` or `</p>`.
+/// The same before a `<br>`.
 const MARKER_BREAK: &str = "<>\u{2}";
+
+/// The same before a `</p>`.
+const MARKER_PARA: &str = "<>\u{5}";
 
 /// Whether `b` is whitespace to `html_to_text`: space, tab, CR and LF (not
 /// form feed, #456 review).
@@ -252,6 +262,22 @@ fn each_marker(bytes: &[u8], mut f: impl FnMut(usize, &'static str)) {
 
 /// The marker for the tag starting at `lt`, if it is one that gets one.
 fn marker_at(bytes: &[u8], lt: usize) -> Option<&'static str> {
+    let (name, closing) = tag_name(bytes, lt);
+    let is = |t: &str| t.as_bytes().eq_ignore_ascii_case(name);
+    if is("br") {
+        Some(MARKER_BREAK)
+    } else if closing && is("p") {
+        Some(MARKER_PARA)
+    } else if BLOCK_TAGS.iter().any(|t| is(t)) {
+        Some(MARKER)
+    } else {
+        None
+    }
+}
+
+/// The name of the tag starting at `lt`, read as `html_to_text` reads it,
+/// and whether it is an end tag.
+fn tag_name(bytes: &[u8], lt: usize) -> (&[u8], bool) {
     let mut name_start = lt.saturating_add(1);
     while bytes
         .get(name_start)
@@ -279,13 +305,94 @@ fn marker_at(bytes: &[u8], lt: usize) -> Option<&'static str> {
     let closing = bytes
         .get(lt.saturating_add(1)..name_start)
         .is_some_and(|between| between.contains(&b'/'));
-    let is = |t: &str| t.as_bytes().eq_ignore_ascii_case(name);
-    if is("br") || (closing && is("p")) {
-        Some(MARKER_BREAK)
-    } else if BLOCK_TAGS.iter().any(|t| is(t)) {
-        Some(MARKER)
+    (name, closing)
+}
+
+/// `html` with the text inside `<pre>` written so that `html_to_text`,
+/// which collapses whitespace, keeps it (#460): each line break becomes a
+/// `<br>`, each space `&#32;` and each tab `&#9;` (references it writes
+/// as they are, see [`MARK_KEEP`]). As in HTML, a line break right after
+/// the `<pre>` start tag is dropped, and CR LF or a lone CR is one line
+/// break. Tags are read as `html_to_text` reads them ([`tag_end`]): tags,
+/// comments, and a cut-off tag up to the next `<` are copied unchanged,
+/// and so is text in content it leaves out (head, style, script,
+/// template), where a `<pre>` doesn't count either. At most five bytes
+/// per byte of `<pre>` text; other input is copied as it is.
+fn pre_as_breaks(html: &str) -> String {
+    let bytes = html.as_bytes();
+    let mut out = String::with_capacity(html.len());
+    let mut depth = 0usize;
+    let (mut head, mut style, mut script, mut template) = (false, false, false, false);
+    let mut after_pre_start = false;
+    let mut copied = 0;
+    let mut pos = 0;
+    while let Some(at) = bytes
+        .get(pos..)
+        .and_then(|rest| rest.iter().position(|b| *b == b'<'))
+    {
+        let lt = pos.saturating_add(at);
+        let hidden = head || style || script || template;
+        let text = html.get(copied..lt).unwrap_or_default();
+        push_text(&mut out, text, depth > 0 && !hidden, after_pre_start);
+        after_pre_start = false;
+        let after = match tag_end(bytes, lt) {
+            Ok(after) => {
+                let (name, closing) = tag_name(bytes, lt);
+                let is = |t: &str| t.as_bytes().eq_ignore_ascii_case(name);
+                if is("head") {
+                    head = !closing;
+                } else if is("style") {
+                    style = !closing;
+                } else if is("script") {
+                    script = !closing;
+                } else if is("template") {
+                    template = !closing;
+                } else if is("pre") && !hidden {
+                    if closing {
+                        depth = depth.saturating_sub(1);
+                    } else {
+                        depth = depth.saturating_add(1);
+                        after_pre_start = true;
+                    }
+                }
+                after
+            }
+            Err(next) => next,
+        };
+        let after = after.max(lt.saturating_add(1));
+        out.push_str(html.get(lt..after).unwrap_or_default());
+        copied = after;
+        pos = after;
+    }
+    let hidden = head || style || script || template;
+    let text = html.get(copied..).unwrap_or_default();
+    push_text(&mut out, text, depth > 0 && !hidden, after_pre_start);
+    out
+}
+
+/// Appends `text` to `out`, written for `<pre>` when `pre` is set (see
+/// [`pre_as_breaks`]); `drop_first_break` drops a leading line break.
+fn push_text(out: &mut String, text: &str, pre: bool, drop_first_break: bool) {
+    if !pre {
+        out.push_str(text);
+        return;
+    }
+    let text = if drop_first_break {
+        text.strip_prefix("\r\n")
+            .or_else(|| text.strip_prefix(['\n', '\r']))
+            .unwrap_or(text)
     } else {
-        None
+        text
+    };
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '\r' if chars.peek() == Some(&'\n') => {}
+            '\n' | '\r' => out.push_str("<br>"),
+            ' ' => out.push_str("&#32;"),
+            '\t' => out.push_str("&#9;"),
+            _ => out.push(c),
+        }
     }
 }
 
@@ -393,7 +500,9 @@ fn mark_html_blocks(html: &str) -> String {
 /// after a block mark are dropped. A line break `html_to_text` wrote for a
 /// sender's `<br>`, `</p>` or `&#10;` (the character right after
 /// [`MARK_BREAK`]) is kept, after the break of a block mark before it, so
-/// a blank line the sender made (`<div><br></div>`, `<br><br>`) stays. Only
+/// a blank line the sender made (`<div><br></div>`, `<br><br>`) stays. The
+/// break of a `</p>` ([`MARK_PARA`]) right after a `<br>`'s, with no text
+/// between, is dropped: that `<br>` only ended the paragraph (#460). Only
 /// tags html_to_text closes get a break mark, so one is always followed by
 /// its line break; that the mark counts for the next character only is a
 /// guard, with no input known to need it. The character after
@@ -407,21 +516,32 @@ fn lines_from_marks(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut pending = false;
     let mut after_break = false;
+    let mut after_para = false;
     let mut keep_next = false;
+    // The last line break written was a `<br>`'s, with no text since: a
+    // `</p>` now only ends that line, so its own break is dropped (#460).
+    let mut broke = false;
     let line_started = |out: &String| !out.is_empty() && !out.ends_with('\n');
     for c in text.chars() {
         let after_break_mark = std::mem::take(&mut after_break);
+        let after_para_mark = std::mem::take(&mut after_para);
         let keep = std::mem::take(&mut keep_next);
         match c {
             MARK => pending = true,
             MARK_BREAK => after_break = true,
+            MARK_PARA => after_para = true,
             MARK_KEEP => keep_next = true,
-            '\n' if after_break_mark => {
+            '\n' if after_para_mark && broke => {
+                pending = false;
+                broke = false;
+            }
+            '\n' if after_break_mark || after_para_mark => {
                 if pending && line_started(&out) {
                     out.push('\n');
                 }
                 out.push('\n');
                 pending = false;
+                broke = after_break_mark;
             }
             '\n' if !keep => pending = true,
             ' ' | '\t' if pending && !keep => {}
@@ -430,6 +550,7 @@ fn lines_from_marks(text: &str) -> String {
                     out.push('\n');
                 }
                 pending = false;
+                broke = broke && c.is_whitespace();
                 out.push(c);
             }
         }
@@ -688,6 +809,8 @@ mod tests {
         "\u{1}",
         "\u{2}",
         "\u{4}",
+        "\u{5}",
+        "&#5;",
         "&",
         ";",
         "#",
@@ -735,7 +858,6 @@ mod tests {
         ("<td>", "<br>"),
         ("</td>", "</br>"),
         ("<li>", "<br>"),
-        ("<pre>", "<br>"),
         ("</pre>", "</br>"),
         ("<DIV class=\"a>b\">", "<br class=\"a>b\">"),
         ("< /div>", "< /br>"),
@@ -788,7 +910,7 @@ mod tests {
     /// replaced, lines tidied.
     fn plain(html: &str) -> String {
         let text = mail_parser::html_to_text(html);
-        tidy_lines(&text.replace(['\u{1}', '\u{2}', '\u{4}'], NOT_A_MARK))
+        tidy_lines(&text.replace(['\u{1}', '\u{2}', '\u{4}', '\u{5}'], NOT_A_MARK))
     }
 
     /// `text` with each run of line breaks made one.
@@ -809,10 +931,61 @@ mod tests {
 
         /// #456 (lead's decision): without closed block tags,
         /// html_to_lines is html_to_text exactly. The markers are the
-        /// only difference.
+        /// only difference. A `</p>` can end a line a `<br>` already ended,
+        /// where html_to_text writes a blank line and #460 wants none, so
+        /// with a `</p` in the input blank lines are not compared here;
+        /// [`a_br_that_ends_a_paragraph_adds_nothing`] holds that rule.
+        /// (No piece spells it `</ p`.)
         #[test]
         fn without_blocks_it_is_html_to_text(html in html_from(INLINE_PIECES)) {
-            prop_assert_eq!(html_to_lines(&html), plain(&html), "{:?}", html);
+            if html.to_ascii_lowercase().contains("</p") {
+                prop_assert_eq!(
+                    one_break_per_run(&html_to_lines(&html)),
+                    one_break_per_run(&plain(&html)),
+                    "{:?}",
+                    html
+                );
+            } else {
+                prop_assert_eq!(html_to_lines(&html), plain(&html), "{:?}", html);
+            }
+        }
+
+        /// #460: a `<br>` right before a paragraph's end, after text,
+        /// changes nothing: the paragraph's end already ends the line, so
+        /// it adds no blank line, wherever the pair lands among other
+        /// pieces (inside a tag, a comment or a quoted value it is dropped
+        /// either way).
+        #[test]
+        fn a_br_that_ends_a_paragraph_adds_nothing(
+            before in html_and_twin(),
+            after in html_and_twin(),
+            br in proptest::sample::select(&["<br>", "<BR/>", "&#10;", "<br><b></b>", "<br> "][..]),
+        ) {
+            let (before, after) = (before.0, after.0);
+            let with = format!("{before}A{br}</p>{after}");
+            let without = format!("{before}A</p>{after}");
+            prop_assert_eq!(html_to_lines(&with), html_to_lines(&without), "{:?}", with);
+        }
+
+        /// #460: text in `<pre>` keeps every line break and space: its
+        /// lines are the source lines (inline tags removed), but for the
+        /// line break HTML drops right after the `<pre>` start tag, one
+        /// line break just before `</pre>` (the block's end ends that line
+        /// anyway), and the blank-line and trailing-space tidying every
+        /// result gets.
+        #[test]
+        fn pre_keeps_its_lines(
+            text in proptest::collection::vec(
+                proptest::sample::select(&PRE_PIECES[..]), 0..24
+            ).prop_map(|p| p.concat()),
+        ) {
+            let html = format!("<div>x</div><pre>{text}</pre><div>y</div>");
+            let source = text.replace("\r\n", "\n").replace('\r', "\n");
+            let source = source.strip_prefix('\n').unwrap_or(&source);
+            let source = source.replace("<b>", "").replace("</b>", "");
+            let source = source.strip_suffix('\n').unwrap_or(&source);
+            let expected = tidy_lines(&format!("x\n{source}\ny"));
+            prop_assert_eq!(html_to_lines(&html), expected, "{:?}", html);
         }
 
         /// #456 review: with block tags, html_to_lines is html_to_text on
@@ -840,6 +1013,56 @@ mod tests {
             let squeeze = |s: &str| s.chars().filter(|c| !c.is_whitespace()).collect::<String>();
             prop_assert_eq!(squeeze(&html_to_lines(&html)), squeeze(&plain(&html)), "{:?}", html);
         }
+    }
+
+    /// Pieces of `<pre>` text for [`pre_keeps_its_lines`]: text, spaces,
+    /// tabs, every kind of line break, and inline tags.
+    const PRE_PIECES: &[&str] = &[
+        "A", "bc", " ", "  ", "\t", "\n", "\r\n", "\r", "<b>", "</b>", "x y",
+    ];
+
+    /// #460: a `<br>` that only ends a paragraph adds no blank line; a
+    /// blank paragraph (`<p><br></p>`) and `<br><br>` keep theirs.
+    #[test]
+    fn a_paragraph_final_br_adds_no_blank_line() {
+        assert_eq!(html_to_lines("<p>A<br></p><p>B</p>"), "A\nB");
+        assert_eq!(html_to_lines("<p>A<br/></P><p>B<br></p>"), "A\nB");
+        assert_eq!(html_to_lines("<p>A</p><p><br></p><p>B</p>"), "A\n\nB");
+        assert_eq!(html_to_lines("<p>A<br><br></p><p>B</p>"), "A\n\nB");
+        assert_eq!(html_to_lines("A<br></p></p>B"), html_to_lines("A</p></p>B"));
+    }
+
+    /// #460: `<pre>` keeps its line breaks and spaces; the line break
+    /// right after `<pre>` is dropped, as in HTML.
+    #[test]
+    fn pre_keeps_line_breaks_and_spaces() {
+        assert_eq!(
+            html_to_lines("<pre>line1\nline2\n  indented</pre>"),
+            "line1\nline2\n  indented"
+        );
+        assert_eq!(html_to_lines("<pre>\nx\r\ny\rz</pre>"), "x\ny\nz");
+        assert_eq!(html_to_lines("<pre>a\n\nb</pre>"), "a\n\nb");
+        assert_eq!(
+            html_to_lines("<p>A</p><PRE class=\"c\">a  b\tc</pre>B"),
+            "A\na  b\tc\nB"
+        );
+        // Inline tags inside are still tags; their attributes aren't text.
+        assert_eq!(
+            html_to_lines("<pre><span class=\"k w\">fn</span> main()\n{}</pre>"),
+            "fn main()\n{}"
+        );
+        // Hidden content and comments inside are left as they were.
+        assert_eq!(
+            html_to_lines("<pre>a<style>p {\n}</style>\nb</pre>"),
+            "a\nb"
+        );
+        assert_eq!(html_to_lines("<pre>a<!-- x\ny -->\nb</pre>"), "a\nb");
+        // Outside `<pre>`, or in a `<pre>` inside hidden content, nothing changes.
+        assert_eq!(html_to_lines("<div>a\n  b</div>"), "a b");
+        assert_eq!(html_to_lines("<style><pre></style>a\n  b"), "a b");
+        assert_eq!(html_to_lines("<pre>a</pre>c\n  d"), "a\nc d");
+        // The snippet still collapses whitespace.
+        assert_eq!(snippet(&html_to_lines("<pre>a\n   b</pre>")), "a b");
     }
 
     /// Pieces for [`hidden_content_changes_only_whitespace`]: text,
@@ -883,6 +1106,10 @@ mod tests {
         "</head>",
         "<title>",
         "</title>",
+        "<pre>",
+        "</pre>",
+        "\n",
+        "  ",
     ];
 
     /// #456 review: a mark character in the input, raw or in any form of
