@@ -159,10 +159,13 @@ fn removing_the_account_destroys_its_subscription_on_the_server() {
 
     // What remove_account runs first, with the fake's certificate.
     let store = Store::open(&path).expect("store");
+    // A hang guard, not the production 5 s limit: a busy machine can stall
+    // the fake for seconds (#487).
     crate::account::destroy_push_subscription(
         &store,
         account,
         Some(server.root_cert_der().to_vec()),
+        std::time::Duration::from_secs(60),
     );
     assert!(server.push_subscriptions().is_empty());
     assert_eq!(store.push_subscription(account).expect("read"), None);
