@@ -162,14 +162,17 @@ fn queue_in_tx(
             )?;
         }
         if let Some(opposite) = kind.opposite() {
-            // The newest queued action on this message, if untried.
+            // The newest queued action on this message, if untried. Only one
+            // queued for this UID of this folder: an older action may name a
+            // row id that another message took since (#503).
             let latest: Option<(i64, String)> = tx
                 .query_row(
                     "SELECT o.id, o.kind FROM pending_ops o \
                          JOIN pending_op_messages pm ON pm.op_id = o.id \
-                         WHERE pm.message_id = ?1 AND o.attempts = 0 AND o.step = 0 \
+                         WHERE pm.message_id = ?1 AND pm.uid = ?2 AND o.folder_id = ?3 \
+                         AND o.attempts = 0 AND o.step = 0 \
                          ORDER BY o.id DESC LIMIT 1",
-                    params![m.message_id.0],
+                    params![m.message_id.0, m.uid, folder.0],
                     |r| Ok((r.get(0)?, r.get(1)?)),
                 )
                 .optional()?;
