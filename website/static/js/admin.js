@@ -9,9 +9,13 @@
 // - Unauthenticated, GitHub allows 60 requests an hour per network, and a 304
 //   counts like any other answer. So this page spends at most BUDGET requests
 //   per rolling hour in this browser (counted in localStorage, so reloads and
-//   other tabs share it): 2 every 5 minutes, 4 every 15 minutes, and a
-//   comments request only when an open fleet PR has changed. That is about 40
-//   an hour, leaving room for the Refresh button. ETags still save bandwidth.
+//   other tabs share it): 2 every 5 minutes, 5 every 15 minutes (one of them
+//   the lead's reports, #562), and a comments request only when an open fleet
+//   PR has changed. That is about 44 an hour, leaving room for the Refresh
+//   button. ETags still save bandwidth.
+// - The reports are Markdown written by the fleet's lead. They are built
+//   with DOM nodes and textContent too (a small subset: paragraphs, lists,
+//   bold, code, links), so no HTML from a comment ever reaches the page.
 // - Refreshes only while the tab is visible.
 "use strict";
 
@@ -26,6 +30,11 @@
   const SLOW_MS = 15 * 60 * 1000;
   const LOW_REMAINING = 5;
   const PREFIX = "mailcrane-admin:";
+  // The pinned, locked issue the lead posts its reports on (#561), and how
+  // each report starts.
+  const REPORTS_ISSUE = 561;
+  const REPORT_START = "**mailbot.lead: report";
+  const REPORTS_SHOWN = 5;
 
   const $ = (id) => document.getElementById(id);
   const statusLine = $("admin-status");
@@ -121,7 +130,26 @@
     created_at: text(run && run.created_at),
   });
 
+  // The start of the day before yesterday, UTC, to the second: the reports
+  // URL stays the same all day, so its ETag keeps saving requests' bandwidth,
+  // and hourly reports make well under 100 in that window.
+  function reportsSince() {
+    const start = Math.floor(Date.now() / DAY) * DAY - 2 * DAY;
+    return new Date(start).toISOString().replace(/\.\d{3}Z$/, "Z");
+  }
+
   const ENDPOINTS = {
+    reports: {
+      path: () => `/issues/${REPORTS_ISSUE}/comments?per_page=100&since=${reportsSince()}`,
+      // Only the repository owner's own reports count (the fleet posts as
+      // the owner); anyone else could type the same start.
+      slim: (data) =>
+        list(data)
+          .filter((c) => c && text(c.user && c.user.login) === OWNER && text(c.body).startsWith(REPORT_START))
+          .map((c) => ({ url: text(c.html_url), created_at: text(c.created_at), body: text(c.body).slice(0, 8000) }))
+          .sort((a, b) => time(b.created_at) - time(a.created_at))
+          .slice(0, REPORTS_SHOWN),
+    },
     open: {
       path: "/pulls?state=open&per_page=100",
       slim: (data, response) => ({ more: hasNextPage(response), items: list(data).map(slimPull) }),
@@ -179,7 +207,7 @@
     },
   };
   const FAST = ["open", "ci"];
-  const SLOW = ["releases", "issues", "closed", "release"];
+  const SLOW = ["releases", "issues", "closed", "release", "reports"];
 
   let errors = new Set();
   let remaining = null;
@@ -219,7 +247,8 @@
     let response;
     try {
       // no-store: the browser's own cache would turn GitHub's 304 into a 200.
-      response = await fetch(API + endpoint.path, {
+      const path = typeof endpoint.path === "function" ? endpoint.path() : endpoint.path;
+      response = await fetch(API + path, {
         headers,
         cache: "no-store",
         credentials: "omit",
@@ -476,7 +505,102 @@
     target.prepend(counts);
   }
 
+  // ---------- Reports: a small Markdown subset, DOM nodes only ----------
+
+  // A link in a report: http(s) URLs only, opened without a referrer or a
+  // handle back to this page. Anything else stays text.
+  function reportLink(href, content) {
+    if (typeof href !== "string" || !/^https?:\/\/[^\s]+$/.test(href)) return document.createTextNode(content);
+    const a = node("a", null, content);
+    a.href = href;
+    a.rel = "noopener noreferrer";
+    return a;
+  }
+
+  // **bold**, `code`, [text](https://…), bare https:// URLs and #123.
+  const INLINE = /(\*\*([^*]+)\*\*)|(`([^`]+)`)|(\[([^\]]+)\]\((https?:\/\/[^\s)]+)\))|(https?:\/\/[^\s<>()]+)|(#(\d+)\b)/g;
+
+  function inline(line) {
+    const fragment = document.createDocumentFragment();
+    let last = 0;
+    for (const m of line.matchAll(INLINE)) {
+      if (m.index > last) fragment.append(line.slice(last, m.index));
+      if (m[1]) {
+        const strong = node("strong");
+        strong.append(inline(m[2]));
+        fragment.append(strong);
+      } else if (m[3]) fragment.append(node("code", null, m[4]));
+      else if (m[5]) fragment.append(reportLink(m[7], m[6]));
+      else if (m[8]) fragment.append(reportLink(m[8], m[8]));
+      else fragment.append(reportLink(`${REPO}/issues/${m[10]}`, m[9]));
+      last = m.index + m[0].length;
+    }
+    fragment.append(line.slice(last));
+    return fragment;
+  }
+
+  // Paragraphs (lines joined until a blank line) and "- " or "* " lists.
+  // Headings show as plain paragraphs; nothing else is interpreted.
+  function markdown(body) {
+    const fragment = document.createDocumentFragment();
+    let paragraph = [];
+    let items = null;
+    const flush = () => {
+      if (paragraph.length === 0) return;
+      const p = node("p");
+      paragraph.forEach((line, i) => {
+        if (i > 0) p.append(" ");
+        p.append(inline(line));
+      });
+      fragment.append(p);
+      paragraph = [];
+    };
+    body
+      .replace(/\r\n?/g, "\n")
+      .split("\n")
+      .forEach((raw) => {
+        const line = raw.trim();
+        const item = line.match(/^[-*]\s+(.*)$/);
+        if (item) {
+          flush();
+          if (!items) {
+            items = node("ul");
+            fragment.append(items);
+          }
+          const li = node("li");
+          li.append(inline(item[1]));
+          items.append(li);
+        } else if (line === "") {
+          flush();
+          items = null;
+        } else {
+          items = null;
+          paragraph.push(line.replace(/^#{1,6}\s+/, ""));
+        }
+      });
+    flush();
+    return fragment;
+  }
+
+  function renderReports() {
+    const target = $("admin-reports");
+    const reports = saved("reports");
+    if (!target) return;
+    if (reports === null) return fill("admin-reports", null);
+    const items = list(reports).map((report) => {
+      const li = node("li", "admin-report");
+      const head = node("p", "admin-report-head");
+      head.append(when(report.created_at), " · ", link(report.url, "on GitHub"));
+      const body = node("div", "admin-report-body");
+      body.append(markdown(text(report.body)));
+      li.append(head, body);
+      return li;
+    });
+    fill("admin-reports", items, "No reports in the last two days.");
+  }
+
   function renderAll() {
+    renderReports();
     renderBuild();
     renderPrs();
     renderMerged();

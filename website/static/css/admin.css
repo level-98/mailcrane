@@ -166,3 +166,29 @@ a.admin-num:hover,
     width: auto;
   }
 }
+
+/* Reports (#562): the lead's Markdown, as paragraphs and lists. Long words
+   and code wrap rather than scroll sideways. */
+.admin-report-head {
+  margin: 0;
+  font-size: 0.9rem;
+}
+
+.admin-report-body {
+  overflow-wrap: anywhere;
+  font-size: 0.95rem;
+}
+
+.admin-report-body p,
+.admin-report-body ul {
+  margin: 6px 0 0;
+}
+
+.admin-report-body ul {
+  padding-left: 1.2em;
+}
+
+.admin-report-body code {
+  overflow-wrap: anywhere;
+  font-size: 0.85em;
+}
