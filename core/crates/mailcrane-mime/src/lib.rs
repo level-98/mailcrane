@@ -135,7 +135,9 @@ pub fn parse_message(raw: &[u8]) -> Result<ParsedMessage, MimeError> {
     }
     if text_plain.is_none() {
         if let Some(h) = &html {
-            text_plain = Some(mail_parser::html_to_text(h));
+            // Spaces at block boundaries first, so adjacent blocks don't run
+            // together in the text and the snippet (#391).
+            text_plain = Some(mail_parser::html_to_text(&snippet::space_html_blocks(h)));
         }
     }
 
