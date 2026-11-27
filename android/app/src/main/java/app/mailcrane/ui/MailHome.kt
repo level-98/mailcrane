@@ -22,6 +22,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -92,100 +93,124 @@ fun MailHome(
             )
         }
     }
+    Box(Modifier.fillMaxSize()) {
+        ComposeOrMailbox(
+            composing = composing,
+            compose = { shared ->
+                ComposeScreen(
+                    accountId = accountId,
+                    reply = reply,
+                    draft = draft,
+                    prefill = prefill,
+                    onDone = { result ->
+                        if (result is ComposeResult.Sent) {
+                            notice =
+                                if (result.rejected.isEmpty()) {
+                                    resources.getString(R.string.compose_sent)
+                                } else {
+                                    resources.getString(
+                                        R.string.compose_sent_partly,
+                                        result.rejected.joinToString(", "),
+                                    )
+                                }
+                        }
+                        if (result is ComposeResult.Undoable) undoable = result.outboxId to result.seconds
+                        if (result is ComposeResult.Scheduled) {
+                            notice = resources.getString(R.string.schedule_done, formatSendAt(result.sendAt))
+                        }
+                        if (result is ComposeResult.Queued) {
+                            notice = resources.getString(R.string.compose_queued)
+                        }
+                        if (result is ComposeResult.SavedDraft) {
+                            notice = resources.getString(R.string.compose_draft_saved)
+                        }
+                        composing = false
+                        reply = null
+                        draft = null
+                        prefill = null
+                    },
+                    modifier = shared,
+                )
+            },
+            mailbox = { shared ->
+                MailboxScreen(
+                    accountId = accountId,
+                    accounts = accounts,
+                    onSwitchAccount = onSwitchAccount,
+                    onAddAccount = onAddAccount,
+                    onRemoveAccount = onRemoveAccount,
+                    onAccountsChanged = onAccountsChanged,
+                    openMessageId = openMessageId,
+                    onMessageOpened = onMessageOpened,
+                    onCompose = {
+                        reply = null
+                        draft = null
+                        prefill = null
+                        composing = true
+                    },
+                    onReply = {
+                        reply = it
+                        draft = null
+                        prefill = null
+                        composing = true
+                    },
+                    onOpenDraft = {
+                        draft = it
+                        reply = null
+                        prefill = null
+                        composing = true
+                    },
+                    onComposeTo = {
+                        prefill = it
+                        reply = null
+                        draft = null
+                        composing = true
+                    },
+                    composeFabModifier = shared,
+                    notice = notice,
+                    onNoticeShown = { notice = null },
+                )
+            },
+        )
+        SnackbarHost(undoSnackbar, Modifier.align(Alignment.BottomCenter).padding(bottom = 88.dp))
+    }
+}
+
+/**
+ * Compose or the mailbox, with the shared container transform between them ([compose] and [mailbox]
+ * get the shared-bounds modifier). The mailbox's saved state (each folder's scroll position, an open
+ * search or thread) is kept while Compose replaces it, so closing Compose returns to where the user was
+ * (#496). Compose's isn't kept: each new message starts empty.
+ */
+@Composable
+internal fun ComposeOrMailbox(
+    composing: Boolean,
+    compose: @Composable (Modifier) -> Unit,
+    mailbox: @Composable (Modifier) -> Unit,
+) {
     val motion = MaterialTheme.motionScheme
     val spatial = motion.defaultSpatialSpec<Rect>()
     val bounds = BoundsTransform { _, _ -> spatial }
-    Box(Modifier.fillMaxSize()) {
-        SharedTransitionLayout {
-            AnimatedContent(
-                targetState = composing,
-                transitionSpec = {
-                    fadeIn(motion.defaultEffectsSpec()) togetherWith fadeOut(motion.fastEffectsSpec())
-                },
-                label = "compose",
-            ) { open ->
-                val shared =
-                    Modifier.sharedBounds(
-                        sharedContentState = rememberSharedContentState(key = "compose"),
-                        animatedVisibilityScope = this@AnimatedContent,
-                        boundsTransform = bounds,
-                    )
-                if (open) {
-                    ComposeScreen(
-                        accountId = accountId,
-                        reply = reply,
-                        draft = draft,
-                        prefill = prefill,
-                        onDone = { result ->
-                            if (result is ComposeResult.Sent) {
-                                notice =
-                                    if (result.rejected.isEmpty()) {
-                                        resources.getString(R.string.compose_sent)
-                                    } else {
-                                        resources.getString(
-                                            R.string.compose_sent_partly,
-                                            result.rejected.joinToString(", "),
-                                        )
-                                    }
-                            }
-                            if (result is ComposeResult.Undoable) undoable = result.outboxId to result.seconds
-                            if (result is ComposeResult.Scheduled) {
-                                notice = resources.getString(R.string.schedule_done, formatSendAt(result.sendAt))
-                            }
-                            if (result is ComposeResult.Queued) {
-                                notice = resources.getString(R.string.compose_queued)
-                            }
-                            if (result is ComposeResult.SavedDraft) {
-                                notice = resources.getString(R.string.compose_draft_saved)
-                            }
-                            composing = false
-                            reply = null
-                            draft = null
-                            prefill = null
-                        },
-                        modifier = shared,
-                    )
-                } else {
-                    MailboxScreen(
-                        accountId = accountId,
-                        accounts = accounts,
-                        onSwitchAccount = onSwitchAccount,
-                        onAddAccount = onAddAccount,
-                        onRemoveAccount = onRemoveAccount,
-                        onAccountsChanged = onAccountsChanged,
-                        openMessageId = openMessageId,
-                        onMessageOpened = onMessageOpened,
-                        onCompose = {
-                            reply = null
-                            draft = null
-                            prefill = null
-                            composing = true
-                        },
-                        onReply = {
-                            reply = it
-                            draft = null
-                            prefill = null
-                            composing = true
-                        },
-                        onOpenDraft = {
-                            draft = it
-                            reply = null
-                            prefill = null
-                            composing = true
-                        },
-                        onComposeTo = {
-                            prefill = it
-                            reply = null
-                            draft = null
-                            composing = true
-                        },
-                        composeFabModifier = shared,
-                        notice = notice,
-                        onNoticeShown = { notice = null },
-                    )
-                }
+    val screens = rememberSaveableStateHolder()
+    SharedTransitionLayout {
+        AnimatedContent(
+            targetState = composing,
+            transitionSpec = {
+                fadeIn(motion.defaultEffectsSpec()) togetherWith fadeOut(motion.fastEffectsSpec())
+            },
+            label = "compose",
+        ) { open ->
+            val shared =
+                Modifier.sharedBounds(
+                    sharedContentState = rememberSharedContentState(key = "compose"),
+                    animatedVisibilityScope = this@AnimatedContent,
+                    boundsTransform = bounds,
+                )
+            if (open) {
+                compose(shared)
+            } else {
+                screens.SaveableStateProvider("mailbox") { mailbox(shared) }
             }
         }
-        SnackbarHost(undoSnackbar, Modifier.align(Alignment.BottomCenter).padding(bottom = 88.dp))
     }
 }
