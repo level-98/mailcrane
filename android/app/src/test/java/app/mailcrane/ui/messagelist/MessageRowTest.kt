@@ -2,13 +2,13 @@ package app.mailcrane.ui.messagelist
 
 import android.app.Application
 import android.provider.Settings
-import androidx.test.core.app.ApplicationProvider
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onRoot
+import androidx.test.core.app.ApplicationProvider
 import app.mailcrane.core.MessageSummary
 import app.mailcrane.ui.theme.MailcraneTheme
 import org.junit.Assert.assertEquals
