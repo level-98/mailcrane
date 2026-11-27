@@ -15,7 +15,7 @@ use mailcrane_core::sync::{
     live_stop, log_failure, run_live_updates, FolderSyncer, ImapLogin, LiveAccount, LiveConfig,
     LiveStop, SyncConfig, SyncError as CoreSyncError,
 };
-use mailcrane_imap::{ImapConfig, ImapError, Session};
+use mailcrane_imap::{ImapError, Session};
 use mailcrane_store::{AccountId, FolderId, MessageId, Store};
 #[cfg(test)]
 use mailcrane_store::{FolderRole, Security};

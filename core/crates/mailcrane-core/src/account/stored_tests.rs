@@ -53,7 +53,7 @@ impl EventListener for Events {
 async fn fake(folders: &[&str]) -> FakeImap {
     let mut builder = FakeImap::builder().user(USER, PASSWORD);
     for name in folders {
-        builder = builder.folder(name, Vec::new());
+        builder = builder.folder(*name, Vec::new());
     }
     builder.start().await.expect("fake imap starts")
 }
