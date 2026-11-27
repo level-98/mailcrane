@@ -672,6 +672,7 @@ class MessageListViewModelTest {
         vm.clearSelection()
         assertEquals(0, vm.state.value.confirmDeleteForGood)
     }
+
     /** #552: a conversation row of thread 4 (message 40), unread or flagged as asked. */
     private fun swipedThread(
         unread: UInt = 0u,
