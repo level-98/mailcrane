@@ -9,6 +9,11 @@ use mailcrane_store::{AccountId, FolderId, FolderRole, NewAccount, Security, Sto
 use mailcrane_testkit::{FakeEmail, FakeJmap};
 use std::time::Duration;
 
+/// Only a hang guard: a busy machine (a Gradle build, disk or memory
+/// pressure) can stall the fake servers for seconds, and a short limit
+/// would fail the test for that alone (#409, as in #362).
+const HANG_GUARD: Duration = Duration::from_secs(60);
+
 fn email(id: &str, mailbox: &str, at: &str, seen: bool) -> FakeEmail {
     FakeEmail {
         id: id.into(),
@@ -55,7 +60,7 @@ async fn setup() -> Setup {
         )
         .expect("account");
     let config = ClientConfig {
-        timeout: Duration::from_secs(5),
+        timeout: HANG_GUARD,
         extra_roots: vec![server.root_cert_der().to_vec()],
     };
     Setup {
@@ -303,7 +308,7 @@ async fn sending_submits_and_files_the_message_in_sent() {
         rich: None,
     };
     let options = SendOptions {
-        timeout: Duration::from_secs(10),
+        timeout: HANG_GUARD,
         extra_root_certs: vec![s.server.root_cert_der().to_vec()],
     };
     send(&s.store, &secrets, &draft, &options)
@@ -374,7 +379,7 @@ async fn a_sender_without_an_identity_is_refused_clearly() {
         rich: None,
     };
     let options = SendOptions {
-        timeout: Duration::from_secs(10),
+        timeout: HANG_GUARD,
         extra_root_certs: vec![s.server.root_cert_der().to_vec()],
     };
     let result = send(&s.store, &secrets, &draft, &options).await;
@@ -536,7 +541,7 @@ impl Sender {
     }
     fn options(&self) -> mailcrane_core::compose::SendOptions {
         mailcrane_core::compose::SendOptions {
-            timeout: Duration::from_secs(10),
+            timeout: HANG_GUARD,
             extra_root_certs: vec![self.server.root_cert_der().to_vec()],
         }
     }

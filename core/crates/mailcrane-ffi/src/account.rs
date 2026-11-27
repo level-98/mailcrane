@@ -422,6 +422,11 @@ async fn add_with(
 mod tests {
     use super::*;
 
+    /// Only a hang guard: a busy machine (a Gradle build, disk or memory
+    /// pressure) can stall the fake servers for seconds, and a short limit
+    /// would fail the test for that alone (#409, as in #362).
+    const HANG_GUARD: std::time::Duration = std::time::Duration::from_secs(60);
+
     fn config() -> ManualAccountConfig {
         ManualAccountConfig {
             email: "alice@example.org".into(),
@@ -504,7 +509,7 @@ mod tests {
         let db_path = dir.path().join("mailcrane.sqlite");
         let db_path = db_path.to_str().expect("utf-8 path");
         let options = mailcrane_core::account::jmap::JmapSetupOptions {
-            timeout: std::time::Duration::from_secs(10),
+            timeout: HANG_GUARD,
             extra_roots: vec![server.root_cert_der().to_vec()],
         };
         let setup = JmapAccountSetup {
@@ -607,7 +612,7 @@ mod tests {
         config.smtp.host = "localhost".into();
         config.smtp.port = u32::from(smtp.addr().port());
         let options = core::SetupOptions {
-            timeout: std::time::Duration::from_secs(10),
+            timeout: HANG_GUARD,
             extra_root_certs: vec![imap.root_cert_der().to_vec(), smtp.root_cert_der().to_vec()],
         };
 
@@ -678,7 +683,7 @@ mod tests {
         config.smtp.host = "localhost".into();
         config.smtp.port = u32::from(smtp.addr().port());
         let options = core::SetupOptions {
-            timeout: std::time::Duration::from_secs(10),
+            timeout: HANG_GUARD,
             extra_root_certs: vec![imap.root_cert_der().to_vec(), smtp.root_cert_der().to_vec()],
         };
         assert_eq!(
@@ -749,7 +754,7 @@ mod tests {
             security: ConnectionSecurity::Tls,
         };
         let options = core::SetupOptions {
-            timeout: std::time::Duration::from_secs(10),
+            timeout: HANG_GUARD,
             extra_root_certs: vec![imap.root_cert_der().to_vec(), smtp.root_cert_der().to_vec()],
         };
 

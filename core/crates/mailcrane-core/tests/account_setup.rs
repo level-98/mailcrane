@@ -19,6 +19,11 @@ mod account {
         use mailcrane_store::{AccountId, Store};
         use mailcrane_testkit::{FakeImap, FakeSmtp, Fault, MemorySecretStore};
 
+        /// Only a hang guard: a busy machine (a Gradle build, disk or memory
+        /// pressure) can stall the fake servers for seconds, and a short limit
+        /// would fail the test for that alone (#409, as in #362).
+        const HANG_GUARD: Duration = Duration::from_secs(60);
+
         const USER: &str = "alice@example.org";
         const PASSWORD: &str = "s3cret-value";
 
@@ -104,7 +109,7 @@ mod account {
 
         fn options_for(servers: &Servers) -> SetupOptions {
             SetupOptions {
-                timeout: Duration::from_secs(5),
+                timeout: HANG_GUARD,
                 extra_root_certs: vec![
                     servers.imap.root_cert_der().to_vec(),
                     servers.smtp.root_cert_der().to_vec(),
@@ -125,7 +130,7 @@ mod account {
         ) -> Result<AccountId, AddAccountError> {
             // Any hang is a failure: setup's own timeout must fire first.
             tokio::time::timeout(
-                Duration::from_secs(20),
+                2 * HANG_GUARD,
                 add_account_manual_with(store, secrets, config, pw(password), options),
             )
             .await
