@@ -5,9 +5,14 @@
 use mailcrane_core::events::NoListener;
 use mailcrane_core::sync::{JmapSyncer, SyncConfig};
 use mailcrane_jmap::{Auth, ClientConfig};
-use mailcrane_store::{AccountId, FolderId, FolderRole, NewAccount, Security, Store};
+use mailcrane_store::{AccountId, FolderId, FolderRole, NewAccount, Security, Store, VirtualRole};
 use mailcrane_testkit::{FakeEmail, FakeJmap};
 use std::time::Duration;
+
+/// Only a hang guard: a busy machine (a Gradle build, disk or memory
+/// pressure) can stall the fake servers for seconds, and a short limit
+/// would fail the test for that alone (#409, as in #362).
+const HANG_GUARD: Duration = Duration::from_secs(60);
 
 fn email(id: &str, mailbox: &str, at: &str, seen: bool) -> FakeEmail {
     FakeEmail {
@@ -55,7 +60,7 @@ async fn setup() -> Setup {
         )
         .expect("account");
     let config = ClientConfig {
-        timeout: Duration::from_secs(5),
+        timeout: HANG_GUARD,
         extra_roots: vec![server.root_cert_der().to_vec()],
     };
     Setup {
@@ -303,7 +308,7 @@ async fn sending_submits_and_files_the_message_in_sent() {
         rich: None,
     };
     let options = SendOptions {
-        timeout: Duration::from_secs(10),
+        timeout: HANG_GUARD,
         extra_root_certs: vec![s.server.root_cert_der().to_vec()],
     };
     send(&s.store, &secrets, &draft, &options)
@@ -374,7 +379,7 @@ async fn a_sender_without_an_identity_is_refused_clearly() {
         rich: None,
     };
     let options = SendOptions {
-        timeout: Duration::from_secs(10),
+        timeout: HANG_GUARD,
         extra_root_certs: vec![s.server.root_cert_der().to_vec()],
     };
     let result = send(&s.store, &secrets, &draft, &options).await;
@@ -536,7 +541,7 @@ impl Sender {
     }
     fn options(&self) -> mailcrane_core::compose::SendOptions {
         mailcrane_core::compose::SendOptions {
-            timeout: Duration::from_secs(10),
+            timeout: HANG_GUARD,
             extra_root_certs: vec![self.server.root_cert_der().to_vec()],
         }
     }
@@ -959,4 +964,67 @@ async fn a_detached_email_survives_completing_its_op() {
         subjects(&s.store, inbox).contains(&"Subject m2".to_string()),
         "m2 is back in the Inbox, not deleted with the op"
     );
+}
+
+#[tokio::test]
+async fn a_flagged_mailbox_is_virtual_and_an_important_one_ordinary() {
+    // #461: RFC 8621 mailbox roles come from the same IANA registry as the
+    // IMAP attributes, so "flagged" is a virtual folder, as `\Flagged` is on
+    // IMAP: no folder role, so nothing moves, archives or deletes into it.
+    // "important" (RFC 8457 §3) may be a real folder; IMAP counts it only on
+    // Gmail, which has no JMAP, so it stays ordinary (#482 review).
+    let server = FakeJmap::builder()
+        .mailbox("mb-inbox", "Inbox", Some("inbox"), None)
+        .mailbox("mb-flagged", "Starred", Some("flagged"), None)
+        .mailbox("mb-important", "Important", Some("important"), None)
+        .mailbox("mb-work", "Work", None, None)
+        .start()
+        .await
+        .expect("server");
+    let store = Store::open_in_memory().expect("store");
+    let account = store
+        .insert_jmap_account(
+            &NewAccount {
+                display_name: "Alice".into(),
+                email: "alice@example.org".into(),
+                imap_host: String::new(),
+                imap_port: 0,
+                imap_security: Security::Tls,
+                smtp_host: String::new(),
+                smtp_port: 0,
+                smtp_security: Security::Tls,
+                username: "alice@example.org".into(),
+            },
+            &server.base_url(),
+        )
+        .expect("account");
+    let config = ClientConfig {
+        timeout: Duration::from_secs(5),
+        extra_roots: vec![server.root_cert_der().to_vec()],
+    };
+    let s = Setup {
+        server,
+        store,
+        account,
+        config,
+    };
+    let mut j = syncer(&s).await;
+    j.refresh_mailboxes().await.expect("mailboxes");
+    let folders = s.store.list_folders(s.account).expect("folders");
+    let by_name = |name: &str| {
+        folders
+            .iter()
+            .find(|f| f.details.display_name == name)
+            .expect("mailbox stored")
+            .details
+            .clone()
+    };
+    let starred = by_name("Starred");
+    assert_eq!(starred.virtual_role, Some(VirtualRole::Starred));
+    assert_eq!(starred.role, None);
+    let important = by_name("Important");
+    assert_eq!(important.virtual_role, None, "an ordinary folder");
+    assert_eq!(important.role, None);
+    assert_eq!(by_name("Work").virtual_role, None);
+    assert_eq!(by_name("Inbox").role, Some(FolderRole::Inbox));
 }

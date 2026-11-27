@@ -95,6 +95,23 @@ impl Store {
         &self.scope
     }
 
+    /// Runs `f` with this thread's writes to this store's database marked
+    /// urgent ([`urgent_writes`], #294), keyed by the path the store was
+    /// opened with. Wrap only the writes the user is waiting for (#473). An
+    /// in-memory store shares its database with no one, so `f` just runs.
+    pub fn urgent<T>(&self, f: impl FnOnce() -> T) -> T {
+        match &self.urgent_key {
+            Some(key) => urgent_writes(key, f),
+            None => f(),
+        }
+    }
+
+    /// Whether this thread's writes to this store's database are marked
+    /// urgent right now ([`Store::urgent`]). Always `false` in memory.
+    pub fn urgent_here(&self) -> bool {
+        self.urgent_key.as_deref().is_some_and(urgent_here)
+    }
+
     /// How long a statement waits for another connection's write lock
     /// before failing with `SQLITE_BUSY` (5 s by default). For tests.
     pub fn set_busy_timeout(&self, timeout: std::time::Duration) -> Result<(), StoreError> {

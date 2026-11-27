@@ -198,7 +198,7 @@ private fun FolderRow(
         headlineContent = { Text(name) },
         leadingContent = { Icon(painterResource(folderIcon(folder.role)), contentDescription = null) },
         trailingContent = {
-            if (canManage) {
+            if (canManage && (folder.canHoldSubfolders || folder.canChange)) {
                 Box {
                     IconButton(onClick = { menu = true }, modifier = Modifier.testTag("folder-menu-${folder.id}")) {
                         Icon(
@@ -213,7 +213,9 @@ private fun FolderRow(
                                 action()
                             })
                         }
-                        item(R.string.folders_new_subfolder) { onCreate(folder) }
+                        if (folder.canHoldSubfolders) {
+                            item(R.string.folders_new_subfolder) { onCreate(folder) }
+                        }
                         if (folder.canChange) {
                             item(R.string.folders_rename) { onRename(folder) }
                             item(R.string.folders_move) { onMove(folder) }
