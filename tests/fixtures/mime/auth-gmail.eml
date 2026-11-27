@@ -1,0 +1,26 @@
+Received: by 2001:db8:6a10:abcd:b0:5f1:1234:5678 with SMTP id x1csp123456pxb;
+        Thu, 26 Nov 2026 14:30:00 -0800 (PST)
+X-Received: by 2001:db8:90b:1234:b0:2a1:5678:9abc with SMTP id y2;
+        Thu, 26 Nov 2026 14:30:00 -0800 (PST)
+ARC-Authentication-Results: i=1; mx.google.com; dkim=pass header.i=@example.net
+Return-Path: <sender@example.net>
+Received: from mail.example.net (mail.example.net. [192.0.2.10])
+        by mx.google.com with ESMTPS id abc123.45.2026.11.26.14.29.58
+        for <user@example.com> (version=TLS1_3 cipher=TLS_AES_256_GCM_SHA384);
+        Thu, 26 Nov 2026 14:29:59 -0800 (PST)
+Received-SPF: pass (google.com: domain of sender@example.net designates 192.0.2.10 as permitted sender) client-ip=192.0.2.10;
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@example.net header.s=sel1 header.b=AbCdEfGh;
+       spf=pass (google.com: domain of sender@example.net designates 192.0.2.10 as permitted sender) smtp.mailfrom=sender@example.net;
+       dmarc=pass (p=REJECT sp=REJECT dis=NONE) header.from=example.net
+From: Sender <sender@example.net>
+To: User <user@example.com>
+Subject: Auth: Gmail layout (#398)
+Date: Thu, 26 Nov 2026 14:29:58 -0800
+Message-ID: <auth-gmail@example.net>
+
+Gmail over IMAP: an internal hop with an IPv6 `by`, then mx.google.com,
+which writes its Authentication-Results just below its own Received.
+Expected: no chip by default (Gmail needs the server name setting, like
+Postfix); with the authentication server name set to mx.google.com, the
+chip says "Verified".

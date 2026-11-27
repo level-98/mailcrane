@@ -570,6 +570,41 @@ class ComposeViewModelTest {
     }
 
     @Test
+    fun onlyOutsideChangesMoveTheSubjectRevision() {
+        // #429: the subject field takes the subject over its own text only when this moves.
+        val core = FakeCore()
+        val vm = started(core)
+        val start = vm.state.value.subjectRevision
+        vm.onSubjectChange("Lunch", start)
+        assertEquals("typing doesn't", start, vm.state.value.subjectRevision)
+        assertEquals("Lunch", vm.state.value.subject)
+        vm.requestClose()
+        val id = core.drafts.keys.single()
+        val reopened = ComposeViewModel(core, FakeAppSettings()).apply { start(1, draft = DraftRequest(draftId = id)) }
+        assertEquals("Lunch", reopened.state.value.subject)
+        assertTrue("a loaded draft does", reopened.state.value.subjectRevision > 0)
+        val loaded = reopened.state.value.subjectRevision
+        reopened.reset()
+        assertTrue("so does a reset", reopened.state.value.subjectRevision > loaded)
+        assertEquals("", reopened.state.value.subject)
+    }
+
+    @Test
+    fun aSubjectTypedBeforeALoadDoesntReplaceTheLoadedOne() {
+        // #429: typed against the revision before a reply loaded; the reply's subject stays, and the field is
+        // told to take it over.
+        val vm = ComposeViewModel(FakeCore(), FakeAppSettings())
+        val before = vm.state.value.subjectRevision
+        vm.start(1, ReplyRequest(42, ReplyKind.REPLY, "Ana wrote:"))
+        val replied = vm.state.value.subject
+        val loaded = vm.state.value.subjectRevision
+        assertTrue(loaded > before)
+        vm.onSubjectChange("x", before)
+        assertEquals(replied, vm.state.value.subject)
+        assertTrue(vm.state.value.subjectRevision > loaded)
+    }
+
+    @Test
     fun onlyOutsideChangesMoveTheBodyRevision() {
         // #419: the field takes the body over its own text only when this moves.
         val core = FakeCore().apply { signatures = mapOf(1L to "Ann") }
