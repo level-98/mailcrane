@@ -19,7 +19,7 @@ pub use repo::{
     SignatureSetting, ThreadSummary, UnthreadedMessage, ACCOUNT_COLOR_COUNT, MAX_SIGNATURE_BYTES,
 };
 pub use repo::{JmapRow, Protocol};
-pub use repo::{KeywordedMessage, NewSnooze, Snooze, SnoozeId, SnoozeState};
+pub use repo::{KeywordedMessage, NewSnooze, Snooze, SnoozeId, SnoozeState, Snoozing};
 pub use repo::{ServerRules, ServerRulesState};
 
 use rusqlite::Connection;

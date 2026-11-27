@@ -1,10 +1,17 @@
 package app.mailcrane.core
 
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.emptyFlow
+
 /**
  * Reading one message through the core. An interface so the message screen can be tested with a
  * fake. Suspending calls run off the main thread and throw [SyncFailure] when they fail.
  */
 interface MessageCore {
+    /** What changed in the core, so a shown message can follow its snooze as a wake lands (#431). */
+    val events: Flow<CoreEvent>
+        get() = emptyFlow()
+
     /**
      * The message, ready to show. HTML is already sanitised and wrapped in a locked-down document;
      * remote images are left in only when [allowRemote]. Reads only the database.
