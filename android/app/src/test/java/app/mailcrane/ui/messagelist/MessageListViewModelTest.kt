@@ -677,7 +677,17 @@ class MessageListViewModelTest {
     private fun swipedThread(
         unread: UInt = 0u,
         flagged: Boolean = false,
-    ) = ThreadSummary(4, "Subject 4", listOf("Ana", "Bob"), 3u, unread, 4, flagged, false, 40)
+    ) = ThreadSummary(
+        threadId = 4,
+        subject = "Subject 4",
+        participants = listOf("Ana", "Bob"),
+        messageCount = 3u,
+        unreadCount = unread,
+        lastDate = 4,
+        hasAttachments = false,
+        isFlagged = flagged,
+        newestMessageId = 40,
+    )
 
     @Test
     fun anArchiveSwipeOnAConversationArchivesItsMessagesWithUndo() =
