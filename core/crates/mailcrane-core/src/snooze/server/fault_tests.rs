@@ -491,11 +491,17 @@ async fn check(
     // \Deleted copy never shows.
     let mut shown_in = Vec::new();
     for loc in FOLDERS {
+        // Any listed row with this Message-ID: a folder can also hold a
+        // hidden \Deleted original of it (a server with neither MOVE nor
+        // UIDPLUS), which a lookup by header may return first.
         if let Some(f) = folder(store, account, loc.name()) {
-            if let Some(id) = store.find_message_by_header(f, MID).expect("find") {
-                if shown(store, f).contains(&id) {
-                    shown_in.push(loc);
-                }
+            let listed = store
+                .list_messages(f, 50, 0)
+                .expect("list")
+                .iter()
+                .any(|m| m.details.message_id_header.as_deref() == Some(MID));
+            if listed {
+                shown_in.push(loc);
             }
         }
     }
