@@ -114,44 +114,80 @@ fn from_row(r: &Row<'_>) -> Result<Snooze, StoreError> {
     })
 }
 
+/// What [`Store::snooze_messages`] did.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Snoozing {
+    /// Snoozed, one row per message, in order.
+    Done(Vec<SnoozeId>),
+    /// Nothing changed: a message is being woken past step 0 (#431).
+    Waking,
+}
+
 impl Store {
     /// Snoozes a message: hides `hide_message` and records the snooze, in
     /// one transaction. Snoozing a message that is already snoozed changes
     /// its wake time (the server keyword is updated on the next run).
-    pub fn snooze_message(&self, s: &NewSnooze) -> Result<SnoozeId, StoreError> {
+    /// Returns `None` if the message is being woken past step 0 (#431):
+    /// then nothing is changed (see [`Store::snooze_messages`]).
+    pub fn snooze_message(&self, s: &NewSnooze) -> Result<Option<SnoozeId>, StoreError> {
+        Ok(match self.snooze_messages(std::slice::from_ref(s))? {
+            Snoozing::Done(ids) => ids.first().copied(),
+            Snoozing::Waking => None,
+        })
+    }
+
+    /// Snoozes several messages in one transaction: all of them, or none
+    /// if any is being woken past step 0 (#431, lead's decision on #455).
+    /// Such a wake has started moving the message on the server, so a new
+    /// snooze would cross it: the user snoozes again once it lands.
+    pub fn snooze_messages(&self, plans: &[NewSnooze]) -> Result<Snoozing, StoreError> {
         let tx = self.write_tx()?;
-        if let Some(message) = s.hide_message {
-            tx.execute(
-                "UPDATE messages SET hidden = 1 WHERE id = ?1",
-                params![message.0],
+        for s in plans {
+            let waking: bool = tx.query_row(
+                "SELECT EXISTS (SELECT 1 FROM snoozes WHERE account_id = ?1 \
+                     AND message_id_header = ?2 AND state = 'to_wake' AND step > 0)",
+                params![s.account_id.0, s.message_id_header],
+                |r| r.get(0),
             )?;
+            if waking {
+                return Ok(Snoozing::Waking);
+            }
         }
-        tx.execute(
-            "INSERT INTO snoozes (account_id, message_id_header, original_folder_id, \
-             local_message_id, wake_at, state) VALUES (?1, ?2, ?3, ?4, ?5, 'to_snooze') \
-             ON CONFLICT (account_id, message_id_header) DO UPDATE SET \
-             wake_at = excluded.wake_at, state = 'to_snooze', mark_unread = 1, \
-             local_message_id = COALESCE(excluded.local_message_id, local_message_id), \
-             original_folder_id = COALESCE(original_folder_id, excluded.original_folder_id), \
-             attempts = 0, next_attempt_at = 0, \
-             step = CASE WHEN state = 'to_snooze' THEN step ELSE 0 END, \
-             target_uidnext = CASE WHEN state = 'to_snooze' THEN target_uidnext ELSE NULL END, \
-             rollback_since = CASE WHEN state = 'to_snooze' THEN rollback_since ELSE NULL END",
-            params![
-                s.account_id.0,
-                s.message_id_header,
-                s.original_folder_id.map(|f| f.0),
-                s.hide_message.map(|m| m.0),
-                s.wake_at
-            ],
-        )?;
-        let id = tx.query_row(
-            "SELECT id FROM snoozes WHERE account_id = ?1 AND message_id_header = ?2",
-            params![s.account_id.0, s.message_id_header],
-            |r| r.get(0),
-        )?;
+        let mut ids = Vec::with_capacity(plans.len());
+        for s in plans {
+            if let Some(message) = s.hide_message {
+                tx.execute(
+                    "UPDATE messages SET hidden = 1 WHERE id = ?1",
+                    params![message.0],
+                )?;
+            }
+            tx.execute(
+                "INSERT INTO snoozes (account_id, message_id_header, original_folder_id, \
+                 local_message_id, wake_at, state) VALUES (?1, ?2, ?3, ?4, ?5, 'to_snooze') \
+                 ON CONFLICT (account_id, message_id_header) DO UPDATE SET \
+                 wake_at = excluded.wake_at, state = 'to_snooze', mark_unread = 1, \
+                 local_message_id = COALESCE(excluded.local_message_id, local_message_id), \
+                 original_folder_id = COALESCE(original_folder_id, excluded.original_folder_id), \
+                 attempts = 0, next_attempt_at = 0, \
+                 step = CASE WHEN state = 'to_snooze' THEN step ELSE 0 END, \
+                 target_uidnext = CASE WHEN state = 'to_snooze' THEN target_uidnext ELSE NULL END, \
+                 rollback_since = CASE WHEN state = 'to_snooze' THEN rollback_since ELSE NULL END",
+                params![
+                    s.account_id.0,
+                    s.message_id_header,
+                    s.original_folder_id.map(|f| f.0),
+                    s.hide_message.map(|m| m.0),
+                    s.wake_at
+                ],
+            )?;
+            ids.push(SnoozeId(tx.query_row(
+                "SELECT id FROM snoozes WHERE account_id = ?1 AND message_id_header = ?2",
+                params![s.account_id.0, s.message_id_header],
+                |r| r.get(0),
+            )?));
+        }
         tx.commit()?;
-        Ok(SnoozeId(id))
+        Ok(Snoozing::Done(ids))
     }
 
     /// Records a snooze another install made (learnt from the server
@@ -317,6 +353,25 @@ impl Store {
         tx.execute("DELETE FROM snoozes WHERE id = ?1", params![id.0])?;
         tx.commit()?;
         Ok(())
+    }
+
+    /// Records step 1 (the target's UIDNEXT, just before the COPY or MOVE
+    /// is sent), but only while the row is still in `state` and hasn't
+    /// gone past step 1. Returns false if it has changed meanwhile, for
+    /// example a wake at step 0 the user replaced by snoozing again
+    /// (#431): then nothing may be sent (review of #455).
+    pub fn start_snooze_move(
+        &self,
+        id: SnoozeId,
+        state: SnoozeState,
+        target_uidnext: u32,
+    ) -> Result<bool, StoreError> {
+        let n = self.conn.execute(
+            "UPDATE snoozes SET step = 1, target_uidnext = ?3 \
+             WHERE id = ?1 AND state = ?2 AND step <= 1",
+            params![id.0, state.as_str(), target_uidnext],
+        )?;
+        Ok(n > 0)
     }
 
     /// Records how far a move without MOVE got (#423). `target_uidnext` is

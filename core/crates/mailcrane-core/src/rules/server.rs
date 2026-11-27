@@ -78,6 +78,9 @@ struct Folders {
     names: HashMap<i64, String>,
     archive: Option<String>,
     trash: Option<String>,
+    /// Virtual folders (#390), such as Starred: a rule's move into one is
+    /// skipped, here as on the device.
+    virtual_ids: HashSet<i64>,
 }
 
 impl Folders {
@@ -85,7 +88,14 @@ impl Folders {
         let mut names = HashMap::new();
         let mut archive = None;
         let mut trash = None;
+        let mut virtual_ids = HashSet::new();
         for f in store.list_folders(account)? {
+            // A virtual folder (#390) takes no moves: a rule's move into one
+            // is dropped, as the device skips it.
+            if f.details.virtual_role.is_some() {
+                virtual_ids.insert(f.id.0);
+                continue;
+            }
             if !f.details.selectable {
                 continue;
             }
@@ -105,6 +115,7 @@ impl Folders {
             names,
             archive,
             trash,
+            virtual_ids,
         })
     }
 }
@@ -132,6 +143,9 @@ fn to_script_rule(rule: &NewRule, folders: &Folders) -> Option<ScriptRule> {
         match a {
             RuleAction::MarkRead => flags.push(Flag::Seen),
             RuleAction::Flag => flags.push(Flag::Flagged),
+            // A rule saved before #390 can move into a virtual folder: the
+            // device skips that move, and it doesn't take the first-move slot.
+            RuleAction::Move(f) if folders.virtual_ids.contains(&f.0) => {}
             // The first moving action wins, as locally.
             _ if moving.is_some() => {}
             RuleAction::Move(f) => {
@@ -162,10 +176,22 @@ fn to_script_rule(rule: &NewRule, folders: &Folders) -> Option<ScriptRule> {
 /// device rule that moves mail or stops processing, every later rule stays
 /// on the device too, so the order the rules run in still holds.
 pub fn plan(store: &Store, account: AccountId, ext: &Extensions) -> Result<Plan, StoreError> {
-    let folders = Folders::load(store, account)?;
+    let mut folders = Folders::load(store, account)?;
+    let rules = store.list_rules(Some(account))?;
+    // A rule for every account can move into another account's virtual
+    // folder: decided by id, as the device does (`rules::is_virtual`).
+    for rule in rules.iter().filter(|r| r.rule.enabled) {
+        for action in &rule.rule.actions {
+            if let RuleAction::Move(to) = action {
+                if crate::rules::is_virtual(store, *to)? {
+                    folders.virtual_ids.insert(to.0);
+                }
+            }
+        }
+    }
     let mut plan = Plan::default();
     let mut rest_local = false;
-    for rule in store.list_rules(Some(account))? {
+    for rule in rules {
         if !rule.rule.enabled || rule.rule.conditions.is_empty() || rule.rule.actions.is_empty() {
             continue;
         }
@@ -175,16 +201,28 @@ pub fn plan(store: &Store, account: AccountId, ext: &Extensions) -> Result<Plan,
             to_script_rule(&rule.rule, &folders).filter(|r| r.supported(ext))
         };
         match compiled {
+            // Nothing left for a script, such as a rule whose only action is
+            // a move into a virtual folder (#390): kept off the server (no
+            // empty script uploaded for it). It moves nothing on the device,
+            // so later rules may still go to the server, unless it stops
+            // processing: then they stay here too, so the order still holds.
+            Some(r) if r.flags.is_empty() && r.moving.is_none() => {
+                if r.stop {
+                    rest_local = true;
+                }
+                plan.device.push(rule.id);
+            }
             Some(r) => {
                 let fingerprint = fnv(&format!("{r:?}"));
                 plan.server.push((rule.id, r, fingerprint));
             }
             None => {
-                let moves = rule.rule.actions.iter().any(|a| {
-                    matches!(
-                        a,
-                        RuleAction::Move(_) | RuleAction::Archive | RuleAction::Delete
-                    )
+                // A move into a virtual folder (#390) is skipped on the device,
+                // so it's no move to keep in order.
+                let moves = rule.rule.actions.iter().any(|a| match a {
+                    RuleAction::Move(f) => !folders.virtual_ids.contains(&f.0),
+                    RuleAction::Archive | RuleAction::Delete => true,
+                    RuleAction::MarkRead | RuleAction::Flag => false,
                 });
                 if moves || rule.rule.stop_processing {
                     rest_local = true;

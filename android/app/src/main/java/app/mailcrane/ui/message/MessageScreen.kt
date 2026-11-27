@@ -93,6 +93,7 @@ import app.mailcrane.core.TrackerInfo
 import app.mailcrane.core.sanitizeFilename
 import app.mailcrane.ui.compose.ComposePrefill
 import app.mailcrane.ui.compose.ReplyRequest
+import app.mailcrane.ui.folders.takesMoves
 import app.mailcrane.ui.messagelist.errorText
 import app.mailcrane.ui.theme.LocalDarkMessageBodies
 import app.mailcrane.ui.theme.LocalDarkTheme
@@ -134,6 +135,7 @@ fun MessageScreen(
                             when (effect.reason) {
                                 ActionRefusal.NO_ARCHIVE_FOLDER -> R.string.action_no_archive_folder
                                 ActionRefusal.CANNOT_SNOOZE -> R.string.snooze_no_message_id
+                                ActionRefusal.WAKING -> R.string.snooze_waking_try_again
                                 ActionRefusal.FAILED -> R.string.action_not_applied
                             },
                         ),
@@ -288,8 +290,10 @@ fun MessageContent(
                     if (state is MessageState.Ready) {
                         MessageToolbarActions(
                             flagged = state.message.isFlagged,
-                            moveTargets = folders.filter { it.id != state.message.folderId },
+                            moveTargets = folders.filter { it.id != state.message.folderId && it.takesMoves },
                             actions = actions,
+                            // Coming back from snooze: it can be snoozed again once it lands (#431).
+                            snoozeEnabled = state.snooze?.waking != true,
                         )
                     }
                 },

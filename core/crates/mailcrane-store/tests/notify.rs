@@ -34,6 +34,7 @@ fn inbox(account_id: AccountId, uidvalidity: Option<i64>) -> NewFolder {
         highestmodseq: None,
         is_subscribed: true,
         selectable: true,
+        virtual_role: None,
     }
 }
 

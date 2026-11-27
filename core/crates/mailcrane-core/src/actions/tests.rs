@@ -622,3 +622,72 @@ async fn bulk_flag_skips_messages_already_flagged_and_counts_each_once() {
         .expect("nothing to do");
     assert_eq!(none, BulkApplied::default());
 }
+
+/// A virtual folder in `s`'s account, such as Gmail's Starred (#390).
+fn add_virtual_folder(s: &Setup) -> FolderId {
+    s.store
+        .upsert_folder(&mailcrane_store::NewFolder {
+            account_id: s.account,
+            remote_name: "[Gmail]/Starred".into(),
+            display_name: "Starred".into(),
+            delimiter: Some("/".into()),
+            role: None,
+            uidvalidity: None,
+            uidnext: None,
+            highestmodseq: None,
+            is_subscribed: true,
+            selectable: true,
+            virtual_role: Some(mailcrane_store::VirtualRole::Starred),
+        })
+        .expect("virtual folder")
+}
+
+#[tokio::test]
+async fn nothing_moves_into_a_virtual_folder() {
+    // #390 review: the core refuses it, whatever the app offers; nothing is
+    // queued or changed.
+    let imap = fake(&[], &[]).await;
+    let s = setup(&imap, Store::open_in_memory().expect("store")).await;
+    let starred = add_virtual_folder(&s);
+    let events = Events::default();
+    let moved = apply_action(
+        &s.store,
+        &[s.message(1)],
+        Action::Move { to: starred },
+        NOW,
+        &events,
+    );
+    assert!(matches!(moved, Err(ActionError::NotADestination)));
+    let bulk = apply_bulk_action(
+        &s.store,
+        &[s.message(1)],
+        Action::Move { to: starred },
+        NOW,
+        &events,
+    );
+    assert!(matches!(bulk, Err(ActionError::NotADestination)));
+    assert_eq!(s.store.count_pending_ops(s.account).expect("count"), 0);
+    assert!(events.all().is_empty());
+}
+
+#[tokio::test]
+async fn a_rule_moving_into_a_virtual_folder_cant_be_saved() {
+    // #390 review: saving checks every move target.
+    let imap = fake(&[], &[]).await;
+    let s = setup(&imap, Store::open_in_memory().expect("store")).await;
+    let starred = add_virtual_folder(&s);
+    let rule = |to: FolderId| crate::rules::NewRule {
+        account_id: Some(s.account),
+        name: "R".into(),
+        enabled: true,
+        match_all: true,
+        stop_processing: false,
+        conditions: vec![crate::rules::RuleCondition::Subject("x".into())],
+        actions: vec![
+            crate::rules::RuleAction::MarkRead,
+            crate::rules::RuleAction::Move(to),
+        ],
+    };
+    assert!(!crate::rules::targets_take_moves(&s.store, &rule(starred)).expect("check"));
+    assert!(crate::rules::targets_take_moves(&s.store, &rule(s.inbox)).expect("check"));
+}

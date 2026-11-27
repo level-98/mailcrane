@@ -318,6 +318,7 @@ async fn saving_again_keeps_sync_state() {
             highestmodseq: Some(99),
             is_subscribed: false,
             selectable: true,
+            virtual_role: None,
         })
         .expect("seed");
     save_folders(&store, account, &folders).expect("saved");

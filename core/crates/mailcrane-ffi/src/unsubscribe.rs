@@ -86,14 +86,18 @@ pub fn unsubscribe_options(
 /// Call only after the user confirmed. Blocking, at most about 15 seconds.
 #[uniffi::export]
 pub fn one_click_unsubscribe(db_path: String, message_id: i64) -> Result<(), UnsubscribeFailure> {
-    let store = Store::open(&db_path).map_err(|_| UnsubscribeFailure::Storage)?;
-    let runtime = crate::sync::runtime().map_err(|_| UnsubscribeFailure::Network)?;
-    runtime.block_on(unsubscribe::one_click_unsubscribe(
-        &store,
-        MessageId(message_id),
-        &[],
-    ))?;
-    Ok(())
+    // Never on the caller's stack (#462).
+    crate::worker::on_job_thread(|| {
+        let store = Store::open(&db_path).map_err(|_| UnsubscribeFailure::Storage)?;
+        let runtime = crate::sync::runtime().map_err(|_| UnsubscribeFailure::Network)?;
+        runtime.block_on(unsubscribe::one_click_unsubscribe(
+            &store,
+            MessageId(message_id),
+            &[],
+        ))?;
+        Ok(())
+    })
+    .unwrap_or(Err(UnsubscribeFailure::Network))
 }
 
 #[cfg(test)]

@@ -103,7 +103,10 @@ impl From<ActionError> for ActionFailure {
     fn from(error: ActionError) -> Self {
         match error {
             ActionError::NoArchiveFolder => Self::NoArchiveFolder,
-            ActionError::UnknownMessage | ActionError::UnknownFolder => Self::NotFound,
+            // A virtual folder (#390) is no destination; the apps never offer one.
+            ActionError::UnknownMessage
+            | ActionError::UnknownFolder
+            | ActionError::NotADestination => Self::NotFound,
             ActionError::MixedFolders => Self::MixedFolders,
             ActionError::MixedAccounts => Self::MixedAccounts,
             ActionError::TooMany => Self::TooMany,
