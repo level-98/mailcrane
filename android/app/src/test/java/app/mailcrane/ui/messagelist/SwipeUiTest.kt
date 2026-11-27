@@ -7,12 +7,14 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.test.junit4.StateRestorationTester
+import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.swipeLeft
 import androidx.compose.ui.test.swipeRight
 import app.mailcrane.core.MessageSummary
+import app.mailcrane.core.ThreadSummary
 import app.mailcrane.settings.SwipeAction
 import app.mailcrane.ui.theme.MailcraneTheme
 import org.junit.Assert.assertEquals
@@ -52,6 +54,7 @@ class SwipeUiTest {
         MessageListState(messages = listOf(message(1), message(2), message(3)), isLoading = false),
     )
     private val swiped = mutableListOf<Pair<Long, SwipeAction>>()
+    private val threadSwipes = mutableListOf<Pair<Long, SwipeAction>>()
 
     private fun show(
         right: SwipeAction = SwipeAction.FLAG,
@@ -70,6 +73,7 @@ class SwipeUiTest {
                             right = right,
                             left = SwipeAction.ARCHIVE,
                             onSwipe = onSwipe,
+                            onSwipeThread = { thread, action -> threadSwipes += thread.threadId to action },
                         ),
                 )
             }
@@ -277,5 +281,22 @@ class SwipeUiTest {
         compose.mainClock.advanceTimeBy(SWIPE_REMOVE_TIMEOUT_MS + 1_000)
         assertEquals(listOf(2L to SwipeAction.ARCHIVE), swiped)
         assertEquals("back at rest", start, left("Subject 2"), 1f)
+    }
+
+    /** #552: a conversation row swipes like a message row, and its action goes to the whole conversation. */
+    @Test
+    fun aConversationRowSwipesAndTheActionIsTheConversations() {
+        state =
+            state.copy(
+                grouped = true,
+                threads =
+                    listOf(ThreadSummary(9, "Conversation 9", listOf("Ana", "Bob"), 2u, 0u, now, false, false, 1)),
+            )
+        show()
+        val row = compose.onNode(hasContentDescription("Conversation 9", substring = true), useUnmergedTree = true)
+        row.performTouchInput { swipeLeft() }
+        compose.waitForIdle()
+        assertEquals(listOf(9L to SwipeAction.ARCHIVE), threadSwipes)
+        assertTrue("not run as a single message", swiped.isEmpty())
     }
 }

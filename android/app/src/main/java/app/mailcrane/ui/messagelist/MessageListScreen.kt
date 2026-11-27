@@ -1,5 +1,6 @@
 package app.mailcrane.ui.messagelist
 
+import android.content.res.Resources
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
@@ -122,16 +123,7 @@ fun MessageListScreen(
     }
     LaunchedEffect(viewModel) {
         viewModel.undoOffers.collect { offer ->
-            val label = if (offer.action == SwipeAction.DELETE) R.string.swipe_deleted else R.string.swipe_archived
-            val result =
-                withTimeoutOrNull(UNDO_WINDOW_MS) {
-                    snackbar.showSnackbar(
-                        message = resources.getString(label),
-                        actionLabel = resources.getString(R.string.undo_send_undo),
-                        duration = SnackbarDuration.Indefinite,
-                    )
-                }
-            if (result == SnackbarResult.ActionPerformed) viewModel.undo(offer.messageId)
+            if (showSwipeUndo(snackbar, resources, offer)) viewModel.undo(offer.messageId)
         }
     }
     val swipes by viewModel.swipes.collectAsStateWithLifecycle()
@@ -146,12 +138,30 @@ fun MessageListScreen(
             onDismiss = { moving = null },
         )
     }
+    var movingThread by rememberSaveable { mutableStateOf<Long?>(null) }
+    movingThread?.let { threadId ->
+        MoveDialog(
+            folders = folders.filter { it.id != folderId && it.takesMoves },
+            onPick = {
+                movingThread = null
+                viewModel.moveThread(threadId, it)
+            },
+            onDismiss = { movingThread = null },
+        )
+    }
     val swipeHandlers =
         SwipeHandlers(
             right = swipes.first,
             left = swipes.second,
             onSwipe = { message, action ->
                 if (action == SwipeAction.MOVE) moving = message.id else viewModel.swipe(message, action)
+            },
+            onSwipeThread = { thread, action ->
+                if (action == SwipeAction.MOVE) {
+                    movingThread = thread.threadId
+                } else {
+                    viewModel.swipeThread(thread, action)
+                }
             },
         )
     LaunchedEffect(viewModel) {
@@ -222,11 +232,12 @@ fun MessageListScreen(
     )
 }
 
-/** What swiping a row does, and the code that runs it. */
+/** What swiping a row does, and the code that runs it: on a message row, or on a conversation row (#552). */
 data class SwipeHandlers(
     val right: SwipeAction = SwipeAction.NONE,
     val left: SwipeAction = SwipeAction.NONE,
     val onSwipe: (MessageSummary, SwipeAction) -> Unit = { _, _ -> },
+    val onSwipeThread: (ThreadSummary, SwipeAction) -> Unit = { _, _ -> },
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -459,7 +470,12 @@ private fun Messages(
                         item(key = message.id, contentType = "message") {
                             // Rows that leave or arrive move the others smoothly (#341).
                             Column(Modifier.animateItem()) {
-                                SwipeableRow(message, swipe) {
+                                SwipeableRow(
+                                    right = swipe.right,
+                                    left = swipe.left,
+                                    a11yLabel = { swipeA11yLabel(it, message) },
+                                    onSwipe = { swipe.onSwipe(message, it) },
+                                ) {
                                     MessageRow(
                                         message = message,
                                         now = now,
@@ -502,7 +518,12 @@ private fun ThreadItem(
 ) {
     val single = byId[thread.newestMessageId]?.takeIf { thread.messageCount <= 1u }
     if (single != null) {
-        SwipeableRow(single, swipe) {
+        SwipeableRow(
+            right = swipe.right,
+            left = swipe.left,
+            a11yLabel = { swipeA11yLabel(it, single) },
+            onSwipe = { swipe.onSwipe(single, it) },
+        ) {
             MessageRow(
                 message = single,
                 now = now,
@@ -514,23 +535,30 @@ private fun ThreadItem(
             )
         }
     } else {
-        ThreadRow(
-            thread = thread,
-            newest = byId[thread.newestMessageId],
-            now = now,
-            locale = locale,
-            onClick = {
-                when {
-                    state.selecting -> selection.onToggleThread(thread.threadId)
-                    thread.messageCount <= 1u -> onOpenMessage(thread.newestMessageId)
-                    else -> onOpenThread(thread.threadId, thread.subject)
-                }
-            },
-            onLongClick = { selection.onToggleThread(thread.threadId) },
-            selecting = state.selecting,
-            selected = thread.threadId in state.selectedThreads,
-            onAvatarClick = { selection.onToggleThread(thread.threadId) },
-        )
+        SwipeableRow(
+            right = swipe.right,
+            left = swipe.left,
+            a11yLabel = { threadSwipeA11yLabel(it, thread) },
+            onSwipe = { swipe.onSwipeThread(thread, it) },
+        ) {
+            ThreadRow(
+                thread = thread,
+                newest = byId[thread.newestMessageId],
+                now = now,
+                locale = locale,
+                onClick = {
+                    when {
+                        state.selecting -> selection.onToggleThread(thread.threadId)
+                        thread.messageCount <= 1u -> onOpenMessage(thread.newestMessageId)
+                        else -> onOpenThread(thread.threadId, thread.subject)
+                    }
+                },
+                onLongClick = { selection.onToggleThread(thread.threadId) },
+                selecting = state.selecting,
+                selected = thread.threadId in state.selectedThreads,
+                onAvatarClick = { selection.onToggleThread(thread.threadId) },
+            )
+        }
     }
     RowDivider()
 }
@@ -594,6 +622,24 @@ internal fun errorText(kind: SyncErrorKind): Int =
         SyncErrorKind.BUSY -> R.string.sync_error_busy
     }
 
+/** Shows "Archived · Undo" or "Deleted · Undo" for [offer] for [UNDO_WINDOW_MS]; true if Undo was tapped. */
+internal suspend fun showSwipeUndo(
+    snackbar: SnackbarHostState,
+    resources: Resources,
+    offer: UndoOffer,
+): Boolean {
+    val label = if (offer.action == SwipeAction.DELETE) R.string.swipe_deleted else R.string.swipe_archived
+    val result =
+        withTimeoutOrNull(UNDO_WINDOW_MS) {
+            snackbar.showSnackbar(
+                message = resources.getString(label),
+                actionLabel = resources.getString(R.string.undo_send_undo),
+                duration = SnackbarDuration.Indefinite,
+            )
+        }
+    return result == SnackbarResult.ActionPerformed
+}
+
 /** Whether swiping [action] takes the message out of the list it's in (archive, delete). */
 internal fun swipeRemovesRow(action: SwipeAction): Boolean =
     action == SwipeAction.ARCHIVE || action == SwipeAction.DELETE
@@ -609,9 +655,12 @@ internal const val SWIPE_REMOVE_TIMEOUT_MS = 3_000L
  * Other actions (read, flag, move) spring back at once: the row stays.
  */
 @Composable
-private fun SwipeableRow(
-    message: MessageSummary,
-    swipe: SwipeHandlers,
+internal fun SwipeableRow(
+    right: SwipeAction,
+    left: SwipeAction,
+    /** TalkBack's label for an action on this row. */
+    a11yLabel: (SwipeAction) -> Int,
+    onSwipe: (SwipeAction) -> Unit,
     content: @Composable () -> Unit,
 ) {
     // Not saved: material3's dismiss effect runs onDismiss whenever the state isn't Settled, so a row
@@ -622,9 +671,9 @@ private fun SwipeableRow(
     val scope = rememberCoroutineScope()
     val resources = LocalResources.current
     val actions =
-        listOf(swipe.right, swipe.left).distinct().filter { it != SwipeAction.NONE }.map { action ->
-            CustomAccessibilityAction(resources.getString(swipeA11yLabel(action, message))) {
-                swipe.onSwipe(message, action)
+        listOf(right, left).distinct().filter { it != SwipeAction.NONE }.map { action ->
+            CustomAccessibilityAction(resources.getString(a11yLabel(action))) {
+                onSwipe(action)
                 true
             }
         }
@@ -632,15 +681,16 @@ private fun SwipeableRow(
     // new lambda on every recomposition runs the action again. A read or flag swipe changes the row,
     // the row recomposes while it is still springing back, and the action ran again: the message
     // flipped read, unread, read… and each run restarted the spring from rest, so the row crawled back
-    // over seconds (#368). One callback for the row's lifetime, reading the latest message and handlers.
-    val currentMessage by rememberUpdatedState(message)
-    val currentSwipe by rememberUpdatedState(swipe)
+    // over seconds (#368). One callback for the row's lifetime, reading the latest actions and handler
+    // (which holds the latest message or conversation).
+    val currentRight by rememberUpdatedState(right)
+    val currentLeft by rememberUpdatedState(left)
+    val currentOnSwipe by rememberUpdatedState(onSwipe)
     val onDismiss: (SwipeToDismissBoxValue) -> Unit =
         remember(state, scope) {
             { value ->
-                val handlers = currentSwipe
-                val action = if (value == SwipeToDismissBoxValue.StartToEnd) handlers.right else handlers.left
-                handlers.onSwipe(currentMessage, action)
+                val action = if (value == SwipeToDismissBoxValue.StartToEnd) currentRight else currentLeft
+                currentOnSwipe(action)
                 scope.launch {
                     if (swipeRemovesRow(action)) delay(SWIPE_REMOVE_TIMEOUT_MS)
                     state.reset()
@@ -650,8 +700,8 @@ private fun SwipeableRow(
     SwipeToDismissBox(
         state = state,
         modifier = Modifier.semantics { customActions = actions },
-        enableDismissFromStartToEnd = swipe.right != SwipeAction.NONE,
-        enableDismissFromEndToStart = swipe.left != SwipeAction.NONE,
+        enableDismissFromStartToEnd = right != SwipeAction.NONE,
+        enableDismissFromEndToStart = left != SwipeAction.NONE,
         // Only a row at rest takes a swipe. material3 1.5.0 already disables dragging until the state is
         // Settled; this only says so here, in case a later version stops doing it: a swipe caught mid-reset
         // would settle at the same value, run nothing, and leave the row swiped away for good (#368, #369 review).
@@ -660,8 +710,8 @@ private fun SwipeableRow(
         backgroundContent = {
             val action =
                 when (state.dismissDirection) {
-                    SwipeToDismissBoxValue.StartToEnd -> swipe.right
-                    SwipeToDismissBoxValue.EndToStart -> swipe.left
+                    SwipeToDismissBoxValue.StartToEnd -> right
+                    SwipeToDismissBoxValue.EndToStart -> left
                     SwipeToDismissBoxValue.Settled -> SwipeAction.NONE
                 }
             SwipeBackground(action, state.dismissDirection)
@@ -704,6 +754,24 @@ private fun swipeIcon(action: SwipeAction): Int =
         SwipeAction.READ_UNREAD -> R.drawable.ic_mc_mail
         SwipeAction.FLAG -> R.drawable.ic_mc_star
         SwipeAction.MOVE, SwipeAction.NONE -> R.drawable.ic_mc_folder
+    }
+
+/**
+ * What TalkBack offers for [action] on a conversation row: read and flag go by the row, as the swipe
+ * does (#552).
+ */
+internal fun threadSwipeA11yLabel(
+    action: SwipeAction,
+    thread: ThreadSummary,
+): Int =
+    when (action) {
+        SwipeAction.ARCHIVE -> R.string.message_archive
+        SwipeAction.DELETE -> R.string.message_delete
+        SwipeAction.READ_UNREAD ->
+            if (thread.unreadCount > 0u) R.string.message_mark_read else R.string.message_mark_unread
+        SwipeAction.FLAG -> if (thread.isFlagged) R.string.message_unflag else R.string.message_flag
+        SwipeAction.MOVE -> R.string.message_move
+        SwipeAction.NONE -> R.string.swipe_none
     }
 
 /** What TalkBack offers for [action] on [message], e.g. "Mark as unread" for a read one. */

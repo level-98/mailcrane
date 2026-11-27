@@ -159,7 +159,8 @@ private class FakeMailbox(
     ): BulkApplied {
         actionFailure?.let { throw it }
         bulkCalls += Triple(selection, action, undoable)
-        return BulkApplied(listOf(1L), selection.messageIds, deletedForGood)
+        // A conversation row stands for its messages: here, thread n holds message n * 10.
+        return BulkApplied(listOf(1L), selection.messageIds + selection.threadIds.map { it * 10 }, deletedForGood)
     }
 
     val undoBulkCalls = mutableListOf<List<Long>>()
@@ -671,4 +672,87 @@ class MessageListViewModelTest {
         vm.clearSelection()
         assertEquals(0, vm.state.value.confirmDeleteForGood)
     }
+    /** #552: a conversation row of thread 4 (message 40), unread or flagged as asked. */
+    private fun swipedThread(
+        unread: UInt = 0u,
+        flagged: Boolean = false,
+    ) = ThreadSummary(4, "Subject 4", listOf("Ana", "Bob"), 3u, unread, 4, flagged, false, 40)
+
+    @Test
+    fun anArchiveSwipeOnAConversationArchivesItsMessagesWithUndo() =
+        runTest {
+            val core = FakeMailbox(stored = 3)
+            val vm = MessageListViewModel(core, FakeAppSettings(), FOLDER)
+            vm.swipeThread(swipedThread(), SwipeAction.ARCHIVE)
+            val (selection, action, undoable) = core.bulkCalls.single()
+            assertEquals(listOf(4L), selection.threadIds)
+            assertEquals(FOLDER, selection.folderId)
+            assertTrue(selection.messageIds.isEmpty())
+            assertEquals(MessageAction.Archive, action)
+            assertTrue("waits for a possible undo", undoable)
+            val offer = vm.bulkUndoOffers.first()
+            assertEquals(BulkUndoKind.ARCHIVED, offer.kind)
+            assertEquals(listOf(40L), offer.messageIds)
+            assertFalse("a swipe doesn't start selection", vm.state.value.selecting)
+        }
+
+    @Test
+    fun readAndFlagSwipesOnAConversationGoByTheRow() =
+        runTest {
+            val core = FakeMailbox(stored = 3)
+            val vm = MessageListViewModel(core, FakeAppSettings(), FOLDER)
+            vm.swipeThread(swipedThread(unread = 2u), SwipeAction.READ_UNREAD)
+            vm.swipeThread(swipedThread(unread = 0u), SwipeAction.READ_UNREAD)
+            vm.swipeThread(swipedThread(flagged = false), SwipeAction.FLAG)
+            vm.swipeThread(swipedThread(flagged = true), SwipeAction.FLAG)
+            assertEquals(
+                listOf(MessageAction.MarkRead, MessageAction.MarkUnread, MessageAction.Flag, MessageAction.Unflag),
+                core.bulkCalls.map { it.second },
+            )
+            assertTrue("no undo for read and flag", core.bulkCalls.none { it.third })
+        }
+
+    @Test
+    fun aDeleteSwipeOnAConversationThatWouldBePermanentAsksFirst() =
+        runTest {
+            val core = FakeMailbox(stored = 3).apply { forGood = 3 }
+            val vm = MessageListViewModel(core, FakeAppSettings(), FOLDER)
+            vm.swipeThread(swipedThread(), SwipeAction.DELETE)
+            assertEquals(3, vm.state.value.confirmDeleteForGood)
+            assertTrue("nothing deleted before the answer", core.bulkCalls.isEmpty())
+            vm.cancelDeleteForGood()
+            assertTrue(core.bulkCalls.isEmpty())
+
+            vm.swipeThread(swipedThread(), SwipeAction.DELETE)
+            vm.confirmDeleteForGood()
+            val (selection, action, undoable) = core.bulkCalls.single()
+            assertEquals("deletes the swiped conversation", listOf(4L), selection.threadIds)
+            assertEquals(MessageAction.Delete, action)
+            assertFalse(undoable)
+        }
+
+    @Test
+    fun aDeleteSwipeOnAConversationToTrashOffersUndo() =
+        runTest {
+            val core = FakeMailbox(stored = 3)
+            val vm = MessageListViewModel(core, FakeAppSettings(), FOLDER)
+            vm.swipeThread(swipedThread(), SwipeAction.DELETE)
+            assertEquals(0, vm.state.value.confirmDeleteForGood)
+            assertEquals(MessageAction.Delete, core.bulkCalls.single().second)
+            assertEquals(BulkUndoKind.DELETED, vm.bulkUndoOffers.first().kind)
+        }
+
+    @Test
+    fun aMoveSwipeOnAConversationMovesItsMessagesWithUndo() =
+        runTest {
+            val core = FakeMailbox(stored = 3)
+            val vm = MessageListViewModel(core, FakeAppSettings(), FOLDER)
+            vm.swipeThread(swipedThread(), SwipeAction.MOVE)
+            assertTrue("the screen asks for the folder first", core.bulkCalls.isEmpty())
+            vm.moveThread(4, 9)
+            val (selection, action, _) = core.bulkCalls.single()
+            assertEquals(listOf(4L), selection.threadIds)
+            assertEquals(MessageAction.Move(9), action)
+            assertEquals(BulkUndoKind.MOVED, vm.bulkUndoOffers.first().kind)
+        }
 }
