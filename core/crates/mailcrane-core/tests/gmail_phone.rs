@@ -229,6 +229,7 @@ async fn a_v15_database_with_partial_gmail_rows_syncs_with_v16_code() {
             "UPDATE folders SET uidvalidity = 1, uidnext = 5 WHERE remote_name = 'INBOX';
              UPDATE messages SET uid = uid + 100000 WHERE uid % 7 = 0;
              ALTER TABLE folders DROP COLUMN selectable;
+             ALTER TABLE folders DROP COLUMN virtual_role;
              ALTER TABLE accounts DROP COLUMN local_only;
              ALTER TABLE rules DROP COLUMN missing_folder;
              ALTER TABLE accounts DROP COLUMN provider_authserv_id;

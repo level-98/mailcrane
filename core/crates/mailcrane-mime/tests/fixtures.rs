@@ -273,3 +273,25 @@ fn html_blocks_are_separated_in_the_snippet() -> R {
     );
     Ok(())
 }
+
+/// #446: in an HTML-only message, `text_plain` (the body of a draft opened
+/// from the server and the reply quote) keeps one line per block and per
+/// `<br>`; inline tags join as before. The snippet is unchanged (#391).
+#[test]
+fn html_blocks_are_lines_in_the_text() -> R {
+    let m = load("html-blocks.eml")?;
+    assert_eq!(
+        m.text_plain.as_deref(),
+        Some(
+            "New people to discover\n\
+             Suggested accounts based on your contacts\n\
+             Line one\nLine two\nLine three\n\
+             First\nSecond\n\
+             Cell A\nCell B\nHead C\n\
+             Quoted\n\
+             Examples stay one word\n\
+             Acme\nHello\nSale\nToday"
+        )
+    );
+    Ok(())
+}

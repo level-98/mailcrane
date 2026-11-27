@@ -12,6 +12,10 @@ pub enum ServerQuirk {
     /// The server files a copy of every message sent through its SMTP server
     /// in the Sent folder itself; uploading another would duplicate it.
     AutoSavesSent,
+    /// Gmail (it advertises `X-GM-EXT-1`): folders are labels, and its own
+    /// LIST attributes, such as `\Important` for "[Gmail]/Important", mean
+    /// what Gmail says they mean (#390).
+    GmailLabels,
 }
 
 /// Microsoft's IMAP hosts. Outlook.com and Microsoft 365 save messages sent
@@ -27,6 +31,9 @@ pub fn detect(capabilities: &[String], host: &str) -> Vec<ServerQuirk> {
     let microsoft = MICROSOFT_HOSTS.iter().any(|h| h.eq_ignore_ascii_case(host));
     if gmail || microsoft {
         quirks.push(ServerQuirk::AutoSavesSent);
+    }
+    if gmail {
+        quirks.push(ServerQuirk::GmailLabels);
     }
     quirks
 }
@@ -135,7 +142,7 @@ mod tests {
     fn gmail_and_microsoft_save_sent_mail_themselves() {
         assert_eq!(
             detect(&caps(&["IMAP4rev1", "X-GM-EXT-1"]), "imap.example.org"),
-            [ServerQuirk::AutoSavesSent]
+            [ServerQuirk::AutoSavesSent, ServerQuirk::GmailLabels]
         );
         for host in [
             "outlook.office365.com",

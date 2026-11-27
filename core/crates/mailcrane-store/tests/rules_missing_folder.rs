@@ -28,6 +28,7 @@ fn setup(store: &Store) -> Result<(AccountId, FolderId, RuleId), StoreError> {
         highestmodseq: None,
         is_subscribed: true,
         selectable: true,
+        virtual_role: None,
     })?;
     let rule = store.insert_rule(&rule(account, folder))?;
     Ok((account, folder, rule))
