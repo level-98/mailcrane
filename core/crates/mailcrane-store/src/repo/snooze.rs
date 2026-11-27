@@ -77,6 +77,85 @@ pub struct Snooze {
     pub target_uidnext: Option<u32>,
     /// When a rollback (step 4) began, unix seconds.
     pub rollback_since: Option<i64>,
+    /// The copy's UID in the target, from the server's COPYUID
+    /// (`migrations/0025_snooze_copy_uid.sql`, #450); `None` if it sent none.
+    pub copy_uid: Option<u32>,
+}
+
+impl Snooze {
+    /// The row as this copy of it says it is: what a guarded write
+    /// requires the stored row still to be (#459).
+    pub fn seen(&self) -> SnoozeSeen {
+        SnoozeSeen {
+            id: self.id,
+            state: self.state,
+            step: self.step,
+            wake_at: self.wake_at,
+            mark_unread: self.mark_unread,
+            target_uidnext: self.target_uidnext,
+            copy_uid: self.copy_uid,
+        }
+    }
+}
+
+/// A snooze row as a sync read it (#459, invariant 5). Every write that
+/// finishes, advances or deletes a row takes one, and changes nothing if
+/// the stored row differs in any of these: the user changed it meanwhile,
+/// and the next sync reads it again and decides afresh. Compared with
+/// `IS`, so NULL columns match.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SnoozeSeen {
+    pub id: SnoozeId,
+    pub state: SnoozeState,
+    pub step: u8,
+    pub wake_at: i64,
+    pub mark_unread: bool,
+    pub target_uidnext: Option<u32>,
+    pub copy_uid: Option<u32>,
+}
+
+impl SnoozeSeen {
+    /// The same row after this sync's own write of `step`, and of
+    /// `target_uidnext` and `copy_uid` where given.
+    pub fn at_step(self, step: u8, target_uidnext: Option<u32>, copy_uid: Option<u32>) -> Self {
+        Self {
+            step,
+            target_uidnext: target_uidnext.or(self.target_uidnext),
+            copy_uid: copy_uid.or(self.copy_uid),
+            ..self
+        }
+    }
+}
+
+/// The guard every conditional write ends its `WHERE` with: parameters ?1
+/// to ?7 are the [`SnoozeSeen`] fields, in order ([`seen_params`]).
+const SEEN: &str = "id = ?1 AND state IS ?2 AND step IS ?3 AND wake_at IS ?4 \
+    AND mark_unread IS ?5 AND target_uidnext IS ?6 AND copy_uid IS ?7";
+
+/// A queued move or delete of the snooze row's message as it is in
+/// Snoozed, in its account (used inside a statement on `snoozes`; 'snoozed'
+/// is mailcrane-core's SNOOZED_FOLDER_NAME, ignoring case).
+const QUEUED_MOVE: &str = "SELECT 1 FROM pending_ops o \
+    JOIN pending_op_messages pm ON pm.op_id = o.id \
+    JOIN messages m ON m.id = pm.message_id \
+    JOIN folders f ON f.id = m.folder_id \
+    WHERE o.account_id = snoozes.account_id AND o.kind IN ('move', 'expunge') \
+    AND f.account_id = snoozes.account_id AND lower(f.remote_name) = 'snoozed' \
+    AND m.message_id_header = snoozes.message_id_header";
+
+fn seen_params(s: &SnoozeSeen) -> Vec<rusqlite::types::Value> {
+    use rusqlite::types::Value;
+    vec![
+        Value::Integer(s.id.0),
+        Value::Text(s.state.as_str().to_owned()),
+        Value::Integer(i64::from(s.step)),
+        Value::Integer(s.wake_at),
+        Value::Integer(i64::from(s.mark_unread)),
+        s.target_uidnext
+            .map_or(Value::Null, |v| Value::Integer(i64::from(v))),
+        s.copy_uid
+            .map_or(Value::Null, |v| Value::Integer(i64::from(v))),
+    ]
 }
 
 /// A stored message with keywords that start with a given prefix.
@@ -90,7 +169,7 @@ pub struct KeywordedMessage {
 
 const COLS: &str = "id, account_id, message_id_header, original_folder_id, local_message_id, \
     wake_at, state, on_server, mark_unread, attempts, next_attempt_at, step, target_uidnext, \
-    rollback_since";
+    rollback_since, copy_uid";
 
 fn from_row(r: &Row<'_>) -> Result<Snooze, StoreError> {
     Ok(Snooze {
@@ -111,6 +190,10 @@ fn from_row(r: &Row<'_>) -> Result<Snooze, StoreError> {
             .map(|v| narrow(v, "target_uidnext"))
             .transpose()?,
         rollback_since: r.get(13)?,
+        copy_uid: r
+            .get::<_, Option<i64>>(14)?
+            .map(|v| narrow(v, "copy_uid"))
+            .transpose()?,
     })
 }
 
@@ -412,6 +495,187 @@ impl Store {
             params![id.0, now],
         )?;
         Ok(())
+    }
+
+    /// Runs `sql` (an `UPDATE` or `DELETE` on `snoozes` ending in
+    /// `WHERE {SEEN}`) with the guard's parameters first and `extra` after
+    /// them (?8 on), in `tx`. Returns whether the row matched.
+    fn guarded(
+        tx: &rusqlite::Transaction<'_>,
+        sql: &str,
+        seen: &SnoozeSeen,
+        extra: &[rusqlite::types::Value],
+    ) -> Result<bool, StoreError> {
+        let mut values = seen_params(seen);
+        values.extend_from_slice(extra);
+        let n = tx.execute(sql, rusqlite::params_from_iter(values))?;
+        Ok(n > 0)
+    }
+
+    /// [`Store::finish_snooze`], only if the row is still `seen` (#459).
+    /// Returns whether it was finished.
+    pub fn finish_snooze_if(&self, seen: &SnoozeSeen, on_server: bool) -> Result<bool, StoreError> {
+        let tx = self.write_tx()?;
+        let local: Option<Option<i64>> = tx
+            .query_row(
+                &format!(
+                    "SELECT local_message_id FROM snoozes WHERE {SEEN} AND state = 'to_snooze'"
+                ),
+                rusqlite::params_from_iter(seen_params(seen)),
+                |r| r.get(0),
+            )
+            .optional()?;
+        let Some(local) = local else {
+            return Ok(false);
+        };
+        if let Some(m) = local {
+            tx.execute(
+                "DELETE FROM messages WHERE hidden = 1 AND id = ?1",
+                params![m],
+            )?;
+        }
+        let done = Self::guarded(
+            &tx,
+            &format!(
+                "UPDATE snoozes SET state = 'snoozed', on_server = ?8, local_message_id = NULL, \
+                 attempts = 0, next_attempt_at = 0, step = 0, target_uidnext = NULL, \
+                 rollback_since = NULL, copy_uid = NULL WHERE {SEEN}"
+            ),
+            seen,
+            &[rusqlite::types::Value::Integer(i64::from(on_server))],
+        )?;
+        tx.commit()?;
+        Ok(done)
+    }
+
+    /// [`Store::delete_snooze`], only if the row is still `seen` (#459),
+    /// with `message` (a wake's row in the Snoozed folder) deleted in the
+    /// same transaction. Returns whether it was deleted; if not, nothing
+    /// changed.
+    pub fn delete_snooze_if(
+        &self,
+        seen: &SnoozeSeen,
+        unhide: bool,
+        message: Option<MessageId>,
+    ) -> Result<bool, StoreError> {
+        let tx = self.write_tx()?;
+        let local: Option<Option<i64>> = tx
+            .query_row(
+                &format!("SELECT local_message_id FROM snoozes WHERE {SEEN}"),
+                rusqlite::params_from_iter(seen_params(seen)),
+                |r| r.get(0),
+            )
+            .optional()?;
+        let Some(local) = local else {
+            return Ok(false);
+        };
+        if unhide {
+            if let Some(m) = local {
+                tx.execute("UPDATE messages SET hidden = 0 WHERE id = ?1", params![m])?;
+            }
+        }
+        if let Some(m) = message {
+            tx.execute("DELETE FROM messages WHERE id = ?1", params![m.0])?;
+        }
+        let done = Self::guarded(&tx, &format!("DELETE FROM snoozes WHERE {SEEN}"), seen, &[])?;
+        tx.commit()?;
+        Ok(done)
+    }
+
+    /// Records step 1 (the target's UIDNEXT, just before the COPY or MOVE
+    /// is sent), only if the row is still `seen` and at step 0 or 1.
+    /// Returns false if the user changed it meanwhile: then nothing may be
+    /// sent (#431, #459).
+    ///
+    /// A wake also waits while a move or delete of the same message is
+    /// queued: the user's action, accepted at step 0, goes first (#459
+    /// review). Once it has run, the wake finds the message gone.
+    pub fn start_snooze_move_if(
+        &self,
+        seen: &SnoozeSeen,
+        target_uidnext: u32,
+    ) -> Result<bool, StoreError> {
+        if seen.step > 1 {
+            return Ok(false);
+        }
+        let tx = self.write_tx()?;
+        let done = Self::guarded(
+            &tx,
+            &format!(
+                "UPDATE snoozes SET step = 1, target_uidnext = ?8, copy_uid = NULL WHERE {SEEN} \
+                 AND (state <> 'to_wake' OR NOT EXISTS ({QUEUED_MOVE}))"
+            ),
+            seen,
+            &[rusqlite::types::Value::Integer(i64::from(target_uidnext))],
+        )?;
+        tx.commit()?;
+        Ok(done)
+    }
+
+    /// Records how far a move got (#423), and the copy's UID when the server
+    /// sent COPYUID (#450), only if the row is still `seen` (#459).
+    /// `target_uidnext` and `copy_uid` are kept unless new values are given.
+    pub fn set_snooze_step_if(
+        &self,
+        seen: &SnoozeSeen,
+        step: u8,
+        target_uidnext: Option<u32>,
+        copy_uid: Option<u32>,
+    ) -> Result<bool, StoreError> {
+        use rusqlite::types::Value;
+        let opt = |v: Option<u32>| v.map_or(Value::Null, |v| Value::Integer(i64::from(v)));
+        let tx = self.write_tx()?;
+        let done = Self::guarded(
+            &tx,
+            &format!(
+                "UPDATE snoozes SET step = ?8, target_uidnext = COALESCE(?9, target_uidnext), \
+                 copy_uid = COALESCE(?10, copy_uid) WHERE {SEEN}"
+            ),
+            seen,
+            &[
+                Value::Integer(i64::from(step)),
+                opt(target_uidnext),
+                opt(copy_uid),
+            ],
+        )?;
+        tx.commit()?;
+        Ok(done)
+    }
+
+    /// [`Store::start_snooze_rollback`], only if the row is still `seen`.
+    pub fn start_snooze_rollback_if(
+        &self,
+        seen: &SnoozeSeen,
+        now: i64,
+    ) -> Result<bool, StoreError> {
+        let tx = self.write_tx()?;
+        let done = Self::guarded(
+            &tx,
+            &format!(
+                "UPDATE snoozes SET step = 4, rollback_since = COALESCE(rollback_since, ?8) \
+                 WHERE {SEEN}"
+            ),
+            seen,
+            &[rusqlite::types::Value::Integer(now)],
+        )?;
+        tx.commit()?;
+        Ok(done)
+    }
+
+    /// [`Store::reset_snooze_step`], only if the row is still `seen`.
+    pub fn reset_snooze_step_if(&self, seen: &SnoozeSeen, now: i64) -> Result<bool, StoreError> {
+        let tx = self.write_tx()?;
+        let done = Self::guarded(
+            &tx,
+            &format!(
+                "UPDATE snoozes SET step = 0, target_uidnext = NULL, copy_uid = NULL, \
+                 rollback_since = COALESCE(rollback_since, ?8) WHERE {SEEN}"
+            ),
+            seen,
+            &[rusqlite::types::Value::Integer(now)],
+        )?;
+        tx.commit()?;
+        Ok(done)
     }
 
     /// The snooze with this id, as stored now.

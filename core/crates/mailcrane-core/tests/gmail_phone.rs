@@ -237,6 +237,7 @@ async fn a_v15_database_with_partial_gmail_rows_syncs_with_v16_code() {
              ALTER TABLE snoozes DROP COLUMN step;
              ALTER TABLE snoozes DROP COLUMN target_uidnext;
              ALTER TABLE snoozes DROP COLUMN rollback_since;
+             ALTER TABLE snoozes DROP COLUMN copy_uid;
              DROP TABLE jmap_push_subscriptions;
              DROP TABLE server_rules_deployed;
              DROP TABLE server_rules;

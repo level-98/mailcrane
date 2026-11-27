@@ -776,35 +776,11 @@ impl SyncEngine {
         runtime.block_on(async {
             let mut session = self.connect(&store, account).await.map_err(report)?;
             if replay {
-                // Only a local database failure comes back as an error, and
-                // the sync reports that itself; actions that failed against
-                // the server are already deferred or undone.
-                let _ = mailcrane_core::actions::replay(
-                    &store,
-                    &mut session,
-                    &listener,
-                    account,
-                    crate::actions::now(),
-                )
-                .await;
-                // Drafts too (M2-05); a failed upload is deferred, not lost.
-                let _ = mailcrane_core::drafts::upload_drafts(
-                    &store,
-                    &mut session,
-                    account,
-                    crate::actions::now(),
-                )
-                .await;
-                // And copies of sent messages for the Sent folder (M2-07).
-                let _ = mailcrane_core::outbox::save_sent_copies(
-                    &store,
-                    &mut session,
-                    account,
-                    crate::actions::now(),
-                )
-                .await;
-                // And snoozes to carry out (M4-06).
-                let _ = mailcrane_core::snooze::sync_snoozes(
+                // Queued actions, drafts, sent copies, then snoozes, in the
+                // order the snooze tests drive (#459). What the server
+                // refuses is deferred or undone; only a local database
+                // failure is an error, and the sync below reports that.
+                mailcrane_core::sync::push_local_changes(
                     &store,
                     &mut session,
                     &listener,

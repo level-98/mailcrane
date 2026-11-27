@@ -130,7 +130,8 @@ async fn a_wake_replaced_at_step_0_sends_nothing_and_keeps_the_new_snooze() {
         .expect("in Snoozed");
     snooze(&store, &[message], LATER_WAKE, &Quiet).expect("re-snooze");
     let mut session = connect(&imap).await;
-    let outcome = Box::pin(wake_one(&store, &mut session, &read)).await;
+    let mut read = read;
+    let outcome = Box::pin(wake_one(&store, &mut session, &mut read)).await;
     assert!(
         matches!(outcome, Ok(ref changed) if changed.is_empty()),
         "nothing done"

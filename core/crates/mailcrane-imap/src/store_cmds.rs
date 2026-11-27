@@ -4,7 +4,7 @@
 use crate::command::Arg;
 use crate::error::ImapError;
 use crate::fetch::uid_set;
-use crate::parser::{Code, StatusKind};
+use crate::parser::{Code, Condition, StatusKind, Untagged};
 use crate::session::{has_cap, Done, Session};
 
 /// A system flag the app changes (RFC 9051 §2.3.2).
@@ -53,6 +53,36 @@ impl ChangeError {
 
 /// RFC 5530 response codes that describe a temporary condition.
 const TRANSIENT_CODES: &[&str] = &["UNAVAILABLE", "INUSE", "LIMIT", "SERVERBUG"];
+
+/// The target UID from a `[COPYUID <uidvalidity> <source-uids> <target-uids>]`
+/// code (RFC 4315 §3) in the tagged reply or an untagged OK (RFC 6851
+/// §4.3), when it names exactly one message. A range or list (several
+/// messages) gives `None`, as does no code at all.
+fn copyuid(done: &Done) -> Option<u32> {
+    done.untagged
+        .iter()
+        .find_map(|u| match u {
+            Untagged::Condition {
+                condition: Condition::Ok,
+                text,
+            } => one_copyuid(text.code.as_ref()),
+            _ => None,
+        })
+        .or_else(|| one_copyuid(done.text.code.as_ref()))
+}
+
+fn one_copyuid(code: Option<&Code>) -> Option<u32> {
+    match code {
+        Some(Code::Other { name, args }) if name.eq_ignore_ascii_case("COPYUID") => args
+            .as_deref()?
+            .split_whitespace()
+            .nth(2)?
+            .parse()
+            .ok()
+            .filter(|uid| *uid > 0),
+        _ => None,
+    }
+}
 
 fn check(done: &Done) -> Result<(), ChangeError> {
     if done.status == StatusKind::Ok {
@@ -172,8 +202,19 @@ impl Session {
     /// `UID COPY <uids> <folder>` (RFC 9051 §6.4.7). Not idempotent: each
     /// call makes new copies.
     pub async fn uid_copy(&mut self, uids: &[u32], to_raw_name: &str) -> Result<(), ChangeError> {
+        self.uid_copy_returning(uids, to_raw_name).await.map(|_| ())
+    }
+
+    /// [`Session::uid_copy`], returning the copy's UID in the target when
+    /// one message was copied and the server said which (`COPYUID`, RFC
+    /// 4315 §3; #450).
+    pub async fn uid_copy_returning(
+        &mut self,
+        uids: &[u32],
+        to_raw_name: &str,
+    ) -> Result<Option<u32>, ChangeError> {
         if uids.is_empty() {
-            return Ok(());
+            return Ok(None);
         }
         let set = uid_set(uids);
         let done = self
@@ -186,7 +227,8 @@ impl Session {
                 ],
             )
             .await?;
-        check(&done)
+        check(&done)?;
+        Ok(copyuid(&done))
     }
 
     /// `UID MOVE <uids> <folder>` (RFC 6851 §3.2). Moving UIDs that are no
@@ -194,8 +236,20 @@ impl Session {
     /// connection makes no duplicates. Only call it when
     /// [`Session::supports_move`] is true.
     pub async fn uid_move(&mut self, uids: &[u32], to_raw_name: &str) -> Result<(), ChangeError> {
+        self.uid_move_returning(uids, to_raw_name).await.map(|_| ())
+    }
+
+    /// [`Session::uid_move`], returning the moved message's UID in the
+    /// target when one message was moved and the server said which
+    /// (`COPYUID`, sent with MOVE in an untagged OK or the tagged one, RFC
+    /// 6851 §4.3; #450).
+    pub async fn uid_move_returning(
+        &mut self,
+        uids: &[u32],
+        to_raw_name: &str,
+    ) -> Result<Option<u32>, ChangeError> {
         if uids.is_empty() {
-            return Ok(());
+            return Ok(None);
         }
         let set = uid_set(uids);
         let done = self
@@ -208,7 +262,8 @@ impl Session {
                 ],
             )
             .await?;
-        check(&done)
+        check(&done)?;
+        Ok(copyuid(&done))
     }
 
     /// `UID EXPUNGE <uids>` (RFC 4315 §2.1): removes only these messages,
