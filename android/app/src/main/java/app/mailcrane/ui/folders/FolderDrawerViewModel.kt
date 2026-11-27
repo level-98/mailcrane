@@ -90,6 +90,11 @@ class FolderDrawerViewModel
             }
         }
 
+        /** Opens the account's inbox (or its first folder), such as when leaving All inboxes. */
+        fun openInbox() {
+            _state.update { it.copy(selectedFolderId = defaultFolder(it.folders, null) ?: it.selectedFolderId) }
+        }
+
         /** Tries again after the folder list couldn't be loaded. */
         fun retry() {
             _state.update { it.copy(isLoading = it.folders.isEmpty(), loadError = null) }

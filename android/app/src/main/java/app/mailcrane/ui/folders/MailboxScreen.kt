@@ -89,7 +89,7 @@ fun MailboxScreen(
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     // "Open the app on" (M4-16): the Unified Inbox at start, once.
-    LaunchedEffect(Unit) {
+    LaunchedEffect(startInUnified) {
         if (startInUnified) {
             viewModel.select(UNIFIED_FOLDER_ID)
             onStartShown()
@@ -299,7 +299,14 @@ fun MailboxScreen(
                     currentAccountId = accountId,
                     onSwitchAccount = { id ->
                         closeDrawer()
-                        onSwitchAccount(id)
+                        if (id == accountId) {
+                            // The current account, tapped in All inboxes: open its inbox (#373 review).
+                            viewModel.openInbox()
+                            openMessage = null
+                            openThread = null
+                        } else {
+                            onSwitchAccount(id)
+                        }
                     },
                     unifiedUnread = state.unifiedUnread,
                     onOpenOutbox = {

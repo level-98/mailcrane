@@ -44,9 +44,12 @@ fun startChoice(
     lastFolderId: Long,
 ): StartChoice {
     val last = lastAccountId.takeIf { it in ids } ?: ids.firstOrNull()
+    // The Unified Inbox is only offered with two or more accounts (#373 review).
+    val several = ids.size > 1
     return when (view) {
-        StartView.Unified -> StartChoice(last, unified = last != null)
-        StartView.Last -> StartChoice(last, unified = last != null && lastFolderId == UNIFIED_FOLDER_ID)
+        StartView.Unified ->
+            if (several) StartChoice(last, unified = true) else StartChoice(last, unified = false, resetToLast = true)
+        StartView.Last -> StartChoice(last, unified = several && lastFolderId == UNIFIED_FOLDER_ID)
         is StartView.Account ->
             if (view.accountId in ids) {
                 StartChoice(view.accountId, unified = false)
@@ -81,21 +84,28 @@ class AccountsViewModel
                         settings.lastFolderId.first(),
                     )
                 if (choice.resetToLast) settings.setStartView(StartView.Last)
-                reload(preferred = choice.accountId, listed = accounts)
-                _state.update { it.copy(startInUnified = choice.unified) }
+                // In the same state update as the account, so no frame shows the inbox first (#373 review).
+                reload(preferred = choice.accountId, listed = accounts, startInUnified = choice.unified)
             }
         }
 
         private suspend fun reload(
             preferred: Long?,
             listed: List<AccountSummary>? = null,
+            startInUnified: Boolean? = null,
         ) {
             val accounts = listed ?: core.listAccounts()
             val current =
                 accounts.firstOrNull { it.id == preferred }?.id
                     ?: accounts.firstOrNull { it.id == _state.value.currentId }?.id
                     ?: accounts.firstOrNull()?.id
-            _state.update { it.copy(accounts = accounts, currentId = current) }
+            _state.update {
+                it.copy(
+                    accounts = accounts,
+                    currentId = current,
+                    startInUnified = startInUnified ?: it.startInUnified,
+                )
+            }
             current?.let { settings.setLastAccountId(it) }
         }
 
@@ -132,8 +142,13 @@ class AccountsViewModel
                 try {
                     core.removeAccount(id)
                     _state.update { it.copy(removeFailed = false) }
-                    // The account the app opened on is gone: "Last used" from now on.
-                    if (settings.startView.first() == StartView.Account(id)) settings.setStartView(StartView.Last)
+                    // The account the app opened on is gone, or the Unified Inbox no longer is offered
+                    // (fewer than two accounts left): "Last used" from now on.
+                    val left = _state.value.accounts?.count { it.id != id } ?: 0
+                    val view = settings.startView.first()
+                    if (view == StartView.Account(id) || (view == StartView.Unified && left < 2)) {
+                        settings.setStartView(StartView.Last)
+                    }
                 } catch (_: RemoveAccountFailure) {
                     _state.update { it.copy(removeFailed = true) }
                 }

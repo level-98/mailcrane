@@ -7,6 +7,7 @@ import app.mailcrane.core.MailboxCore
 import app.mailcrane.core.MessageSummary
 import app.mailcrane.core.SyncErrorKind
 import app.mailcrane.core.SyncFailure
+import app.mailcrane.core.UNIFIED_FOLDER_ID
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -126,6 +127,15 @@ class FolderDrawerViewModelTest {
         assertFalse(vm.state.value.isLoading)
         assertEquals(listOf(INBOX, WORK), vm.state.value.folders)
         assertEquals(INBOX.id, vm.state.value.selectedFolderId)
+    }
+
+    @Test
+    fun leavingAllInboxesOpensTheAccountsInbox() {
+        val vm = FolderDrawerViewModel(FakeFolders(stored = listOf(INBOX, SENT, WORK)), ACCOUNT)
+        vm.select(UNIFIED_FOLDER_ID)
+        assertEquals(UNIFIED_FOLDER_ID, vm.state.value.selectedFolderId)
+        vm.openInbox()
+        assertEquals(INBOX, vm.state.value.selected)
     }
 
     @Test

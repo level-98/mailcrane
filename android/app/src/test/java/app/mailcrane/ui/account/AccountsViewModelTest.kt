@@ -183,6 +183,27 @@ class AccountsViewModelTest {
         assertEquals(StartChoice(2, unified = true), startChoice(StartView.Unified, ids, 2, 7))
         assertEquals(StartChoice(1, unified = false), startChoice(StartView.Account(1), ids, 2, UNIFIED_FOLDER_ID))
         assertEquals(StartChoice(1, false, resetToLast = true), startChoice(StartView.Account(5), ids, 2, 7))
-        assertEquals(StartChoice(null, unified = false), startChoice(StartView.Unified, emptyList(), 0, 0))
+        assertEquals(StartChoice(null, false, resetToLast = true), startChoice(StartView.Unified, emptyList(), 0, 0))
+        // One account: no Unified Inbox, whatever was chosen or shown last.
+        assertEquals(StartChoice(1, false, resetToLast = true), startChoice(StartView.Unified, listOf(1L), 1, 7))
+        assertEquals(StartChoice(1, unified = false), startChoice(StartView.Last, listOf(1L), 1, UNIFIED_FOLDER_ID))
     }
+
+    @Test
+    fun withOneAccountTheUnifiedChoiceFallsBackToLastUsed() =
+        runTest {
+            val settings = FakeAppSettings().apply { start.value = StartView.Unified }
+            val vm = AccountsViewModel(FakeAccounts(mutableListOf(acct(1))), settings)
+            assertFalse(vm.state.value.startInUnified)
+            assertEquals(StartView.Last, settings.start.value)
+        }
+
+    @Test
+    fun removingTheSecondAccountResetsTheUnifiedChoice() =
+        runTest {
+            val settings = FakeAppSettings().apply { start.value = StartView.Unified }
+            val vm = AccountsViewModel(FakeAccounts(mutableListOf(acct(1), acct(2))), settings)
+            vm.remove(2)
+            assertEquals(StartView.Last, settings.start.value)
+        }
 }
