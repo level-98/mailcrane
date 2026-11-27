@@ -50,6 +50,31 @@ class ConversationContentTest {
         assertEquals(2L, opened)
     }
 
+    /** #399: inside a conversation each message's date includes its time, not only the weekday. */
+    @Test
+    fun conversationRowsShowTheTime() {
+        val zone = java.time.ZoneId.systemDefault()
+        val today =
+            ZonedDateTime
+                .now(zone)
+                .withHour(9)
+                .withMinute(5)
+                .withSecond(0)
+        val sent = today.toEpochSecond()
+        compose.setContent {
+            MailcraneTheme {
+                ConversationContent(
+                    title = "Lunch?",
+                    messages = listOf(message(1, "Ana", "Lunch?").copy(date = sent)),
+                    onBack = {},
+                    onOpenMessage = {},
+                )
+            }
+        }
+        // The row's date reads as a time (9:05 or 09:05, by the 12/24-hour setting).
+        compose.onNodeWithContentDescription("9:05", substring = true).assertIsDisplayed()
+    }
+
     @Test
     fun aThreadRowNamesItsPeopleAndCount() {
         var clicked = false

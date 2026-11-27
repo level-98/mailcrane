@@ -59,7 +59,8 @@ class RowCountAndDateTest {
     private val thread =
         ThreadSummary(
             threadId = 7,
-            subject = "Lunch",
+            // Unlike the plain row's, so the test can find the row that holds this date.
+            subject = "Dinner",
             participants = listOf("Ana", "Ben"),
             messageCount = 3u,
             unreadCount = 0u,
@@ -80,9 +81,13 @@ class RowCountAndDateTest {
             }
         }
         val plain = compose.onNodeWithTag("plain").getBoundsInRoot()
-        val counted = compose.onNodeWithTag("thread-row").getBoundsInRoot()
-        // The date sits at the row's end, inside the same padding, so equal rows mean the dates line up.
-        // Before #392, the count took width from beside the row and the counted row's date sat further left.
+        // The row that draws the thread's date: found by its own description, in the unmerged tree, so
+        // before #392 this is the inner row the count squeezed (#481 review), not the full-width wrapper.
+        val counted =
+            compose
+                .onNode(hasContentDescription("Dinner", substring = true), useUnmergedTree = true)
+                .getBoundsInRoot()
+        // The date sits at that row's end, inside the same padding, so equal rows mean the dates line up.
         assertEquals(plain.left, counted.left)
         assertEquals(plain.right, counted.right)
     }

@@ -121,6 +121,19 @@ class SearchViewModel
         private val _state = MutableStateFlow(SearchState())
         val state: StateFlow<SearchState> = _state.asStateFlow()
 
+        /** The last search opening seen ([claimOpening]); the view model outlives the screen. */
+        private var seenOpening = -1
+
+        /**
+         * Whether [opening] (the caller's count of times search was opened) is new: true once per
+         * opening, so a fresh search selects the old query, and coming back from a result doesn't (#481 review).
+         */
+        fun claimOpening(opening: Int): Boolean {
+            val fresh = opening != seenOpening
+            seenOpening = opening
+            return fresh
+        }
+
         val recent: StateFlow<List<String>> =
             settings.recentSearches.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
@@ -232,6 +245,8 @@ fun SearchScreen(
     onOpenMessage: (Long) -> Unit,
     onBack: () -> Unit,
     accounts: List<AccountSummary> = emptyList(),
+    /** How many times search has been opened; a new value means a fresh search (#397, #481 review). */
+    opening: Int = 0,
     viewModel: SearchViewModel =
         hiltViewModel<SearchViewModel, SearchViewModel.Factory>(
             key = "search-$accountId",
@@ -240,7 +255,10 @@ fun SearchScreen(
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val recent by viewModel.recent.collectAsStateWithLifecycle()
+    // Asked once each time the screen enters composition: only a new opening selects the old query.
+    val fresh = remember { viewModel.claimOpening(opening) }
     SearchContent(
+        selectQuery = fresh,
         state = state,
         recent = recent,
         onQueryChange = viewModel::onQueryChange,
@@ -290,14 +308,19 @@ fun SearchContent(
     onOpenMessage: (Long) -> Unit,
     onBack: () -> Unit,
     chips: SearchChipActions = SearchChipActions(),
+    /** A fresh opening: the old query starts selected, so typing replaces it (#397). */
+    selectQuery: Boolean = false,
 ) {
     val focus = remember { FocusRequester() }
     LaunchedEffect(Unit) { focus.requestFocus() }
     // The field's own text and cursor. When the query changes from outside the field (a chip, a recent search),
     // the cursor goes to the end, so typing continues after the new term rather than at the old position.
     // Opened again with the last query still there (the view model outlives the screen), it starts selected,
-    // so typing replaces it instead of adding to it (#397).
-    var typed by remember { mutableStateOf(TextFieldValue(state.query, TextRange(0, state.query.length))) }
+    // so typing replaces it instead of adding to it (#397). Back from a result, the cursor is at the end.
+    var typed by remember {
+        val start = if (selectQuery) 0 else state.query.length
+        mutableStateOf(TextFieldValue(state.query, TextRange(start, state.query.length)))
+    }
     val field = fieldValueFor(typed, state.query)
     // Remember the moved cursor too, so a later chip that restores an earlier query doesn't bring back an old cursor.
     SideEffect { if (typed != field) typed = field }
