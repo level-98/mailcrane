@@ -418,7 +418,6 @@ class MessageListViewModel
             }
         }
 
-        /** The server refused a message action and it was undone; shown in a snackbar. */
         /** What to tell the user when a queued change couldn't be applied: a string resource. */
         val actionsUndone: Flow<Int> = _actionsUndone.receiveAsFlow()
 
