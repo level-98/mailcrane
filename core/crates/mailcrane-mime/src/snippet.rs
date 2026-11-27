@@ -95,50 +95,126 @@ pub(crate) fn html_to_lines(html: &str) -> String {
 /// follows text, so `html_to_text` ends the line there. Adjacent blocks
 /// (`</div><div>`) get one, and none follows a `<br>` or `</p>`, which end
 /// the line already. Inline tags (`b`, `a`, `span`) are left as they are.
-/// One pass, a few bytes of look-ahead per `<` with no allocation, and no
-/// panics on any input.
+///
+/// It reads the HTML the way `html_to_text` does, so only text that ends
+/// up in the output counts: comments and what is inside `<style>`,
+/// `<script>`, `<template>` and `<head>` aren't text (and are left out of
+/// the result), and a tag ends at the first `>` outside a quoted attribute
+/// value (#456 review). One pass, no panics on any input.
 fn break_html_blocks(html: &str) -> String {
+    let bytes = html.as_bytes();
     let mut out = String::with_capacity(html.len().saturating_add(html.len() / 16));
-    let mut rest = html;
     // Whether text has come since the last line break.
     let mut text_since = false;
-    let mut in_tag = false;
-    while let Some(at) = rest.find('<') {
-        let (before, tag) = rest.split_at(at);
-        out.push_str(before);
-        // `before` starts with the previous tag's name and attributes.
-        let text = if in_tag {
-            before
-                .find('>')
-                .map_or("", |i| before.get(i + 1..).unwrap_or_default())
-        } else {
-            before
-        };
-        if !text.trim().is_empty() {
-            text_since = true;
+    // Inside an element whose content `html_to_text` drops: its name.
+    let mut hidden: Option<&'static str> = None;
+    let mut pos = 0;
+    while let Some(at) = html.get(pos..).and_then(|rest| rest.find('<')) {
+        let lt = pos + at;
+        let text = html.get(pos..lt).unwrap_or_default();
+        if hidden.is_none() {
+            out.push_str(text);
+            if !text.trim().is_empty() {
+                text_since = true;
+            }
         }
-        let closing = tag.as_bytes().get(1) == Some(&b'/');
-        let name_start = usize::from(closing) + 1;
-        let after = tag.as_bytes().get(name_start..).unwrap_or_default();
-        let len = after
+        let end = if html.get(lt..).is_some_and(|t| t.starts_with("<!--")) {
+            comment_end(bytes, lt + 2)
+        } else {
+            tag_end(bytes, lt + 1)
+        };
+        let tag = html.get(lt..end).unwrap_or_default();
+        pos = end;
+        if tag.starts_with("<!--") {
+            continue;
+        }
+        let closing = bytes.get(lt + 1) == Some(&b'/');
+        let name_start = lt + 1 + usize::from(closing);
+        let len = bytes
+            .get(name_start..end)
+            .unwrap_or_default()
             .iter()
             .take(LONGEST_TAG + 1)
             .take_while(|b| b.is_ascii_alphanumeric())
             .count();
-        let name = after.get(..len).unwrap_or_default();
+        let name = bytes.get(name_start..name_start + len).unwrap_or_default();
         let is = |t: &str| t.as_bytes().eq_ignore_ascii_case(name);
+        // A hidden element is left out whole: `html_to_text` drops its
+        // text, but would still break lines at a `<p>` or `<br>` in it.
+        if let Some(element) = hidden {
+            if closing && is(element) {
+                hidden = None;
+            }
+            continue;
+        }
+        if let Some(element) = HIDDEN_TAGS.iter().find(|t| is(t)).filter(|_| !closing) {
+            hidden = Some(element);
+            continue;
+        }
         if is("br") || (closing && is("p")) {
             text_since = false;
         } else if text_since && BLOCK_TAGS.iter().any(|t| is(t)) {
             out.push_str("<br>");
             text_since = false;
         }
-        out.push('<');
-        rest = tag.get(1..).unwrap_or_default();
-        in_tag = true;
+        out.push_str(tag);
     }
-    out.push_str(rest);
+    if hidden.is_none() {
+        out.push_str(html.get(pos..).unwrap_or_default());
+    }
     out
+}
+
+/// Elements whose content `html_to_text` leaves out.
+const HIDDEN_TAGS: [&str; 4] = ["style", "script", "template", "head"];
+
+/// Where the tag starting before `from` ends (just past its `>`), skipping
+/// quoted attribute values as `html_to_text` does: a quote counts only
+/// right after `=` (spaces allowed). The end of `bytes` if it never closes.
+fn tag_end(bytes: &[u8], from: usize) -> usize {
+    let mut pos = from;
+    let mut after_equals = false;
+    while let Some(&b) = bytes.get(pos) {
+        match b {
+            b'>' => return pos + 1,
+            b'"' | b'\'' if after_equals => {
+                let close = bytes
+                    .get(pos + 1..)
+                    .and_then(|rest| rest.iter().position(|&c| c == b));
+                match close {
+                    Some(at) => pos += at + 2,
+                    None => return bytes.len(),
+                }
+                after_equals = false;
+                continue;
+            }
+            b'=' => after_equals = true,
+            b' ' | b'\t' | b'\r' | b'\n' => {}
+            _ => after_equals = false,
+        }
+        pos += 1;
+    }
+    bytes.len()
+}
+
+/// Where a comment whose `--` starts at `from` ends (just past its `>`):
+/// at the first `>` after `--` or `--!`, as `html_to_text` reads it. The
+/// end of `bytes` if it never closes.
+fn comment_end(bytes: &[u8], from: usize) -> usize {
+    let mut pos = from;
+    while let Some(at) = bytes
+        .get(pos..)
+        .and_then(|rest| rest.iter().position(|&b| b == b'>'))
+    {
+        let close = pos + at;
+        let body = bytes.get(from..close).unwrap_or_default();
+        if body.len() >= 2 && (body.ends_with(b"--") || (body.len() >= 3 && body.ends_with(b"--!")))
+        {
+            return close + 1;
+        }
+        pos = close + 1;
+    }
+    bytes.len()
 }
 
 /// `text` with trailing spaces cut from each line, no blank lines at the
@@ -218,6 +294,41 @@ mod tests {
             html_to_lines(r#"<div class="x">A</div><div title="y">B</div>"#),
             "A\nB"
         );
+    }
+
+    /// #456 review: what `html_to_text` leaves out isn't text, so no blank
+    /// line comes from a style block, a script, a template or a comment
+    /// between blocks; nor from a `>` or `<` in a quoted attribute value.
+    #[test]
+    fn hidden_content_and_quoted_values_add_no_blank_line() {
+        for between in [
+            "<style>p { color: red }</style>",
+            "<script>if (a > b) {}</script>",
+            "<template><p>x</p></template>",
+            "<!-- a > b -->",
+            "<!-- <p>x</p> -->",
+            r#"<div><a title="1 > 0"><img src=x></a></div>"#,
+            r#"<img alt="x>y">"#,
+            r#"<img alt='<p>'>"#,
+        ] {
+            assert_eq!(
+                html_to_lines(&format!("<div>A</div>{between}<div>B</div>")),
+                "A\nB",
+                "{between}"
+            );
+        }
+        // Text after a hidden element still counts.
+        assert_eq!(html_to_lines("<style>x</style>A<div>B</div>"), "A\nB");
+        // A head before the body is left out, then text counts again.
+        assert_eq!(
+            html_to_lines(
+                "<html><head><title>T</title></head><body><p>A</p><p>B</p></body></html>"
+            ),
+            "A\nB"
+        );
+        for odd in ["<!--", "<!-- x", "<a title=\"x", "<style>", "<a title='>"] {
+            let _ = html_to_lines(odd);
+        }
     }
 
     #[test]
