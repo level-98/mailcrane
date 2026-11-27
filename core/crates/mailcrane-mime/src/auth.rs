@@ -3,9 +3,10 @@
 //!
 //! Only the header the user's own provider added means anything; the
 //! sender can write any `Authentication-Results` they like.
-//! [`provider_results`] picks the trusted one (the same check one-click
-//! unsubscribe, M4-10, uses), and [`summarize`] reads it. Neither ever
-//! panics, whatever the input.
+//! [`trusted_results_with`] picks the trusted one, by its authserv-id
+//! **and** where it sits in the trace (RFC 8601 §5); the sender check
+//! (M5-07) and one-click unsubscribe (M4-10) both use it. [`summarize`]
+//! reads it. Neither ever panics, whatever the input.
 
 /// At most this many results are read from one header.
 pub const MAX_RESULTS: usize = 64;
@@ -418,21 +419,6 @@ fn by_is_ip_literal(received: &str) -> bool {
         }
     }
     false
-}
-
-/// Of these Authentication-Results headers, the topmost whose authserv-id
-/// is in the same organisation as `received_by`. This checks only the
-/// authserv-id, which a sender can copy: use [`trusted_results`], which
-/// also checks where the header sits.
-pub fn provider_results<'a>(results: &'a [String], received_by: Option<&str>) -> Option<&'a str> {
-    let provider = org_domain(received_by?);
-    if !provider.contains('.') {
-        return None;
-    }
-    results
-        .iter()
-        .map(String::as_str)
-        .find(|r| authserv_in(r, &provider))
 }
 
 /// Whether the authserv-id of an Authentication-Results value is in the
