@@ -7,11 +7,11 @@ import app.mailcrane.contacts.DeviceContacts
 import app.mailcrane.contacts.NoDeviceContacts
 import app.mailcrane.contacts.RecipientSuggestion
 import app.mailcrane.contacts.mergeSuggestions
-import app.mailcrane.core.CoreLog
 import app.mailcrane.core.AccountSummary
 import app.mailcrane.core.ComposeAttachment
 import app.mailcrane.core.ComposeCore
 import app.mailcrane.core.ComposeDraft
+import app.mailcrane.core.CoreLog
 import app.mailcrane.core.DraftKind
 import app.mailcrane.core.RecipientEntry
 import app.mailcrane.core.RecipientField
@@ -283,7 +283,6 @@ class ComposeViewModel
             }
         }
 
-        /** Fills the screen from a saved draft (opening a Drafts folder message first if needed). */
         /** The running draft or reply load, if any, and which one it is (#435). */
         private var loadJob: Job? = null
         private var loadGeneration = 0L
@@ -311,6 +310,7 @@ class ComposeViewModel
                 }
         }
 
+        /** Fills the screen from a saved draft (opening a Drafts folder message first if needed). */
         private fun openDraft(request: DraftRequest) {
             _state.update { it.copy(openedDraft = request, signatureAdded = true) }
             startLoad(ComposeError.DRAFT_UNAVAILABLE) { loadDraft(request) }

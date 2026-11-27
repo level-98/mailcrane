@@ -660,7 +660,11 @@ class ComposeViewModelTest {
         assertTrue("nothing saved during the load", core.drafts.isEmpty())
         gate.complete(Unit)
         assertTrue(vm.state.value.canSend)
-        assertFalse(vm.state.value.copy(loadingContent = true).canSend)
+        assertFalse(
+            vm.state.value
+                .copy(loadingContent = true)
+                .canSend,
+        )
     }
 
     @Test
@@ -681,7 +685,10 @@ class ComposeViewModelTest {
         assertEquals("", vm.state.value.body)
         second.complete(Unit)
         assertFalse(vm.state.value.loadingContent)
-        assertTrue(vm.state.value.body.contains("> Noon?"))
+        assertTrue(
+            vm.state.value.body
+                .contains("> Noon?"),
+        )
     }
 
     @Test
@@ -691,8 +698,15 @@ class ComposeViewModelTest {
         val vm = ComposeViewModel(core, FakeAppSettings())
         vm.start(1, ReplyRequest(42, ReplyKind.REPLY, "Ana wrote:"))
         assertFalse(vm.state.value.loadingContent)
-        assertTrue(vm.state.value.body.contains("> Noon?"))
-        assertFalse("no signature block", vm.state.value.body.contains("-- \n"))
+        assertTrue(
+            vm.state.value.body
+                .contains("> Noon?"),
+        )
+        assertFalse(
+            "no signature block",
+            vm.state.value.body
+                .contains("-- \n"),
+        )
         assertEquals("Re: Lunch", vm.state.value.subject)
     }
 
