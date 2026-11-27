@@ -285,13 +285,31 @@ impl<'a> FolderSyncer<'a> {
                     "UIDVALIDITY changed, clearing the folder"
                 );
             }
-            self.store.reset_folder(
-                folder,
-                i64::from(info.uidvalidity),
-                i64::from(info.uidnext),
-            )?;
+            let dropped = self
+                .store
+                .reset_folder_reporting(
+                    folder,
+                    i64::from(info.uidvalidity),
+                    i64::from(info.uidnext),
+                )?
+                .unwrap_or_default();
             self.listener
                 .on_event(CoreEvent::FolderChanged { folder_id: folder });
+            // Changes queued for this folder can't be applied any more: the
+            // server renumbered it, so their UIDs name other messages (#517).
+            for op in dropped {
+                tracing::warn!(
+                    folder = folder.0,
+                    kind = ?op.kind,
+                    "queued action dropped: the server reset the folder"
+                );
+                self.listener.on_event(CoreEvent::ActionFailed {
+                    account_id: self.account,
+                    action: crate::actions::action_kind(op.kind),
+                    message_ids: op.message_ids,
+                    reason: SyncErrorKind::FolderReset,
+                });
+            }
         }
         Ok(changed)
     }

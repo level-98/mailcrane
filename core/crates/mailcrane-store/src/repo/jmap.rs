@@ -268,8 +268,12 @@ impl Store {
     /// Forgets the folder's local copy: deletes its messages and clears its
     /// sync state, so the next sync starts over. For a JMAP server that
     /// can't say what changed (`cannotCalculateChanges`, RFC 8620 §5.2).
-    pub fn forget_folder(&self, folder: FolderId) -> Result<(), StoreError> {
+    /// The folder's queued actions go too, and are returned so the user can
+    /// be told: they're keyed by the local rows deleted here, whose ids and
+    /// UIDs the refill reuses for other emails (#517).
+    pub fn forget_folder(&self, folder: FolderId) -> Result<Vec<crate::DroppedOp>, StoreError> {
         let tx = self.write_tx()?;
+        let dropped = super::pending_ops::take_folder_ops(&tx, folder)?;
         tx.execute(
             "DELETE FROM messages WHERE folder_id = ?1",
             params![folder.0],
@@ -279,7 +283,7 @@ impl Store {
             params![folder.0],
         )?;
         tx.commit()?;
-        Ok(())
+        Ok(dropped)
     }
 
     /// Marks a folder as synced once, for an empty JMAP mailbox (a folder

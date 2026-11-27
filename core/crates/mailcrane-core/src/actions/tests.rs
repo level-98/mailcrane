@@ -691,3 +691,64 @@ async fn a_rule_moving_into_a_virtual_folder_cant_be_saved() {
     assert!(!crate::rules::targets_take_moves(&s.store, &rule(starred)).expect("check"));
     assert!(crate::rules::targets_take_moves(&s.store, &rule(s.inbox)).expect("check"));
 }
+
+#[tokio::test]
+async fn a_renumbered_folder_drops_its_queued_actions_and_says_so() {
+    // #517: the server reset the inbox's UIDVALIDITY, so UIDs 1-3 are other
+    // messages now. Changes queued against the old UIDs must not touch them.
+    let imap = fake(&[], &[]).await;
+    let s = setup(&imap, Store::open_in_memory().expect("store")).await;
+    let events = Events::default();
+    apply_action(&s.store, &[s.message(1)], Action::Archive, NOW, &events).expect("archive");
+    apply_action(&s.store, &[s.message(2)], Action::Delete, NOW, &events).expect("delete");
+    assert_eq!(s.store.count_pending_ops(s.account).expect("count"), 2);
+    imap.mailbox().set_uidvalidity(2);
+    imap.mailbox()
+        .replace_folder("INBOX", (1..=3).map(|n| raw(n + 100)).collect())
+        .await;
+
+    // Replay first, as a sync does: the renumbered folder applies nothing.
+    let report = replay_now(&imap, &s, &events, NOW + 1).await;
+    assert_eq!(report.done, 0);
+    // The folder's sync resets it and drops the actions, saying why.
+    let mut session = connect(&imap).await;
+    FolderSyncer::new(
+        &s.store,
+        &mut session,
+        &events,
+        s.account,
+        SyncConfig::default(),
+    )
+    .sync_folder(s.inbox)
+    .await
+    .expect("sync");
+    session.logout().await;
+
+    assert_eq!(s.store.count_pending_ops(s.account).expect("count"), 0);
+    assert!(
+        imap.mailbox().messages("Archive").await.is_empty(),
+        "nothing archived"
+    );
+    assert!(
+        imap.mailbox().messages("Trash").await.is_empty(),
+        "nothing deleted"
+    );
+    assert_eq!(imap.mailbox().messages("INBOX").await.len(), 3);
+    let dropped: Vec<ActionKind> = events
+        .all()
+        .iter()
+        .filter_map(|e| match e {
+            CoreEvent::ActionFailed {
+                action,
+                reason: SyncErrorKind::FolderReset,
+                ..
+            } => Some(*action),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        dropped,
+        [ActionKind::Move, ActionKind::Move],
+        "archive and delete (to Trash)"
+    );
+}

@@ -154,7 +154,7 @@ fun MessageListScreen(
             },
         )
     LaunchedEffect(viewModel) {
-        viewModel.actionsUndone.collect { snackbar.showSnackbar(resources.getString(R.string.action_undone)) }
+        viewModel.actionsUndone.collect { message -> snackbar.showSnackbar(resources.getString(message)) }
     }
     // Multi-select (M4-14).
     LaunchedEffect(viewModel) {

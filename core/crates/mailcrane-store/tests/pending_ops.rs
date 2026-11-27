@@ -306,3 +306,45 @@ fn an_untried_action_can_be_undone() -> R {
     assert_eq!(f.store.cancel_queued(b.message_id)?, None);
     Ok(())
 }
+
+#[test]
+fn a_folder_reset_drops_only_that_folders_queued_actions() -> R {
+    // #517: the reset folder's UIDs name other messages now; other folders'
+    // actions, and actions moving mail into the reset folder, are kept.
+    let f = fixture(Store::open_in_memory()?)?;
+    let in_archive = f.store.upsert_message_header(&header(f.archive, 1))?;
+    let flagged = f.messages[0];
+    f.store
+        .queue_op(f.account, OpKind::Flag, f.inbox, None, &[flagged], 100)?
+        .ok_or("queued")?;
+    let back = OpMessage {
+        message_id: in_archive,
+        uid: 1,
+    };
+    f.store
+        .queue_op(
+            f.account,
+            OpKind::Move,
+            f.archive,
+            Some(f.inbox),
+            &[back],
+            100,
+        )?
+        .ok_or("queued")?;
+    let dropped = f
+        .store
+        .reset_folder_reporting(f.inbox, 2, 1)?
+        .ok_or("the folder exists")?;
+    assert_eq!(dropped.len(), 1);
+    assert_eq!(dropped[0].kind, OpKind::Flag);
+    assert_eq!(dropped[0].message_ids, [flagged.message_id]);
+    let left = f.store.pending_ops(f.account)?;
+    assert_eq!(left.len(), 1, "the move from Archive into the inbox stays");
+    assert_eq!(left[0].folder_id, f.archive);
+    // An unknown folder: nothing changes.
+    assert!(f
+        .store
+        .reset_folder_reporting(FolderId(999), 1, 1)?
+        .is_none());
+    Ok(())
+}

@@ -255,6 +255,16 @@ impl<'a> JmapSyncer<'a> {
             // undone per message.
             let mut rows: Vec<(String, MessageId)> = Vec::new();
             for m in &op.messages {
+                // Only while the row is still that message: in the action's
+                // folder with its UID. Row ids are reused once a row is
+                // deleted, so it could be another email now (#517).
+                let same = self
+                    .store
+                    .get_message_header(m.message_id)?
+                    .is_some_and(|h| h.details.folder_id == op.folder_id && h.details.uid == m.uid);
+                if !same {
+                    continue;
+                }
                 if let Some(row) = self.store.jmap_row(m.message_id)? {
                     rows.push((row.email_id, m.message_id));
                 }
@@ -770,9 +780,23 @@ impl<'a> JmapSyncer<'a> {
     /// fills again on its next sync.
     fn start_over(&self) -> Result<(), SyncError> {
         for (folder, _) in self.store.jmap_mailboxes(self.account)? {
-            self.store.forget_folder(folder)?;
+            let dropped = self.store.forget_folder(folder)?;
             self.listener
                 .on_event(CoreEvent::MessagesChanged { folder_id: folder });
+            // Its queued changes were keyed by the rows just forgotten (#517).
+            for op in dropped {
+                tracing::warn!(
+                    folder = folder.0,
+                    kind = ?op.kind,
+                    "queued action dropped: the folder was forgotten"
+                );
+                self.listener.on_event(CoreEvent::ActionFailed {
+                    account_id: self.account,
+                    action: crate::actions::action_kind(op.kind),
+                    message_ids: op.message_ids,
+                    reason: crate::events::SyncErrorKind::FolderReset,
+                });
+            }
         }
         self.store.clear_jmap_state(self.account, EMAIL)?;
         Ok(())

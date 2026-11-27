@@ -153,15 +153,31 @@ impl Store {
 
     /// Deletes every cached message of the folder (with their bodies and
     /// attachment metadata) and records the server's new `UIDVALIDITY` and
-    /// `UIDNEXT`, in one transaction (RFC 9051 §2.3.1.1). Returns whether
-    /// the folder exists; if not, nothing is changed.
+    /// `UIDNEXT`, in one transaction (RFC 9051 §2.3.1.1). The folder's
+    /// queued actions go too: their UIDs now name other messages (#517).
+    /// Returns whether the folder exists; if not, nothing is changed.
     pub fn reset_folder(
         &self,
         id: FolderId,
         uidvalidity: i64,
         uidnext: i64,
     ) -> Result<bool, StoreError> {
+        Ok(self
+            .reset_folder_reporting(id, uidvalidity, uidnext)?
+            .is_some())
+    }
+
+    /// [`Store::reset_folder`], returning the queued actions it dropped so
+    /// the user can be told (#517); `None` if the folder doesn't exist (then
+    /// nothing is changed).
+    pub fn reset_folder_reporting(
+        &self,
+        id: FolderId,
+        uidvalidity: i64,
+        uidnext: i64,
+    ) -> Result<Option<Vec<crate::DroppedOp>>, StoreError> {
         let tx = self.write_tx()?;
+        let dropped = super::pending_ops::take_folder_ops(&tx, id)?;
         tx.execute("DELETE FROM messages WHERE folder_id = ?1", params![id.0])?;
         let n = tx.execute(
             "UPDATE folders SET uidvalidity = ?2, uidnext = ?3, highestmodseq = NULL \
@@ -169,10 +185,11 @@ impl Store {
             params![id.0, uidvalidity, uidnext],
         )?;
         if n == 0 {
-            return Ok(false);
+            // Rolled back: no folder, nothing changed.
+            return Ok(None);
         }
         tx.commit()?;
-        Ok(true)
+        Ok(Some(dropped))
     }
 
     /// Records the folder's `UIDNEXT` and `HIGHESTMODSEQ` after a sync.

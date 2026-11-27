@@ -143,7 +143,17 @@ async fn run(store: &Store, session: &mut Session, op: &PendingOp) -> Result<Out
         // The folder was removed locally (and so were its messages).
         .ok_or(ChangeError::Refused { transient: false })?;
     let uids: Vec<u32> = op.messages.iter().map(|m| m.uid).collect();
-    session.select(&folder.details.remote_name).await?;
+    let info = session.select(&folder.details.remote_name).await?;
+    // The server renumbered the folder (RFC 9051 §2.3.1.1): the stored UIDs
+    // name other messages now, so apply nothing. The folder's next sync
+    // resets it and drops this action, telling the user (#517).
+    if folder
+        .details
+        .uidvalidity
+        .is_some_and(|v| v != i64::from(info.uidvalidity))
+    {
+        return Err(ChangeError::Refused { transient: true });
+    }
     match op.kind {
         OpKind::MarkRead | OpKind::MarkUnread | OpKind::Flag | OpKind::Unflag => {
             let (flag, add) = match op.kind {
