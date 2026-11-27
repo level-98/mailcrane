@@ -8,17 +8,21 @@
     "inkMuted": "#5A6380",
     "surface": "#FFFFFF",
     "surfaceDim": "#F4F6FB",
-    "outline": "#D5DBEA",
+    "surfaceHighest": "#E8ECF5",
+    "outline": "#7F89A6",
+    "outlineVariant": "#D5DBEA",
     "error": "#C62828",
     "success": "#157A4C"
   },
   "dark": {
     "surface": "#0F1424",
     "surfaceHigh": "#1A2138",
+    "surfaceHighest": "#252D47",
     "primary": "#8FA8FF",
     "ink": "#E8ECF8",
     "inkMuted": "#9AA3BF",
-    "outline": "#2A3350",
+    "outline": "#6B7594",
+    "outlineVariant": "#2A3350",
     "error": "#F28B82",
     "success": "#3DBE83"
   }

@@ -27,7 +27,9 @@ C = {
     "inkMuted": "#5A6380",
     "surface": "#FFFFFF",
     "surfaceDim": "#F4F6FB",
-    "outline": "#D5DBEA",
+    "surfaceHighest": "#E8ECF5",
+    "outline": "#7F89A6",      # component boundaries: 3:1 non-text (#395)
+    "outlineVariant": "#D5DBEA",  # dividers
     "darkSurface": "#0F1424",
     "darkSurfaceHigh": "#1A2138",
     "darkPrimary": "#8FA8FF",
@@ -307,6 +309,8 @@ illo("welcome", bg + "\n  " + crane_group("color", 120, 100, 1.25) +
 # ---------------------------------------------------------------- tokens
 write("colors.json", json.dumps({"light": {k: v for k, v in C.items() if not k.startswith("dark")},
                                  "dark": {"surface": C["darkSurface"], "surfaceHigh": C["darkSurfaceHigh"],
+                                          "surfaceHighest": "#252D47",
                                           "primary": C["darkPrimary"], "ink": "#E8ECF8",
-                                          "inkMuted": "#9AA3BF", "outline": "#2A3350"}}, indent=2))
+                                          "inkMuted": "#9AA3BF", "outline": "#6B7594",
+                                          "outlineVariant": "#2A3350"}}, indent=2))
 print("built", OUT, "wordmark", W, "x", H)

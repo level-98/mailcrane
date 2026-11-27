@@ -38,6 +38,40 @@ class ThemeGeneratorTests(unittest.TestCase):
         self.assertTrue(any("OnPrimary/Primary=" in failure for failure in failures))
         self.assertTrue(any("4.5:1" in failure for failure in failures))
 
+    def test_old_outline_fails_the_non_text_check(self):
+        # #395: the old outline (the divider colour) was about 1.4:1 in both schemes.
+        bad = json.loads(json.dumps(self.data))
+        bad["light"]["outline"] = "#D5DBEA"
+        bad["dark"]["outline"] = "#2A3350"
+        failures = gen_theme.check_contrast(bad)
+        for theme in ("light", "dark"):
+            for background in ("Surface", "SurfaceDim", "SurfaceHigh"):
+                self.assertTrue(
+                    any(f.startswith(f"{theme}: Outline/{background}=") and "3:1" in f for f in failures),
+                    f"{theme} Outline/{background} not flagged: {failures}",
+                )
+
+    def test_dividers_stay_subtle_and_unchecked(self):
+        # outlineVariant is for dividers; it keeps the old subtle colour and isn't held to 3:1.
+        mapped = gen_theme.mapped_colours(self.data)
+        self.assertEqual(mapped["light"]["OutlineVariant"], "#D5DBEA")
+        self.assertEqual(mapped["dark"]["OutlineVariant"], "#2A3350")
+        self.assertNotEqual(mapped["light"]["Outline"], mapped["light"]["OutlineVariant"])
+        self.assertNotEqual(mapped["dark"]["Outline"], mapped["dark"]["OutlineVariant"])
+
+    def test_outline_meets_three_to_one_with_margin(self):
+        mapped = gen_theme.mapped_colours(self.data)
+        for theme in ("light", "dark"):
+            for background in gen_theme.NON_TEXT_BACKGROUNDS:
+                ratio = gen_theme.contrast_ratio(mapped[theme]["Outline"], mapped[theme][background])
+                self.assertGreaterEqual(ratio, 3.0, f"{theme} Outline/{background}")
+
+    def test_scheme_sets_outline_variant_and_highest_container(self):
+        source = gen_theme.android_source(gen_theme.mapped_colours(self.data))
+        self.assertIn("outlineVariant = Color(0xFFD5DBEA)", source)
+        self.assertIn("surfaceContainerHighest = Color(0xFFE8ECF5)", source)
+        self.assertIn("surfaceContainerHighest = Color(0xFF252D47)", source)
+
     def test_generated_output_is_stable(self):
         outputs = gen_theme.expected_outputs(self.data)
         self.assertEqual(gen_theme.stale_outputs(outputs), [])
