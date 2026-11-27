@@ -559,17 +559,16 @@ fn a_jmap_account_syncs_through_the_same_calls() {
     let (held_tx, held_rx) = std::sync::mpsc::channel();
     let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
     let fetched = std::thread::scope(|scope| {
-        scope.spawn(|| {
+        scope.spawn(move || {
             let _guard = gate.lock();
             let _ = held_tx.send(());
             let _ = release_rx.recv();
         });
         held_rx.recv().expect("the writer lock is held");
         let (done_tx, done_rx) = std::sync::mpsc::channel();
-        scope.spawn(|| {
-            let _ = done_tx.send(super::stack_tests::on_small_stack(|| {
-                engine.fetch_body(message.id.0)
-            }));
+        let (engine, id) = (&engine, message.id.0);
+        scope.spawn(move || {
+            let _ = done_tx.send(super::stack_tests::on_small_stack(|| engine.fetch_body(id)));
         });
         let fetched = done_rx.recv_timeout(std::time::Duration::from_secs(20));
         // Let the "sync" finish either way, so a waiting open can end.
