@@ -80,7 +80,10 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.repeatOnLifecycle
 import app.mailcrane.R
 import app.mailcrane.core.AttachmentInfo
 import app.mailcrane.core.FolderSummary
@@ -91,6 +94,7 @@ import app.mailcrane.core.MessageDetail
 import app.mailcrane.core.ReplyKind
 import app.mailcrane.core.TrackerInfo
 import app.mailcrane.core.sanitizeFilename
+import app.mailcrane.settings.MarkReadMode
 import app.mailcrane.ui.compose.ComposePrefill
 import app.mailcrane.ui.compose.ReplyRequest
 import app.mailcrane.ui.folders.takesMoves
@@ -111,6 +115,8 @@ fun MessageScreen(
     messageId: Long,
     onBack: () -> Unit,
     folders: List<FolderSummary> = emptyList(),
+    /** The message was archived, deleted or moved (M4-15); the caller shows what comes next. */
+    onLeft: () -> Unit = onBack,
     onReply: (ReplyRequest) -> Unit = {},
     onComposeTo: (ComposePrefill) -> Unit = {},
     onCreateRule: ((String) -> Unit)? = null,
@@ -125,10 +131,24 @@ fun MessageScreen(
     val snackbar = remember { SnackbarHostState() }
     val resources = LocalResources.current
     val back by rememberUpdatedState(onBack)
+    val left by rememberUpdatedState(onLeft)
+    // Shown again with a kept view model: read the message again, so its read state is current (#372 QA).
+    LaunchedEffect(viewModel) { viewModel.onShown() }
+    // "Mark as read: After 2 seconds" (M4-15): counts only while the message is on screen and the app is
+    // in front, so leaving sooner keeps it unread.
+    val markReadMode by viewModel.markReadMode.collectAsStateWithLifecycle()
+    val shownId = (state as? MessageState.Ready)?.message?.id
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    LaunchedEffect(shownId, markReadMode) {
+        if (shownId != null && markReadMode == MarkReadMode.AFTER_DELAY) {
+            lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) { viewModel.markReadAfterDelay() }
+        }
+    }
     LaunchedEffect(viewModel) {
         viewModel.effects.collect { effect ->
             when (effect) {
                 MessageEffect.Close -> back()
+                MessageEffect.Left -> left()
                 is MessageEffect.ActionRefused ->
                     snackbar.showSnackbar(
                         resources.getString(
@@ -234,6 +254,8 @@ fun MessageScreen(
                 onArchive = viewModel::archive,
                 onDelete = viewModel::delete,
                 onMarkUnread = viewModel::markUnread,
+                onMarkRead =
+                    (state as? MessageState.Ready)?.takeIf { !it.message.isSeen }?.let { viewModel::markReadByHand },
                 onToggleFlag = viewModel::toggleFlag,
                 onMove = viewModel::moveTo,
                 onSnooze = { snoozing = true },
