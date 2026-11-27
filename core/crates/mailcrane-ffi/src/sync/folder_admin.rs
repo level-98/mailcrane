@@ -162,7 +162,7 @@ impl SyncEngine {
                 })?
             }
             Kind::Imap => {
-                plan = self.on_server(&store, account, async |s| {
+                plan = self.on_server(account, async |s| {
                     let namespace = server_namespace(s).await.or(derived.clone());
                     let plan = plan_with(namespace.as_deref())?;
                     admin::create_on_server(s, &plan).await?;
@@ -205,9 +205,7 @@ impl SyncEngine {
                 })?;
             }
             Kind::Imap => {
-                self.on_server(&store, account, async |s| {
-                    admin::delete_on_server(s, &folder).await
-                })?;
+                self.on_server(account, async |s| admin::delete_on_server(s, &folder).await)?;
                 admin::save_deleted(&store, &folder)?;
             }
             Kind::Local => admin::save_deleted(&store, &folder)?,
@@ -225,10 +223,11 @@ impl SyncEngine {
         &self,
         folder_id: i64,
         plan: impl Fn(
-            &[mailcrane_store::Folder],
-            FolderId,
-            Option<&str>,
-        ) -> Result<admin::RenamePlan, FolderAdminError>,
+                &[mailcrane_store::Folder],
+                FolderId,
+                Option<&str>,
+            ) -> Result<admin::RenamePlan, FolderAdminError>
+            + Sync,
     ) -> Result<(), FolderFailure> {
         let (store, account, kind) = self.admin_folder(folder_id)?;
         let folders = list(&store, account)?;
@@ -247,7 +246,7 @@ impl SyncEngine {
                 })?;
             }
             Kind::Imap => {
-                p = self.on_server(&store, account, async |s| {
+                p = self.on_server(account, async |s| {
                     let namespace = server_namespace(s).await.or(derived.clone());
                     let p = plan(&folders, id, namespace.as_deref())?;
                     admin::rename_on_server(s, &p).await?;
@@ -268,12 +267,13 @@ impl SyncEngine {
 
     /// Runs a folder change on a JMAP account (M4-26) through the sync
     /// engine's JMAP session. The job stores what it changed.
-    fn jmap_admin<T>(
+    fn jmap_admin<T: Send>(
         &self,
         account: AccountId,
         job: impl for<'a> FnOnce(
-            &'a mut mailcrane_core::sync::JmapSyncer<'_>,
-        ) -> SyncFuture<'a, Result<T, FolderAdminError>>,
+                &'a mut mailcrane_core::sync::JmapSyncer<'_>,
+            ) -> SyncFuture<'a, Result<T, FolderAdminError>>
+            + Send,
     ) -> Result<T, FolderFailure> {
         match self.run_jmap(account, job) {
             Some(Ok(result)) => Ok(result?),
@@ -324,22 +324,32 @@ impl SyncEngine {
     }
 
     /// Connects, runs `job`, logs out. Holds the account's lock so no sync
-    /// runs at the same time.
-    fn on_server<T>(
+    /// runs at the same time. Runs on a thread with a stack this crate sets
+    /// (#462), never on the caller's.
+    fn on_server<T: Send>(
         &self,
-        store: &Store,
         account: AccountId,
-        job: impl AsyncFnOnce(&mut Session) -> Result<T, FolderAdminError>,
+        job: impl AsyncFnOnce(&mut Session) -> Result<T, FolderAdminError> + Send,
     ) -> Result<T, FolderFailure> {
-        let lock = self.account_lock(account);
-        let _guard = lock.lock();
         let sync = |kind: events::SyncErrorKind| FolderFailure::Sync { kind: kind.into() };
-        let runtime = runtime().map_err(sync)?;
-        runtime.block_on(async {
-            let mut session = self.connect(store, account).await.map_err(sync)?;
-            let result = job(&mut session).await;
-            session.logout().await;
-            Ok(result?)
+        crate::worker::on_job_thread(|| {
+            let lock = self.account_lock(account);
+            let _guard = lock.lock();
+            let store = self.open_store().map_err(|_| FolderFailure::Storage)?;
+            let runtime = runtime().map_err(sync)?;
+            runtime.block_on(async {
+                let mut session = self.connect(&store, account).await.map_err(sync)?;
+                let result = job(&mut session).await;
+                session.logout().await;
+                Ok(result?)
+            })
+        })
+        .unwrap_or_else(|| {
+            tracing::error!(
+                stage = "job thread",
+                "the folder change couldn't run on a thread of its own"
+            );
+            Err(sync(events::SyncErrorKind::Network))
         })
     }
 }

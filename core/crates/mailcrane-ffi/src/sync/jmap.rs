@@ -8,8 +8,24 @@ use mailcrane_store::Protocol;
 
 impl SyncEngine {
     /// Runs `job` for a JMAP account and threads what it stored; `None` if
-    /// the account speaks IMAP (the caller then does the IMAP work).
-    pub(crate) fn run_jmap<T>(
+    /// the account speaks IMAP (the caller then does the IMAP work). Runs on
+    /// a thread with a stack this crate sets (#462), never on the caller's.
+    pub(crate) fn run_jmap<T: Send>(
+        &self,
+        account: AccountId,
+        job: impl for<'a> FnOnce(&'a mut JmapSyncer<'_>) -> SyncFuture<'a, T> + Send,
+    ) -> Option<Result<T, SyncFailure>> {
+        crate::worker::on_job_thread(|| self.run_jmap_here(account, job)).unwrap_or_else(|| {
+            tracing::error!(
+                stage = "job thread",
+                "the JMAP job couldn't run on a thread of its own"
+            );
+            Some(Err(failed(events::SyncErrorKind::Network)))
+        })
+    }
+
+    /// [`Self::run_jmap`], on the current thread.
+    fn run_jmap_here<T>(
         &self,
         account: AccountId,
         job: impl for<'a> FnOnce(&'a mut JmapSyncer<'_>) -> SyncFuture<'a, T>,
