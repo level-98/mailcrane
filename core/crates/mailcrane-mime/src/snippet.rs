@@ -83,138 +83,127 @@ const LONGEST_TAG: usize = 10;
 /// `html` as plain text with a line break at every block boundary, so
 /// text from adjacent blocks stays apart: on its own line in `text_plain`
 /// (a draft's body, the reply quote) and one space apart in the snippet,
-/// which collapses whitespace (#391, #446). `<br>` and `</p>` keep the
-/// line break `mail_parser::html_to_text` gives them, so a blank line made
-/// with `<br><br>` stays; runs of blank lines become one, and the text
-/// starts and ends with neither.
+/// which collapses whitespace (#391, #446). `mail_parser::html_to_text`
+/// alone decides what is text; block boundaries are marked before it runs
+/// and turned into line breaks after (#456 review). A blank line the
+/// sender made with `<br><br>` stays; runs of blank lines become one, and
+/// the text starts and ends with neither.
 pub(crate) fn html_to_lines(html: &str) -> String {
-    tidy_lines(&mail_parser::html_to_text(&break_html_blocks(html)))
+    let text = mail_parser::html_to_text(&mark_html_blocks(html));
+    tidy_lines(&lines_from_marks(&text))
 }
 
-/// `html` with a `<br>` in front of a block-level start or end tag that
-/// follows text, so `html_to_text` ends the line there. Adjacent blocks
-/// (`</div><div>`) get one, and none follows a `<br>` or `</p>`, which end
-/// the line already. Inline tags (`b`, `a`, `span`) are left as they are.
-///
-/// It reads the HTML the way `html_to_text` does, so only text that ends
-/// up in the output counts: comments and what is inside `<style>`,
-/// `<script>`, `<template>` and `<head>` aren't text (and are left out of
-/// the result), and a tag ends at the first `>` outside a quoted attribute
-/// value (#456 review). One pass, no panics on any input.
-fn break_html_blocks(html: &str) -> String {
+/// Stands for a line break between blocks while `html_to_text` runs (a
+/// private-use character, so it means nothing in real text).
+const MARK: char = '\u{E000}';
+
+/// Stands for a `<br>` or `</p>`, whose line break `html_to_text` writes
+/// itself: only a line break right after this mark is the sender's. One
+/// without it comes from a `<br>` or `</p>` inside content html_to_text
+/// leaves out (a template, a style), and counts as a block boundary.
+const MARK_BREAK: char = '\u{E001}';
+
+/// What goes before a block tag: an unknown tag, which `html_to_text`
+/// ignores but which also ends any tag it was still reading, then the mark
+/// as text. So the mark reaches the output exactly when the block does:
+/// inside a comment, a style or script, a template or a quoted attribute
+/// value it is dropped with that content (#456 review).
+const MARKER: &str = "<mc-block>\u{E000}";
+
+/// The same before a `<br>` or `</p>`.
+const MARKER_BREAK: &str = "<mc-block>\u{E001}";
+
+/// `html` with [`MARKER`] in front of every block-level start or end tag,
+/// and [`MARKER_BREAK`] in front of each `<br>` and `</p>`. Nothing else
+/// is changed: what is text is left to `html_to_text` alone, so no content
+/// can be lost here. Names are read as `html_to_text` reads them: after
+/// `<`, spaces and `/` are skipped (a `/` makes it an end tag), and the
+/// name runs up to `<`, `>`, `/` or a space. Marks already in the input
+/// are dropped first. One pass with checked positions; no panics on any
+/// input.
+fn mark_html_blocks(html: &str) -> String {
+    let html = html.replace([MARK, MARK_BREAK], "");
     let bytes = html.as_bytes();
-    let mut out = String::with_capacity(html.len().saturating_add(html.len() / 16));
-    // Whether text has come since the last line break.
-    let mut text_since = false;
-    // Inside an element whose content `html_to_text` drops: its name.
-    let mut hidden: Option<&'static str> = None;
+    let mut out = String::with_capacity(html.len().saturating_add(html.len() / 8));
+    let mut copied = 0;
     let mut pos = 0;
     while let Some(at) = html.get(pos..).and_then(|rest| rest.find('<')) {
-        let lt = pos + at;
-        let text = html.get(pos..lt).unwrap_or_default();
-        if hidden.is_none() {
-            out.push_str(text);
-            if !text.trim().is_empty() {
-                text_since = true;
-            }
+        let lt = pos.saturating_add(at);
+        let mut name_start = lt.saturating_add(1);
+        while bytes
+            .get(name_start)
+            .is_some_and(|b| *b == b'/' || b.is_ascii_whitespace())
+        {
+            name_start = name_start.saturating_add(1);
         }
-        let end = if html.get(lt..).is_some_and(|t| t.starts_with("<!--")) {
-            comment_end(bytes, lt + 2)
-        } else {
-            tag_end(bytes, lt + 1)
-        };
-        let tag = html.get(lt..end).unwrap_or_default();
-        pos = end;
-        if tag.starts_with("<!--") {
-            continue;
-        }
-        let closing = bytes.get(lt + 1) == Some(&b'/');
-        let name_start = lt + 1 + usize::from(closing);
         let len = bytes
-            .get(name_start..end)
+            .get(name_start..)
             .unwrap_or_default()
             .iter()
-            .take(LONGEST_TAG + 1)
-            .take_while(|b| b.is_ascii_alphanumeric())
+            .take(LONGEST_TAG.saturating_add(1))
+            .take_while(|b| !matches!(b, b'<' | b'>' | b'/') && !b.is_ascii_whitespace())
             .count();
-        let name = bytes.get(name_start..name_start + len).unwrap_or_default();
+        let name = bytes
+            .get(name_start..name_start.saturating_add(len))
+            .unwrap_or_default();
+        let closing = bytes
+            .get(lt.saturating_add(1)..name_start)
+            .is_some_and(|between| between.contains(&b'/'));
         let is = |t: &str| t.as_bytes().eq_ignore_ascii_case(name);
-        // A hidden element is left out whole: `html_to_text` drops its
-        // text, but would still break lines at a `<p>` or `<br>` in it.
-        if let Some(element) = hidden {
-            if closing && is(element) {
-                hidden = None;
-            }
-            continue;
+        let marker = if is("br") || (closing && is("p")) {
+            Some(MARKER_BREAK)
+        } else if BLOCK_TAGS.iter().any(|t| is(t)) {
+            Some(MARKER)
+        } else {
+            None
+        };
+        if let Some(marker) = marker {
+            out.push_str(html.get(copied..lt).unwrap_or_default());
+            out.push_str(marker);
+            copied = lt;
         }
-        if let Some(element) = HIDDEN_TAGS.iter().find(|t| is(t)).filter(|_| !closing) {
-            hidden = Some(element);
-            continue;
-        }
-        if is("br") || (closing && is("p")) {
-            text_since = false;
-        } else if text_since && BLOCK_TAGS.iter().any(|t| is(t)) {
-            out.push_str("<br>");
-            text_since = false;
-        }
-        out.push_str(tag);
+        pos = lt.saturating_add(1);
     }
-    if hidden.is_none() {
-        out.push_str(html.get(pos..).unwrap_or_default());
-    }
+    out.push_str(html.get(copied..).unwrap_or_default());
     out
 }
 
-/// Elements whose content `html_to_text` leaves out.
-const HIDDEN_TAGS: [&str; 4] = ["style", "script", "template", "head"];
-
-/// Where the tag starting before `from` ends (just past its `>`), skipping
-/// quoted attribute values as `html_to_text` does: a quote counts only
-/// right after `=` (spaces allowed). The end of `bytes` if it never closes.
-fn tag_end(bytes: &[u8], from: usize) -> usize {
-    let mut pos = from;
-    let mut after_equals = false;
-    while let Some(&b) = bytes.get(pos) {
-        match b {
-            b'>' => return pos + 1,
-            b'"' | b'\'' if after_equals => {
-                let close = bytes
-                    .get(pos + 1..)
-                    .and_then(|rest| rest.iter().position(|&c| c == b));
-                match close {
-                    Some(at) => pos += at + 2,
-                    None => return bytes.len(),
+/// `html_to_text`'s output with each run of block marks made one line
+/// break, where text came before it on the line; spaces after a mark are
+/// dropped. A line break `html_to_text` wrote for a sender's `<br>` or
+/// `</p>` (right after [`MARK_BREAK`]) is kept, after the break of a block
+/// mark before it, so a blank line the sender made (`<div><br></div>`,
+/// `<br><br>`) stays. Any other line break counts as a block mark.
+fn lines_from_marks(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut pending = false;
+    let mut sender_break = false;
+    let line_started = |out: &String| !out.is_empty() && !out.ends_with('\n');
+    for c in text.chars() {
+        match c {
+            MARK => pending = true,
+            MARK_BREAK => sender_break = true,
+            '\n' if sender_break => {
+                if pending && line_started(&out) {
+                    out.push('\n');
                 }
-                after_equals = false;
-                continue;
+                out.push('\n');
+                pending = false;
+                sender_break = false;
             }
-            b'=' => after_equals = true,
-            b' ' | b'\t' | b'\r' | b'\n' => {}
-            _ => after_equals = false,
+            '\n' => pending = true,
+            ' ' | '\t' if pending || sender_break => {}
+            _ => {
+                if pending && line_started(&out) {
+                    out.push('\n');
+                }
+                pending = false;
+                sender_break = false;
+                out.push(c);
+            }
         }
-        pos += 1;
     }
-    bytes.len()
-}
-
-/// Where a comment whose `--` starts at `from` ends (just past its `>`):
-/// at the first `>` after `--` or `--!`, as `html_to_text` reads it. The
-/// end of `bytes` if it never closes.
-fn comment_end(bytes: &[u8], from: usize) -> usize {
-    let mut pos = from;
-    while let Some(at) = bytes
-        .get(pos..)
-        .and_then(|rest| rest.iter().position(|&b| b == b'>'))
-    {
-        let close = pos + at;
-        let body = bytes.get(from..close).unwrap_or_default();
-        if body.len() >= 2 && (body.ends_with(b"--") || (body.len() >= 3 && body.ends_with(b"--!")))
-        {
-            return close + 1;
-        }
-        pos = close + 1;
-    }
-    bytes.len()
+    out
 }
 
 /// `text` with trailing spaces cut from each line, no blank lines at the
@@ -329,6 +318,58 @@ mod tests {
         for odd in ["<!--", "<!-- x", "<a title=\"x", "<style>", "<a title='>"] {
             let _ = html_to_lines(odd);
         }
+    }
+
+    /// #456 review: nothing after a stray `<` is lost, wherever it is;
+    /// html_to_text alone decides what is text.
+    #[test]
+    fn a_stray_angle_bracket_loses_nothing() {
+        assert_eq!(
+            html_to_lines("<div>A</div><script>if (a < b) {}</script><div>B</div>"),
+            "A\nB"
+        );
+        assert_eq!(
+            html_to_lines("A<div>B</div><p>C < D</p><div>E</div>"),
+            // html_to_text reads `< D</p` as a tag (as it always has); the
+            // blocks around it keep their lines.
+            "A\nB\nC\nE"
+        );
+        // html_to_text reads `<3 you` as a tag; the block after it still
+        // starts a line.
+        assert_eq!(html_to_lines("I <3 you<div>Next</div>"), "I\nNext");
+        for name in ["head-x", "style:x", "script-x", "template-x"] {
+            assert_eq!(
+                html_to_lines(&format!("<div>A</div><{name}>m</{name}><div>B</div>")),
+                "A\nm\nB",
+                "{name}"
+            );
+        }
+    }
+
+    /// #456 review: a raw no-break space is text to html_to_text, so a block
+    /// holding only one is a blank line, as `&nbsp;` is.
+    #[test]
+    fn a_block_of_a_no_break_space_is_a_blank_line() {
+        assert_eq!(
+            html_to_lines("<div>A</div><div>\u{a0}</div><div>B</div>"),
+            "A\n\nB"
+        );
+        assert_eq!(
+            html_to_lines("<div>A</div><div>&nbsp;</div><div>B</div>"),
+            "A\n\nB"
+        );
+    }
+
+    /// #456 review: tag names as html_to_text reads them.
+    #[test]
+    fn closing_tags_with_spaces_and_odd_names() {
+        assert_eq!(html_to_lines("A</ p><div>B"), "A\nB");
+        assert_eq!(html_to_lines("A< br>B"), "A\nB");
+        // Not `</p>` to html_to_text: no line break, from it or from us.
+        assert_eq!(html_to_lines("<div>A</p:x>B</div>"), "AB");
+        assert_eq!(html_to_lines("<div>A</div><!--!>x--><div>B</div>"), "A\nB");
+        // A mark in the input is no line break.
+        assert_eq!(html_to_lines("A\u{e000}B\u{e001}C"), "ABC");
     }
 
     #[test]
