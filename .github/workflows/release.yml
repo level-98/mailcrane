@@ -16,6 +16,8 @@
 #   workflow_dispatch   the same build and signing for the chosen ref, kept as
 #                       a workflow artifact; no GitHub Release
 #   pull_request        only when this file changes: build only, never signed
+#   workflow_call       from nightly.yml (#425) with build_only: the build job
+#                       only; the nightly signs in its own environment
 #
 # Third-party actions are pinned to a commit SHA, the same ones as ci.yml.
 name: Release
@@ -26,12 +28,25 @@ on:
   workflow_dispatch:
   pull_request:
     paths: [".github/workflows/release.yml"]
+  workflow_call:
+    inputs:
+      build_only:
+        description: Run the build job only, never this workflow's sign job.
+        type: boolean
+        default: false
+    outputs:
+      version:
+        description: The build's name, e.g. dev-1a2b3c4 (the artifact holds mailcrane-<version>-unsigned.apk).
+        value: ${{ jobs.build.outputs.version }}
 
 permissions:
   contents: read
 
 concurrency:
-  group: release-${{ github.ref }}
+  # The calling workflow's name too: when nightly.yml calls this, github.workflow
+  # is "Nightly test build", so a nightly never queues behind (or cancels) a
+  # release started on the same ref (#425).
+  group: release-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: false
 
 env:
@@ -45,6 +60,10 @@ jobs:
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 75
+    # Read-only, however much a caller grants (nightly.yml grants contents:
+    # write only so this workflow's skipped sign job passes GitHub's check).
+    permissions:
+      contents: read
     outputs:
       version: ${{ steps.version.outputs.version }}
     steps:
@@ -98,7 +117,9 @@ jobs:
       - uses: taiki-e/install-action@fe3acb53a98b62c772db35de75ce0e4595e7ca8c # v2.90.8
         with:
           # cargo-ndk pinned for reproducible release builds (docs/fdroid.md).
-          tool: cargo-deny,cargo-ndk@4.1.2
+          # cargo-about checks the in-app licences list (#366); without it
+          # `cargo xtask ci --strict` fails the deny step (#413).
+          tool: cargo-deny,cargo-ndk@4.1.2,cargo-about@0.9.3
 
       - uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
         with:
@@ -148,7 +169,9 @@ jobs:
 
   sign:
     needs: build
-    if: github.event_name != 'pull_request'
+    # inputs.build_only is set only by a workflow_call (nightly.yml); for every
+    # other trigger it is empty, so this is unchanged for them.
+    if: github.event_name != 'pull_request' && !inputs.build_only
     runs-on: ubuntu-latest
     timeout-minutes: 20
     # Holds the signing secrets; maintainers approve each run (docs/releasing.md).

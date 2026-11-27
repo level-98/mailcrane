@@ -229,15 +229,30 @@ async fn nothing_listening_is_cannot_connect() {
 }
 
 #[tokio::test]
-async fn xoauth2_is_not_available_yet() {
-    let smtp = fake(vec![]).await;
+async fn xoauth2_signs_in_with_the_token() {
+    // M3-02: Gmail's XOAUTH2.
     let auth = SmtpAuth::XOAuth2 {
         username: "alice@example.org".into(),
-        token: Secret::new("token"),
+        token: Secret::new("ya29.token"),
+    };
+    let smtp = fake(vec![]).await;
+    let settings = config(&smtp, SmtpSecurity::ImplicitTls);
+    assert_eq!(check_login(&settings, &auth).await, Ok(()));
+    assert!(send(&settings, &auth, &envelope(), MESSAGE).await.is_ok());
+
+    let refusing = fake(vec![Fault::RejectLogin]).await;
+    assert_eq!(
+        check_login(&config(&refusing, SmtpSecurity::ImplicitTls), &auth).await,
+        Err(SmtpError::AuthFailed)
+    );
+    // A token that could break the SASL string is refused before sending.
+    let broken = SmtpAuth::XOAuth2 {
+        username: "alice@example.org".into(),
+        token: Secret::new("ya29\u{1}x"),
     };
     assert_eq!(
-        check_login(&config(&smtp, SmtpSecurity::ImplicitTls), &auth).await,
-        Err(SmtpError::AuthFailed)
+        check_login(&settings, &broken).await,
+        Err(SmtpError::InvalidInput)
     );
 }
 

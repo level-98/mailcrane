@@ -226,6 +226,8 @@ internal fun roleName(role: FolderRole): Int =
         FolderRole.SPAM -> R.string.folder_spam
         FolderRole.TRASH -> R.string.folder_trash
         FolderRole.ALL_MAIL -> R.string.folder_all_mail
+        FolderRole.STARRED -> R.string.folder_starred
+        FolderRole.IMPORTANT -> R.string.folder_important
     }
 
 @DrawableRes
@@ -238,8 +240,24 @@ internal fun folderIcon(role: FolderRole?): Int =
         FolderRole.SPAM -> R.drawable.ic_mc_spam
         FolderRole.TRASH -> R.drawable.ic_mc_trash
         FolderRole.ALL_MAIL -> R.drawable.ic_mc_mail
+        FolderRole.STARRED -> R.drawable.ic_mc_star
+        FolderRole.IMPORTANT -> R.drawable.ic_mc_important
         null -> R.drawable.ic_mc_folder
     }
+
+/**
+ * Whether messages can be moved into this folder, as the core decides: not a virtual folder such as Gmail's Starred
+ * or Important (#390), which the core also refuses as a move or rule target.
+ */
+val FolderSummary.takesMoves: Boolean
+    get() = canTakeMoves
+
+/**
+ * Whether a folder can be created under this one: not under a virtual folder such as Gmail's Starred, which the
+ * core refuses as a parent (#461).
+ */
+val FolderSummary.canHoldSubfolders: Boolean
+    get() = canTakeMoves
 
 @Composable
 private fun unreadBadge(count: UInt): String =

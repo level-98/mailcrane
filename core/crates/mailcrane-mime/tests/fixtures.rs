@@ -257,3 +257,64 @@ fn bidi_subject_and_attachment_name() -> R {
     assert_eq!(strip_bidi(name), "invoicefdp.exe");
     Ok(())
 }
+
+/// #391: in an HTML-only message, block boundaries (headings, paragraphs,
+/// `<br>`, list items, table cells, quotes) become one space in the
+/// snippet, even with no whitespace between the tags; inline tags (`b`,
+/// `a`, `span`) add none.
+#[test]
+fn html_blocks_are_separated_in_the_snippet() -> R {
+    let m = load("html-blocks.eml")?;
+    assert_eq!(
+        m.snippet,
+        "New people to discover Suggested accounts based on your contacts \
+         Line one Line two Line three First Second Cell A Cell B Head C \
+         Quoted Examples stay one word Acme Hello Sale Today"
+    );
+    Ok(())
+}
+
+/// #460: in an HTML-only message, a `<br>` that only ends a paragraph adds
+/// no blank line to `text_plain`, a blank paragraph keeps its one, and
+/// `<pre>` keeps its lines and indentation. The snippet collapses it all.
+#[test]
+fn paragraph_final_breaks_and_pre_in_the_text() -> R {
+    let m = load("html-br-pre.eml")?;
+    assert_eq!(
+        m.text_plain.as_deref(),
+        Some(
+            "Hi Bob,\n\
+             the build failed:\n\
+             error: linking failed\n  at step 3\n\texit code 1\n\
+             \n\
+             Thanks"
+        )
+    );
+    assert_eq!(
+        m.snippet,
+        "Hi Bob, the build failed: error: linking failed at step 3 exit code 1 Thanks"
+    );
+    Ok(())
+}
+
+/// #446: in an HTML-only message, `text_plain` (the body of a draft opened
+/// from the server and the reply quote) keeps one line per block and per
+/// `<br>`; inline tags join as before. The snippet is unchanged (#391).
+#[test]
+fn html_blocks_are_lines_in_the_text() -> R {
+    let m = load("html-blocks.eml")?;
+    assert_eq!(
+        m.text_plain.as_deref(),
+        Some(
+            "New people to discover\n\
+             Suggested accounts based on your contacts\n\
+             Line one\nLine two\nLine three\n\
+             First\nSecond\n\
+             Cell A\nCell B\nHead C\n\
+             Quoted\n\
+             Examples stay one word\n\
+             Acme\nHello\nSale\nToday"
+        )
+    );
+    Ok(())
+}

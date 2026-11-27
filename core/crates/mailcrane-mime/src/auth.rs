@@ -3,9 +3,10 @@
 //!
 //! Only the header the user's own provider added means anything; the
 //! sender can write any `Authentication-Results` they like.
-//! [`provider_results`] picks the trusted one (the same check one-click
-//! unsubscribe, M4-10, uses), and [`summarize`] reads it. Neither ever
-//! panics, whatever the input.
+//! [`trusted_results_with`] picks the trusted one, by its authserv-id
+//! **and** where it sits in the trace (RFC 8601 §5); the sender check
+//! (M5-07) and one-click unsubscribe (M4-10) both use it. [`summarize`]
+//! reads it. Neither ever panics, whatever the input.
 
 /// At most this many results are read from one header.
 pub const MAX_RESULTS: usize = 64;
@@ -374,7 +375,10 @@ pub fn received_by(received: &str) -> Option<String> {
                 .next()?
                 .trim_end_matches([';', '.'])
                 .to_ascii_lowercase();
+            // An address literal is not a host name, even a bare IPv4 one
+            // made of digits and dots (#442 review).
             let ok = !host.is_empty()
+                && host.parse::<std::net::IpAddr>().is_err()
                 && host.contains('.')
                 && host
                     .chars()
@@ -385,19 +389,36 @@ pub fn received_by(received: &str) -> Option<String> {
     None
 }
 
-/// Of these Authentication-Results headers, the topmost whose authserv-id
-/// is in the same organisation as `received_by`. This checks only the
-/// authserv-id, which a sender can copy: use [`trusted_results`], which
-/// also checks where the header sits.
-pub fn provider_results<'a>(results: &'a [String], received_by: Option<&str>) -> Option<&'a str> {
-    let provider = org_domain(received_by?);
-    if !provider.contains('.') {
-        return None;
+/// How many leading Received headers with an address-literal `by` host are
+/// skipped when looking for the provider's first named hop (#398).
+const MAX_LITERAL_HOPS: usize = 5;
+
+/// Whether the `by` host of a Received header is an IP address literal:
+/// `192.0.2.1`, `2001:db8::1`, `[192.0.2.1]` or `[IPv6:2001:db8::1]` (RFC
+/// 5321 §4.1.3). Gmail writes its internal hops this way (#398). Parsed with
+/// `std::net`, never by hand.
+fn by_is_ip_literal(received: &str) -> bool {
+    let text = strip_comments(received);
+    let mut words = text.split_whitespace();
+    while let Some(w) = words.next() {
+        if w.eq_ignore_ascii_case("by") {
+            let Some(host) = words.next() else {
+                return false;
+            };
+            let host = host.trim_end_matches([';', '.']);
+            let host = host
+                .strip_prefix('[')
+                .and_then(|h| h.strip_suffix(']'))
+                .unwrap_or(host);
+            let host = host
+                .get(..5)
+                .filter(|p| p.eq_ignore_ascii_case("ipv6:"))
+                .and_then(|_| host.get(5..))
+                .unwrap_or(host);
+            return host.parse::<std::net::IpAddr>().is_ok();
+        }
     }
-    results
-        .iter()
-        .map(String::as_str)
-        .find(|r| authserv_in(r, &provider))
+    false
 }
 
 /// Whether the authserv-id of an Authentication-Results value is in the
@@ -422,7 +443,11 @@ pub enum TraceHeader {
 ///
 /// `trace` is the message's Received and Authentication-Results headers in
 /// their original order, topmost first. The provider is the organisation of
-/// the `by` host of the topmost Received header. A header is trusted only
+/// the `by` host of the topmost Received header. Leading hops whose `by` is
+/// an address literal (at most [`MAX_LITERAL_HOPS`], as Gmail writes its
+/// internal hops, #398) are skipped only in [`trusted_results_with`], when
+/// the user's provider authserv-id names the first named hop's
+/// organisation. A header is trusted only
 /// if its authserv-id is in that organisation **and** it sits above the
 /// first Received header for a hop from outside the provider, where the
 /// message entered it (RFC 8601 §5). Everything below that point, the
@@ -447,16 +472,41 @@ pub fn trusted_results_with<'a>(
     trace: &'a [TraceHeader],
     provider_authserv_id: Option<&str>,
 ) -> Option<&'a str> {
-    let provider_host = trace.iter().find_map(|h| match h {
+    // Leading hops with an address-literal `by` are the provider's own
+    // internal hops (#398); the first named one gives the provider. Past the
+    // cap, a literal hop has no name, and there is no provider, as before.
+    let mut leading_literal = 0usize;
+    let mut provider_host = None;
+    for r in trace.iter().filter_map(|h| match h {
         TraceHeader::Received(r) => Some(r),
         TraceHeader::AuthenticationResults(_) => None,
-    })?;
-    let provider = org_domain(&received_by(provider_host)?);
+    }) {
+        if leading_literal < MAX_LITERAL_HOPS && by_is_ip_literal(r) {
+            leading_literal = leading_literal.saturating_add(1);
+            continue;
+        }
+        provider_host = Some(r);
+        break;
+    }
+    let provider = org_domain(&received_by(provider_host?)?);
     if !provider.contains('.') {
         return None;
     }
+    // Skipping is anchored to the user's setting (lead's decision on the
+    // #442 review): if the user's own server writes every hop with a literal
+    // `by`, the first named hop would be the sender's forged one, and the
+    // sender's own header would be trusted. So literal hops count only when
+    // the provider authserv-id is set and the first named hop is in its
+    // organisation (mx.google.com for the setting mx.google.com).
+    if leading_literal > 0 {
+        let configured = provider_authserv_id?.trim_end_matches('.');
+        if !configured.contains('.') || org_domain(configured) != provider {
+            return None;
+        }
+    }
     let mut found = None;
     let mut confirmed = None;
+    let mut skipped = 0usize;
     for (i, header) in trace.iter().enumerate() {
         match header {
             TraceHeader::AuthenticationResults(a) => {
@@ -466,6 +516,13 @@ pub fn trusted_results_with<'a>(
             }
             TraceHeader::Received(r) => {
                 confirmed = found;
+                // The leading literal hops counted above are internal.
+                // Further down, a literal `by` is not in the provider, so
+                // the walk stops there: it fails closed.
+                if skipped < leading_literal {
+                    skipped = skipped.saturating_add(1);
+                    continue;
+                }
                 if !internal_hop(r, &provider) {
                     let provider_wrote_it =
                         received_by(r).is_some_and(|by| org_domain(&by) == provider);

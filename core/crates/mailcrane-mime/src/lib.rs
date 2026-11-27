@@ -97,7 +97,7 @@ fn mime_type_of(part: &mail_parser::MessagePart<'_>) -> String {
 /// brackets if there are any, lower-case; `None` if it isn't plausible.
 fn list_id_of(value: &str) -> Option<String> {
     let id = match (value.rfind('<'), value.rfind('>')) {
-        (Some(a), Some(b)) if a < b => &value[a + 1..b],
+        (Some(a), Some(b)) if a < b => value.get(a + 1..b).unwrap_or(value),
         _ => value,
     };
     let id = id.trim().to_ascii_lowercase();
@@ -135,7 +135,10 @@ pub fn parse_message(raw: &[u8]) -> Result<ParsedMessage, MimeError> {
     }
     if text_plain.is_none() {
         if let Some(h) = &html {
-            text_plain = Some(mail_parser::html_to_text(h));
+            // One line per block, so adjacent blocks don't run together in
+            // the text (a draft's body, the reply quote) or the snippet
+            // (#391, #446).
+            text_plain = Some(snippet::html_to_lines(h));
         }
     }
 

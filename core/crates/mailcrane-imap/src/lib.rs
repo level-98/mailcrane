@@ -55,6 +55,14 @@ pub use store_cmds::{ChangeError, SystemFlag};
 
 use std::fmt;
 
+/// How to log in: a password (`AUTHENTICATE PLAIN` or `LOGIN`), or an OAuth
+/// access token with Google's XOAUTH2 (M3-02). `Debug` never shows either.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum ImapAuth {
+    Password(Secret),
+    XOAuth2(Secret),
+}
+
 /// A password or token. Never shown in `Debug` output.
 #[derive(Clone, PartialEq, Eq)]
 pub struct Secret(String);

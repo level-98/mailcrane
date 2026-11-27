@@ -26,7 +26,8 @@
         android:theme="@android:style/Theme.Material.NoActionBar">
         <activity
             android:name=".MainActivity"
-            android:exported="true">
+            android:exported="true"
+            android:windowSoftInputMode="adjustResize">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
@@ -104,6 +105,9 @@
                 <category android:name="android.intent.category.BROWSABLE" />
                 <!-- The scheme only: a private-use redirect has no host (RFC 8252 §7.1), and
                      a path filter needs one. OAuthSignIn.isRedirect checks the path. -->
+                <!-- OAuthSignIn.REDIRECT_URI's scheme, the release package that Google's client
+                     is registered for. Debug builds remove this activity (#405), and
+                     CheckOAuthRedirect in build.gradle.kts fails the build if either changes. -->
                 <data android:scheme="app.mailcrane" />
             </intent-filter>
         </activity>

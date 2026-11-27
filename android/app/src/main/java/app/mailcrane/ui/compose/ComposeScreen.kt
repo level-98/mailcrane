@@ -14,7 +14,6 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ButtonDefaults
@@ -30,6 +29,7 @@ import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
@@ -50,6 +50,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.LiveRegionMode
@@ -57,7 +58,6 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
@@ -108,6 +108,7 @@ fun ComposeScreen(
                 onShowCcBcc = viewModel::showCcBcc,
                 onSubjectChange = viewModel::onSubjectChange,
                 onBodyChange = viewModel::onBodyChange,
+                currentState = { viewModel.state.value },
                 onSend = viewModel::send,
                 onSchedule = viewModel::schedule,
                 onClose = viewModel::requestClose,
@@ -140,8 +141,12 @@ data class ComposeActions(
     val onRemoveRecipient: (RecipientField, Int) -> Unit = { _, _ -> },
     val onEditLastRecipient: (RecipientField) -> Unit = {},
     val onShowCcBcc: () -> Unit = {},
-    val onSubjectChange: (String) -> Unit = {},
-    val onBodyChange: (String) -> Unit = {},
+    /** The subject text, and the subject revision it was typed against (#429). */
+    val onSubjectChange: (String, Long) -> Unit = { _, _ -> },
+    /** The body text, and the body revision it was typed against (#419). */
+    val onBodyChange: (String, Long) -> Unit = { _, _ -> },
+    /** The view model's state right now, ahead of the composed state while edits are in flight (#419). */
+    val currentState: (() -> ComposeUiState)? = null,
     val onSend: () -> Unit = {},
     val onSchedule: (Long) -> Unit = {},
     val onClose: () -> Unit = {},
@@ -188,7 +193,7 @@ fun ComposeContent(
                 // Attach and Send stay in the bar; scheduling and discarding are in "More options", so
                 // a phone-width bar leaves the title room for one line (#340).
                 actions = {
-                    IconButton(onClick = actions.onAttach, enabled = !state.sending) {
+                    IconButton(onClick = actions.onAttach, enabled = !state.sending && !state.loadingContent) {
                         Icon(
                             painter = painterResource(R.drawable.ic_mc_attach),
                             contentDescription = stringResource(R.string.compose_attach),
@@ -210,7 +215,9 @@ fun ComposeContent(
                     .verticalScroll(rememberScrollState()),
         ) {
             state.error?.let { ErrorBanner(it, state.errorAddresses, actions.onDismissError) }
-            val editable = !state.sending
+            // Nothing can be edited while sending, or while a draft or reply loads: the load overwrites the
+            // whole form (#435).
+            val editable = !state.sending && !state.loadingContent
             if (state.showFromPicker) {
                 FromPicker(state.accounts, state.fromAccountId, editable, actions.onFromChange)
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
@@ -229,24 +236,35 @@ fun ComposeContent(
                 Recipient(RecipientField.BCC, R.string.compose_bcc, state, actions, editable)
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
             }
-            TextField(
-                value = state.subject,
-                onValueChange = actions.onSubjectChange,
+            SubjectField(
+                state = state,
+                onSubjectChange = actions.onSubjectChange,
                 enabled = editable,
-                singleLine = true,
-                placeholder = { Text(stringResource(R.string.compose_subject)) },
-                keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
                 colors = plainFieldColors(),
-                modifier = Modifier.fillMaxWidth(),
+                currentState = actions.currentState,
             )
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
             ComposeAttachments(state, actions.onRemoveAttachment)
+            if (state.loadingContent) {
+                val loading = stringResource(R.string.compose_loading_content)
+                LinearProgressIndicator(
+                    modifier =
+                        Modifier
+                            .fillMaxWidth()
+                            .testTag("compose-loading")
+                            .semantics {
+                                contentDescription = loading
+                                liveRegion = LiveRegionMode.Polite
+                            },
+                )
+            }
             RichBodyField(
                 state = state,
                 onBodyChange = actions.onBodyChange,
                 actions = actions.rich,
                 enabled = editable,
                 colors = plainFieldColors(),
+                currentState = actions.currentState,
             )
         }
     }

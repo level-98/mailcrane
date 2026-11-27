@@ -153,6 +153,43 @@ interface AppSettings {
     val contactPhotos: Flow<Boolean>
 
     suspend fun setContactPhotos(enabled: Boolean)
+
+    /** "Mark as read" (M4-15): when an opened message is marked read. When opened, by default. */
+    val markReadMode: Flow<MarkReadMode>
+
+    suspend fun setMarkReadMode(mode: MarkReadMode)
+
+    /** "After deleting or moving" (M4-15): what shows next. Back to the list, by default. */
+    val afterMoveAction: Flow<AfterMoveAction>
+
+    suspend fun setAfterMoveAction(action: AfterMoveAction)
+}
+
+/** When an opened message is marked read (M4-15). */
+enum class MarkReadMode {
+    /** As soon as it is shown: the behaviour before M4-15. */
+    ON_OPEN,
+
+    /** After it has been shown for [MARK_READ_DELAY_MS]; leaving sooner keeps it unread. */
+    AFTER_DELAY,
+
+    /** Never by opening it; only "Mark as read". */
+    MANUAL,
+}
+
+/** How long a message must stay open to be marked read with [MarkReadMode.AFTER_DELAY]. */
+const val MARK_READ_DELAY_MS = 2_000L
+
+/** What shows after archiving, deleting or moving the open message (M4-15). */
+enum class AfterMoveAction {
+    /** The next message in the list the message was opened from. */
+    NEXT,
+
+    /** The previous message in that list. */
+    PREVIOUS,
+
+    /** The list itself: the behaviour before M4-15. */
+    LIST,
 }
 
 /** Which view the app opens on (M4-16). */
@@ -353,6 +390,20 @@ class DataStoreAppSettings(
         dataStore.edit { it[CONTACT_PHOTOS] = enabled }
     }
 
+    override val markReadMode: Flow<MarkReadMode> =
+        prefs.map { p -> MarkReadMode.entries.firstOrNull { it.name == p[MARK_READ] } ?: MarkReadMode.ON_OPEN }
+
+    override suspend fun setMarkReadMode(mode: MarkReadMode) {
+        dataStore.edit { it[MARK_READ] = mode.name }
+    }
+
+    override val afterMoveAction: Flow<AfterMoveAction> =
+        prefs.map { p -> AfterMoveAction.entries.firstOrNull { it.name == p[AFTER_MOVE] } ?: AfterMoveAction.LIST }
+
+    override suspend fun setAfterMoveAction(action: AfterMoveAction) {
+        dataStore.edit { it[AFTER_MOVE] = action.name }
+    }
+
     /**
      * The theme just chosen, shown before the settings file has been written: the app used to wait for the
      * write, so the switch lagged behind the tap (#339). Cleared once the file holds it.
@@ -443,6 +494,8 @@ class DataStoreAppSettings(
         val APP_LOCK_TIMEOUT = intPreferencesKey("app_lock_timeout_seconds")
         val APP_LOCK_SCREENSHOTS = booleanPreferencesKey("app_lock_allow_screenshots")
         val BACKGROUND_DOWNLOAD = stringPreferencesKey("background_download")
+        val MARK_READ = stringPreferencesKey("mark_read_mode")
+        val AFTER_MOVE = stringPreferencesKey("after_move_action")
     }
 }
 

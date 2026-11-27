@@ -15,6 +15,7 @@ import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -118,6 +119,8 @@ fun MailboxScreen(
             var showOutbox by rememberSaveable { mutableStateOf(false) }
             var showManageFolders by rememberSaveable { mutableStateOf(false) }
             var showSearch by rememberSaveable { mutableStateOf(false) }
+            // Each tap on search is a new opening; coming back from a result isn't (#481 review).
+            var searchOpenings by rememberSaveable { mutableIntStateOf(0) }
             // An open conversation (M4-02): its thread id and title.
             var openThread by rememberSaveable { mutableStateOf<Pair<Long, String>?>(null) }
             if (showManageFolders) {
@@ -173,10 +176,23 @@ fun MailboxScreen(
             val layout = mailLayoutFor(LocalConfiguration.current.screenWidthDp.dp)
             // Next and previous message (J/K, ↓/↑) follow the order the list shows.
             var listOrder by remember { mutableStateOf<List<Long>>(emptyList()) }
+            // The open conversation's messages, oldest first, for "After deleting or moving" (M4-15).
+            var threadOrder by remember { mutableStateOf<List<Long>>(emptyList()) }
+            val leaveOrder = if (openThread != null) threadOrder else listOrder
+            // Whether the open message came from search, which isn't a list to step through (#372 review).
+            var openedFromSearch by remember { mutableStateOf(false) }
+            // Its neighbours in the list it was opened from, taken when it opened: by id, and from that list
+            // even if another one is shown later (#372 review).
+            val neighbours = remember(messageId) { if (openedFromSearch) null else neighboursIn(leaveOrder, messageId) }
+            val afterMove: AfterMoveViewModel = hiltViewModel()
+            val afterMoveAction by afterMove.action.collectAsStateWithLifecycle()
             val openMessageAt: (Int) -> Unit = { delta ->
                 val i = listOrder.indexOf(messageId)
                 val next = if (i < 0) listOrder.firstOrNull() else listOrder.getOrNull(i + delta)
-                if (next != null) openMessage = next
+                if (next != null) {
+                    openedFromSearch = false
+                    openMessage = next
+                }
             }
             val detail: @Composable () -> Unit = {
                 if (messageId != null) {
@@ -184,6 +200,14 @@ fun MailboxScreen(
                         messageId = messageId,
                         onBack = { openMessage = null },
                         folders = state.folders,
+                        onLeft = {
+                            val next = messageAfterLeaving(neighbours, afterMoveAction, leaveOrder)
+                            // One pane, the lists aren't shown while a message is open, so their orders aren't
+                            // refreshed: drop the message from them, or J/K could open it again (#372 review).
+                            listOrder = listOrder - messageId
+                            threadOrder = threadOrder - messageId
+                            openMessage = next
+                        },
                         onReply = onReply,
                         onComposeTo = onComposeTo,
                         onCreateRule = {
@@ -201,9 +225,13 @@ fun MailboxScreen(
                     SearchScreen(
                         accountId = accountId,
                         folderId = selected.id,
-                        onOpenMessage = { openMessage = it },
+                        onOpenMessage = {
+                            openedFromSearch = true
+                            openMessage = it
+                        },
                         onBack = { showSearch = false },
                         accounts = accounts,
+                        opening = searchOpenings,
                     )
                     return
                 }
@@ -214,7 +242,11 @@ fun MailboxScreen(
                         threadId = thread.first,
                         title = thread.second,
                         onBack = { openThread = null },
-                        onOpenMessage = { openMessage = it },
+                        onOpenMessage = {
+                            openedFromSearch = false
+                            openMessage = it
+                        },
+                        onShownMessages = { threadOrder = it },
                     )
                     return
                 }
@@ -293,16 +325,24 @@ fun MailboxScreen(
                         SearchScreen(
                             accountId = accountId,
                             folderId = selected.id,
-                            onOpenMessage = { openMessage = it },
+                            onOpenMessage = {
+                                openedFromSearch = true
+                                openMessage = it
+                            },
                             onBack = { showSearch = false },
                             accounts = accounts,
+                            opening = searchOpenings,
                         )
                     layout != MailLayout.ONE_PANE && thread != null ->
                         ConversationScreen(
                             threadId = thread.first,
                             title = thread.second,
                             onBack = { openThread = null },
-                            onOpenMessage = { openMessage = it },
+                            onOpenMessage = {
+                                openedFromSearch = false
+                                openMessage = it
+                            },
+                            onShownMessages = { threadOrder = it },
                         )
                     else ->
                         saved.SaveableStateProvider("folder-${selected.id}") {
@@ -319,6 +359,7 @@ fun MailboxScreen(
                                     if (selected.role == FolderRole.DRAFTS) {
                                         onOpenDraft(DraftRequest(messageId = it))
                                     } else {
+                                        openedFromSearch = false
                                         openMessage = it
                                     }
                                 },
@@ -333,7 +374,10 @@ fun MailboxScreen(
                                         )
                                     },
                                 folders = state.folders,
-                                onOpenSearch = { showSearch = true },
+                                onOpenSearch = {
+                                    searchOpenings++
+                                    showSearch = true
+                                },
                                 onOpenThread = { id, title -> openThread = id to title },
                                 onCompose = onCompose,
                                 composeFabModifier = composeFabModifier,

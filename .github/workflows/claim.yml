@@ -1,4 +1,5 @@
 # Lets anyone claim an issue by commenting /claim, or give it up with /unclaim.
+# At most two open claims each, except maintainers (admin or maintain access).
 # GitHub allows assigning anyone who has commented on the issue.
 name: Claim issues
 
@@ -42,11 +43,19 @@ jobs:
               return reply(`Sorry @${user}, this is already claimed by @${assignees.join(', @')}. Have a look at other [unassigned issues](https://github.com/${owner}/${repo}/issues?q=is%3Aopen+is%3Aissue+no%3Aassignee).`);
             if (assignees.includes(user)) return reply(`@${user} you already have this one.`);
 
-            const mine = await github.rest.search.issuesAndPullRequests({
-              q: `repo:${owner}/${repo} is:issue is:open assignee:${user}`,
-            });
-            if (mine.data.total_count >= 2)
-              return reply(`@${user} you already have ${mine.data.total_count} claimed issues. Please finish or \`/unclaim\` one first.`);
+            // Maintainers (admin or maintain access) have no claim limit: the
+            // maintainer's agent fleet claims as them (docs/fleet.md).
+            const { data: access } = await github.rest.repos.getCollaboratorPermissionLevel({
+              owner, repo, username: user,
+            }).catch(() => ({ data: {} }));
+            const maintainer = ['admin', 'maintain'].includes(access.role_name);
+            if (!maintainer) {
+              const mine = await github.rest.search.issuesAndPullRequests({
+                q: `repo:${owner}/${repo} is:issue is:open assignee:${user}`,
+              });
+              if (mine.data.total_count >= 2)
+                return reply(`@${user} you already have ${mine.data.total_count} claimed issues. Please finish or \`/unclaim\` one first.`);
+            }
 
             await github.rest.issues.addAssignees({ owner, repo, issue_number, assignees: [user] });
             await reply(

@@ -65,6 +65,10 @@ pub enum FolderAdminError {
     /// The server has no subfolders.
     #[error("the server has no subfolders")]
     NoSubfolders,
+    /// The chosen parent can't hold folders: a virtual folder such as
+    /// Gmail's Starred (#461), which holds mail by flag.
+    #[error("that folder can't hold folders")]
+    NotAParent,
     /// The folder (or the chosen parent) isn't in this account.
     #[error("no such folder")]
     NotFound,
@@ -206,10 +210,12 @@ fn is_under(child: &str, parent: &str, delimiter: Option<char>) -> bool {
         .is_some_and(|rest| rest.starts_with(d))
 }
 
-/// A standard folder or Mailcrane's own Snoozed folder.
+/// A standard folder, a virtual one such as Gmail's Starred (#390), or
+/// Mailcrane's own Snoozed folder.
 pub fn is_system_folder(f: &Folder) -> bool {
     let remote = &f.details.remote_name;
     f.details.role.is_some()
+        || f.details.virtual_role.is_some()
         || remote.eq_ignore_ascii_case("INBOX")
         || decode(last_segment(remote, delimiter_of(f))) == SNOOZED_FOLDER_NAME
 }
@@ -229,6 +235,17 @@ fn find(folders: &[Folder], id: FolderId) -> Result<&Folder, FolderAdminError> {
         .iter()
         .find(|f| f.id == id)
         .ok_or(FolderAdminError::NotFound)
+}
+
+/// The folder `id` as a parent for a new or moved folder. A virtual folder,
+/// such as Gmail's Starred (#390), holds mail by flag and has no
+/// subfolders, so it's refused (#461) and drops out of the move picker.
+fn find_parent(folders: &[Folder], id: FolderId) -> Result<&Folder, FolderAdminError> {
+    let parent = find(folders, id)?;
+    if parent.details.virtual_role.is_some() {
+        return Err(FolderAdminError::NotAParent);
+    }
+    Ok(parent)
 }
 
 fn taken(folders: &[Folder], remote: &str, except: Option<FolderId>) -> bool {
@@ -277,7 +294,7 @@ pub fn plan_create_in(
     local_default: Option<char>,
     namespace: Option<&str>,
 ) -> Result<CreatePlan, FolderAdminError> {
-    let parent = parent.map(|p| find(folders, p)).transpose()?;
+    let parent = parent.map(|p| find_parent(folders, p)).transpose()?;
     let delimiter = parent
         .and_then(delimiter_of)
         .or_else(|| account_delimiter(folders, local_default));
@@ -382,7 +399,7 @@ pub fn plan_move_in(
     let new_remote = match parent {
         None => format!("{}{leaf}", namespace.unwrap_or_default()),
         Some(p) => {
-            let p = find(folders, p)?;
+            let p = find_parent(folders, p)?;
             let pr = &p.details.remote_name;
             if p.id == f.id || is_under(pr, remote, d) {
                 return Err(FolderAdminError::IntoItself);
@@ -512,6 +529,7 @@ pub fn save_created(store: &Store, plan: &CreatePlan) -> Result<FolderId, Folder
         highestmodseq: None,
         is_subscribed: true,
         selectable: true,
+        virtual_role: None,
     })?)
 }
 

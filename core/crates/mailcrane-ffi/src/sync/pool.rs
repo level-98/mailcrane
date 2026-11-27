@@ -81,6 +81,14 @@ struct Pooled {
 }
 
 impl Pooled {
+    /// Closes the connection on a thread with a stack this crate sets
+    /// (#462): the apps call [`SyncEngine::close_connections`] on any thread.
+    fn close_on_job_thread(self, reason: CloseReason) {
+        // `None`: the thread didn't start (the connection is then dropped
+        // without LOGOUT) or the close panicked; either way it's gone.
+        let _ = crate::worker::on_job_thread(move || self.close(reason));
+    }
+
     fn close(self, reason: CloseReason) {
         let Pooled {
             runtime, session, ..
@@ -227,7 +235,7 @@ impl ConnectionPool {
         for slot in slots {
             let conn = slot.lock().unwrap_or_else(|p| p.into_inner()).conn.take();
             if let Some(conn) = conn {
-                conn.close(reason);
+                conn.close_on_job_thread(reason);
             }
         }
     }
@@ -268,24 +276,22 @@ impl ConnectionPool {
         // The thread holds the pool weakly, so dropping the engine ends it.
         let pool = Arc::downgrade(self);
         let stopped = self.stopped.clone();
-        let spawned = std::thread::Builder::new()
-            .name("mailcrane-pool-sweeper".into())
-            .spawn(move || {
-                let mut since = Instant::now();
-                loop {
-                    std::thread::sleep(SWEEP_POLL);
-                    if stopped.load(Ordering::SeqCst) {
-                        return;
-                    }
-                    let Some(pool) = pool.upgrade() else {
-                        return;
-                    };
-                    if since.elapsed() >= pool.config().sweep_every {
-                        pool.sweep();
-                        since = Instant::now();
-                    }
+        let spawned = crate::worker::job_thread("mailcrane-pool-sweeper".into(), move || {
+            let mut since = Instant::now();
+            loop {
+                std::thread::sleep(SWEEP_POLL);
+                if stopped.load(Ordering::SeqCst) {
+                    return;
                 }
-            });
+                let Some(pool) = pool.upgrade() else {
+                    return;
+                };
+                if since.elapsed() >= pool.config().sweep_every {
+                    pool.sweep();
+                    since = Instant::now();
+                }
+            }
+        });
         *sweeper = spawned.ok();
     }
 
@@ -395,10 +401,10 @@ fn open(
     let login = login().map_err(PoolError::Connect)?;
     let runtime = runtime().map_err(PoolError::Connect)?;
     let session = runtime
-        .block_on(Session::connect(
+        .block_on(Session::connect_auth(
             &login.config,
             &login.username,
-            &login.password,
+            &login.auth,
         ))
         .map_err(|e| {
             let e = CoreSyncError::from(e);

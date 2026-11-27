@@ -20,7 +20,7 @@ It needs `rsvg-convert`, ImageMagick (`convert`) and the Python `fontTools` pack
 
 ## Colours (`colors.json`)
 
-Both apps read their colours from this file. Never hard-code a colour.
+Both apps read their colours from this file, and so does `build.py` (through `palette.py`) for the brand assets: it's the only copy of the palette (#495). Edit colours here, never in a script, and never hard-code one.
 
 | Token | Light | Dark |
 |---|---|---|
@@ -33,8 +33,8 @@ Both apps read their colours from this file. Never hard-code a colour.
 | surface | `#FFFFFF` | `#0F1424` |
 | surfaceDim / surfaceHigh | `#F4F6FB` | `#1A2138` |
 | outline | `#D5DBEA` | `#2A3350` |
-| error | `#D93B3B` | |
-| success | `#1F9D63` | |
+| error | `#C62828` | `#F28B82` |
+| success | `#157A4C` | `#3DBE83` |
 
 Typeface: **DM Sans** (Open Font License). The wordmark is Bold converted to outlines, so it doesn't need the font installed.
 

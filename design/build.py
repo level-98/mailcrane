@@ -6,11 +6,14 @@ Needs rsvg-convert, ImageMagick (`convert`) and fontTools.
 DM Sans is read from $DMSANS_TTF, or the Google Fonts path below.
 Only the generated folders next to this script are deleted and rebuilt.
 """
-import json, os, shutil, subprocess
+import os, shutil, subprocess, sys
 from fontTools.ttLib import TTFont
 from fontTools.varLib import instancer
 from fontTools.pens.svgPathPen import SVGPathPen
 from fontTools.pens.boundsPen import BoundsPen
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import palette  # noqa: E402
 
 OUT = os.path.dirname(os.path.abspath(__file__))
 GENERATED = ["brand", "app-icon", "splash", "ui-icons", "illustrations"]
@@ -18,22 +21,8 @@ for d in GENERATED:
     shutil.rmtree(os.path.join(OUT, d), ignore_errors=True)
 
 # ---------------------------------------------------------------- palette
-C = {
-    "primary": "#2B57D9",      # Crane blue
-    "primaryDark": "#1E44B8",
-    "primaryContainer": "#E3EAFF",
-    "tint": "#BFD0FF",
-    "ink": "#141A2E",          # text on light
-    "inkMuted": "#5A6380",
-    "surface": "#FFFFFF",
-    "surfaceDim": "#F4F6FB",
-    "outline": "#D5DBEA",
-    "darkSurface": "#0F1424",
-    "darkSurfaceHigh": "#1A2138",
-    "darkPrimary": "#8FA8FF",
-    "error": "#D93B3B",
-    "success": "#1F9D63",
-}
+# Read from colors.json, the single source (#495): edit the colours there.
+C = palette.load()
 
 # ---------------------------------------------------------------- crane mark
 # Origami crane on a 100-unit grid. Content bbox x 4..96, y 8..76 (centre 50,42).
@@ -230,7 +219,9 @@ ICONS = {
     "spam":     ["M8.2 3h7.6L21 8.2v7.6L15.8 21H8.2L3 15.8V8.2z", "M12 7.5v5",
                  ("M12 15.25a1.1 1.1 0 1 1 0 2.2a1.1 1.1 0 1 1 0-2.2z", F)],
     "label":    ["M3.5 3.5h8l9 9-8 8-9-9z", ("M8 6.9a1.1 1.1 0 1 1 0 2.2a1.1 1.1 0 1 1 0-2.2z", F)],
+    "important": ["M4 6.5h11.5l4.5 5.5-4.5 5.5H4l4.5-5.5z"],
     "folder":   ["M3 7.5A1.5 1.5 0 0 1 4.5 6H9l2 2h8.5A1.5 1.5 0 0 1 21 9.5v8a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 17.5z"],
+    "filter":   ["M4 5h16l-6 7.5V19l-4-2v-4.5z"],
     "snooze":   ["M12 3a9 9 0 1 1 0 18a9 9 0 1 1 0-18z", "M12 7.5V12l3 2"],
     "search":   ["M11 4a7 7 0 1 1 0 14a7 7 0 1 1 0-14z", "M16 16l4.5 4.5"],
     "compose":  ["M4 20h4L19 9l-4-4L4 16z", "M13.5 6.5l4 4"],
@@ -303,9 +294,4 @@ illo("welcome", bg + "\n  " + crane_group("color", 120, 100, 1.25) +
      f'\n  <path d="M40 150q20-10 40 0t40 0 40 0 40 0" fill="none" stroke="{C["tint"]}" '
      f'stroke-width="4" stroke-linecap="round"/>')
 
-# ---------------------------------------------------------------- tokens
-write("colors.json", json.dumps({"light": {k: v for k, v in C.items() if not k.startswith("dark")},
-                                 "dark": {"surface": C["darkSurface"], "surfaceHigh": C["darkSurfaceHigh"],
-                                          "primary": C["darkPrimary"], "ink": "#E8ECF8",
-                                          "inkMuted": "#9AA3BF", "outline": "#2A3350"}}, indent=2))
 print("built", OUT, "wordmark", W, "x", H)

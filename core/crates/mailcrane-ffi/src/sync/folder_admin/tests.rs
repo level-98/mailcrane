@@ -40,6 +40,7 @@ fn local_account() -> (tempfile::TempDir, String, i64) {
             highestmodseq: None,
             is_subscribed: true,
             selectable: true,
+            virtual_role: None,
         })
         .expect("inbox");
     (dir, path, account.0)

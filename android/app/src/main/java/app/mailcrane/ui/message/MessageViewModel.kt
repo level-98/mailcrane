@@ -3,6 +3,7 @@ package app.mailcrane.ui.message
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import app.mailcrane.core.ActionFailure
+import app.mailcrane.core.CoreEvent
 import app.mailcrane.core.InlinePart
 import app.mailcrane.core.LinkCheck
 import app.mailcrane.core.LinkChecker
@@ -20,6 +21,8 @@ import app.mailcrane.core.SyncFailure
 import app.mailcrane.core.UnsubscribeFailure
 import app.mailcrane.core.UnsubscribeInfo
 import app.mailcrane.settings.AppSettings
+import app.mailcrane.settings.MARK_READ_DELAY_MS
+import app.mailcrane.settings.MarkReadMode
 import app.mailcrane.ui.compose.ComposePrefill
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedFactory
@@ -27,21 +30,31 @@ import dagger.assisted.AssistedInject
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.getAndUpdate
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 /** One-off things the message screen does after an action. */
 sealed interface MessageEffect {
-    /** The message left this folder (archived, deleted, moved) or was marked unread: close it. */
+    /** The message was marked unread or snoozed: close it. */
     data object Close : MessageEffect
+
+    /**
+     * The message was archived, deleted or moved out of the folder. The screen shows what "After deleting
+     * or moving" says (M4-15): the next or previous message, or the list.
+     */
+    data object Left : MessageEffect
 
     /** The action couldn't be applied; nothing changed. */
     data class ActionRefused(
@@ -104,6 +117,9 @@ enum class ActionRefusal {
     /** The message has no Message-ID, so it can't be snoozed. */
     CANNOT_SNOOZE,
 
+    /** The message is coming back from snooze right now: snooze it again once it has (#431). */
+    WAKING,
+
     /** The message or folder is gone, or the database failed. */
     FAILED,
 }
@@ -134,15 +150,15 @@ sealed interface MessageState {
 }
 
 /**
- * One open message. Downloads the body if it isn't stored yet, marks the message as read once it
- * is shown, and re-reads it with remote images allowed when the user asks, for this message only.
+ * One open message. Downloads the body if it isn't stored yet, marks the message as read as the
+ * "Mark as read" setting says (M4-15), and re-reads it with remote images allowed when the user asks, for this message only.
  */
 @HiltViewModel(assistedFactory = MessageViewModel.Factory::class)
 class MessageViewModel
     @AssistedInject
     constructor(
         private val core: MessageCore,
-        settings: AppSettings,
+        private val settings: AppSettings,
         private val linkCleaner: LinkCleaner,
         private val linkChecker: LinkChecker,
         private val senderTrust: SenderTrustChanges,
@@ -161,6 +177,10 @@ class MessageViewModel
 
         private val confirmLinks = settings.confirmLinks.stateIn(viewModelScope, SharingStarted.Eagerly, true)
 
+        /** "Mark as read" (M4-15). The screen runs the delay for [MarkReadMode.AFTER_DELAY]. */
+        val markReadMode: StateFlow<MarkReadMode> =
+            settings.markReadMode.stateIn(viewModelScope, SharingStarted.Eagerly, MarkReadMode.ON_OPEN)
+
         private val _linkPreview = MutableStateFlow<LinkPreview?>(null)
 
         /** The link waiting for the user's confirmation, if any. */
@@ -173,7 +193,26 @@ class MessageViewModel
 
         private var remoteAllowed = false
         private var markedRead = false
+        private var shown = false
         private var loading: Job? = null
+
+        /**
+         * The screen shows this message (again). The view model outlives the screen (it is kept per message
+         * in the Activity), so a message marked unread since, for example by a swipe in the list, would still
+         * show as read and never be marked read again (#372 QA). The first call is the open [load] in `init`
+         * already covers; each later one reads the message again, as on a first open.
+         */
+        fun onShown() {
+            if (!shown) {
+                shown = true
+                return
+            }
+            markedRead = false
+            load()
+        }
+
+        /** Asks for the snooze to be read again; conflated, so an older read never wins over a newer one. */
+        private val snoozeRefresh = Channel<Unit>(Channel.CONFLATED)
 
         init {
             load()
@@ -181,6 +220,32 @@ class MessageViewModel
                 // A provider server name was saved or cleared: read the sender check again at once.
                 senderTrust.version.drop(1).collect { refresh() }
             }
+            viewModelScope.launch {
+                // A wake moving the message lands with a change: "Waking…" and the disabled Snooze
+                // follow the snooze row, with no timer (#431). Only while the message shows a snooze.
+                core.events
+                    .filter { it is CoreEvent.MessagesChanged }
+                    .filter { (_state.value as? MessageState.Ready)?.snooze != null }
+                    .collect { snoozeRefresh.trySend(Unit) }
+            }
+            viewModelScope.launch {
+                for (ask in snoozeRefresh) refreshSnooze()
+            }
+        }
+
+        /** Reads the message's snooze again and applies it to the state as it is now. */
+        private suspend fun refreshSnooze() {
+            val info =
+                try {
+                    core.snoozeInfo(messageId)
+                } catch (_: SnoozeFailure.NotFound) {
+                    // The wake landed and took this row with it: the message is back in its folder.
+                    _effects.send(MessageEffect.Close)
+                    return
+                } catch (_: SnoozeFailure) {
+                    return
+                }
+            _state.update { (it as? MessageState.Ready)?.copy(snooze = info) ?: it }
         }
 
         /** Reads the shown message again without the loading state, for example after [SenderTrustChanges]. */
@@ -192,7 +257,11 @@ class MessageViewModel
                     try {
                         val message = core.getMessage(messageId, ready.remoteAllowed)
                         _state.value =
-                            ready.copy(message = message, unsubscribe = core.unsubscribeOptions(messageId))
+                            ready.copy(
+                                message = message,
+                                unsubscribe = core.unsubscribeOptions(messageId),
+                                snooze = snoozeOf(),
+                            )
                     } catch (e: SyncFailure.Failed) {
                         _state.value = MessageState.Failed(e.kind)
                     }
@@ -218,7 +287,9 @@ class MessageViewModel
                                 unsubscribe = core.unsubscribeOptions(messageId),
                                 snooze = snoozeOf(),
                             )
-                        markRead(message)
+                        if (settings.markReadMode.first() == MarkReadMode.ON_OPEN) {
+                            (_state.value as? MessageState.Ready)?.let { markShownRead(it) }
+                        }
                     } catch (e: SyncFailure.Failed) {
                         _state.value = MessageState.Failed(e.kind)
                     }
@@ -248,17 +319,44 @@ class MessageViewModel
                 }
         }
 
-        /** Moves the message to the account's Archive folder and closes it. */
-        fun archive() = act(MessageAction.Archive, close = true)
+        /** Moves the message to the account's Archive folder; then [MessageEffect.Left]. */
+        fun archive() = act(MessageAction.Archive, close = MessageEffect.Left)
 
-        /** Moves the message to Trash (or deletes it for good if it's in Trash) and closes it. */
-        fun delete() = act(MessageAction.Delete, close = true)
+        /** Moves the message to Trash (or deletes it for good if it's in Trash); then [MessageEffect.Left]. */
+        fun delete() = act(MessageAction.Delete, close = MessageEffect.Left)
 
-        /** Moves the message to folder [folderId] and closes it. */
-        fun moveTo(folderId: Long) = act(MessageAction.Move(folderId), close = true)
+        /** Moves the message to folder [folderId]; then [MessageEffect.Left]. */
+        fun moveTo(folderId: Long) = act(MessageAction.Move(folderId), close = MessageEffect.Left)
 
         /** Marks the message unread and closes it, so it isn't marked read again at once. */
-        fun markUnread() = act(MessageAction.MarkUnread, close = true)
+        fun markUnread() = act(MessageAction.MarkUnread, close = MessageEffect.Close)
+
+        /**
+         * For [MarkReadMode.AFTER_DELAY]: marks the shown message read after [MARK_READ_DELAY_MS]. The screen
+         * calls it while the message is on screen, so leaving sooner cancels it and the message stays unread.
+         */
+        suspend fun markReadAfterDelay() {
+            delay(MARK_READ_DELAY_MS)
+            (_state.value as? MessageState.Ready)?.let { markShownRead(it) }
+        }
+
+        /** "Mark as read" in the toolbar, for an unread message (any mode, and the only way with MANUAL). */
+        fun markReadByHand() {
+            val ready = _state.value as? MessageState.Ready ?: return
+            viewModelScope.launch { markShownRead(ready) }
+        }
+
+        private suspend fun markShownRead(ready: MessageState.Ready) {
+            if (ready.message.isSeen) return
+            // Only when this call marked it: a second tap (or the timer) while the first is still running, or a
+            // call that failed, leaves the toolbar as it was (#372 review).
+            if (markRead(ready.message)) {
+                // Marked: the toolbar offers "Mark as unread" again.
+                (_state.value as? MessageState.Ready)?.let {
+                    _state.value = it.copy(message = it.message.copy(isSeen = true))
+                }
+            }
+        }
 
         /**
          * Unsubscribes the way [unsubscribeMethod] says. Call only after the user confirmed: one-click
@@ -325,7 +423,13 @@ class MessageViewModel
                     _effects.send(MessageEffect.Close)
                 } catch (e: SnoozeFailure) {
                     val reason =
-                        if (e is SnoozeFailure.NoMessageId) ActionRefusal.CANNOT_SNOOZE else ActionRefusal.FAILED
+                        when (e) {
+                            is SnoozeFailure.NoMessageId -> ActionRefusal.CANNOT_SNOOZE
+                            is SnoozeFailure.Waking -> ActionRefusal.WAKING
+                            else -> ActionRefusal.FAILED
+                        }
+                    // Waking: the message now shows as waking, with snoozing disabled until it lands.
+                    if (e is SnoozeFailure.Waking) snoozeRefresh.trySend(Unit)
                     _effects.send(MessageEffect.ActionRefused(reason))
                 }
             }
@@ -358,7 +462,7 @@ class MessageViewModel
             val ready = _state.value as? MessageState.Ready ?: return
             val flagged = !ready.message.isFlagged
             _state.value = ready.copy(message = ready.message.copy(isFlagged = flagged))
-            act(if (flagged) MessageAction.Flag else MessageAction.Unflag, close = false) {
+            act(if (flagged) MessageAction.Flag else MessageAction.Unflag, close = null) {
                 // Refused: show the flag as it was.
                 (_state.value as? MessageState.Ready)?.let {
                     _state.value = it.copy(message = it.message.copy(isFlagged = !flagged))
@@ -368,13 +472,13 @@ class MessageViewModel
 
         private fun act(
             action: MessageAction,
-            close: Boolean,
+            close: MessageEffect?,
             onRefused: () -> Unit = {},
         ) {
             viewModelScope.launch {
                 try {
                     core.applyAction(messageId, action)
-                    if (close) _effects.send(MessageEffect.Close)
+                    if (close != null) _effects.send(close)
                 } catch (e: ActionFailure) {
                     onRefused()
                     val reason =
@@ -438,15 +542,24 @@ class MessageViewModel
                 null
             }
 
-        private suspend fun markRead(message: MessageDetail) {
-            if (message.isSeen || markedRead) return
+        /**
+         * Marks [message] read in the core. True only if this call marked it: false when it's read already,
+         * another call is marking it, or the core failed. A call that fails or is cancelled (a reload while it
+         * runs) allows another try.
+         */
+        private suspend fun markRead(message: MessageDetail): Boolean {
+            if (message.isSeen || markedRead) return false
             markedRead = true
+            var done = false
             try {
                 core.markRead(messageId)
+                done = true
             } catch (_: SyncFailure.Failed) {
-                // Only the unread dot stays; the message is shown either way. Allow another try.
-                markedRead = false
+                // Only the unread dot stays; the message is shown either way.
+            } finally {
+                if (!done) markedRead = false
             }
+            return done
         }
     }
 

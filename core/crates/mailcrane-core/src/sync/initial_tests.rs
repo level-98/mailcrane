@@ -4,7 +4,8 @@ use super::{FailureLog, FolderSyncer, SyncConfig, SyncError};
 use crate::events::{CoreEvent, EventListener, SyncErrorKind};
 use mailcrane_imap::{ImapConfig, ImapSecurity, Secret, Session};
 use mailcrane_store::{
-    AccountId, BodyState, FolderId, MessageId, NewAccount, NewFolder, Security, Store,
+    AccountId, BodyState, FolderId, FolderRole, MessageId, NewAccount, NewFolder, Security, Store,
+    VirtualRole,
 };
 use mailcrane_testkit::{FakeImap, Fault};
 use std::sync::Mutex;
@@ -91,6 +92,7 @@ fn setup() -> (Store, AccountId, FolderId) {
             highestmodseq: None,
             is_subscribed: true,
             selectable: true,
+            virtual_role: None,
         })
         .expect("folder");
     (store, account, folder)
@@ -411,6 +413,93 @@ async fn a_folder_too_big_for_one_search_line_syncs_newest_first() {
 }
 
 #[tokio::test]
+async fn gmails_starred_and_important_are_virtual_folders_with_no_role() {
+    // #390: listed with \Flagged and \Important, "[Gmail]/Starred" and
+    // "[Gmail]/Important" are virtual folders, shown like the rest of
+    // "[Gmail]" instead of by their raw paths.
+    let imap = FakeImap::builder()
+        .user(USER, PASSWORD)
+        .folder("INBOX", raws(1))
+        .gmail_layout()
+        .start()
+        .await
+        .expect("fake imap starts");
+    let (store, account, _) = setup();
+    let mut session = connect(&imap).await;
+    let listed = session.list_folders().await.expect("list");
+    mailcrane_imap::save_folders(&store, account, &listed).expect("save");
+
+    let folders = store.list_folders(account).expect("folders");
+    let details = |name: &str| {
+        folders
+            .iter()
+            .find(|f| f.details.remote_name == name)
+            .unwrap_or_else(|| panic!("{name} listed"))
+            .details
+            .clone()
+    };
+    let role = |name: &str| details(name).role;
+    // Virtual folders: a virtual role and no role, so nothing moves into them.
+    assert_eq!(
+        details("[Gmail]/Starred").virtual_role,
+        Some(VirtualRole::Starred)
+    );
+    assert_eq!(
+        details("[Gmail]/Important").virtual_role,
+        Some(VirtualRole::Important)
+    );
+    assert_eq!(role("[Gmail]/Starred"), None);
+    assert_eq!(role("[Gmail]/Important"), None);
+    assert!(folders
+        .iter()
+        .filter(|f| f.details.role.is_some())
+        .all(|f| f.details.virtual_role.is_none()));
+    // The others are unchanged.
+    assert_eq!(role("INBOX"), Some(FolderRole::Inbox));
+    assert_eq!(role("[Gmail]/All Mail"), Some(FolderRole::All));
+    assert_eq!(role("[Gmail]/Sent Mail"), Some(FolderRole::Sent));
+    assert_eq!(role("[Gmail]/Drafts"), Some(FolderRole::Drafts));
+    assert_eq!(role("[Gmail]/Spam"), Some(FolderRole::Spam));
+    assert_eq!(role("[Gmail]/Trash"), Some(FolderRole::Trash));
+    assert_eq!(role("[Gmail]"), None);
+}
+
+#[tokio::test]
+async fn important_counts_only_on_gmail_but_flagged_counts_anywhere() {
+    // #390 review: \Important isn't in RFC 6154, so on a server without the
+    // Gmail quirk (no X-GM-EXT-1) a folder carrying it stays an ordinary
+    // folder. \Flagged is RFC 6154 and means starred everywhere.
+    let imap = FakeImap::builder()
+        .user(USER, PASSWORD)
+        .folder("INBOX", raws(1))
+        .folder("Important", Vec::new())
+        .special_use("Important", "\\Important")
+        .folder("Flagged", Vec::new())
+        .special_use("Flagged", "\\Flagged")
+        .start()
+        .await
+        .expect("fake imap starts");
+    let (store, account, _) = setup();
+    let mut session = connect(&imap).await;
+    assert!(!session
+        .quirks()
+        .contains(&mailcrane_imap::ServerQuirk::GmailLabels));
+    let listed = session.list_folders().await.expect("list");
+    mailcrane_imap::save_folders(&store, account, &listed).expect("save");
+    let folders = store.list_folders(account).expect("folders");
+    let virtual_role = |name: &str| {
+        folders
+            .iter()
+            .find(|f| f.details.remote_name == name)
+            .unwrap_or_else(|| panic!("{name} listed"))
+            .details
+            .virtual_role
+    };
+    assert_eq!(virtual_role("Important"), None);
+    assert_eq!(virtual_role("Flagged"), Some(VirtualRole::Starred));
+}
+
+#[tokio::test]
 async fn gmail_layout_syncs_every_folder_and_never_selects_the_noselect_parent() {
     let imap = FakeImap::builder()
         .user(USER, PASSWORD)
@@ -499,6 +588,7 @@ async fn a_refused_select_logs_the_command_and_error_but_no_server_text() {
             highestmodseq: None,
             is_subscribed: true,
             selectable: true,
+            virtual_role: None,
         })
         .expect("folder");
     let events = Events::default();
@@ -578,4 +668,187 @@ fn a_database_failure_logs_the_sqlite_code_but_no_values() {
         (log.store, log.field, log.sqlite),
         ("Invalid", "uid", "none")
     );
+}
+
+/// A message header in `folder`, seen and flagged.
+fn stored_header(store: &Store, folder: FolderId, uid: u32) -> MessageId {
+    store
+        .upsert_message_header(&mailcrane_store::NewMessageHeader {
+            folder_id: folder,
+            uid,
+            message_id_header: Some(format!("<{uid}@example.net>")),
+            in_reply_to: None,
+            references_json: "[]".into(),
+            thread_id: None,
+            subject: "Lunch".into(),
+            from_name: None,
+            from_addr: Some("ana@example.net".into()),
+            to_json: "[]".into(),
+            cc_json: "[]".into(),
+            date: 1_790_000_000,
+            internal_date: 1_790_000_000,
+            size: 40,
+            flags: mailcrane_store::Flags {
+                seen: true,
+                flagged: true,
+                ..Default::default()
+            },
+            keywords_json: "[]".into(),
+            has_attachments: false,
+            snippet: String::new(),
+        })
+        .expect("header")
+}
+
+const RAW: &[u8] = b"From: ana@example.net\r\nSubject: Lunch\r\n\r\nSee you at noon\r\n";
+
+#[test]
+fn an_opened_body_is_saved_under_the_urgent_mark_and_only_then() {
+    // #473: the mark covers the save itself, on the thread that writes, and
+    // nothing else; background saves (prefetch, sync) aren't marked.
+    let dir = tempfile::tempdir().expect("dir");
+    let path = dir.path().join("urgent.db");
+    let store = Store::open(&path).expect("store");
+    let folder = {
+        let account = store
+            .insert_account(&NewAccount {
+                display_name: "Alice".into(),
+                email: USER.into(),
+                imap_host: "localhost".into(),
+                imap_port: 993,
+                imap_security: Security::Tls,
+                smtp_host: "localhost".into(),
+                smtp_port: 587,
+                smtp_security: Security::Starttls,
+                username: USER.into(),
+            })
+            .expect("account");
+        store
+            .upsert_folder(&NewFolder {
+                account_id: account,
+                remote_name: "INBOX".into(),
+                display_name: "INBOX".into(),
+                delimiter: Some("/".into()),
+                role: None,
+                uidvalidity: None,
+                uidnext: None,
+                highestmodseq: None,
+                is_subscribed: true,
+                selectable: true,
+                virtual_role: None,
+            })
+            .expect("folder")
+    };
+    let opened = stored_header(&store, folder, 1);
+    let background = stored_header(&store, folder, 2);
+    super::OPENED_SAVES.with(|s| s.borrow_mut().clear());
+    assert!(!store.urgent_here(), "not marked before");
+    super::save_opened_body(&store, opened, None, RAW).expect("saved");
+    assert!(!store.urgent_here(), "nor after");
+    super::save_body(&store, background, RAW).expect("saved");
+    assert_eq!(
+        super::OPENED_SAVES.with(|s| s.borrow().clone()),
+        [true],
+        "one opened save, under the mark; the background save isn't counted"
+    );
+    assert!(store.get_body(background).expect("body").is_some());
+}
+
+#[tokio::test]
+async fn opening_a_message_on_imap_saves_through_the_opened_path() {
+    let imap = fake(raws(1), &[]).await;
+    let (store, account, folder) = setup();
+    let events = Events::default();
+    let mut session = connect(&imap).await;
+    let mut syncer = FolderSyncer::new(
+        &store,
+        &mut session,
+        &events,
+        account,
+        SyncConfig::default(),
+    );
+    syncer.sync_folder(folder).await.expect("syncs");
+    let id = store
+        .list_messages(folder, 10, 0)
+        .expect("page")
+        .first()
+        .expect("message")
+        .id;
+    super::OPENED_SAVES.with(|s| s.borrow_mut().clear());
+    syncer.fetch_body(id).await.expect("fetches");
+    // In memory there's no shared file, so no mark; what counts is the path.
+    assert_eq!(super::OPENED_SAVES.with(|s| s.borrow().len()), 1);
+}
+
+#[test]
+fn an_opened_save_writes_only_the_body_and_its_parts() {
+    // #472 condition 1: it can run beside a sync because it never touches
+    // the flags, folder or other columns the sync owns.
+    let (store, _, folder) = setup();
+    let id = stored_header(&store, folder, 1);
+    let before = store.get_message_header(id).expect("get").expect("header");
+    super::save_opened_body(&store, id, None, RAW).expect("saved");
+    let after = store.get_message_header(id).expect("get").expect("header");
+    assert_eq!(after.body_state, BodyState::Fetched);
+    assert_eq!(after.details.folder_id, before.details.folder_id);
+    assert_eq!(after.details.uid, before.details.uid);
+    assert_eq!(after.details.flags, before.details.flags);
+    assert_eq!(after.details.subject, before.details.subject);
+    assert_eq!(after.details.keywords_json, before.details.keywords_json);
+}
+
+#[test]
+fn a_message_removed_before_its_body_is_saved_is_dropped_quietly() {
+    // #472 condition 2: no error for the opener, and no row comes back.
+    let (store, _, folder) = setup();
+    let id = stored_header(&store, folder, 1);
+    store.delete_message_row(id).expect("removed by the sync");
+    assert!(matches!(
+        super::save_opened_body(&store, id, None, RAW),
+        Ok(())
+    ));
+    assert!(store.get_message_header(id).expect("get").is_none());
+    assert!(store.get_body(id).expect("body").is_none());
+}
+
+#[test]
+fn a_sync_writing_the_header_again_keeps_a_stored_body() {
+    // #472 condition 3: the sync's header upsert never clears the body.
+    let (store, _, folder) = setup();
+    let id = stored_header(&store, folder, 1);
+    super::save_opened_body(&store, id, None, RAW).expect("saved");
+    let again = stored_header(&store, folder, 1);
+    assert_eq!(again, id, "same row");
+    assert_eq!(
+        store
+            .get_message_header(id)
+            .expect("get")
+            .expect("header")
+            .body_state,
+        BodyState::Fetched
+    );
+    assert_eq!(store.get_body(id).expect("body").as_deref(), Some(RAW));
+}
+
+#[test]
+fn a_jmap_open_never_saves_into_a_row_that_took_its_id() {
+    // #488 review: row ids are reused (INTEGER PRIMARY KEY). The sync
+    // deletes the newest row and inserts another email, which gets the same
+    // id; the open still holding the old id must not write its body there.
+    let (store, account, folder) = setup();
+    let old = stored_header(&store, folder, 1);
+    store.delete_message_row(old).expect("the sync removes it");
+    let new = stored_header(&store, folder, 2);
+    assert_eq!(new, old, "the id was reused");
+    let email = super::JmapEmail {
+        account,
+        email_id: "M-old",
+    };
+    assert!(matches!(
+        super::save_opened_body(&store, old, Some(email), RAW),
+        Ok(())
+    ));
+    let row = store.get_message_header(new).expect("get").expect("header");
+    assert_eq!(row.body_state, BodyState::None, "the new email has no body");
+    assert!(store.get_body(new).expect("body").is_none());
 }

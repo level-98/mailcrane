@@ -13,6 +13,11 @@ mod compose {
     use mailcrane_store::{AccountId, NewAccount, Security, Store};
     use mailcrane_testkit::{FakeSmtp, Fault, MemorySecretStore};
 
+    /// Only a hang guard: a busy machine (a Gradle build, disk or memory
+    /// pressure) can stall the fake servers for seconds, and a short limit
+    /// would fail the test for that alone (#409, as in #362).
+    const HANG_GUARD: Duration = Duration::from_secs(60);
+
     struct Setup {
         smtp: FakeSmtp,
         store: Store,
@@ -61,7 +66,7 @@ mod compose {
 
     fn options(s: &Setup) -> SendOptions {
         SendOptions {
-            timeout: Duration::from_secs(5),
+            timeout: HANG_GUARD,
             extra_root_certs: vec![s.smtp.root_cert_der().to_vec()],
         }
     }
@@ -83,12 +88,9 @@ mod compose {
     }
 
     async fn run(s: &Setup, d: &ComposeDraft) -> Result<SendReport, SendError> {
-        tokio::time::timeout(
-            Duration::from_secs(20),
-            send(&s.store, &s.secrets, d, &options(s)),
-        )
-        .await
-        .expect("send must not hang")
+        tokio::time::timeout(2 * HANG_GUARD, send(&s.store, &s.secrets, d, &options(s)))
+            .await
+            .expect("send must not hang")
     }
 
     #[tokio::test]
@@ -144,6 +146,7 @@ mod compose {
                 highestmodseq: None,
                 is_subscribed: true,
                 selectable: true,
+                virtual_role: None,
             })
             .expect("folder");
         let raw = b"From: Bob Example <bob@example.net>\r\n\

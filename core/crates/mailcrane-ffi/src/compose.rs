@@ -496,6 +496,8 @@ async fn send_with(
     draft: ComposeDraft,
     options: &core::SendOptions,
 ) -> Result<SendResult, SendFailure> {
+    let account = mailcrane_store::AccountId(draft.account_id);
+    crate::secrets::refresh_oauth(db_path, secrets, account).await;
     let prepared = prepare(db_path, secrets, draft, options)?;
     let report = core::send_prepared(prepared).await?;
     Ok(SendResult {
@@ -524,6 +526,11 @@ mod tests {
     use super::*;
     use mailcrane_core::secrets::{Secret, SecretKey};
     use mailcrane_store::{NewAccount, Security};
+
+    /// Only a hang guard: a busy machine (a Gradle build, disk or memory
+    /// pressure) can stall the fake servers for seconds, and a short limit
+    /// would fail the test for that alone (#409, as in #362).
+    const HANG_GUARD: std::time::Duration = std::time::Duration::from_secs(60);
 
     fn draft(account_id: i64) -> ComposeDraft {
         ComposeDraft {
@@ -626,7 +633,7 @@ mod tests {
         );
 
         let options = core::SendOptions {
-            timeout: std::time::Duration::from_secs(5),
+            timeout: HANG_GUARD,
             extra_root_certs: vec![smtp.root_cert_der().to_vec()],
         };
         let mut bad = draft(id.0);

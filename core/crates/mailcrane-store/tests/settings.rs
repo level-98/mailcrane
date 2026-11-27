@@ -148,3 +148,24 @@ fn bad_authserv_ids_and_unknown_accounts_change_nothing() -> R {
     assert!(is_valid_authserv_id("mx_1-a.example.co.uk"));
     Ok(())
 }
+
+#[test]
+fn an_account_signs_in_with_a_password_unless_oauth_is_set() -> R {
+    // M3-02: Gmail accounts sign in with Google.
+    let dir = tempfile::tempdir()?;
+    let path = dir.path().join("a.db");
+    let store = Store::open(&path)?;
+    let id = store.insert_account(&account())?;
+    assert_eq!(store.oauth_provider(id)?, None);
+    assert!(store.set_oauth_provider(id, Some("google"))?);
+    drop(store);
+    let store = Store::open(&path)?;
+    assert_eq!(store.oauth_provider(id)?.as_deref(), Some("google"));
+    // Only known providers; an unknown account changes nothing.
+    assert!(store.set_oauth_provider(id, Some("example")).is_err());
+    assert_eq!(store.oauth_provider(id)?.as_deref(), Some("google"));
+    assert!(!store.set_oauth_provider(AccountId(99), Some("google"))?);
+    assert!(store.set_oauth_provider(id, None)?);
+    assert_eq!(store.oauth_provider(id)?, None);
+    Ok(())
+}

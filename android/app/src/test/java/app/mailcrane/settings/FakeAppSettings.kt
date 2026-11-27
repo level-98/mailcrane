@@ -180,4 +180,18 @@ class FakeAppSettings(
     override suspend fun setContactPhotos(enabled: Boolean) {
         photos.value = enabled
     }
+
+    val markRead = MutableStateFlow(MarkReadMode.ON_OPEN)
+    override val markReadMode: StateFlow<MarkReadMode> = markRead
+
+    override suspend fun setMarkReadMode(mode: MarkReadMode) {
+        markRead.value = mode
+    }
+
+    val afterMove = MutableStateFlow(AfterMoveAction.LIST)
+    override val afterMoveAction: StateFlow<AfterMoveAction> = afterMove
+
+    override suspend fun setAfterMoveAction(action: AfterMoveAction) {
+        afterMove.value = action
+    }
 }

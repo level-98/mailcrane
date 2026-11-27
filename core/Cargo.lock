@@ -1133,6 +1133,7 @@ dependencies = [
  "hyper",
  "hyper-util",
  "mailcrane-core",
+ "mailcrane-mime",
  "rcgen",
  "rustls",
  "serde_json",

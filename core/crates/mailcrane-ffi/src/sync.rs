@@ -14,7 +14,9 @@ use mailcrane_core::sync::{
     live_stop, log_failure, run_live_updates, FolderSyncer, ImapLogin, LiveAccount, LiveConfig,
     LiveStop, SyncConfig, SyncError as CoreSyncError,
 };
-use mailcrane_imap::{save_folder_list, ImapConfig, ImapError, ImapSecurity, Secret, Session};
+use mailcrane_imap::{
+    save_folder_list, ImapAuth, ImapConfig, ImapError, ImapSecurity, Secret, Session,
+};
 use mailcrane_store::{AccountId, FolderId, FolderRole, MessageId, Security, Store};
 
 /// Why a sync failed. Never carries server text.
@@ -205,6 +207,10 @@ pub struct SyncEngine {
     dns: Mutex<Option<Arc<dyn crate::autoconfig::PlatformDns>>>,
     #[cfg(test)]
     extra_root_cert: Mutex<Option<Vec<u8>>>,
+    /// For each pooled attempt of an IMAP open, whether its job thread was
+    /// marked urgent when the job started (#473: it mustn't be).
+    #[cfg(test)]
+    pub(crate) urgent_at_open: Mutex<Vec<bool>>,
 }
 
 #[uniffi::export]
@@ -224,6 +230,8 @@ impl SyncEngine {
             dns: Mutex::new(None),
             #[cfg(test)]
             extra_root_cert: Mutex::new(None),
+            #[cfg(test)]
+            urgent_at_open: Mutex::new(Vec::new()),
         })
     }
 
@@ -298,25 +306,32 @@ impl SyncEngine {
         // From here on a background download gives way (M4-25).
         let gate = self.account_lock(account);
         let _waiting = gate.announce();
-        if let Some(r) = self.run_jmap(account, |s| {
+        // Opening never waits for a sync: it takes no writer lock, on IMAP
+        // (issue #294) and JMAP alike (#472). Its only writes are the body's
+        // own short transactions, which the core marks urgent just around the
+        // save (`save_opened_body`), so they take the next turn for SQLite's
+        // write lock without holding it up while connecting or downloading
+        // (#473).
+        if let Some(r) = self.run_jmap_open(account, |s| {
             Box::pin(async move { s.fetch_body(MessageId(message_id)).await })
         }) {
             return r;
         }
-        // On the account's reused connection, without the sync's writer
-        // lock (issue #294): opening never waits for a sync. Its only writes
-        // are the body's own short transactions, marked urgent so they take
-        // the next turn for SQLite's write lock: a sync writing batch after
-        // batch would otherwise win every race and the save would end in
-        // SQLITE_BUSY.
+        // On the account's reused connection.
         let config = self.config;
-        mailcrane_store::urgent_writes(&self.db_path, || {
-            self.pooled(account, Retry::Idempotent, |store, session, listener| {
-                Box::pin(async move {
-                    FolderSyncer::new(store, session, listener, account, config)
-                        .fetch_body(MessageId(message_id))
-                        .await
-                })
+        self.pooled(account, Retry::Idempotent, |store, session, listener| {
+            // Tests: whether the thread starting the job (after waiting for
+            // the connection, before downloading) was marked urgent; it
+            // mustn't be (#473).
+            #[cfg(test)]
+            self.urgent_at_open
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .push(mailcrane_store::urgent_here(&self.db_path));
+            Box::pin(async move {
+                FolderSyncer::new(store, session, listener, account, config)
+                    .fetch_body(MessageId(message_id))
+                    .await
             })
         })
     }
@@ -339,6 +354,21 @@ impl SyncEngine {
     /// each folder's sync state. Returns the inbox's folder id, or `None` if
     /// the server has no inbox. On failure the saved folders are unchanged.
     pub fn refresh_folders(&self, account_id: i64) -> Result<Option<i64>, SyncFailure> {
+        // A local-only account never connects (#289): answered here, before
+        // any job thread, so it can't get a `Network` error either.
+        let account = AccountId(account_id);
+        if self.is_local(account)? {
+            let store = self.open_store()?;
+            return Ok(inbox_of(&store, account)?.map(|f| f.0));
+        }
+        // Never on the caller's stack (#462).
+        self.account_job(account, || self.refresh_folders_here(account_id))
+    }
+}
+
+impl SyncEngine {
+    /// [`Self::refresh_folders`], on the current thread.
+    fn refresh_folders_here(&self, account_id: i64) -> Result<Option<i64>, SyncFailure> {
         let account = AccountId(account_id);
         if self.is_local(account)? {
             let store = self.open_store()?;
@@ -379,7 +409,10 @@ impl SyncEngine {
         })?;
         Ok(inbox_of(&store, account)?.map(|f| f.0))
     }
+}
 
+#[uniffi::export]
+impl SyncEngine {
     /// The ids of every account in the database, for starting and stopping
     /// live updates.
     pub fn account_ids(&self) -> Result<Vec<i64>, SyncFailure> {
@@ -441,39 +474,37 @@ impl SyncEngine {
         let (sync_config, live_config) = (self.config, self.live_config);
         let extra_root_cert = self.extra_root_cert();
         let write_lock = self.account_lock(account).write_lock();
-        let thread = std::thread::Builder::new()
-            .name(format!("mailcrane-live-{account_id}"))
-            .spawn(move || {
-                let report = |kind| {
-                    listener.on_event(events::CoreEvent::SyncError {
-                        account_id: account,
-                        kind,
-                    })
-                };
-                let runtime = match runtime() {
-                    Ok(runtime) => runtime,
-                    Err(kind) => return report(kind),
-                };
-                let store = match Store::open(&db_path) {
-                    Ok(store) => store,
-                    Err(_) => return report(events::SyncErrorKind::Storage),
-                };
-                let login = || imap_login(&store, account, extra_root_cert.as_deref());
-                runtime.block_on(run_live_updates(
-                    &store,
-                    LiveAccount {
-                        id: account,
-                        write_lock,
-                    },
-                    &listener,
-                    login,
-                    sync_config,
-                    live_config,
-                    signal,
-                ));
-                let _ = done_tx.send(());
-            })
-            .map_err(|_| failed(events::SyncErrorKind::Network))?;
+        let thread = crate::worker::job_thread(format!("mailcrane-live-{account_id}"), move || {
+            let report = |kind| {
+                listener.on_event(events::CoreEvent::SyncError {
+                    account_id: account,
+                    kind,
+                })
+            };
+            let runtime = match runtime() {
+                Ok(runtime) => runtime,
+                Err(kind) => return report(kind),
+            };
+            let store = match Store::open(&db_path) {
+                Ok(store) => store,
+                Err(_) => return report(events::SyncErrorKind::Storage),
+            };
+            let login = || imap_login(&store, account, extra_root_cert.as_deref());
+            runtime.block_on(run_live_updates(
+                &store,
+                LiveAccount {
+                    id: account,
+                    write_lock,
+                },
+                &listener,
+                login,
+                sync_config,
+                live_config,
+                signal,
+            ));
+            let _ = done_tx.send(());
+        })
+        .map_err(|_| failed(events::SyncErrorKind::Network))?;
         // A finished thread for this account (it could not open the
         // database, say) is replaced.
         live.insert(
@@ -697,10 +728,10 @@ impl SyncEngine {
     }
 
     /// Connects for the folder's account and runs `job` with a syncer.
-    pub(crate) fn run<T>(
+    pub(crate) fn run<T: Send>(
         &self,
         folder: FolderId,
-        job: impl for<'a> FnOnce(&'a mut FolderSyncer<'_>) -> SyncFuture<'a, T>,
+        job: impl for<'a> FnOnce(&'a mut FolderSyncer<'_>) -> SyncFuture<'a, T> + Send,
     ) -> Result<T, SyncFailure> {
         self.run_replaying(folder, false, job)
     }
@@ -708,7 +739,21 @@ impl SyncEngine {
     /// [`Self::run`], replaying the account's queued actions first when
     /// `replay` is set. A replay that fails only defers the actions; the
     /// sync goes ahead.
-    fn run_replaying<T>(
+    fn run_replaying<T: Send>(
+        &self,
+        folder: FolderId,
+        replay: bool,
+        job: impl for<'a> FnOnce(&'a mut FolderSyncer<'_>) -> SyncFuture<'a, T> + Send,
+    ) -> Result<T, SyncFailure> {
+        // The folder's account, a short database read here, so a job thread
+        // that can't run is reported for it (#470 review). Never on the
+        // caller's stack (#462).
+        let account = self.folder_account(folder)?;
+        self.account_job(account, || self.run_replaying_here(folder, replay, job))
+    }
+
+    /// [`Self::run_replaying`], on the current thread.
+    fn run_replaying_here<T>(
         &self,
         folder: FolderId,
         replay: bool,
@@ -825,10 +870,11 @@ impl SyncEngine {
     /// recovery), so it never writes beside a sync. Never retried on a new
     /// connection: the jobs change things on the server and defer or undo
     /// what failed themselves.
-    pub(crate) fn with_session<T>(
+    pub(crate) fn with_session<T: Send>(
         &self,
         account: AccountId,
-        job: impl for<'a> FnOnce(&'a Store, &'a mut Session, &'a dyn EventListener) -> SyncFuture<'a, T>,
+        job: impl for<'a> FnOnce(&'a Store, &'a mut Session, &'a dyn EventListener) -> SyncFuture<'a, T>
+            + Send,
     ) -> Result<T, SyncFailure> {
         // Lock order: WriteLock, then the pooled connection (`pooled`).
         let lock = self.account_lock(account);
@@ -846,28 +892,28 @@ impl SyncEngine {
     /// Runs `job` on the account's reused connection (issue #294) with the
     /// store and a listener. `SyncError` events from inside the job are held
     /// back, since a failed attempt may be retried; the final failure is
-    /// reported once. Takes no writer lock itself.
-    pub(crate) fn pooled<T>(
+    /// reported once. Takes no writer lock itself. Runs on a thread with a
+    /// stack this crate sets (#462), never on the caller's.
+    pub(crate) fn pooled<T: Send>(
         &self,
         account: AccountId,
         retry: Retry,
-        mut job: impl for<'a> FnMut(
-            &'a Store,
-            &'a mut Session,
-            &'a dyn EventListener,
-        ) -> SyncFuture<'a, T>,
+        mut job: impl for<'a> FnMut(&'a Store, &'a mut Session, &'a dyn EventListener) -> SyncFuture<'a, T>
+            + Send,
     ) -> Result<T, SyncFailure> {
-        let ctx = (
-            self.open_store()?,
-            HoldErrors(ListenerAdapter(self.listener.clone())),
-        );
-        let extra_root_cert = self.extra_root_cert();
-        let login = || imap_login(&ctx.0, account, extra_root_cert.as_deref());
-        self.pool
-            .run(account, login, retry, &ctx, |session, (store, listener)| {
-                job(store, session, listener)
-            })
-            .map_err(|e| self.report(account, e.kind()))
+        self.account_job(account, || {
+            let ctx = (
+                self.open_store()?,
+                HoldErrors(ListenerAdapter(self.listener.clone())),
+            );
+            let extra_root_cert = self.extra_root_cert();
+            let login = || imap_login(&ctx.0, account, extra_root_cert.as_deref());
+            self.pool
+                .run(account, login, retry, &ctx, |session, (store, listener)| {
+                    job(store, session, listener)
+                })
+                .map_err(|e| self.report(account, e.kind()))
+        })
     }
 
     /// Sends a `SyncError` event and returns the matching failure.
@@ -902,8 +948,29 @@ impl SyncEngine {
         store: &Store,
         account: AccountId,
     ) -> Result<Session, events::SyncErrorKind> {
+        // An OAuth account (M3-02) gets a fresh access token first.
+        if let Ok(secrets) = crate::secrets::secret_store() {
+            match mailcrane_core::account::credentials::refresh_if_needed(
+                store,
+                secrets.as_ref(),
+                account,
+                &[],
+                OAUTH_TIMEOUT,
+            )
+            .await
+            {
+                Err(mailcrane_core::account::credentials::CredentialError::ReauthRequired) => {
+                    return Err(events::SyncErrorKind::Auth)
+                }
+                Err(mailcrane_core::account::credentials::CredentialError::Storage) => {
+                    return Err(events::SyncErrorKind::Storage)
+                }
+                // Not reachable now: try the cached token.
+                Err(mailcrane_core::account::credentials::CredentialError::Missing) | Ok(()) => {}
+            }
+        }
         let login = imap_login(store, account, self.extra_root_cert().as_deref())?;
-        Session::connect(&login.config, &login.username, &login.password)
+        Session::connect_auth(&login.config, &login.username, &login.auth)
             .await
             .map_err(|e: ImapError| {
                 let e = CoreSyncError::from(e);
@@ -911,6 +978,42 @@ impl SyncEngine {
                 e.kind()
             })
     }
+}
+
+impl SyncEngine {
+    /// [`on_job_thread`] for work on `account`'s behalf. A thread that
+    /// couldn't start, or (in the app) work that panicked, also sends a
+    /// `SyncError` event for the account, as a runtime that can't be built
+    /// does, so the app's error display sees it (#468).
+    pub(crate) fn account_job<T: Send>(
+        &self,
+        account: AccountId,
+        work: impl FnOnce() -> Result<T, SyncFailure> + Send,
+    ) -> Result<T, SyncFailure> {
+        self.job_outcome(account, crate::worker::on_job_thread(work))
+    }
+
+    /// What `account`'s job came back as; `None` (it didn't run, or it
+    /// panicked) is reported as `Network`.
+    fn job_outcome<T>(
+        &self,
+        account: AccountId,
+        outcome: Option<Result<T, SyncFailure>>,
+    ) -> Result<T, SyncFailure> {
+        outcome.unwrap_or_else(|| Err(self.report(account, events::SyncErrorKind::Network)))
+    }
+}
+
+/// Runs `work` on a thread with a stack this crate sets (#462), never on the
+/// caller's, whose size the app chooses. A thread that couldn't start, or
+/// work that panicked (in the app; tests let the panic through), comes back
+/// as `Network`, the kind `runtime` gives too. This sends no `SyncError`
+/// event: for work done for one account use [`SyncEngine::account_job`],
+/// which does. `worker::on_job_thread` logs which of the two it was.
+pub(crate) fn on_job_thread<T: Send>(
+    work: impl FnOnce() -> Result<T, SyncFailure> + Send,
+) -> Result<T, SyncFailure> {
+    crate::worker::on_job_thread(work).unwrap_or(Err(failed(events::SyncErrorKind::Network)))
 }
 
 pub(crate) fn runtime() -> Result<tokio::runtime::Runtime, events::SyncErrorKind> {
@@ -956,13 +1059,27 @@ fn imap_login(
     {
         return Err(events::SyncErrorKind::NotFound);
     }
-    let password = crate::secrets::secret_store()
-        .and_then(|s| s.get(&SecretKey::account_password(account.0)))
-        .map_err(|_| events::SyncErrorKind::Auth)?
-        .ok_or(events::SyncErrorKind::Auth)?;
-    let password = std::str::from_utf8(password.expose())
-        .map_err(|_| events::SyncErrorKind::Auth)?
-        .to_owned();
+    let secrets = crate::secrets::secret_store().map_err(|_| events::SyncErrorKind::Auth)?;
+    // Outside an async runtime (the connection pool), an OAuth account's
+    // token is refreshed here; inside one, the async paths did it first.
+    if tokio::runtime::Handle::try_current().is_err() {
+        if let Ok(rt) = runtime() {
+            let _ = rt.block_on(mailcrane_core::account::credentials::refresh_if_needed(
+                store,
+                secrets.as_ref(),
+                account,
+                &[],
+                OAUTH_TIMEOUT,
+            ));
+        }
+    }
+    use mailcrane_core::account::credentials::{credential, Credential, CredentialError};
+    let auth = match credential(store, secrets.as_ref(), account) {
+        Ok(Credential::Password(p)) => ImapAuth::Password(Secret::new(p)),
+        Ok(Credential::OAuth(token)) => ImapAuth::XOAuth2(Secret::new(token.as_str())),
+        Err(CredentialError::Storage) => return Err(events::SyncErrorKind::Storage),
+        Err(_) => return Err(events::SyncErrorKind::Auth),
+    };
     let security = match row.details.imap_security {
         Security::Tls => ImapSecurity::ImplicitTls,
         Security::Starttls => ImapSecurity::StartTls,
@@ -974,9 +1091,12 @@ fn imap_login(
     Ok(ImapLogin {
         config,
         username: row.details.username,
-        password: Secret::new(password),
+        auth,
     })
 }
+
+/// How long refreshing an OAuth access token may take (M3-02).
+const OAUTH_TIMEOUT: Duration = Duration::from_secs(20);
 
 /// How long the background check waits for background downloads before
 /// returning its notifications.
@@ -1043,5 +1163,7 @@ mod pool_tests;
 mod prefetch_tests;
 #[cfg(test)]
 mod push_tests;
+#[cfg(test)]
+mod stack_tests;
 #[cfg(test)]
 mod tests;

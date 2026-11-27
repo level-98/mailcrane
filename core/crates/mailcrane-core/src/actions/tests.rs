@@ -278,6 +278,36 @@ async fn delete_in_trash_deletes_for_good_with_uid_expunge() {
 }
 
 #[tokio::test]
+async fn gmail_archive_moves_to_all_mail_delete_to_trash_and_flag_stars() {
+    // M3-02: Gmail has no Archive folder. Archive = remove the Inbox label
+    // = UID MOVE to [Gmail]/All Mail; delete goes to [Gmail]/Trash; a flag
+    // is Gmail's star.
+    let imap = FakeImap::builder()
+        .user(USER, PASSWORD)
+        .folder("INBOX", vec![raw(1), raw(2), raw(3)])
+        .gmail_layout()
+        .start()
+        .await
+        .expect("fake imap");
+    let s = setup(&imap, Store::open_in_memory().expect("store")).await;
+    let events = Events::default();
+    act(&s, 1, Action::Archive, &events);
+    act(&s, 2, Action::Delete, &events);
+    act(&s, 3, Action::Flag, &events);
+    let report = replay_now(&imap, &s, &events, NOW).await;
+    assert_eq!(report.done, 3);
+    assert_eq!(server_uids(&imap, "INBOX").await, vec![3]);
+    assert_eq!(server_uids(&imap, "[Gmail]/All Mail").await.len(), 1);
+    assert_eq!(server_uids(&imap, "[Gmail]/Trash").await.len(), 1);
+    assert!(server_flags(&imap, "INBOX", 3)
+        .await
+        .iter()
+        .any(|f| f == "\\Flagged"));
+    let received = imap.received_commands().await;
+    assert!(received.iter().any(|c| c == "UID MOVE"));
+}
+
+#[tokio::test]
 async fn archive_without_an_archive_folder_is_an_error_and_changes_nothing() {
     let imap = FakeImap::builder()
         .user(USER, PASSWORD)
@@ -591,4 +621,73 @@ async fn bulk_flag_skips_messages_already_flagged_and_counts_each_once() {
     let none = apply_bulk_action(&s.store, &[s.message(1)], Action::Flag, NOW, &events)
         .expect("nothing to do");
     assert_eq!(none, BulkApplied::default());
+}
+
+/// A virtual folder in `s`'s account, such as Gmail's Starred (#390).
+fn add_virtual_folder(s: &Setup) -> FolderId {
+    s.store
+        .upsert_folder(&mailcrane_store::NewFolder {
+            account_id: s.account,
+            remote_name: "[Gmail]/Starred".into(),
+            display_name: "Starred".into(),
+            delimiter: Some("/".into()),
+            role: None,
+            uidvalidity: None,
+            uidnext: None,
+            highestmodseq: None,
+            is_subscribed: true,
+            selectable: true,
+            virtual_role: Some(mailcrane_store::VirtualRole::Starred),
+        })
+        .expect("virtual folder")
+}
+
+#[tokio::test]
+async fn nothing_moves_into_a_virtual_folder() {
+    // #390 review: the core refuses it, whatever the app offers; nothing is
+    // queued or changed.
+    let imap = fake(&[], &[]).await;
+    let s = setup(&imap, Store::open_in_memory().expect("store")).await;
+    let starred = add_virtual_folder(&s);
+    let events = Events::default();
+    let moved = apply_action(
+        &s.store,
+        &[s.message(1)],
+        Action::Move { to: starred },
+        NOW,
+        &events,
+    );
+    assert!(matches!(moved, Err(ActionError::NotADestination)));
+    let bulk = apply_bulk_action(
+        &s.store,
+        &[s.message(1)],
+        Action::Move { to: starred },
+        NOW,
+        &events,
+    );
+    assert!(matches!(bulk, Err(ActionError::NotADestination)));
+    assert_eq!(s.store.count_pending_ops(s.account).expect("count"), 0);
+    assert!(events.all().is_empty());
+}
+
+#[tokio::test]
+async fn a_rule_moving_into_a_virtual_folder_cant_be_saved() {
+    // #390 review: saving checks every move target.
+    let imap = fake(&[], &[]).await;
+    let s = setup(&imap, Store::open_in_memory().expect("store")).await;
+    let starred = add_virtual_folder(&s);
+    let rule = |to: FolderId| crate::rules::NewRule {
+        account_id: Some(s.account),
+        name: "R".into(),
+        enabled: true,
+        match_all: true,
+        stop_processing: false,
+        conditions: vec![crate::rules::RuleCondition::Subject("x".into())],
+        actions: vec![
+            crate::rules::RuleAction::MarkRead,
+            crate::rules::RuleAction::Move(to),
+        ],
+    };
+    assert!(!crate::rules::targets_take_moves(&s.store, &rule(starred)).expect("check"));
+    assert!(crate::rules::targets_take_moves(&s.store, &rule(s.inbox)).expect("check"));
 }

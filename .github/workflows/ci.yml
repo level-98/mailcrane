@@ -2,10 +2,23 @@
 # core/xtask, so what passes locally is what passes here. Don't add check
 # logic to this file.
 #
-# Runs on every pull request (no path filters) and on pushes to main:
+# Runs on every pull request, merge queue group and push to main:
+#   changes  which of the jobs below this change needs (#530)
 #   linux    every check, and builds the debug APK (uploaded)
 #   windows  fmt, clippy and tests of the core, to keep it portable
-#   ci-ok    passes only if every job above passed
+#   ci-ok    passes only if every job above passed or was rightly skipped
+#
+# What `changes` picks, from the files a pull request or merge group changes
+# (renames count as both paths):
+#   docs only (docs/**, website/**, *.md at the top level)
+#            linux and windows are skipped; ci-ok still runs and passes
+#   android/** (and docs) only
+#            linux runs in full; windows is skipped
+#   anything else, every push to main and every hand-started run
+#            linux and windows, as before
+# docs/dev-mail.md counts as code: an xtask test reads it. Linux always runs
+# every step: checks cross the tree (strings, licences, the release guard,
+# the core's Android-only code, the OAuth redirect), so no finer split.
 #
 # Third-party actions are pinned to a commit SHA; the comment gives the
 # version it was taken from.
@@ -15,12 +28,16 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Ready for GitHub's merge queue; does nothing until it is turned on.
+  merge_group:
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.ref }}
+  # The event too, so a hand-started run doesn't cancel main's push run.
+  group: ci-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
 
 env:
@@ -29,7 +46,67 @@ env:
   NDK_VERSION: "30.0.16248370"
 
 jobs:
+  changes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      linux: ${{ steps.pick.outputs.linux }}
+      windows: ${{ steps.pick.outputs.windows }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # A pull request's merge commit and its first parent, the base.
+          fetch-depth: 2
+
+      - name: Pick the jobs this change needs
+        id: pick
+        env:
+          EVENT: ${{ github.event_name }}
+          MERGE_GROUP_BASE: ${{ github.event.merge_group.base_sha }}
+        run: |
+          set -eu
+          base=""
+          case "$EVENT" in
+            pull_request) base="$(git rev-parse HEAD^1)" ;;
+            merge_group)
+              git fetch --no-tags --depth=1 origin "$MERGE_GROUP_BASE"
+              base="$MERGE_GROUP_BASE"
+              ;;
+          esac
+          # Pushes to main and hand-started runs check everything.
+          linux=true
+          windows=true
+          if [ -n "$base" ]; then
+            # --no-renames: a move out of android/ lists its old path too.
+            files="$(git diff --name-only --no-renames "$base" HEAD)"
+            printf 'changed files:\n%s\n' "$files"
+            android=false
+            other=false
+            while IFS= read -r f; do
+              case "$f" in
+                "") ;;
+                docs/dev-mail.md) other=true ;;
+                docs/* | website/*) ;;
+                android/*) android=true ;;
+                */*) other=true ;;
+                *.md) ;;
+                *) other=true ;;
+              esac
+            done <<< "$files"
+            if [ "$other" = false ]; then
+              windows=false
+              linux="$android"
+            fi
+          fi
+          echo "linux=$linux windows=$windows"
+          {
+            echo "linux=$linux"
+            echo "windows=$windows"
+          } >> "$GITHUB_OUTPUT"
+
   linux:
+    needs: changes
+    if: needs.changes.outputs.linux == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -51,7 +128,8 @@ jobs:
       - uses: taiki-e/install-action@fe3acb53a98b62c772db35de75ce0e4595e7ca8c # v2.90.8
         with:
           # cargo-ndk pinned for reproducible release builds (docs/fdroid.md).
-          tool: cargo-deny,cargo-ndk@4.1.2
+          # cargo-about checks the in-app licences list (#366).
+          tool: cargo-deny,cargo-ndk@4.1.2,cargo-about@0.9.3
 
       - uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
         with:
@@ -78,6 +156,8 @@ jobs:
           if-no-files-found: error
 
   windows:
+    needs: changes
+    if: needs.changes.outputs.windows == 'true'
     runs-on: windows-latest
     timeout-minutes: 30
     steps:
@@ -98,16 +178,29 @@ jobs:
 
   ci-ok:
     if: always()
-    needs: [linux, windows]
+    needs: [changes, linux, windows]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      # Fails if any job failed, was cancelled or was skipped.
-      - name: Every job passed
+      # Fails if any job failed or was cancelled, or was skipped although
+      # `changes` said this change needs it (or `changes` itself failed).
+      - name: Every needed job passed
         env:
-          RESULTS: ${{ join(needs.*.result, ' ') }}
+          CHANGES: ${{ needs.changes.result }}
+          LINUX: ${{ needs.linux.result }}
+          WINDOWS: ${{ needs.windows.result }}
+          NEED_LINUX: ${{ needs.changes.outputs.linux }}
+          NEED_WINDOWS: ${{ needs.changes.outputs.windows }}
         run: |
-          echo "results: $RESULTS"
-          for r in $RESULTS; do
-            if [ "$r" != "success" ]; then exit 1; fi
-          done
+          echo "changes=$CHANGES linux=$LINUX ($NEED_LINUX) windows=$WINDOWS ($NEED_WINDOWS)"
+          [ "$CHANGES" = success ] || exit 1
+          # check <needed> <result>
+          check() {
+            case "$2" in
+              success) ;;
+              skipped) [ "$1" = false ] || exit 1 ;;
+              *) exit 1 ;;
+            esac
+          }
+          check "$NEED_LINUX" "$LINUX"
+          check "$NEED_WINDOWS" "$WINDOWS"

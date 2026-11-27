@@ -4,8 +4,8 @@ use crate::command::{self, Arg, Tags};
 use crate::connection::{connect_tcp, within, Connection, Io};
 use crate::error::ImapError;
 use crate::parser::{Code, Condition, Limits, RespText, Response, StatusKind, Untagged};
-use crate::{b64, mutf7, roles, tls, Secret};
-use mailcrane_store::{AccountId, FolderId, FolderRole, NewFolder, Store};
+use crate::{b64, mutf7, roles, tls, ImapAuth, Secret, ServerQuirk};
+use mailcrane_store::{AccountId, FolderId, FolderRole, NewFolder, Store, VirtualRole};
 use std::collections::HashMap;
 use std::time::Duration;
 
@@ -76,6 +76,9 @@ pub struct ImapFolder {
     pub attributes: Vec<String>,
     /// The folder's role, from SPECIAL-USE or its name.
     pub role: Option<FolderRole>,
+    /// A virtual folder's kind, such as Gmail's Starred (#390). Only on a
+    /// folder with no role.
+    pub virtual_role: Option<VirtualRole>,
 }
 
 /// An authenticated IMAP session over TLS.
@@ -138,10 +141,28 @@ impl Session {
         username: &str,
         password: &Secret,
     ) -> Result<Session, ImapError> {
+        Self::connect_auth(config, username, &ImapAuth::Password(password.clone())).await
+    }
+
+    /// [`Session::connect`] with a password or an OAuth access token.
+    pub async fn connect_auth(
+        config: &ImapConfig,
+        username: &str,
+        auth: &ImapAuth,
+    ) -> Result<Session, ImapError> {
         if config.host.is_empty() || config.host.chars().any(|c| c.is_control() || c == ' ') {
             return Err(ImapError::InvalidInput);
         }
-        if !valid_credential(username) || !valid_credential(password.expose()) {
+        let secret = match auth {
+            ImapAuth::Password(s) | ImapAuth::XOAuth2(s) => s,
+        };
+        if !valid_credential(username) || !valid_credential(secret.expose()) {
+            return Err(ImapError::InvalidInput);
+        }
+        // XOAUTH2 separates its fields with ^A: neither may contain one.
+        if matches!(auth, ImapAuth::XOAuth2(_))
+            && (username.contains('\u{1}') || secret.expose().contains('\u{1}'))
+        {
             return Err(ImapError::InvalidInput);
         }
         let host = config.host.as_str();
@@ -183,7 +204,7 @@ impl Session {
             // RFC 9051 §7.1.4: already authenticated, over TLS.
             return Ok(session);
         }
-        session.login(username, password).await?;
+        session.login(username, auth).await?;
         tracing::debug!(host, "IMAP logged in");
         Ok(session)
     }
@@ -250,9 +271,21 @@ impl Session {
         capabilities_in(&done).ok_or(ImapError::Protocol)
     }
 
-    /// `AUTHENTICATE PLAIN` if offered (RFC 9051 §6.2.2, RFC 4616),
-    /// otherwise `LOGIN` (§6.2.3) unless `LOGINDISABLED` is advertised.
-    async fn login(&mut self, username: &str, password: &Secret) -> Result<(), ImapError> {
+    /// With a password: `AUTHENTICATE PLAIN` if offered (RFC 9051 §6.2.2,
+    /// RFC 4616), otherwise `LOGIN` (§6.2.3) unless `LOGINDISABLED` is
+    /// advertised. With a token: `AUTHENTICATE XOAUTH2`, which the server
+    /// must offer.
+    async fn login(&mut self, username: &str, auth: &ImapAuth) -> Result<(), ImapError> {
+        let password = match auth {
+            ImapAuth::Password(password) => password,
+            ImapAuth::XOAuth2(token) => {
+                if !has_cap(&self.caps, "AUTH=XOAUTH2") {
+                    return Err(ImapError::AuthFailed);
+                }
+                let done = self.authenticate_xoauth2(username, token).await?;
+                return self.after_login(done).await;
+            }
+        };
         let done = if has_cap(&self.caps, "AUTH=PLAIN") {
             self.authenticate_plain(username, password).await?
         } else if has_cap(&self.caps, "LOGINDISABLED") {
@@ -267,6 +300,11 @@ impl Session {
             )
             .await?
         };
+        self.after_login(done).await
+    }
+
+    /// The end of a login: the server's answer, then its capabilities.
+    async fn after_login(&mut self, done: Done) -> Result<(), ImapError> {
         if done.status != StatusKind::Ok {
             return Err(ImapError::AuthFailed);
         }
@@ -276,6 +314,28 @@ impl Session {
             None => self.capability().await?,
         };
         Ok(())
+    }
+
+    /// Google's XOAUTH2 (developers.google.com/gmail/imap/xoauth2-protocol):
+    /// the token after the server's `+`. A refused token comes back as a
+    /// second `+` with an error description, which is answered with an
+    /// empty line; the server then sends `NO`. The token is never logged.
+    async fn authenticate_xoauth2(
+        &mut self,
+        username: &str,
+        token: &Secret,
+    ) -> Result<Done, ImapError> {
+        self.last_command = Some("AUTHENTICATE");
+        let tag = self.tags.next();
+        let start = format!("{tag} AUTHENTICATE XOAUTH2\r\n").into_bytes();
+        let payload = format!("user={username}\x01auth=Bearer {}\x01\x01", token.expose());
+        let response = format!("{}\r\n", b64::encode(payload.as_bytes())).into_bytes();
+        let limit = self.command_timeout;
+        within(
+            limit,
+            exchange(&mut self.conn, tag, vec![start, response, b"\r\n".to_vec()]),
+        )
+        .await?
     }
 
     async fn authenticate_plain(
@@ -365,6 +425,7 @@ impl Session {
                 delimiter: item.delimiter,
                 attributes: item.attributes,
                 role: None,
+                virtual_role: None,
             });
         }
         if skipped > 0 {
@@ -385,8 +446,13 @@ impl Session {
             })
             .collect();
         let assigned = roles::assign(&candidates);
+        let gmail = self.quirks().contains(&ServerQuirk::GmailLabels);
         for (folder, role) in folders.iter_mut().zip(assigned) {
             folder.role = role;
+            folder.virtual_role = role
+                .is_none()
+                .then(|| roles::virtual_role(&folder.attributes, gmail))
+                .flatten();
         }
         tracing::debug!(host = %self.host, count = folders.len(), "IMAP folders listed");
         Ok(folders)
@@ -429,10 +495,13 @@ pub fn save_folders(
 /// `folders` must be a complete, successful `LIST`. Stored folders it
 /// doesn't contain are gone from the server (deleted or renamed by another
 /// client) and are removed with their messages and queued changes; rules
-/// that moved mail to them are turned off with a note. Two exceptions: a
+/// that moved mail to them are turned off with a note. Three exceptions: a
 /// standard folder (a role from SPECIAL-USE or its name) that is gone under
 /// its old name but whose role now belongs to a newly listed folder is
-/// renamed to it instead, keeping its row; and the Inbox is never removed.
+/// renamed to it instead, keeping its row; a virtual folder (#390), such as
+/// Gmail's Starred, is renamed the same way by its virtual role, but only
+/// when exactly one such folder is gone and exactly one is newly listed
+/// (#461); and the Inbox is never removed.
 /// An empty list removes nothing: a server always has an Inbox, so an empty
 /// answer can't be trusted.
 pub fn save_folder_list(
@@ -457,19 +526,43 @@ pub fn save_folder_list(
             .collect()
     };
     // A standard folder gone under its old name, whose role a newly listed
-    // folder now has: the same folder, renamed elsewhere.
+    // folder now has: the same folder, renamed elsewhere. A virtual folder
+    // (#390) the same way, by its virtual role: Gmail renames
+    // "[Gmail]/Starred" when its interface language changes, and the folder
+    // keeps its messages and rules instead of being removed and fetched
+    // again (#461).
     let mut renames = Vec::new();
     let mut removed = Vec::new();
+    let gone_virtual: Vec<VirtualRole> = gone
+        .iter()
+        .filter(|f| f.details.role.is_none())
+        .filter_map(|f| f.details.virtual_role)
+        .collect();
     for f in gone {
-        let found = f.details.role.and_then(|role| {
-            folders.iter().find(|l| {
-                l.role == Some(role)
-                    && !existing.contains_key(&l.raw_name)
-                    && !renames
-                        .iter()
-                        .any(|(_, r, _): &(FolderId, String, String)| *r == l.raw_name)
-            })
-        });
+        let free = |l: &&ImapFolder| {
+            !existing.contains_key(&l.raw_name)
+                && !renames
+                    .iter()
+                    .any(|(_, r, _): &(FolderId, String, String)| *r == l.raw_name)
+        };
+        let found = match (f.details.role, f.details.virtual_role) {
+            (Some(role), _) => folders.iter().filter(free).find(|l| l.role == Some(role)),
+            // Several folders can share a virtual role (every `\Flagged`
+            // one), so only an unambiguous pair is the same folder renamed:
+            // exactly one gone and exactly one newly listed (#482 review).
+            (None, Some(kind)) => {
+                let gone_alike = gone_virtual.iter().filter(|k| **k == kind).count();
+                let mut listed = folders
+                    .iter()
+                    .filter(free)
+                    .filter(|l| l.role.is_none() && l.virtual_role == Some(kind));
+                match (gone_alike, listed.next(), listed.next()) {
+                    (1, Some(only), None) => Some(only),
+                    _ => None,
+                }
+            }
+            (None, None) => None,
+        };
         match found {
             Some(l) => {
                 if let Some(old) = existing.remove(&f.details.remote_name) {
@@ -498,6 +591,8 @@ pub fn save_folder_list(
                     .attributes
                     .iter()
                     .any(|a| a.eq_ignore_ascii_case("\\Noselect")),
+                // Starred and Gmail's Important (#390), from `list_folders`.
+                virtual_role: f.virtual_role,
             }
         })
         .collect();

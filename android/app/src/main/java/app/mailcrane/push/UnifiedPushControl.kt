@@ -2,12 +2,13 @@ package app.mailcrane.push
 
 import android.app.Activity
 import android.content.Context
+import app.mailcrane.work.JmapPushWorker
 import org.unifiedpush.android.connector.UnifiedPush
 
 /**
  * Turns push wake-ups on and off (M4-05). Off by default: it needs a UnifiedPush distributor app
- * and, because IMAP servers don't send push messages themselves, a gateway on the user's side
- * that watches their mailbox and posts to the address (docs/unifiedpush.md).
+ * and, for IMAP accounts, a gateway on the user's side that watches their mailbox and posts to the
+ * address (docs/unifiedpush.md). JMAP accounts are subscribed with their server (M4-27).
  *
  * The periodic check keeps running alongside, so nothing is missed if the gateway is down.
  */
@@ -34,8 +35,12 @@ object UnifiedPushControl {
         }
     }
 
-    /** Ends the registration with the distributor and forgets the address. */
+    /**
+     * Ends the registration with the distributor, removes the JMAP push subscriptions (M4-27) and
+     * forgets the address.
+     */
     fun turnOff(context: Context) {
+        JmapPushWorker.turnedOff(context)
         UnifiedPush.unregister(context)
         UnifiedPushState.get(context).set(PushStatus.Off)
     }

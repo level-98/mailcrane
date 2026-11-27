@@ -79,12 +79,12 @@ It runs `fmt`, `clippy -D warnings`, the tests, `cargo deny`, the no-panic lint,
 
 ## 8. Pull requests
 
-- One issue per PR, from current `main`. Branch `<issue>-<short-name>`. Body includes `Closes #<issue>`.
+- One issue per PR, from current `main`. Branch `<issue>-<short-name>`. Body includes `Closes #<issue>`. The maintainer's agent fleet has its own exception for small groups of similar issues in [docs/fleet.md](docs/fleet.md#rules-for-every-seat) (rule 5).
 - Commits follow Conventional Commits: `feat(imap): support IDLE`.
 - Add a file to `docs/changelog.d/`. Don't edit shared tables.
 - Fill in the PR template, including **AI-assisted: yes** with the tool and model, and what you actually tested.
 - Open it as a **draft** until `cargo xtask ci` passes.
-- Anything touching sign-in, credentials, TLS, encryption or the sanitiser: add the `security` label and never merge it yourself.
+- Anything touching sign-in, credentials, TLS, encryption or the sanitiser: add the `security` label and never merge it yourself. The maintainer's own agent fleet is the one exception: its lead merges under the conditions in [docs/fleet.md](docs/fleet.md#merging).
 
 ## 9. Conventions
 

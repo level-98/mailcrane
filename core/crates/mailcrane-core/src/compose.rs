@@ -345,12 +345,13 @@ pub(crate) fn smtp_settings(
     {
         return Err(SendError::MissingCredentials);
     }
-    let password = secrets
-        .get(&SecretKey::account_password(account_id.0))
-        .map_err(|_| SendError::MissingCredentials)?
-        .ok_or(SendError::MissingCredentials)?;
-    let password =
-        std::str::from_utf8(password.expose()).map_err(|_| SendError::MissingCredentials)?;
+    // The password, or an OAuth access token (M3-02) that the caller
+    // refreshed first.
+    use crate::account::credentials::{credential, Credential, CredentialError};
+    let credential = credential(store, secrets, account_id).map_err(|e| match e {
+        CredentialError::Storage => SendError::Storage,
+        CredentialError::Missing | CredentialError::ReauthRequired => SendError::MissingCredentials,
+    })?;
     let security = match account.smtp_security {
         Security::Tls => SmtpSecurity::ImplicitTls,
         Security::Starttls => SmtpSecurity::StartTls,
@@ -359,9 +360,15 @@ pub(crate) fn smtp_settings(
     config.connect_timeout = options.timeout;
     config.command_timeout = options.timeout;
     config.extra_root_certs = options.extra_root_certs.clone();
-    let auth = SmtpAuth::Password {
-        username: account.username,
-        password: mailcrane_smtp::Secret::new(password),
+    let auth = match credential {
+        Credential::Password(password) => SmtpAuth::Password {
+            username: account.username,
+            password: mailcrane_smtp::Secret::new(password),
+        },
+        Credential::OAuth(token) => SmtpAuth::XOAuth2 {
+            username: account.username,
+            token: mailcrane_smtp::Secret::new(token.as_str()),
+        },
     };
     Ok((config, auth))
 }

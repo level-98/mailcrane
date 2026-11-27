@@ -5,7 +5,8 @@
 #![cfg(test)]
 
 use mailcrane_imap::{
-    save_folders, ImapConfig, ImapError, ImapSecurity, SearchKey, Secret, Session, SEARCH_WINDOW,
+    save_folders, ImapAuth, ImapConfig, ImapError, ImapSecurity, SearchKey, Secret, Session,
+    SEARCH_WINDOW,
 };
 use mailcrane_store::{FolderRole, NewAccount, NewFolder, Security, Store};
 use mailcrane_testkit::{FakeImap, Fault, Quirk};
@@ -14,6 +15,11 @@ use std::time::Duration;
 const USER: &str = "alice@example.org";
 const PASSWORD: &str = "s3cret-value";
 const BOTH: [ImapSecurity; 2] = [ImapSecurity::ImplicitTls, ImapSecurity::StartTls];
+/// Each connect's and command's limit, only a hang guard: a busy machine (a
+/// Gradle build, disk or memory pressure) can stall the fake server for
+/// seconds, and a short limit would fail the test for that alone (#409).
+/// The tests that check a timeout fires set their own short one.
+const HANG_GUARD: Duration = Duration::from_secs(60);
 
 /// The fake server's port for `security`: implicit TLS and STARTTLS are
 /// separate ports, as on a real server.
@@ -27,8 +33,8 @@ fn port(imap: &FakeImap, security: ImapSecurity) -> u16 {
 fn config(imap: &FakeImap, security: ImapSecurity) -> ImapConfig {
     let mut config = ImapConfig::new("localhost", port(imap, security), security)
         .with_extra_root_cert(imap.root_cert_der().to_vec());
-    config.command_timeout = Duration::from_millis(500);
-    config.connect_timeout = Duration::from_secs(5);
+    config.command_timeout = HANG_GUARD;
+    config.connect_timeout = HANG_GUARD;
     config
 }
 
@@ -46,7 +52,7 @@ async fn fake(faults: &[Fault], quirks: &[Quirk]) -> FakeImap {
 async fn connect(config: &ImapConfig, password: &str) -> Result<Session, ImapError> {
     // Any hang is a failure: the client's own timeouts must fire first.
     tokio::time::timeout(
-        Duration::from_secs(10),
+        2 * HANG_GUARD,
         Session::connect(config, USER, &Secret::new(password)),
     )
     .await
@@ -107,7 +113,7 @@ async fn untrusted_certificate_is_a_tls_failure() {
         let imap = fake(&[], &[]).await;
         // The same server, without trusting the testkit's root.
         let mut config = ImapConfig::new("localhost", port(&imap, security), security);
-        config.command_timeout = Duration::from_millis(500);
+        config.command_timeout = HANG_GUARD;
         let result = connect(&config, PASSWORD).await;
         assert!(matches!(result, Err(ImapError::TlsFailure)), "{result:?}");
         assert!(!credentials_sent(&imap.received_commands().await));
@@ -154,14 +160,18 @@ async fn hostile_servers_give_errors_not_panics_or_hangs() {
             "{security:?}: {result:?}"
         );
 
-        let imap = fake(&[Fault::Delay(Duration::from_secs(3))], &[]).await;
+        // The server stalls for the whole hang guard; the client's own
+        // short command limit must end the wait long before that.
+        let imap = fake(&[Fault::Delay(HANG_GUARD)], &[]).await;
+        let mut short = config(&imap, security);
+        short.command_timeout = Duration::from_millis(500);
         let started = std::time::Instant::now();
-        let result = connect(&config(&imap, security), PASSWORD).await;
+        let result = connect(&short, PASSWORD).await;
         assert!(
             matches!(result, Err(ImapError::Timeout)),
             "{security:?}: {result:?}"
         );
-        assert!(started.elapsed() < Duration::from_secs(3));
+        assert!(started.elapsed() < HANG_GUARD);
     }
 }
 
@@ -317,6 +327,7 @@ async fn saving_again_keeps_sync_state() {
             highestmodseq: Some(99),
             is_subscribed: false,
             selectable: true,
+            virtual_role: None,
         })
         .expect("seed");
     save_folders(&store, account, &folders).expect("saved");
@@ -436,7 +447,7 @@ async fn fetch_on_a_dropped_connection_is_an_error_not_a_hang() {
         .await
         .expect("logged in");
     session.select("INBOX").await.expect("selects");
-    let result = tokio::time::timeout(Duration::from_secs(5), session.uid_fetch_headers(&[1]))
+    let result = tokio::time::timeout(2 * HANG_GUARD, session.uid_fetch_headers(&[1]))
         .await
         .expect("must not hang");
     assert!(result.is_err());
@@ -529,4 +540,35 @@ async fn select_reusing_skips_a_repeat_select_and_noop_works() {
     session.noop().await.expect("noop");
     assert!(imap.received_commands().await.iter().any(|c| c == "NOOP"));
     session.logout().await;
+}
+
+#[tokio::test]
+async fn xoauth2_logs_in_with_the_token_and_refuses_a_wrong_one() {
+    // M3-02: Gmail's XOAUTH2. A refused token gets Google's `+` with an
+    // error, answered with an empty line, then `NO`.
+    let imap = FakeImap::builder()
+        .user(USER, PASSWORD)
+        .xoauth2_token("ya29.good-token")
+        .start()
+        .await
+        .expect("fake imap");
+    let config = config(&imap, ImapSecurity::ImplicitTls);
+    let good = ImapAuth::XOAuth2(Secret::new("ya29.good-token"));
+    let session = Session::connect_auth(&config, USER, &good)
+        .await
+        .expect("logged in");
+    session.logout().await;
+
+    let bad = ImapAuth::XOAuth2(Secret::new("ya29.expired"));
+    let err = Session::connect_auth(&config, USER, &bad).await.err();
+    assert!(matches!(err, Some(ImapError::AuthFailed)), "{err:?}");
+}
+
+#[tokio::test]
+async fn xoauth2_needs_the_server_to_offer_it() {
+    let imap = fake(&[], &[]).await;
+    let config = config(&imap, ImapSecurity::ImplicitTls);
+    let token = ImapAuth::XOAuth2(Secret::new("ya29.token"));
+    let err = Session::connect_auth(&config, USER, &token).await.err();
+    assert!(matches!(err, Some(ImapError::AuthFailed)), "{err:?}");
 }

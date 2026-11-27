@@ -10,9 +10,14 @@ use mailcrane_testkit::FakeJmap;
 use serde_json::json;
 use std::time::Duration;
 
+/// Each request's limit (connect to last byte). Only a hang guard: a busy
+/// machine can stall a request against the fake for seconds, and the same
+/// 5 s limit is the likely cause of the actions tests' failures (#362).
+const HANG_GUARD: Duration = Duration::from_secs(60);
+
 fn config(server: &FakeJmap) -> ClientConfig {
     ClientConfig {
-        timeout: Duration::from_secs(5),
+        timeout: HANG_GUARD,
         extra_roots: vec![server.root_cert_der().to_vec()],
     }
 }
