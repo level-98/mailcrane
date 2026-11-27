@@ -685,15 +685,19 @@ class ComposeViewModelTest {
         vm.start(1)
         assertEquals("H\n\n-- \nAnn", vm.state.value.body)
         vm.onBodyChange("Hi", typing)
+        assertEquals(2, vm.state.value.bodyCursor)
         vm.onBodyChange("Hi there", typing)
         assertEquals("Hi there\n\n-- \nAnn", vm.state.value.body)
         assertEquals(1, separators(vm.state.value.body))
+        // And the field is told to put the cursor after the typing, not where the old offset points.
+        assertEquals(8, vm.state.value.bodyCursor)
     }
 
     @Test
     fun switchingFromWhileTypingKeepsTheTextAndTheNewSignature() {
         // #430: the From swap lands between two keystrokes; the second, typed against the old body, is moved
-        // onto the new one, and the signature block is found by its marker, not by where it was.
+        // onto the new one. (This fake core swaps by position; the real core's matching of the whole `-- `
+        // block by its content is tested in mailcrane-core's compose/signature.rs.)
         val accounts = listOf(AccountSummary(1, "a@example.org", "A"), AccountSummary(2, "b@example.org", "B"))
         val core = FakeCore(accounts).apply { signatures = mapOf(1L to "Ann", 2L to "Bea") }
         val vm = started(core)
