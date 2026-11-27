@@ -529,6 +529,18 @@ class MessageViewModelTest {
             assertTrue(vm.state.value is MessageState.Ready)
         }
 
+    /** #431: snoozing again while the message is coming back is refused; it then shows as waking. */
+    @Test
+    fun aWakingMessageCantBeSnoozedAgainYet() =
+        runTest {
+            val core = FakeMessageCore().apply { snoozeFailure = SnoozeFailure.Waking() }
+            val vm = messageViewModel(core)
+            core.snoozeInfo = SnoozeInfo(wakeAt = 1_800_000_000, deviceOnly = false, waking = true)
+            vm.snooze(1_900_000_000)
+            assertEquals(MessageEffect.ActionRefused(ActionRefusal.WAKING), vm.effects.first())
+            assertEquals(true, ready(vm).snooze?.waking)
+        }
+
     @Test
     fun archiveWithoutAnArchiveFolderExplainsAndStaysOpen() =
         runTest {

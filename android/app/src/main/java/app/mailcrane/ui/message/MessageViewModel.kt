@@ -104,6 +104,9 @@ enum class ActionRefusal {
     /** The message has no Message-ID, so it can't be snoozed. */
     CANNOT_SNOOZE,
 
+    /** The message is coming back from snooze right now: snooze it again once it has (#431). */
+    WAKING,
+
     /** The message or folder is gone, or the database failed. */
     FAILED,
 }
@@ -325,7 +328,17 @@ class MessageViewModel
                     _effects.send(MessageEffect.Close)
                 } catch (e: SnoozeFailure) {
                     val reason =
-                        if (e is SnoozeFailure.NoMessageId) ActionRefusal.CANNOT_SNOOZE else ActionRefusal.FAILED
+                        when (e) {
+                            is SnoozeFailure.NoMessageId -> ActionRefusal.CANNOT_SNOOZE
+                            is SnoozeFailure.Waking -> ActionRefusal.WAKING
+                            else -> ActionRefusal.FAILED
+                        }
+                    // Waking: the message now shows as waking, with snoozing disabled until it lands.
+                    if (e is SnoozeFailure.Waking) {
+                        (_state.value as? MessageState.Ready)?.let { ready ->
+                            _state.value = ready.copy(snooze = snoozeOf())
+                        }
+                    }
                     _effects.send(MessageEffect.ActionRefused(reason))
                 }
             }

@@ -99,7 +99,7 @@ fn reopen_runs_no_migrations_and_keeps_data() -> R {
     let dir = tempfile::tempdir()?;
     let path = dir.path().join("m.db");
     let store = Store::open(&path)?;
-    assert_eq!(store.schema_version()?, 24);
+    assert_eq!(store.schema_version()?, 23);
     drop(store);
     let conn = Connection::open(&path)?;
     conn.execute(
@@ -110,7 +110,7 @@ fn reopen_runs_no_migrations_and_keeps_data() -> R {
     )?;
     drop(conn);
     let store = Store::open(&path)?;
-    assert_eq!(store.schema_version()?, 24);
+    assert_eq!(store.schema_version()?, 23);
     assert_eq!(store.list_accounts()?.len(), 1);
     Ok(())
 }

@@ -34,7 +34,7 @@ pub use settings::{
     is_valid_authserv_id, SignatureSetting, ACCOUNT_COLOR_COUNT, MAX_AUTHSERV_ID_LEN,
     MAX_SIGNATURE_BYTES,
 };
-pub use snooze::{KeywordedMessage, NewSnooze, Snooze, SnoozeId, SnoozeState, WakeLocal};
+pub use snooze::{KeywordedMessage, NewSnooze, Snooze, SnoozeId, SnoozeState, Snoozing};
 pub use threads::{ThreadSummary, UnthreadedMessage};
 
 use crate::error::StoreError;

@@ -913,16 +913,18 @@ async fn run_case(dir: Dir, with_move_cap: bool, case: Case, after: After) -> bo
         .await
         .expect("imap");
     let store = Store::open_in_memory().expect("store");
-    let account = setup(&base, &store).await;
+    let account = Box::pin(setup(&base, &store)).await;
     let inbox = folder(&store, account, "INBOX");
     snooze(&store, &visible(&store, inbox), WAKE, &Quiet).expect("snooze");
     let start = if dir == Dir::Wake {
         assert_eq!(
-            run_sync(&base, &store, account, NOW).await.snoozed,
+            Box::pin(run_sync(&base, &store, account, NOW))
+                .await
+                .snoozed,
             1,
             "{name}"
         );
-        sync_all(&base, &store, account).await;
+        Box::pin(sync_all(&base, &store, account)).await;
         let uid = base.mailbox().messages("Snoozed").await[0].uid;
         base.mailbox().add_flag("Snoozed", uid, "\\Seen").await;
         assert_eq!(wake_due(&store, WAKE + 60, &Quiet).expect("wake").len(), 1);
@@ -944,8 +946,8 @@ async fn run_case(dir: Dir, with_move_cap: bool, case: Case, after: After) -> bo
             vec![Fault::DropAfterCommandOnce("UID COPY".into())]
         }
     };
-    let faulty = twin(&base, with_move_cap, faults).await;
-    let _ = run_sync(&faulty, &store, account, start).await;
+    let faulty = Box::pin(twin(&base, with_move_cap, faults)).await;
+    let _ = Box::pin(run_sync(&faulty, &store, account, start)).await;
     // The mutations only mean something when the drop left a move part-way.
     let mid_move = list_snoozed(&store, Some(account))
         .expect("list")
@@ -967,32 +969,69 @@ async fn run_case(dir: Dir, with_move_cap: bool, case: Case, after: After) -> bo
         _ => {}
     }
 
-    // Nothing moved yet when the user acts: the wake hasn't started its
-    // move (step 0) or is rolling it back (step 4). Then the message must
-    // never be woken on the way to the new snooze.
+    // A re-snooze while the wake is moving the message (past step 0) is
+    // refused, with nothing changed (#431, lead's decision on #455). At
+    // step 0 nothing has moved: the new snooze replaces the wake.
     let before = list_snoozed(&store, Some(account)).expect("list");
-    let nothing_moved = before
+    let waking = before
         .first()
-        .is_some_and(|r| r.state == SnoozeState::ToWake && (r.step == 0 || r.step == 4));
+        .is_some_and(|r| r.state == SnoozeState::ToWake && r.step > 0);
+    let not_moved = !waking
+        && before
+            .first()
+            .is_some_and(|r| r.state == SnoozeState::ToWake);
     let mut acted = true;
-    match after {
-        After::Nothing => {}
-        After::ReSnooze | After::ReSnoozeFromList | After::ReSnoozeThenUndo => {
-            sync_all(&base, &store, account).await;
-            let ids = match after {
-                After::ReSnooze => visible(&store, inbox),
-                After::ReSnoozeFromList => visible(&store, folder(&store, account, "Snoozed")),
-                _ => shown(&store, account),
-            };
-            acted = !ids.is_empty();
-            if acted {
-                snooze(&store, &ids, RESNOOZE_AT, &Quiet).expect("re-snooze");
+    let mut refused_first = false;
+    let mut undone = false;
+    let mut resnoozed = false;
+    if after != After::Nothing {
+        Box::pin(sync_all(&base, &store, account)).await;
+        let ids = match after {
+            After::ReSnooze => visible(&store, inbox),
+            After::ReSnoozeFromList => visible(&store, folder(&store, account, "Snoozed")),
+            _ => shown(&store, account),
+        };
+        acted = !ids.is_empty();
+        if acted {
+            let result = snooze(&store, &ids, RESNOOZE_AT, &Quiet);
+            if waking {
+                assert!(
+                    matches!(result, Err(SnoozeError::Waking)),
+                    "{name}: refused while waking: {result:?}"
+                );
+                assert_eq!(
+                    list_snoozed(&store, Some(account)).expect("list"),
+                    before,
+                    "{name}: nothing changed"
+                );
+                let now_shown = shown(&store, account);
+                assert!(
+                    ids.iter().all(|id| now_shown.contains(id)),
+                    "{name}: still shown"
+                );
+                refused_first = true;
+            } else if ids.iter().all(|id| {
+                store
+                    .get_message_header(*id)
+                    .expect("header")
+                    .is_some_and(|h| h.details.flags.deleted)
+            }) {
+                // A woken original left flagged `\Deleted` (its expunge was
+                // refused): not the message. The snooze finds nothing live
+                // and is undone; the message stays woken in the Inbox.
+                result.expect("re-snooze");
+            } else {
+                result.expect("re-snooze");
                 if after == After::ReSnoozeThenUndo {
                     unsnooze(&store, &ids, start + 1, &Quiet).expect("undo");
+                    undone = true;
+                } else {
+                    resnoozed = true;
                 }
             }
         }
     }
+    let snoozed_at_once = resnoozed;
 
     // A refusal only counts when the move sends that command: COPY and
     // `\Deleted` without MOVE, MOVE with it.
@@ -1005,21 +1044,55 @@ async fn run_case(dir: Dir, with_move_cap: bool, case: Case, after: After) -> bo
     if matches!(case, Case::GiveUp(..)) {
         // Refused for days: at least GIVE_UP_FAILURES syncs over 24 hours.
         for half_day in 1..=8 {
-            let _ = run_sync(&faulty, &store, account, start + half_day * 43_200).await;
+            let _ = Box::pin(run_sync(
+                &faulty,
+                &store,
+                account,
+                start + half_day * 43_200,
+            ))
+            .await;
         }
     }
     // A healthy server afterwards: retries resume and finish (and nothing
     // given up comes back).
-    let healthy = twin(&base, with_move_cap, Vec::new()).await;
+    let healthy = Box::pin(twin(&base, with_move_cap, Vec::new())).await;
     for day in 1..=6 {
-        let _ = run_sync(&healthy, &store, account, start + (4 + day * 2) * 86_400).await;
+        let _ = Box::pin(run_sync(
+            &healthy,
+            &store,
+            account,
+            start + (4 + day * 2) * 86_400,
+        ))
+        .await;
+    }
+
+    // Refused while waking: once the wake has landed, the user snoozes the
+    // message again, where it shows, and that works as any snooze does.
+    if refused_first && after != After::ReSnoozeThenUndo && !given_up {
+        Box::pin(sync_changes_all(&base, &store, account)).await;
+        let mut ids = visible(&store, inbox);
+        if ids.is_empty() {
+            ids = visible(&store, folder(&store, account, "Snoozed"));
+        }
+        assert!(!ids.is_empty(), "{name}: shown once woken");
+        snooze(&store, &ids, RESNOOZE_AT, &Quiet).expect("re-snooze once woken");
+        resnoozed = true;
+        for day in 1..=2 {
+            let _ = Box::pin(run_sync(
+                &healthy,
+                &store,
+                account,
+                start + (20 + day) * 86_400,
+            ))
+            .await;
+        }
     }
 
     // Invariant 1: one live place. Invariant 2: no keyword in Snoozed
     // without a row. Then the expected end state.
     let rows = list_snoozed(&store, Some(account)).expect("list");
-    let in_inbox = live(&base, "INBOX").await;
-    let in_snoozed = live(&base, "Snoozed").await;
+    let in_inbox = Box::pin(live(&base, "INBOX")).await;
+    let in_snoozed = Box::pin(live(&base, "Snoozed")).await;
     // A given-up rollback can leave its copy (invariant 1's exception).
     let copy_may_stay = given_up && matches!(case, Case::GiveUp(_, t) if t.contains("Deleted"));
     if copy_may_stay {
@@ -1036,13 +1109,12 @@ async fn run_case(dir: Dir, with_move_cap: bool, case: Case, after: After) -> bo
     }
     if rows.is_empty() {
         assert_eq!(
-            live_with_keyword(&base, "Snoozed").await,
+            Box::pin(live_with_keyword(&base, "Snoozed")).await,
             0,
             "{name}: keyword without a row"
         );
     }
-    // Invariant 3: a give-up leaves the message shown here, with no row
-    // (a pending re-snooze is dropped with it).
+    // Invariant 3: a give-up leaves the message shown here, with no row.
     let assert_given_up = |rows: &[mailcrane_store::Snooze]| {
         assert!(rows.is_empty(), "{name}: given up: {rows:?}");
         assert!(
@@ -1050,17 +1122,16 @@ async fn run_case(dir: Dir, with_move_cap: bool, case: Case, after: After) -> bo
             "{name}: shown on this device"
         );
     };
-    let resnoozed = acted && matches!(after, After::ReSnooze | After::ReSnoozeFromList);
     if resnoozed {
         if given_up && rows.is_empty() {
             assert_given_up(&rows);
             return acted;
         }
-        // Invariant 5: one row, the re-snooze applied once the wake ended.
+        // Invariant 5: one row, snoozed until the new time.
         assert_eq!(rows.len(), 1, "{name}: {rows:?}");
         assert_eq!(
-            (rows[0].state, rows[0].wake_at, rows[0].pending_resnooze_at),
-            (SnoozeState::Snoozed, RESNOOZE_AT, None),
+            (rows[0].state, rows[0].wake_at),
+            (SnoozeState::Snoozed, RESNOOZE_AT),
             "{name}"
         );
         assert_eq!(
@@ -1068,7 +1139,7 @@ async fn run_case(dir: Dir, with_move_cap: bool, case: Case, after: After) -> bo
             (0, 1),
             "{name}: one copy, in Snoozed"
         );
-        let parked = live_messages(&base, "Snoozed").await;
+        let parked = Box::pin(live_messages(&base, "Snoozed")).await;
         let new_keyword = format_keyword(RESNOOZE_AT).expect("keyword");
         let keywords: Vec<_> = parked[0]
             .flags
@@ -1076,7 +1147,7 @@ async fn run_case(dir: Dir, with_move_cap: bool, case: Case, after: After) -> bo
             .filter(|f| f.starts_with("$snoozed"))
             .collect();
         assert_eq!(keywords, vec![&new_keyword], "{name}: only the new keyword");
-        if nothing_moved {
+        if snoozed_at_once && not_moved {
             assert!(
                 parked[0].flags.iter().any(|f| f == "\\Seen"),
                 "{name}: snoozed again without being woken (still read): {:?}",
@@ -1085,7 +1156,7 @@ async fn run_case(dir: Dir, with_move_cap: bool, case: Case, after: After) -> bo
         }
         return acted;
     }
-    if acted && after == After::ReSnoozeThenUndo {
+    if undone {
         if given_up {
             assert_given_up(&rows);
             return acted;
@@ -1096,7 +1167,7 @@ async fn run_case(dir: Dir, with_move_cap: bool, case: Case, after: After) -> bo
         assert_eq!(in_inbox, 1, "{name}: back in the Inbox");
         // The app syncs its folders' changes too: the copy the wake made
         // shows, and one a rollback removed goes.
-        sync_changes_all(&base, &store, account).await;
+        Box::pin(sync_changes_all(&base, &store, account)).await;
         assert_eq!(
             visible(&store, inbox).len(),
             1,
@@ -1105,7 +1176,7 @@ async fn run_case(dir: Dir, with_move_cap: bool, case: Case, after: After) -> bo
         // (Unless the keyword cleanup on the copy was refused, which is
         // best effort, as without the re-snooze.)
         if !matches!(case, Case::Refuse(Some("INBOX"), "-FLAGS")) {
-            let back = live_messages(&base, "INBOX").await;
+            let back = Box::pin(live_messages(&base, "INBOX")).await;
             assert!(
                 !back[0].flags.iter().any(|f| f.starts_with("$snoozed")),
                 "{name}: no keyword: {:?}",
@@ -1137,7 +1208,7 @@ async fn run_case(dir: Dir, with_move_cap: bool, case: Case, after: After) -> bo
             assert_eq!(in_inbox, 1, "{name}: back in the Inbox");
             let refused_cleanup = matches!(case, Case::Refuse(Some("INBOX"), "-FLAGS"));
             if !refused_cleanup {
-                let back = live_messages(&base, "INBOX").await;
+                let back = Box::pin(live_messages(&base, "INBOX")).await;
                 assert!(
                     !back[0]
                         .flags
@@ -1214,16 +1285,17 @@ fn every_early_exit_keeps_the_model_invariants() {
     );
 }
 
-/// #431 crossed with the fault table (lead's ask on #455): after every
-/// early exit of a wake, the user snoozes the message again (as shown, or
-/// from the Snoozed list with no local row), or snoozes it again and
-/// undoes that. Between them the cases leave the wake at each step (1
-/// after a lost COPY or MOVE reply, 2 after a lost `\Deleted` reply, 3
-/// after a lost EXPUNGE reply, 4 when the rollback is refused too), or
-/// end it by the give-up rule. Every row keeps the invariants: snoozed
-/// again once, until the new time, in Snoozed with only the new keyword,
-/// and never woken first when nothing had moved; or, undone, woken as if
-/// nothing happened; or given up.
+/// #431 crossed with the fault table (lead's ask and decision on #455):
+/// after every early exit of a wake, the user snoozes the message again
+/// (as shown in the Inbox, or in Snoozed with no local row), or snoozes it
+/// again and undoes that. The cases leave the wake at each step (1 after a
+/// lost COPY or MOVE reply, 2 after a lost `\Deleted` reply, 3 after a
+/// lost EXPUNGE reply, 4 when the rollback is refused too) or end it by
+/// the give-up rule. Past step 0 the re-snooze is refused with nothing
+/// changed, and works once the wake has landed; at step 0 it replaces the
+/// wake, never waking the message first. Every row keeps the invariants
+/// and ends snoozed once, until the new time, in Snoozed with only the new
+/// keyword; or, undone, woken as if nothing happened; or given up.
 #[test]
 fn a_resnooze_after_every_early_exit_of_a_wake_keeps_the_invariants() {
     let mut crossed = Vec::new();
@@ -1320,11 +1392,13 @@ async fn a_lost_original_after_the_copy_keeps_the_copy_with_the_new_keyword() {
     );
 }
 
-/// #431: snoozing a message again while its wake is half done. The wake
-/// finishes first, then the new snooze applies: one copy, in Snoozed,
-/// snoozed until the newer time. With and without MOVE.
+/// #431 (lead's decision on #455): snoozing a message again while its
+/// wake is moving it is refused, with nothing changed, and the message
+/// stays shown. Once the wake lands, snoozing it again works: one copy, in
+/// Snoozed, until the new time, with only its keyword. With and without
+/// MOVE.
 #[tokio::test]
-async fn a_resnooze_during_a_half_done_wake_ends_with_one_snoozed_copy() {
+async fn a_resnooze_while_waking_is_refused_until_the_wake_lands() {
     for with_move_cap in [false, true] {
         let name = format!("move={with_move_cap}");
         let imap = no_move(Vec::new(), &[]).await;
@@ -1346,24 +1420,42 @@ async fn a_resnooze_during_a_half_done_wake_ends_with_one_snoozed_copy() {
             1,
             "{name}"
         );
-        assert!(
-            list_snoozed(&store, Some(account)).expect("list")[0].step > 0,
-            "{name}: half done"
-        );
+        let rows = list_snoozed(&store, Some(account)).expect("list");
+        assert!(rows[0].step > 0, "{name}: half done");
 
-        // The copy shows up in the Inbox, and the user snoozes it again.
+        // The copy shows in the Inbox; snoozing it again is refused.
         sync_all(&imap, &store, account).await;
         let inbox = folder(&store, account, "INBOX");
         let copy = visible(&store, inbox);
         assert_eq!(copy.len(), 1, "{name}");
         let later_wake = WAKE + 72 * 3600;
-        snooze(&store, &copy, later_wake, &Quiet).expect("re-snooze");
-        let row = &list_snoozed(&store, Some(account)).expect("list")[0];
-        assert_eq!(row.state, SnoozeState::ToWake, "{name}: the wake goes on");
-        assert_eq!(row.pending_resnooze_at, Some(later_wake), "{name}");
+        assert!(
+            matches!(
+                snooze(&store, &copy, later_wake, &Quiet),
+                Err(SnoozeError::Waking)
+            ),
+            "{name}"
+        );
+        assert_eq!(
+            list_snoozed(&store, Some(account)).expect("list"),
+            rows,
+            "{name}: nothing changed"
+        );
+        assert_eq!(visible(&store, inbox), copy, "{name}: still shown");
 
+        // The wake lands; now snoozing again works.
         let healthy = twin(&imap, with_move_cap, Vec::new()).await;
         run_sync(&healthy, &store, account, LATER).await;
+        assert!(
+            list_snoozed(&store, Some(account))
+                .expect("list")
+                .is_empty(),
+            "{name}: woken"
+        );
+        sync_changes_all(&imap, &store, account).await;
+        let copy = visible(&store, inbox);
+        assert_eq!(copy.len(), 1, "{name}");
+        snooze(&store, &copy, later_wake, &Quiet).expect("snooze once woken");
         run_sync(&healthy, &store, account, LATER + 60).await;
         assert_eq!(live(&imap, "INBOX").await, 0, "{name}: not in the Inbox");
         assert_eq!(
@@ -1378,23 +1470,13 @@ async fn a_resnooze_during_a_half_done_wake_ends_with_one_snoozed_copy() {
             (SnoozeState::Snoozed, later_wake),
             "{name}"
         );
-        let parked = imap.mailbox().messages("Snoozed").await;
+        let parked = live_messages(&imap, "Snoozed").await;
         let new_keyword = format_keyword(later_wake).expect("keyword");
-        let live_copy = parked
+        let keywords: Vec<_> = parked[0]
+            .flags
             .iter()
-            .find(|m| !m.flags.iter().any(|f| f == r"\Deleted"))
-            .expect("copy");
-        assert!(
-            live_copy.flags.contains(&new_keyword),
-            "{name}: {:?}",
-            live_copy.flags
-        );
-        assert!(
-            !live_copy
-                .flags
-                .iter()
-                .any(|f| f.starts_with("$snoozed") && f != &new_keyword),
-            "{name}: only the new keyword"
-        );
+            .filter(|f| f.starts_with("$snoozed"))
+            .collect();
+        assert_eq!(keywords, vec![&new_keyword], "{name}: only the new keyword");
     }
 }
