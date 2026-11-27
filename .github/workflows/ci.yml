@@ -8,18 +8,17 @@
 #   windows  fmt, clippy and tests of the core, to keep it portable
 #   ci-ok    passes only if every job above passed or was rightly skipped
 #
-# What `changes` picks, from the files a pull request or merge group changes:
+# What `changes` picks, from the files a pull request or merge group changes
+# (renames count as both paths):
 #   docs only (docs/**, website/**, *.md at the top level)
 #            linux and windows are skipped; ci-ok still runs and passes
 #   android/** (and docs) only
-#            linux runs `design` and `android` (which builds the core for
-#            the app); windows is skipped
-#   core/crates/** outside mailcrane-ffi (and docs) only
-#            linux runs every step except `android`; windows runs
-#   anything else (the FFI, xtask, Cargo files, design, workflows, ...),
-#   both android and core, every push to main and every hand-started run
-#            everything, as before
-# docs/dev-mail.md counts as code: an xtask test reads it.
+#            linux runs in full; windows is skipped
+#   anything else, every push to main and every hand-started run
+#            linux and windows, as before
+# docs/dev-mail.md counts as code: an xtask test reads it. Linux always runs
+# every step: checks cross the tree (strings, licences, the release guard,
+# the core's Android-only code, the OAuth redirect), so no finer split.
 #
 # Third-party actions are pinned to a commit SHA; the comment gives the
 # version it was taken from.
@@ -37,7 +36,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.ref }}
+  # The event too, so a hand-started run doesn't cancel main's push run.
+  group: ci-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
 
 env:
@@ -50,9 +50,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
-      rust: ${{ steps.pick.outputs.rust }}
-      android: ${{ steps.pick.outputs.android }}
-      steps: ${{ steps.pick.outputs.steps }}
+      linux: ${{ steps.pick.outputs.linux }}
+      windows: ${{ steps.pick.outputs.windows }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -75,12 +74,12 @@ jobs:
               ;;
           esac
           # Pushes to main and hand-started runs check everything.
-          rust=true
-          android=true
+          linux=true
+          windows=true
           if [ -n "$base" ]; then
-            files="$(git diff --name-only "$base" HEAD)"
+            # --no-renames: a move out of android/ lists its old path too.
+            files="$(git diff --name-only --no-renames "$base" HEAD)"
             printf 'changed files:\n%s\n' "$files"
-            rust=false
             android=false
             other=false
             while IFS= read -r f; do
@@ -89,31 +88,25 @@ jobs:
                 docs/dev-mail.md) other=true ;;
                 docs/* | website/*) ;;
                 android/*) android=true ;;
-                core/crates/mailcrane-ffi/*) other=true ;;
-                core/crates/*) rust=true ;;
                 */*) other=true ;;
                 *.md) ;;
                 *) other=true ;;
               esac
             done <<< "$files"
-            if [ "$other" = true ]; then
-              rust=true
-              android=true
+            if [ "$other" = false ]; then
+              windows=false
+              linux="$android"
             fi
           fi
-          steps=design
-          if [ "$rust" = true ]; then steps="$steps,fmt,lint,test,deny"; fi
-          if [ "$android" = true ]; then steps="$steps,android"; fi
-          echo "rust=$rust android=$android steps=$steps"
+          echo "linux=$linux windows=$windows"
           {
-            echo "rust=$rust"
-            echo "android=$android"
-            echo "steps=$steps"
+            echo "linux=$linux"
+            echo "windows=$windows"
           } >> "$GITHUB_OUTPUT"
 
   linux:
     needs: changes
-    if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.android == 'true'
+    if: needs.changes.outputs.linux == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -139,29 +132,23 @@ jobs:
           tool: cargo-deny,cargo-ndk@4.1.2,cargo-about@0.9.3
 
       - uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
-        if: needs.changes.outputs.android == 'true'
         with:
           distribution: temurin
           java-version: "17"
 
       - uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4.0.4
-        if: needs.changes.outputs.android == 'true'
 
       - name: Install the Android NDK
-        if: needs.changes.outputs.android == 'true'
         run: sdkmanager "ndk;${NDK_VERSION}"
 
       - uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
-        if: needs.changes.outputs.android == 'true'
 
-      - run: cargo xtask ci --strict --only "$STEPS"
+      - run: cargo xtask ci --strict
         env:
-          STEPS: ${{ needs.changes.outputs.steps }}
           ANDROID_NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/${{ env.NDK_VERSION }}
 
       # So the app can be installed on a phone without building it.
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        if: needs.changes.outputs.android == 'true'
         with:
           name: android-debug-apk
           path: android/app/build/outputs/apk/debug/*.apk
@@ -170,7 +157,7 @@ jobs:
 
   windows:
     needs: changes
-    if: needs.changes.outputs.rust == 'true'
+    if: needs.changes.outputs.windows == 'true'
     runs-on: windows-latest
     timeout-minutes: 30
     steps:
@@ -202,13 +189,11 @@ jobs:
           CHANGES: ${{ needs.changes.result }}
           LINUX: ${{ needs.linux.result }}
           WINDOWS: ${{ needs.windows.result }}
-          RUST: ${{ needs.changes.outputs.rust }}
-          ANDROID: ${{ needs.changes.outputs.android }}
+          NEED_LINUX: ${{ needs.changes.outputs.linux }}
+          NEED_WINDOWS: ${{ needs.changes.outputs.windows }}
         run: |
-          echo "changes=$CHANGES linux=$LINUX windows=$WINDOWS (rust=$RUST android=$ANDROID)"
+          echo "changes=$CHANGES linux=$LINUX ($NEED_LINUX) windows=$WINDOWS ($NEED_WINDOWS)"
           [ "$CHANGES" = success ] || exit 1
-          need_linux=false
-          if [ "$RUST" = true ] || [ "$ANDROID" = true ]; then need_linux=true; fi
           # check <needed> <result>
           check() {
             case "$2" in
@@ -217,5 +202,5 @@ jobs:
               *) exit 1 ;;
             esac
           }
-          check "$need_linux" "$LINUX"
-          check "$RUST" "$WINDOWS"
+          check "$NEED_LINUX" "$LINUX"
+          check "$NEED_WINDOWS" "$WINDOWS"
