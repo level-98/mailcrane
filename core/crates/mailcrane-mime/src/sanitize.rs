@@ -100,10 +100,8 @@ pub fn sanitize_html(html: &UnsanitisedHtml, opts: &SanitizeOptions) -> Sanitize
     // `ammonia` slows down sharply on very deep nesting, so a hostile message
     // could freeze the app. Show such a message as plain text instead.
     if too_deep(html.as_unsanitised_str()) {
-        // Block boundaries become spaces, as for the snippet (#391).
-        let text = mail_parser::html_to_text(&crate::snippet::space_html_blocks(
-            html.as_unsanitised_str(),
-        ));
+        // One line per block, as in `text_plain` (#391, #446).
+        let text = crate::snippet::html_to_lines(html.as_unsanitised_str());
         return SanitizedHtml {
             html: format!("<pre>{}</pre>", escape(&text)),
             remote_resources_blocked: 0,
@@ -741,7 +739,10 @@ mod tests {
             "{}",
             out.html.get(..200).unwrap_or_default()
         );
-        assert!(out.html.contains("Heading"));
+        assert!(
+            out.html.contains("Heading\nBody"),
+            "one line per block (#446)"
+        );
     }
 
     #[test]
