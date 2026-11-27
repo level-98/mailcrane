@@ -1,15 +1,18 @@
 package app.mailcrane.ui.messagelist
 
 import android.app.Application
+import android.provider.Settings
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onRoot
+import androidx.test.core.app.ApplicationProvider
 import app.mailcrane.core.MessageSummary
 import app.mailcrane.ui.theme.MailcraneTheme
 import org.junit.Assert.assertEquals
+import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -26,6 +29,17 @@ import java.util.Locale
 class MessageRowTest {
     @get:Rule
     val compose = createComposeRule()
+
+    // The row's time follows the device's 12/24-hour setting (#509): pin it, so the expected times
+    // don't depend on the runner's locale.
+    @Before
+    fun use24HourClock() {
+        Settings.System.putString(
+            ApplicationProvider.getApplicationContext<Application>().contentResolver,
+            Settings.System.TIME_12_24,
+            "24",
+        )
+    }
 
     private val zone = ZoneId.of("Europe/London")
     private val now = ZonedDateTime.of(LocalDateTime.of(2026, 11, 24, 15, 0), zone)

@@ -140,6 +140,24 @@ class RowCountAndDateTest {
         assertTrue(us, us.startsWith("11/17/2026") && Regex("""9:00 ?[aA]\.?[mM]\.?$""").containsMatchIn(us))
     }
 
+    /** #509: today's list time follows the device's 12/24-hour setting, not only the locale. */
+    @Test
+    fun listTimesTodayFollowThe24HourSetting() {
+        val listDate = { epoch: Long, locale: Locale, is24: Boolean ->
+            formatListDate(epoch, now, locale, is24).replace(' ', ' ').replace(' ', ' ')
+        }
+        // QA's case: US English (12-hour by default) on a device set to 24-hour.
+        assertEquals("14:53", listDate(at(24, 14, 53), Locale.US, true))
+        val twelve = listDate(at(24, 14, 53), Locale.US, false)
+        assertTrue(twelve, Regex("""^2:53 ?[pP]\.?[mM]\.?$""").matches(twelve))
+        // And a 24-hour locale on a 12-hour device.
+        val ukTwelve = listDate(at(24, 9, 5), Locale.UK, false)
+        assertTrue(ukTwelve, Regex("""^9:05 ?[aA]\.?[mM]\.?$""").matches(ukTwelve))
+        // Older dates have no time, so the setting changes nothing there.
+        assertEquals("Wed", listDate(at(18, 14, 0), Locale.UK, true))
+        assertEquals("17/11/2026", listDate(at(17, 14, 0), Locale.UK, false))
+    }
+
     @Test
     fun hostileConversationDatesAreEmptyAndTheListIsUnchanged() {
         assertEquals("", formatConversationDate(Long.MAX_VALUE, now, Locale.UK, true))
