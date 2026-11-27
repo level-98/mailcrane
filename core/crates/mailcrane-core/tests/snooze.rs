@@ -986,11 +986,19 @@ async fn run_case(dir: Dir, with_move_cap: bool, case: Case, after: After) -> bo
     let mut resnoozed = false;
     if after != After::Nothing {
         Box::pin(sync_all(&base, &store, account)).await;
-        let ids = match after {
+        let mut ids = match after {
             After::ReSnooze => visible(&store, inbox),
             After::ReSnoozeFromList => visible(&store, folder(&store, account, "Snoozed")),
             _ => shown(&store, account),
         };
+        // A woken original left flagged `\Deleted` (its expunge refused)
+        // isn't the message: snoozing it is another issue's row (#459).
+        ids.retain(|id| {
+            !store
+                .get_message_header(*id)
+                .expect("header")
+                .is_some_and(|h| h.details.flags.deleted)
+        });
         acted = !ids.is_empty();
         if acted {
             let result = snooze(&store, &ids, RESNOOZE_AT, &Quiet);
@@ -1010,16 +1018,6 @@ async fn run_case(dir: Dir, with_move_cap: bool, case: Case, after: After) -> bo
                     "{name}: still shown"
                 );
                 refused_first = true;
-            } else if ids.iter().all(|id| {
-                store
-                    .get_message_header(*id)
-                    .expect("header")
-                    .is_some_and(|h| h.details.flags.deleted)
-            }) {
-                // A woken original left flagged `\Deleted` (its expunge was
-                // refused): not the message. The snooze finds nothing live
-                // and is undone; the message stays woken in the Inbox.
-                result.expect("re-snooze");
             } else {
                 result.expect("re-snooze");
                 if after == After::ReSnoozeThenUndo {

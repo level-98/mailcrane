@@ -762,19 +762,10 @@ async fn snooze_one(
     let info = session.select(&source.details.remote_name).await?;
     let uids = match &local {
         Some(h) => vec![h.details.uid],
-        None => {
-            let found = session.uid_search_message_id(&s.message_id_header).await?;
-            // Found by Message-ID, before the move: only a live message
-            // counts, then the newest of those. A woken original flagged
-            // `\Deleted` but not yet expunged isn't the message, must not
-            // get a keyword (invariant 2), and mustn't hide a live one.
-            let found = if s.step == STEP_NONE {
-                Box::pin(live_uids(session, found)).await?
-            } else {
-                found
-            };
-            newest(s, found)
-        }
+        None => newest(
+            s,
+            session.uid_search_message_id(&s.message_id_header).await?,
+        ),
     };
     let new = format_keyword(s.wake_at);
     if uids.is_empty() {
@@ -835,24 +826,6 @@ async fn snooze_one(
         .finish_snooze(s.id, info.custom_keywords && new.is_some())
         .map_err(store_err)?;
     Ok(vec![source.id, snoozed.id])
-}
-
-/// `uids` in the selected folder that the server answers for without
-/// `\Deleted`: one that went between the SEARCH and this FETCH isn't the
-/// message either.
-async fn live_uids(session: &mut Session, uids: Vec<u32>) -> Result<Vec<u32>, ChangeError> {
-    let (Some(&low), Some(&high)) = (uids.iter().min(), uids.iter().max()) else {
-        return Ok(uids);
-    };
-    let fetched = session.uid_fetch_flags(low, high, None).await?;
-    Ok(uids
-        .into_iter()
-        .filter(|uid| {
-            fetched.updates.iter().any(|u| {
-                u.uid == *uid && !u.flags.iter().any(|f| f.eq_ignore_ascii_case(r"\Deleted"))
-            })
-        })
-        .collect())
 }
 
 async fn wake_one(
