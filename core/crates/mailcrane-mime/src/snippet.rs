@@ -455,6 +455,8 @@ mod tests {
         // Not `</p>` to html_to_text: no line break, from it or from us.
         assert_eq!(html_to_lines("<div>A</p:x>B</div>"), "AB");
         assert_eq!(html_to_lines("<div>A</div><!--!>x--><div>B</div>"), "A\nB");
+        // A form feed is no tag space to html_to_text, so it isn't here.
+        assert_eq!(html_to_lines("A</\u{c}p> B<\u{c}br> C"), "A B C");
     }
 
     /// #456 review: a mark character in the input, raw or in any form of
