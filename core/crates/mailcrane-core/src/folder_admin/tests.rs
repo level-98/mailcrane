@@ -654,3 +654,25 @@ fn the_namespace_is_derived_from_the_folder_list() {
     assert_eq!(derive_namespace(&flat), None);
     assert_eq!(derive_namespace(&[]), None);
 }
+
+#[test]
+fn a_virtual_folder_is_never_a_parent() {
+    // #461: Gmail's Starred holds mail by flag, not subfolders: "Notes under
+    // Starred" would ask Gmail for "[Gmail]/Starred/Notes".
+    let mut list = folders();
+    let mut starred = folder(11, "[Gmail]/Starred", None);
+    starred.details.virtual_role = Some(mailcrane_store::VirtualRole::Starred);
+    list.push(starred);
+    let starred = FolderId(11);
+    assert!(matches!(
+        plan_create(&list, ACCOUNT, Some(starred), "Work", None),
+        Err(FolderAdminError::NotAParent)
+    ));
+    assert!(matches!(
+        plan_move(&list, FolderId(7), Some(starred)),
+        Err(FolderAdminError::NotAParent)
+    ));
+    let (_, under) = move_targets(&list, FolderId(7));
+    assert!(!under.contains(&starred), "not offered in the move picker");
+    assert!(under.contains(&FolderId(4)), "ordinary folders still are");
+}
