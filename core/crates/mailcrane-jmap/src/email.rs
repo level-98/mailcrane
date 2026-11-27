@@ -469,6 +469,7 @@ mod tests {
             username: String::new(),
             mail_account_id: "A 1".into(),
             state: String::new(),
+            max_objects_in_get: None,
         };
         assert_eq!(
             download_url(&session, "b/../x").expect("url").as_str(),

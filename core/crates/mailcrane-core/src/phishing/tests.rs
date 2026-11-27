@@ -302,3 +302,34 @@ fn display_name_fixtures() {
         );
     }
 }
+
+fn fixture(name: &str) -> mailcrane_mime::ParsedMessage {
+    let path = format!(
+        "{}/../../../tests/fixtures/mime/{name}",
+        env!("CARGO_MANIFEST_DIR")
+    );
+    parse_message(&std::fs::read(&path).expect("fixture")).expect("parses")
+}
+
+/// #398: Gmail over IMAP starts its trace with internal hops whose `by` is
+/// an IPv6 address. They no longer hide the provider, so with the server
+/// name setting the chip shows. Without it there is still none: Gmail
+/// writes its header below its own Received, as Postfix does.
+#[test]
+fn the_gmail_fixture() {
+    let parsed = fixture("auth-gmail.eml");
+    assert_eq!(sender_check(&parsed, None).verdict, None);
+    let c = sender_check(&parsed, Some("mx.google.com"));
+    assert!(c.trusted);
+    assert_eq!(c.verdict, Some(AuthVerdict::Verified));
+}
+
+/// A forged `mx.google.com` pass below the sender's hop, and another
+/// server's header right below the entry, are never trusted.
+#[test]
+fn the_forged_gmail_fixture() {
+    let parsed = fixture("auth-gmail-forged.eml");
+    assert_eq!(sender_check(&parsed, None).verdict, None);
+    assert_eq!(sender_check(&parsed, Some("mx.google.com")).verdict, None);
+    assert!(!sender_check(&parsed, Some("mx.google.com")).trusted);
+}
