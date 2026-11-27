@@ -14,6 +14,8 @@ A maintainer can run up to six Claude Code sessions on their own machine that wo
 
 Start them all with `scripts/fleet/start-fleet.ps1` (see [Running it](#running-it)).
 
+**Models** (#507, approved by the maintainer on 2026-11-27): `qa` and `dev3` run on Sonnet, because emulator checks and small, no-emulator tasks don't need the larger model. `lead`, `review`, `dev1` and `dev2` use the account's default model (Opus).
+
 ## The source of truth
 
 **GitHub is the record; Synapse is the live layer.** Issues, claims, PRs, reviews and CI stay on GitHub. The Synapse board, locks and channels say who is doing what *right now*. A seat that restarts rebuilds its picture from GitHub, not from memory.
@@ -147,7 +149,7 @@ Then, from the repository root:
 scripts/fleet/start-fleet.ps1
 ```
 
-It creates the worktrees, wires each one to Synapse, and opens one terminal window per seat. Close a window to stop that seat. By default it starts `lead`, `dev1`, `dev2`, `review` and `qa`. `-Seats` replaces that list: `-Seats lead,dev1` starts only those two, and `-Seats dev3` starts only the third dev seat (for a fleet that's already running). `-DryRun` checks everything and prints what it would start, without creating worktrees or opening windows. Worktrees get the main checkout's `.claude/settings.local.json` without Synapse's own hooks (any other hooks are kept): the Synapse registry binds the project to the main checkout only, so those hooks would always refuse there. Seats call `dev_sync_will_edit`, `dev_sync_did_edit` and the locks themselves.
+It creates the worktrees, wires each one to Synapse, and opens one terminal window per seat. Close a window to stop that seat. By default it starts `lead`, `dev1`, `dev2`, `review` and `qa`. `-Seats` replaces that list: `-Seats lead,dev1` starts only those two, and `-Seats dev3` starts only the third dev seat (for a fleet that's already running). `-DryRun` checks everything and prints what it would start, each seat's model included, without creating worktrees or opening windows. Each seat starts on its default model (see [Models](#the-seats)); `-Model <name>` puts every seat on that model instead. A change of model takes effect when a seat is restarted. Worktrees get the main checkout's `.claude/settings.local.json` without Synapse's own hooks (any other hooks are kept): the Synapse registry binds the project to the main checkout only, so those hooks would always refuse there. Seats call `dev_sync_will_edit`, `dev_sync_did_edit` and the locks themselves.
 
 ## Known gaps
 
