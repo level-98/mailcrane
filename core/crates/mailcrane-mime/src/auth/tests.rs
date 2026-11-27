@@ -469,3 +469,147 @@ mod props {
         }
     }
 }
+
+// --- #398: leading hops whose `by` is an address literal (Gmail) -----------
+
+const GMAIL_INTERNAL: &str =
+    "by 2001:db8:6a10:abcd:b0:5f1:1234:5678 with SMTP id x1csp123456pxb; Thu, 26 Nov 2026 14:30:00 -0800";
+const GMAIL_ENTRY: &str =
+    "from mail.example.net (mail.example.net. [192.0.2.10]) by mx.google.com \
+     with ESMTPS id abc123; Thu, 26 Nov 2026 14:29:59 -0800";
+const GMAIL_PASS: &str =
+    "mx.google.com; dkim=pass header.i=@example.net; dmarc=pass header.from=example.net";
+
+#[test]
+fn ip_literal_by_hosts_are_recognised() {
+    for literal in [
+        "by 192.0.2.1 with SMTP",
+        "by 2001:db8::1 with SMTP",
+        "by [192.0.2.1]; Thu",
+        "by [IPv6:2001:db8::1] id 7",
+        "from x by 192.0.2.1.",
+    ] {
+        assert!(by_is_ip_literal(literal), "{literal}");
+    }
+    for name in [
+        "by mx.google.com with SMTP",
+        "by 2001.example.net",
+        "by",
+        "by [2001:db8::zz]",
+        "",
+    ] {
+        assert!(!by_is_ip_literal(name), "{name}");
+    }
+}
+
+/// Gmail's trace: an internal hop with an IPv6 `by`, then mx.google.com,
+/// which writes its header just below its own Received (postfix layout).
+/// The provider is found; the header counts with the server name setting,
+/// and not without it (as for any Postfix layout).
+#[test]
+fn gmail_internal_ipv6_hops_are_skipped_to_find_the_provider() {
+    let trace = [rcv(GMAIL_INTERNAL), rcv(GMAIL_ENTRY), ar(GMAIL_PASS)];
+    assert_eq!(
+        trusted_results_with(&trace, Some("mx.google.com")),
+        Some(GMAIL_PASS)
+    );
+    assert_eq!(
+        trusted_results_with(&trace, Some("mx.google.com.")),
+        Some(GMAIL_PASS)
+    );
+    assert_eq!(
+        trusted_results(&trace),
+        None,
+        "postfix layout: needs the setting"
+    );
+    // Before #398 the IPv6 hop ended it even with the setting.
+    let two = [
+        rcv(GMAIL_INTERNAL),
+        rcv(GMAIL_INTERNAL),
+        rcv(GMAIL_ENTRY),
+        ar(GMAIL_PASS),
+    ];
+    assert_eq!(
+        trusted_results_with(&two, Some("mx.google.com")),
+        Some(GMAIL_PASS)
+    );
+    // A provider header above the entry hop counts once the setting
+    // anchors the skip; without the setting there is no provider.
+    let above = [rcv(GMAIL_INTERNAL), ar(GMAIL_PASS), rcv(GMAIL_ENTRY)];
+    assert_eq!(
+        trusted_results_with(&above, Some("mx.google.com")),
+        Some(GMAIL_PASS)
+    );
+    assert_eq!(trusted_results(&above), None);
+}
+
+/// #442 review (security): a self-hosted server writes its top hop with a
+/// literal `by`. The first named hop below it is the sender's forged one;
+/// it must never become the provider, with no setting or an unrelated one.
+#[test]
+fn a_literal_top_hop_never_makes_the_senders_hop_the_provider() {
+    let forged_ar =
+        "mx.bank.example; dkim=pass header.d=bank.example; dmarc=pass header.from=bank.example";
+    let trace = [
+        rcv("from relay.example.org by [192.168.1.2]; Thu, 26 Nov 2026 14:30:00 +0000"),
+        ar(forged_ar),
+        rcv("from x.bank.example by mx.bank.example; Thu, 26 Nov 2026 14:29:00 +0000"),
+        ar(forged_ar),
+    ];
+    assert_eq!(trusted_results(&trace), None);
+    assert_eq!(trusted_results_with(&trace, Some("mail.example.org")), None);
+    assert_eq!(trusted_results_with(&trace, Some("mx.google.com")), None);
+    assert_eq!(trusted_results_with(&trace, Some("localhost")), None);
+}
+
+/// Skipping literal hops loosens nothing else: forged or foreign headers
+/// stay untrusted, and past the cap there is no provider at all.
+#[test]
+fn skipping_literal_hops_trusts_no_forged_header() {
+    let forged = "mx.google.com; dkim=pass; dmarc=pass header.from=example.net";
+    // Below the sender's own hop, under the entry: never trusted.
+    let below = [
+        rcv(GMAIL_INTERNAL),
+        rcv(GMAIL_ENTRY),
+        rcv("from laptop.example.net by mail.example.net; Thu, 26 Nov 2026 14:29:00 -0800"),
+        ar(forged),
+    ];
+    assert_eq!(trusted_results_with(&below, Some("mx.google.com")), None);
+    // Another authserv-id right below the entry: not the setting's, not trusted.
+    let other = [
+        rcv(GMAIL_INTERNAL),
+        rcv(GMAIL_ENTRY),
+        ar("evil.example.net; dmarc=pass"),
+    ];
+    assert_eq!(trusted_results_with(&other, Some("mx.google.com")), None);
+    assert_eq!(trusted_results(&other), None);
+    // A literal hop further down (not leading) still ends the walk.
+    let late = [rcv(GMAIL_ENTRY), rcv(GMAIL_INTERNAL), ar(forged)];
+    assert_eq!(trusted_results(&late), None);
+    // Past the cap of leading literal hops: no provider, as before.
+    let mut many: Vec<TraceHeader> = (0..=MAX_LITERAL_HOPS)
+        .map(|_| rcv(GMAIL_INTERNAL))
+        .collect();
+    many.push(ar(GMAIL_PASS));
+    many.push(rcv(GMAIL_ENTRY));
+    assert_eq!(trusted_results(&many), None);
+    // Only literal hops: no provider.
+    assert_eq!(
+        trusted_results(&[rcv(GMAIL_INTERNAL), ar(GMAIL_PASS)]),
+        None
+    );
+}
+
+/// #442 review: a bare IPv4 `by` is not a host name, so it never becomes
+/// a provider (`org_domain("192.0.2.1")` would be "2.1"), whether it's
+/// the topmost hop or the first one past the cap.
+#[test]
+fn a_bare_ipv4_by_is_never_a_provider() {
+    let v4 = "by 192.0.2.1 with SMTP; Thu, 26 Nov 2026 14:30:00 +0000";
+    assert_eq!(received_by(v4), None);
+    let pass = "2.1; dmarc=pass header.from=example.net";
+    assert_eq!(trusted_results(&[rcv(v4), ar(pass)]), None);
+    let mut many: Vec<TraceHeader> = (0..=MAX_LITERAL_HOPS).map(|_| rcv(v4)).collect();
+    many.push(ar(pass));
+    assert_eq!(trusted_results_with(&many, Some("mx.example.org")), None);
+}

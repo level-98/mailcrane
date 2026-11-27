@@ -1,0 +1,8 @@
+From: News <news@example.org>
+To: Bob <bob@example.com>
+Subject: New people to discover
+Date: Thu, 26 Nov 2026 10:00:00 +0000
+Message-ID: <html-blocks@example.org>
+Content-Type: text/html; charset=utf-8
+
+<html><body><h1>New people to discover</h1><p>Suggested accounts based on <b>your</b> <a href="https://example.org/x">contacts</a></p><div>Line one<br>Line two<br/>Line three</div><ul><li>First</li><li>Second</li></ul><table><tr><td>Cell A</td><td>Cell B</td></tr><tr><th>Head C</th></tr></table><blockquote>Quoted</blockquote><p>Ex<span>ample</span>s stay one word</p><header>Acme</header><main>Hello</main><center>Sale</center><center>Today</center></body></html>

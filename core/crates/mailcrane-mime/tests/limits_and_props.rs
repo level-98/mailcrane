@@ -171,3 +171,25 @@ fn one_mebibyte_of_mime_boundaries_is_fast() {
     let _ = parse_message(s.as_bytes());
     assert!(start.elapsed() < Duration::from_secs(1));
 }
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(256))]
+
+    /// #391: HTML-only bodies made of tag-like fragments go through the
+    /// block-spacing pass before `html_to_text`. It never panics, stays
+    /// fast, and the snippet keeps single spaces and its length cap.
+    #[test]
+    fn html_only_bodies_give_a_clean_snippet(
+        body in "(<(/)?(p|div|h1|br|li|td|b|span|a|pre|x)[ /]?>|[a-z ]{0,8}|<|>|/|&amp;){0,400}",
+    ) {
+        let mut msg = b"From: a@example.org\r\nContent-Type: text/html; charset=utf-8\r\n\r\n".to_vec();
+        msg.extend_from_slice(body.as_bytes());
+        let start = Instant::now();
+        if let Ok(m) = parse_message(&msg) {
+            prop_assert!(!m.snippet.contains("  "), "{:?}", m.snippet);
+            prop_assert!(m.snippet.chars().count() <= 200);
+            prop_assert!(m.snippet == m.snippet.trim());
+        }
+        prop_assert!(start.elapsed() < Duration::from_secs(1));
+    }
+}
