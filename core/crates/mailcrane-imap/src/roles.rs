@@ -21,14 +21,16 @@ pub fn role_from_attribute(attribute: &str) -> Option<FolderRole> {
 }
 
 /// The virtual folder a folder's attributes mark, if any (#390): RFC 6154
-/// `\Flagged` is starred mail, and Gmail's own `\Important` its Important
-/// folder. Kept out of [`role_from_attribute`] so these folders never get a
-/// [`FolderRole`]: nothing moves, archives or deletes into them.
-pub fn virtual_role(attributes: &[String]) -> Option<VirtualRole> {
+/// `\Flagged` is starred mail on any server. `\Important` isn't in RFC 6154:
+/// it's Gmail's own attribute for its Important folder, so it counts only on
+/// Gmail (`gmail`: [`crate::ServerQuirk::GmailLabels`]). Kept out of
+/// [`role_from_attribute`] so these folders never get a [`FolderRole`]:
+/// nothing moves, archives or deletes into them.
+pub fn virtual_role(attributes: &[String], gmail: bool) -> Option<VirtualRole> {
     attributes.iter().find_map(|a| {
         if a.eq_ignore_ascii_case("\\Flagged") {
             Some(VirtualRole::Starred)
-        } else if a.eq_ignore_ascii_case("\\Important") {
+        } else if gmail && a.eq_ignore_ascii_case("\\Important") {
             Some(VirtualRole::Important)
         } else {
             None
@@ -136,10 +138,14 @@ mod tests {
         // no role, so nothing can move into them.
         let starred = vec!["\\HasNoChildren".to_string(), "\\Flagged".to_string()];
         let important = vec!["\\important".to_string()];
-        assert_eq!(virtual_role(&starred), Some(VirtualRole::Starred));
-        assert_eq!(virtual_role(&important), Some(VirtualRole::Important));
-        assert_eq!(virtual_role(&["\\Sent".to_string()]), None);
-        assert_eq!(virtual_role(&[]), None);
+        assert_eq!(virtual_role(&starred, true), Some(VirtualRole::Starred));
+        assert_eq!(virtual_role(&important, true), Some(VirtualRole::Important));
+        assert_eq!(virtual_role(&["\\Sent".to_string()], true), None);
+        assert_eq!(virtual_role(&[], true), None);
+        // \Flagged is RFC 6154 on any server; \Important is Gmail's own, so a
+        // server without the Gmail quirk doesn't get it.
+        assert_eq!(virtual_role(&starred, false), Some(VirtualRole::Starred));
+        assert_eq!(virtual_role(&important, false), None);
         let folders = [
             cand("INBOX", &[]),
             cand("[Gmail]/Starred", &starred),

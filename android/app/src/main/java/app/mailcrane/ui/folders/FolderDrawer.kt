@@ -246,11 +246,11 @@ internal fun folderIcon(role: FolderRole?): Int =
     }
 
 /**
- * Whether messages can be moved into this folder. Starred and Gmail's Important are virtual folders (#390): a
- * message is in them because of a flag or Gmail's own judgement, so they're never offered as a destination.
+ * Whether messages can be moved into this folder, as the core decides: not a virtual folder such as Gmail's Starred
+ * or Important (#390), which the core also refuses as a move or rule target.
  */
 val FolderSummary.takesMoves: Boolean
-    get() = role != FolderRole.STARRED && role != FolderRole.IMPORTANT
+    get() = canTakeMoves
 
 @Composable
 private fun unreadBadge(count: UInt): String =

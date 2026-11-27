@@ -86,7 +86,9 @@ impl Folders {
         let mut archive = None;
         let mut trash = None;
         for f in store.list_folders(account)? {
-            if !f.details.selectable {
+            // A virtual folder (#390) takes no moves: a rule filing into one stays
+            // local, where it's skipped.
+            if !f.details.selectable || f.details.virtual_role.is_some() {
                 continue;
             }
             let name = mailcrane_imap::mutf7::decode(&f.details.remote_name)

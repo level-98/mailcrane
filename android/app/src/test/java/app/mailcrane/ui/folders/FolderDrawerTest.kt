@@ -91,7 +91,15 @@ class FolderDrawerTest {
     @Test
     fun virtualFoldersAreNeverMoveTargets() {
         // #390: a message is in Starred or Important because of a flag or Gmail's judgement, not a move.
-        val starred = FolderSummary(id = 7, displayName = "x", role = FolderRole.STARRED, depth = 0u, unreadCount = 0u)
+        val starred =
+            FolderSummary(
+                id = 7,
+                displayName = "x",
+                role = FolderRole.STARRED,
+                depth = 0u,
+                unreadCount = 0u,
+                canTakeMoves = false,
+            )
         val important = starred.copy(id = 8, role = FolderRole.IMPORTANT)
         assertEquals(false, starred.takesMoves)
         assertEquals(false, important.takesMoves)

@@ -51,6 +51,11 @@ pub enum ActionError {
     /// account.
     #[error("unknown folder")]
     UnknownFolder,
+    /// The destination is a virtual folder, such as Gmail's Starred (#390): a
+    /// message is in it because of a flag or the server's own judgement, so
+    /// nothing moves into it.
+    #[error("not a destination")]
+    NotADestination,
     /// The account has no Archive folder, so there is nowhere to archive to.
     #[error("the account has no Archive folder")]
     NoArchiveFolder,
@@ -178,6 +183,9 @@ fn plan(
             let target = store.get_folder(to)?.ok_or(ActionError::UnknownFolder)?;
             if target.details.account_id != account {
                 return Err(ActionError::UnknownFolder);
+            }
+            if target.details.virtual_role.is_some() {
+                return Err(ActionError::NotADestination);
             }
             (OpKind::Move, Some(to))
         }

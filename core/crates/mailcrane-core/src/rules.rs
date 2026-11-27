@@ -123,6 +123,26 @@ pub fn run_on_existing(
     Ok(report)
 }
 
+/// Whether `folder` is a virtual folder (#390), which nothing moves into.
+fn is_virtual(store: &Store, folder: FolderId) -> Result<bool, StoreError> {
+    Ok(store
+        .get_folder(folder)?
+        .is_some_and(|f| f.details.virtual_role.is_some()))
+}
+
+/// Whether every folder `rule` moves mail to can take it: a virtual folder
+/// (#390), such as Gmail's Starred, can't. Saving a rule checks this.
+pub fn targets_take_moves(store: &Store, rule: &NewRule) -> Result<bool, StoreError> {
+    for action in &rule.actions {
+        if let RuleAction::Move(to) = action {
+            if is_virtual(store, *to)? {
+                return Ok(false);
+            }
+        }
+    }
+    Ok(true)
+}
+
 /// Runs `rules` in order on one message. Read and flag actions apply at
 /// once; of the moving actions (move, archive, delete) the first one wins
 /// and runs last. Returns how many actions were applied.
@@ -168,6 +188,16 @@ fn run_rules(
                 RuleAction::Flag => flags.push(Action::Flag),
                 _ if moved => {}
                 RuleAction::Move(to) => {
+                    // A rule saved before #390 can target a virtual folder, such as
+                    // Gmail's Starred: skipped, never run, and it doesn't take the
+                    // "first move wins" slot from a later rule.
+                    if is_virtual(store, *to)? {
+                        tracing::warn!(
+                            rule = rule.id.0,
+                            "skipped a rule's move into a virtual folder"
+                        );
+                        continue;
+                    }
                     moving.get_or_insert(Action::Move { to: *to });
                 }
                 RuleAction::Archive => {

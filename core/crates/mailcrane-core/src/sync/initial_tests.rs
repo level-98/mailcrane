@@ -465,6 +465,41 @@ async fn gmails_starred_and_important_are_virtual_folders_with_no_role() {
 }
 
 #[tokio::test]
+async fn important_counts_only_on_gmail_but_flagged_counts_anywhere() {
+    // #390 review: \Important isn't in RFC 6154, so on a server without the
+    // Gmail quirk (no X-GM-EXT-1) a folder carrying it stays an ordinary
+    // folder. \Flagged is RFC 6154 and means starred everywhere.
+    let imap = FakeImap::builder()
+        .user(USER, PASSWORD)
+        .folder("INBOX", raws(1))
+        .folder("Important", Vec::new())
+        .special_use("Important", "\\Important")
+        .folder("Flagged", Vec::new())
+        .special_use("Flagged", "\\Flagged")
+        .start()
+        .await
+        .expect("fake imap starts");
+    let (store, account, _) = setup();
+    let mut session = connect(&imap).await;
+    assert!(!session
+        .quirks()
+        .contains(&mailcrane_imap::ServerQuirk::GmailLabels));
+    let listed = session.list_folders().await.expect("list");
+    mailcrane_imap::save_folders(&store, account, &listed).expect("save");
+    let folders = store.list_folders(account).expect("folders");
+    let virtual_role = |name: &str| {
+        folders
+            .iter()
+            .find(|f| f.details.remote_name == name)
+            .unwrap_or_else(|| panic!("{name} listed"))
+            .details
+            .virtual_role
+    };
+    assert_eq!(virtual_role("Important"), None);
+    assert_eq!(virtual_role("Flagged"), Some(VirtualRole::Starred));
+}
+
+#[tokio::test]
 async fn gmail_layout_syncs_every_folder_and_never_selects_the_noselect_parent() {
     let imap = FakeImap::builder()
         .user(USER, PASSWORD)

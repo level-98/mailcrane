@@ -207,6 +207,12 @@ pub fn list_rules(db_path: String) -> Result<Vec<RuleInfo>, RulesFailure> {
 pub fn save_rule(db_path: String, id: Option<i64>, rule: RuleInput) -> Result<i64, RulesFailure> {
     let store = open(&db_path)?;
     let new = to_store(&rule)?;
+    // Nothing moves into a virtual folder such as Gmail's Starred (#390).
+    match mailcrane_core::rules::targets_take_moves(&store, &new) {
+        Ok(true) => {}
+        Ok(false) => return Err(RulesFailure::Invalid),
+        Err(_) => return Err(RulesFailure::Storage),
+    }
     match id {
         None => store
             .insert_rule(&new)

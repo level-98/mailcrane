@@ -368,3 +368,53 @@ async fn rules_running_on_the_server_are_not_applied_again() {
     assert!(inbox[0].flags.contains(&"\\Flagged".to_owned()));
     assert!(!inbox[0].flags.contains(&"\\Seen".to_owned()));
 }
+
+/// #390 review: a rule saved before virtual folders existed can move mail
+/// into one, such as Starred. Running it skips that move (nothing is filed
+/// into Starred) and a later rule's move still wins.
+#[tokio::test]
+async fn an_old_rule_moving_into_a_virtual_folder_is_skipped() {
+    let imap = FakeImap::builder()
+        .user(USER, PASSWORD)
+        .folder("INBOX", vec![])
+        .folder("Deals", vec![])
+        .folder("Starred", vec![])
+        .special_use("Starred", "\\Flagged")
+        .start()
+        .await
+        .expect("imap");
+    let s = setup(&imap).await;
+    sync_and_run(&imap, &s).await;
+    let starred = s
+        .store
+        .list_folders(s.account)
+        .expect("folders")
+        .into_iter()
+        .find(|f| f.details.remote_name == "Starred")
+        .expect("starred");
+    assert!(starred.details.virtual_role.is_some(), "virtual");
+    // Inserted straight into the store, as a rule saved before #390 was.
+    let subject = || vec![RuleCondition::Subject("sale".into())];
+    s.store
+        .insert_rule(&rule(
+            "Old",
+            subject(),
+            vec![RuleAction::MarkRead, RuleAction::Move(starred.id)],
+        ))
+        .expect("rule");
+    s.store
+        .insert_rule(&rule("Deals", subject(), vec![RuleAction::Move(s.deals)]))
+        .expect("rule");
+    imap.mailbox()
+        .deliver(
+            "INBOX",
+            raw("Shop <news@shop.example>", "Sale", "v1@x", None),
+        )
+        .await;
+    let report = sync_and_run(&imap, &s).await;
+    // Mark read and the second rule's move ran; the move into Starred didn't.
+    assert_eq!((report.matched, report.actions), (1, 2));
+    assert!(imap.mailbox().messages("Starred").await.is_empty());
+    assert_eq!(imap.mailbox().messages("Deals").await.len(), 1);
+    assert!(imap.mailbox().messages("INBOX").await.is_empty());
+}

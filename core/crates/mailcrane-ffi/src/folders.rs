@@ -90,7 +90,9 @@ pub struct FolderSummary {
     /// Decoded name to show, relative to the folder it's nested under. For
     /// standard folders the apps show a translated name instead.
     pub display_name: String,
-    /// Standard role, if the folder has one.
+    /// What the apps show the folder as: its standard role, or for a virtual
+    /// folder `Starred` or `Important` (#390). Not "can take moves": see
+    /// [`FolderSummary::can_take_moves`].
     pub role: Option<FolderRole>,
     /// How far to indent: 0 for top-level and standard folders, at most
     /// [`MAX_DEPTH`].
@@ -101,10 +103,15 @@ pub struct FolderSummary {
     /// folder or one holding one, and the account supports it.
     #[uniffi(default = false)]
     pub can_change: bool,
+    /// Whether messages can be moved into it. `false` for a virtual folder
+    /// such as Gmail's Starred or Important (#390): the core refuses such a
+    /// move or rule, and the apps leave it out of their pickers.
+    #[uniffi(default = true)]
+    pub can_take_moves: bool,
 }
 
-/// Lists the account's folders in display order: Inbox, Drafts, Sent,
-/// Archive, Spam, Trash, All mail, then every other folder alphabetically
+/// Lists the account's folders in display order: Inbox, Starred, Important,
+/// Drafts, Sent, Archive, Spam, Trash, All mail, then every other folder alphabetically
 /// (ignoring case) with children right under their parent. An unknown
 /// account gives an empty list. Reads only the local database.
 ///
@@ -129,6 +136,7 @@ pub fn list_folders(db_path: String, account_id: i64) -> Result<Vec<FolderSummar
             id: folder.id.0,
             display_name: one_line(&place.name),
             role: FolderRole::of(&folder.details),
+            can_take_moves: folder.details.virtual_role.is_none(),
             depth: place.depth,
             unread_count: u32::try_from(unread).unwrap_or(u32::MAX),
             can_change: manageable && folder_admin::can_change(&folders, folder),
