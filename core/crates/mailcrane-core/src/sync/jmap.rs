@@ -15,7 +15,7 @@ use super::initial::{save_body, SyncConfig, SyncError};
 use crate::events::{AccountId, CoreEvent, EventListener, FolderId};
 use crate::folder_admin::{CreatePlan, FolderAdminError, RenamePlan};
 use mailcrane_jmap::{Auth, ClientConfig, JmapEmail, JmapError, MailboxRole, Session};
-use mailcrane_store::{BodyState, Folder, FolderRole, MessageId, NewFolder, Store};
+use mailcrane_store::{BodyState, Folder, FolderRole, MessageId, NewFolder, Store, VirtualRole};
 use std::collections::{BTreeSet, HashMap};
 
 /// The `Email` data type's state key in the store.
@@ -547,6 +547,7 @@ impl<'a> JmapSyncer<'a> {
             let path = parts.join("/");
             let old = existing.iter().find(|f| f.details.remote_name == path);
             let role = m.role.as_ref().and_then(folder_role);
+            let virtual_role = m.role.as_ref().and_then(virtual_role);
             let id = self.store.upsert_folder(&NewFolder {
                 account_id: self.account,
                 remote_name: path,
@@ -558,7 +559,7 @@ impl<'a> JmapSyncer<'a> {
                 highestmodseq: None,
                 is_subscribed: true,
                 selectable: true,
-                virtual_role: None,
+                virtual_role,
             })?;
             self.store.set_jmap_mailbox(id, &m.id)?;
             if role == Some(FolderRole::Inbox) {
@@ -801,7 +802,16 @@ impl<'a> JmapSyncer<'a> {
             Err(JmapError::Http(404)) => return Err(SyncError::MessageGone),
             Err(e) => return Err(e.into()),
         };
-        save_body(self.store, message, &raw)?;
+        // Only while the row is still this email: ids are reused (#488).
+        super::initial::save_opened_body(
+            self.store,
+            message,
+            Some(super::initial::JmapEmail {
+                account: self.account,
+                email_id: &row.email_id,
+            }),
+            &raw,
+        )?;
         self.listener.on_event(CoreEvent::MessagesChanged {
             folder_id: header.details.folder_id,
         });
@@ -830,6 +840,8 @@ fn transient(e: &JmapError) -> bool {
 }
 
 /// A mailbox role as a folder role (RFC 8621 §2, the IANA mailbox roles).
+/// `flagged` is virtual ([`virtual_role`], #461) and `important` an
+/// ordinary mailbox: neither gets a folder role.
 fn folder_role(role: &MailboxRole) -> Option<FolderRole> {
     Some(match *role {
         MailboxRole::Inbox => FolderRole::Inbox,
@@ -839,7 +851,18 @@ fn folder_role(role: &MailboxRole) -> Option<FolderRole> {
         MailboxRole::Junk => FolderRole::Spam,
         MailboxRole::Trash => FolderRole::Trash,
         MailboxRole::All => FolderRole::All,
+        MailboxRole::Flagged | MailboxRole::Important => return None,
     })
+}
+
+/// A mailbox role as a virtual folder (#390, #461). Only `flagged`, as
+/// IMAP's `\Flagged`: `important` (RFC 8457 §3) can be a real folder, and
+/// IMAP counts it as virtual only on Gmail, which has no JMAP.
+fn virtual_role(role: &MailboxRole) -> Option<VirtualRole> {
+    match *role {
+        MailboxRole::Flagged => Some(VirtualRole::Starred),
+        _ => None,
+    }
 }
 /// The last path segment: a JMAP mailbox's own name.
 fn leaf(path: &str) -> &str {
