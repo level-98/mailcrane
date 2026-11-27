@@ -207,6 +207,9 @@ pub struct SyncEngine {
     dns: Mutex<Option<Arc<dyn crate::autoconfig::PlatformDns>>>,
     #[cfg(test)]
     extra_root_cert: Mutex<Option<Vec<u8>>>,
+    /// For each IMAP open's body save, whether its thread wrote urgently.
+    #[cfg(test)]
+    pub(crate) urgent_at_open: Mutex<Vec<bool>>,
 }
 
 #[uniffi::export]
@@ -226,6 +229,8 @@ impl SyncEngine {
             dns: Mutex::new(None),
             #[cfg(test)]
             extra_root_cert: Mutex::new(None),
+            #[cfg(test)]
+            urgent_at_open: Mutex::new(Vec::new()),
         })
     }
 
@@ -300,20 +305,30 @@ impl SyncEngine {
         // From here on a background download gives way (M4-25).
         let gate = self.account_lock(account);
         let _waiting = gate.announce();
-        // Without the sync's writer lock (issue #294): opening never waits
-        // for a sync. Its only writes are the body's own short transactions,
-        // marked urgent so they take the next turn for SQLite's write lock: a
-        // sync writing batch after batch would otherwise win every race and
-        // the save would end in SQLITE_BUSY. JMAP and IMAP alike (#468).
+        // JMAP opens take the account's writer lock (`jmap_inner`), so they
+        // wait for that account's sync and get no urgent mark: marked while
+        // waiting, they'd slow the very sync they wait for (#469 review).
+        if let Some(r) = self.run_jmap(account, |s| {
+            Box::pin(async move { s.fetch_body(MessageId(message_id)).await })
+        }) {
+            return r;
+        }
+        // On the account's reused connection, without the sync's writer
+        // lock (issue #294): opening never waits for a sync. Its only writes
+        // are the body's own short transactions, marked urgent so they take
+        // the next turn for SQLite's write lock: a sync writing batch after
+        // batch would otherwise win every race and the save would end in
+        // SQLITE_BUSY. The mark is made on the job thread that writes.
         let config = self.config;
         self.urgent_job(account, || {
-            if let Some(r) = self.run_jmap(account, |s| {
-                Box::pin(async move { s.fetch_body(MessageId(message_id)).await })
-            }) {
-                return r;
-            }
-            // On the account's reused connection.
             self.pooled(account, Retry::Idempotent, |store, session, listener| {
+                // Tests: whether the thread about to save the body writes
+                // urgently (#468).
+                #[cfg(test)]
+                self.urgent_at_open
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .push(mailcrane_store::urgent_here(&self.db_path));
                 Box::pin(async move {
                     FolderSyncer::new(store, session, listener, account, config)
                         .fetch_body(MessageId(message_id))
@@ -341,10 +356,15 @@ impl SyncEngine {
     /// each folder's sync state. Returns the inbox's folder id, or `None` if
     /// the server has no inbox. On failure the saved folders are unchanged.
     pub fn refresh_folders(&self, account_id: i64) -> Result<Option<i64>, SyncFailure> {
+        // A local-only account never connects (#289): answered here, before
+        // any job thread, so it can't get a `Network` error either.
+        let account = AccountId(account_id);
+        if self.is_local(account)? {
+            let store = self.open_store()?;
+            return Ok(inbox_of(&store, account)?.map(|f| f.0));
+        }
         // Never on the caller's stack (#462).
-        self.account_job(AccountId(account_id), || {
-            self.refresh_folders_here(account_id)
-        })
+        self.account_job(account, || self.refresh_folders_here(account_id))
     }
 }
 
@@ -727,8 +747,11 @@ impl SyncEngine {
         replay: bool,
         job: impl for<'a> FnOnce(&'a mut FolderSyncer<'_>) -> SyncFuture<'a, T> + Send,
     ) -> Result<T, SyncFailure> {
-        // Never on the caller's stack (#462).
-        on_job_thread(|| self.run_replaying_here(folder, replay, job))
+        // The folder's account, a short database read here, so a job thread
+        // that can't run is reported for it (#470 review). Never on the
+        // caller's stack (#462).
+        let account = self.folder_account(folder)?;
+        self.account_job(account, || self.run_replaying_here(folder, replay, job))
     }
 
     /// [`Self::run_replaying`], on the current thread.
