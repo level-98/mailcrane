@@ -263,12 +263,13 @@ fn cancel_in_tx(tx: &Transaction<'_>, message: MessageId) -> Result<Option<Folde
 /// another message that took the id (#503).
 const SAME_MESSAGE: &str = "WHERE id = ?1 AND folder_id = ?2 AND uid = ?3";
 
+/// Applies `kind` to `m`'s row. Returns whether the row still holds `m`.
 fn apply_local(
     tx: &Transaction<'_>,
     kind: OpKind,
     folder: FolderId,
     m: OpMessage,
-) -> Result<(), StoreError> {
+) -> Result<bool, StoreError> {
     let set = match kind {
         OpKind::MarkRead => "seen = 1",
         OpKind::MarkUnread => "seen = 0",
@@ -276,27 +277,28 @@ fn apply_local(
         OpKind::Unflag => "flagged = 0",
         OpKind::Move | OpKind::Expunge => "hidden = 1",
     };
-    tx.execute(
+    let n = tx.execute(
         &format!("UPDATE messages SET {set} {SAME_MESSAGE}"),
         params![m.message_id.0, folder.0, m.uid],
     )?;
-    Ok(())
+    Ok(n > 0)
 }
 
+/// Undoes `kind` on `m`'s row. Returns whether the row still holds `m`.
 fn revert_local(
     tx: &Transaction<'_>,
     kind: OpKind,
     folder: FolderId,
     m: OpMessage,
-) -> Result<(), StoreError> {
+) -> Result<bool, StoreError> {
     match kind.opposite() {
         Some(opposite) => apply_local(tx, opposite, folder, m),
         None => {
-            tx.execute(
+            let n = tx.execute(
                 &format!("UPDATE messages SET hidden = 0 {SAME_MESSAGE}"),
                 params![m.message_id.0, folder.0, m.uid],
             )?;
-            Ok(())
+            Ok(n > 0)
         }
     }
 }
@@ -469,25 +471,28 @@ impl Store {
 
     /// The server refused the action for good: undoes the local change on
     /// the messages that still exist and drops the action. Returns the
-    /// local ids it was applied to.
+    /// local ids it undid: not a row that holds another message now (#503).
     pub fn fail_op(&self, op: OpId) -> Result<Vec<MessageId>, StoreError> {
         let tx = self.write_tx()?;
         let Some((kind, folder)) = op_folder(&tx, op)? else {
             return Ok(Vec::new());
         };
-        let messages = load_messages(&tx, op)?;
-        for m in &messages {
-            revert_local(&tx, kind, folder, *m)?;
+        let mut reverted = Vec::new();
+        for m in load_messages(&tx, op)? {
+            if revert_local(&tx, kind, folder, m)? {
+                reverted.push(m.message_id);
+            }
         }
         delete_op(&tx, op)?;
         tx.commit()?;
-        Ok(messages.into_iter().map(|m| m.message_id).collect())
+        Ok(reverted)
     }
 
     /// The server refused the action for some of its messages only (a JMAP
     /// `Email/set` can refuse ids one by one): undoes the local change on
     /// those messages and takes them out of the action, so the rest can be
-    /// completed with [`Store::complete_op`]. Returns the ids it undid.
+    /// completed with [`Store::complete_op`]. Returns the ids it undid
+    /// (not a row that holds another message now, #503).
     pub fn fail_op_messages(
         &self,
         op: OpId,
@@ -500,12 +505,14 @@ impl Store {
         let mut undone = Vec::new();
         for m in load_messages(&tx, op)? {
             if refused.contains(&m.message_id) {
-                revert_local(&tx, kind, folder, m)?;
+                let still_there = revert_local(&tx, kind, folder, m)?;
                 tx.execute(
                     "DELETE FROM pending_op_messages WHERE op_id = ?1 AND message_id = ?2",
                     params![op.0, m.message_id.0],
                 )?;
-                undone.push(m.message_id);
+                if still_there {
+                    undone.push(m.message_id);
+                }
             }
         }
         tx.commit()?;

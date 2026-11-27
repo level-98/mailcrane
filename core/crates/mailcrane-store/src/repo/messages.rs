@@ -357,7 +357,8 @@ impl Store {
     ) -> Result<bool, StoreError> {
         let tx = self.write_tx()?;
         let n = tx.execute(
-            "UPDATE messages SET body_state = 'fetched', snippet = ?2, has_attachments = ?3              WHERE id = ?1",
+            "UPDATE messages SET body_state = 'fetched', snippet = ?2, has_attachments = ?3 \
+             WHERE id = ?1",
             params![id.0, snippet, !attachments.is_empty()],
         )?;
         if n == 0 {
@@ -388,11 +389,23 @@ impl Store {
                 uidvalidity,
                 uid,
             } => tx.execute(
-                "UPDATE messages SET body_state = 'fetched', snippet = ?2, has_attachments = ?3                  WHERE id = ?1 AND folder_id = ?4 AND uid = ?5 AND EXISTS (SELECT 1 FROM folders f                    WHERE f.id = ?4 AND f.uidvalidity = ?6)",
-                params![id.0, body.snippet, has_attachments, folder.0, uid, uidvalidity],
+                "UPDATE messages SET body_state = 'fetched', snippet = ?2, has_attachments = ?3 \
+                 WHERE id = ?1 AND folder_id = ?4 AND uid = ?5 AND EXISTS (SELECT 1 FROM folders f \
+                 WHERE f.id = ?4 AND f.uidvalidity = ?6)",
+                params![
+                    id.0,
+                    body.snippet,
+                    has_attachments,
+                    folder.0,
+                    uid,
+                    uidvalidity
+                ],
             )?,
             RowIdentity::Jmap { account, email_id } => tx.execute(
-                "UPDATE messages SET body_state = 'fetched', snippet = ?2, has_attachments = ?3                  WHERE id = ?1 AND EXISTS (SELECT 1 FROM jmap_emails j                    JOIN folders f ON f.id = messages.folder_id                    WHERE j.message_id = ?1 AND j.email_id = ?4 AND f.account_id = ?5)",
+                "UPDATE messages SET body_state = 'fetched', snippet = ?2, has_attachments = ?3 \
+                 WHERE id = ?1 AND EXISTS (SELECT 1 FROM jmap_emails j \
+                 JOIN folders f ON f.id = messages.folder_id \
+                 WHERE j.message_id = ?1 AND j.email_id = ?4 AND f.account_id = ?5)",
                 params![id.0, body.snippet, has_attachments, email_id, account.0],
             )?,
         };
@@ -454,7 +467,9 @@ fn write_body_parts(
     attachments: &[NewAttachment],
 ) -> Result<(), StoreError> {
     tx.execute(
-        "INSERT INTO message_bodies (message_id, raw, fetched_at) VALUES (?1,?2,?3)          ON CONFLICT (message_id) DO UPDATE SET raw = excluded.raw,          fetched_at = excluded.fetched_at",
+        "INSERT INTO message_bodies (message_id, raw, fetched_at) VALUES (?1,?2,?3) \
+         ON CONFLICT (message_id) DO UPDATE SET raw = excluded.raw, \
+         fetched_at = excluded.fetched_at",
         params![id.0, raw, fetched_at],
     )?;
     tx.execute(
@@ -463,7 +478,8 @@ fn write_body_parts(
     )?;
     for a in attachments {
         tx.execute(
-            "INSERT INTO attachments (message_id, part_id, filename, mime_type, size,              content_id, is_inline) VALUES (?1,?2,?3,?4,?5,?6,?7)",
+            "INSERT INTO attachments (message_id, part_id, filename, mime_type, size, \
+             content_id, is_inline) VALUES (?1,?2,?3,?4,?5,?6,?7)",
             params![
                 id.0,
                 a.part_id,

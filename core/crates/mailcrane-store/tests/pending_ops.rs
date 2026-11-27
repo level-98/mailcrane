@@ -373,8 +373,8 @@ fn a_late_revert_or_undo_leaves_a_row_that_took_the_id_alone() -> R {
     // Undo finds no action for the message the row holds now.
     assert_eq!(f.store.cancel_queued(reused)?, None);
     assert!(flagged(&f.store)?);
-    // Nor does the server refusing the flag unflag UID 9.
-    f.store.fail_op(op)?;
+    // Nor does the server refusing the flag unflag UID 9, or name it.
+    assert!(f.store.fail_op(op)?.is_empty());
     assert!(flagged(&f.store)?);
     Ok(())
 }
@@ -444,7 +444,7 @@ fn a_partly_refused_action_leaves_a_row_that_took_the_id_alone() -> R {
     // #503 review: fail_op_messages reverts only the message it queued.
     let f = fixture(Store::open_in_memory()?)?;
     let (op, nine) = reused_after(&f, OpKind::Flag, true)?;
-    f.store.fail_op_messages(op, &[nine.message_id])?;
+    assert!(f.store.fail_op_messages(op, &[nine.message_id])?.is_empty());
     assert!(f
         .store
         .get_message_header(nine.message_id)?
