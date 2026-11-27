@@ -15,7 +15,7 @@ use super::initial::{save_body, SyncConfig, SyncError};
 use crate::events::{AccountId, CoreEvent, EventListener, FolderId};
 use crate::folder_admin::{CreatePlan, FolderAdminError, RenamePlan};
 use mailcrane_jmap::{Auth, ClientConfig, JmapEmail, JmapError, MailboxRole, Session};
-use mailcrane_store::{BodyState, Folder, FolderRole, MessageId, NewFolder, Store};
+use mailcrane_store::{BodyState, Folder, FolderRole, MessageId, NewFolder, Store, VirtualRole};
 use std::collections::{BTreeSet, HashMap};
 
 /// The `Email` data type's state key in the store.
@@ -547,6 +547,7 @@ impl<'a> JmapSyncer<'a> {
             let path = parts.join("/");
             let old = existing.iter().find(|f| f.details.remote_name == path);
             let role = m.role.as_ref().and_then(folder_role);
+            let virtual_role = m.role.as_ref().and_then(virtual_role);
             let id = self.store.upsert_folder(&NewFolder {
                 account_id: self.account,
                 remote_name: path,
@@ -558,7 +559,7 @@ impl<'a> JmapSyncer<'a> {
                 highestmodseq: None,
                 is_subscribed: true,
                 selectable: true,
-                virtual_role: None,
+                virtual_role,
             })?;
             self.store.set_jmap_mailbox(id, &m.id)?;
             if role == Some(FolderRole::Inbox) {
@@ -830,6 +831,8 @@ fn transient(e: &JmapError) -> bool {
 }
 
 /// A mailbox role as a folder role (RFC 8621 §2, the IANA mailbox roles).
+/// The virtual ones (flagged, important) get no folder role: nothing moves,
+/// archives or deletes into them ([`virtual_role`], #461).
 fn folder_role(role: &MailboxRole) -> Option<FolderRole> {
     Some(match *role {
         MailboxRole::Inbox => FolderRole::Inbox,
@@ -839,7 +842,18 @@ fn folder_role(role: &MailboxRole) -> Option<FolderRole> {
         MailboxRole::Junk => FolderRole::Spam,
         MailboxRole::Trash => FolderRole::Trash,
         MailboxRole::All => FolderRole::All,
+        MailboxRole::Flagged | MailboxRole::Important => return None,
     })
+}
+
+/// A mailbox role as a virtual folder (#390, #461): the same IANA roles
+/// as IMAP's `\Flagged` and Gmail's `\Important`.
+fn virtual_role(role: &MailboxRole) -> Option<VirtualRole> {
+    match *role {
+        MailboxRole::Flagged => Some(VirtualRole::Starred),
+        MailboxRole::Important => Some(VirtualRole::Important),
+        _ => None,
+    }
 }
 /// The last path segment: a JMAP mailbox's own name.
 fn leaf(path: &str) -> &str {

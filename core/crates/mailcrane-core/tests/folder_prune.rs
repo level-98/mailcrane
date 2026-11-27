@@ -226,3 +226,53 @@ async fn the_inbox_is_never_removed() {
     save_folder_list(&store, account, &without).expect("save");
     assert!(id_of(&store, account, "INBOX").is_some());
 }
+
+#[tokio::test]
+async fn a_renamed_virtual_folder_keeps_its_row() {
+    // #461: Gmail renames "[Gmail]/Starred" when its interface language
+    // changes. A virtual folder has no standard role, so it's matched by
+    // its virtual role instead, and keeps its row (and its messages)
+    // rather than being removed and fetched again.
+    let imap = FakeImap::builder()
+        .user(USER, PASSWORD)
+        .folder("INBOX", vec![raw(1)])
+        .folder("Starred", Vec::new())
+        // Both names mean starred mail (RFC 6154 \Flagged, on any server).
+        .special_use("Starred", "\\Flagged")
+        .special_use("Com estrela", "\\Flagged")
+        .start()
+        .await
+        .expect("fake imap starts");
+    let store = Store::open_in_memory().expect("store");
+    let account = account(&store);
+    let mut session = connect(&imap).await.expect("connects");
+    save_folder_list(
+        &store,
+        account,
+        &session.list_folders().await.expect("list"),
+    )
+    .expect("save");
+    let starred = id_of(&store, account, "Starred").expect("starred");
+
+    assert!(imap.mailbox().rename_folder("Starred", "Com estrela").await);
+    let saved = save_folder_list(
+        &store,
+        account,
+        &session.list_folders().await.expect("list"),
+    )
+    .expect("save");
+    session.logout().await;
+
+    assert!(saved.removed.is_empty(), "nothing removed");
+    assert_eq!(id_of(&store, account, "Com estrela"), Some(starred));
+    assert_eq!(names(&store, account), ["Com estrela", "INBOX"]);
+    assert_eq!(
+        store
+            .get_folder(starred)
+            .expect("get")
+            .expect("folder")
+            .details
+            .virtual_role,
+        Some(mailcrane_store::VirtualRole::Starred)
+    );
+}

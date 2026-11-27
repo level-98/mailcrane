@@ -523,19 +523,28 @@ pub fn save_folder_list(
             .collect()
     };
     // A standard folder gone under its old name, whose role a newly listed
-    // folder now has: the same folder, renamed elsewhere.
+    // folder now has: the same folder, renamed elsewhere. A virtual folder
+    // (#390) the same way, by its virtual role: Gmail renames
+    // "[Gmail]/Starred" when its interface language changes, and the folder
+    // keeps its messages and rules instead of being removed and fetched
+    // again (#461).
     let mut renames = Vec::new();
     let mut removed = Vec::new();
     for f in gone {
-        let found = f.details.role.and_then(|role| {
-            folders.iter().find(|l| {
-                l.role == Some(role)
-                    && !existing.contains_key(&l.raw_name)
-                    && !renames
-                        .iter()
-                        .any(|(_, r, _): &(FolderId, String, String)| *r == l.raw_name)
-            })
-        });
+        let free = |l: &&ImapFolder| {
+            !existing.contains_key(&l.raw_name)
+                && !renames
+                    .iter()
+                    .any(|(_, r, _): &(FolderId, String, String)| *r == l.raw_name)
+        };
+        let found = match (f.details.role, f.details.virtual_role) {
+            (Some(role), _) => folders.iter().filter(free).find(|l| l.role == Some(role)),
+            (None, Some(kind)) => folders
+                .iter()
+                .filter(free)
+                .find(|l| l.role.is_none() && l.virtual_role == Some(kind)),
+            (None, None) => None,
+        };
         match found {
             Some(l) => {
                 if let Some(old) = existing.remove(&f.details.remote_name) {
