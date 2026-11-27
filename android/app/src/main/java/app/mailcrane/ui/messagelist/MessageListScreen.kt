@@ -608,6 +608,11 @@ private fun SwipeableRow(
         modifier = Modifier.semantics { customActions = actions },
         enableDismissFromStartToEnd = swipe.right != SwipeAction.NONE,
         enableDismissFromEndToStart = swipe.left != SwipeAction.NONE,
+        // Only a row at rest takes a swipe. The callback is stable, so the dismiss effect runs again only
+        // when the settled value changes: a swipe that caught the row springing back (or waiting to be
+        // dropped) would settle it at the same value again, with no action and no reset, and leave it swiped
+        // away for good (#368).
+        gesturesEnabled = state.settledValue == SwipeToDismissBoxValue.Settled,
         onDismiss = onDismiss,
         backgroundContent = {
             val action =

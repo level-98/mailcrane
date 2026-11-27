@@ -150,4 +150,71 @@ class SwipeUiTest {
         assertFalse("marked unread once", state.messages.first { it.id == 1L }.isSeen)
         assertEquals("back in place within a second", start, left("Subject 1"), 1f)
     }
+
+    @Test
+    fun aFlagSwipeRunsOnceWhenTheCoreUpdatesTheRow() {
+        // The same as a read swipe: flagging changes the row while it springs back.
+        show(right = SwipeAction.FLAG) { message, action ->
+            swiped += message.id to action
+            state =
+                state.copy(
+                    messages =
+                        state.messages.map {
+                            if (it.id == message.id) it.copy(isFlagged = !it.isFlagged) else it
+                        },
+                )
+        }
+        val start = left("Subject 1")
+        compose.mainClock.autoAdvance = false
+        compose.onNodeWithText("Subject 1", useUnmergedTree = true).performTouchInput { swipeRight() }
+        compose.mainClock.advanceTimeBy(1_000)
+        assertEquals(listOf(1L to SwipeAction.FLAG), swiped)
+        assertTrue("flagged once", state.messages.first { it.id == 1L }.isFlagged)
+        assertEquals("back in place within a second", start, left("Subject 1"), 1f)
+    }
+
+    @Test
+    fun anArchiveIsSentOnceWhileTheListChangesDuringTheWait() {
+        // A sync or the minute tick redraws the list while an archived row waits to be dropped. Each redraw
+        // used to send the archive again.
+        show()
+        compose.mainClock.autoAdvance = false
+        compose.onNodeWithText("Subject 2", useUnmergedTree = true).performTouchInput { swipeLeft() }
+        repeat(3) {
+            compose.mainClock.advanceTimeBy(500)
+            state =
+                state.copy(
+                    messages = state.messages.map { if (it.id == 3L) it.copy(isSeen = !it.isSeen) else it },
+                )
+        }
+        compose.mainClock.advanceTimeBy(500)
+        assertEquals(listOf(2L to SwipeAction.ARCHIVE), swiped)
+    }
+
+    @Test
+    fun aSwipeWhileTheRowSpringsBackIsIgnored() {
+        // A second swipe that caught the row on its way back used to leave it swiped away for good: the row
+        // settled at the same value again, so no action ran and nothing brought it back.
+        show(right = SwipeAction.READ_UNREAD)
+        val start = left("Subject 1")
+        val row = compose.onNodeWithText("Subject 1", useUnmergedTree = true)
+        compose.mainClock.autoAdvance = false
+        row.performTouchInput { swipeRight() }
+        // Step frame by frame until the row is out and moving back towards rest.
+        var previous = left("Subject 1")
+        var returning = false
+        var frames = 0
+        while (!returning && frames < 240) {
+            compose.mainClock.advanceTimeByFrame()
+            val x = left("Subject 1")
+            returning = x > start + 20f && x < previous
+            previous = x
+            frames++
+        }
+        assertTrue("caught the row springing back", returning)
+        row.performTouchInput { swipeRight() }
+        compose.mainClock.advanceTimeBy(2_000)
+        assertEquals("the second swipe did nothing", listOf(1L to SwipeAction.READ_UNREAD), swiped)
+        assertEquals("at rest", start, left("Subject 1"), 1f)
+    }
 }
