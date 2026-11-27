@@ -123,6 +123,16 @@ $login = (& gh api user --jq .login 2>$null)
 if (-not $login) { Stop-Fleet "gh isn't signed in. Run 'gh auth login' first." }
 Write-Host "Fleet will act on GitHub as $login."
 
+# One compiler cache for every seat (#531), so a new worktree doesn't rebuild
+# every dependency. Only when sccache is installed; otherwise nothing changes.
+$sccacheDir = Join-Path $root '.worktrees\sccache'
+$useSccache = [bool] (Get-Command sccache -ErrorAction SilentlyContinue)
+if ($useSccache) {
+    Write-Host "Seats will share sccache in $sccacheDir (up to 10G)."
+} else {
+    Write-Host 'sccache is not installed, so each seat builds its own dependencies. To share them: cargo install sccache --locked'
+}
+
 if ($DryRun) {
     foreach ($seat in $Seats) {
         $dir = if ($seat -eq 'lead') { $root } else { Join-Path $root ".worktrees\$seat" }
@@ -183,10 +193,14 @@ foreach ($seat in $Seats) {
     # Every value goes into the window's script single-quoted, so escape '.
     $seatText = $seat -replace "'", "''"
     $targetText = $target -replace "'", "''"
+    $cacheText = if ($useSccache) {
+        "`$env:RUSTC_WRAPPER = 'sccache'; `$env:SCCACHE_DIR = '$($sccacheDir -replace "'", "''")'; `$env:SCCACHE_CACHE_SIZE = '10G'"
+    } else { '' }
     $command = @"
 `$host.UI.RawUI.WindowTitle = 'mailbot.$seatText'
 `$env:DEV_SYNC_SEAT = '$seatText'
 `$env:CARGO_TARGET_DIR = '$targetText'
+$cacheText
 claude $argText '$($loop -replace "'", "''")'
 "@
     $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($command))
