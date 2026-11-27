@@ -290,9 +290,10 @@ fun SettingsContent(
     onUndoSendChange: (Int) -> Unit = {},
     appearance: AppearanceSettings = AppearanceSettings(),
     swipe: SwipeSettings = SwipeSettings(),
-    accountSection: @Composable () -> Unit = {},
     /** The list's scroll position, kept by the caller so it survives an account page or About (#492 review). */
     scroll: ScrollState = rememberScrollState(),
+    // Last, so callers can pass it as a trailing lambda.
+    accountSection: @Composable () -> Unit = {},
 ) {
     Scaffold(
         topBar = {
