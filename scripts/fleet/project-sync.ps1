@@ -8,6 +8,9 @@ hand-offs, so the board shows who has what. GitHub stays the record and the
 Synapse board stays the live layer; this only mirrors the state onto the
 project. Adding an item that's already on the board is harmless.
 
+GitHub limits how fast one login may edit (a secondary rate limit, shared by
+every seat): when setting many items, wait some seconds between calls.
+
 Uses your existing `gh` sign-in, which needs the `project` scope
 (`gh auth refresh -s project`, done once by the maintainer). No secrets.
 
@@ -36,7 +39,8 @@ param(
     [int] $Project = 1
 )
 
-$ErrorActionPreference = 'Stop'
+# Not 'Stop': in Windows PowerShell that turns any stderr line from gh into a
+# terminating error when the output is redirected. Exit codes are checked.
 
 function Stop-Sync([string] $Message) {
     Write-Host "project-sync: $Message" -ForegroundColor Red
