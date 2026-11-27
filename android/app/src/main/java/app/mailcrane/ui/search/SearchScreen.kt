@@ -47,6 +47,8 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
@@ -312,6 +314,8 @@ fun SearchContent(
     selectQuery: Boolean = false,
 ) {
     val focus = remember { FocusRequester() }
+    val keyboard = LocalSoftwareKeyboardController.current
+    val focusManager = LocalFocusManager.current
     LaunchedEffect(Unit) { focus.requestFocus() }
     // The field's own text and cursor. When the query changes from outside the field (a chip, a recent search),
     // the cursor goes to the end, so typing continues after the new term rather than at the old position.
@@ -345,7 +349,16 @@ fun SearchContent(
                         placeholder = { Text(stringResource(R.string.search_hint)) },
                         singleLine = true,
                         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                        keyboardActions = KeyboardActions(onSearch = { onSubmit() }),
+                        keyboardActions =
+                            KeyboardActions(onSearch = {
+                                // The keyboard goes, so the results show (#510). An empty query submits
+                                // nothing, so the keyboard stays for typing.
+                                if (state.query.isNotBlank()) {
+                                    onSubmit()
+                                    keyboard?.hide()
+                                    focusManager.clearFocus()
+                                }
+                            }),
                         colors =
                             TextFieldDefaults.colors(
                                 focusedContainerColor = Color.Transparent,
