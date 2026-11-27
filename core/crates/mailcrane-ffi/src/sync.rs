@@ -354,8 +354,15 @@ impl SyncEngine {
     /// each folder's sync state. Returns the inbox's folder id, or `None` if
     /// the server has no inbox. On failure the saved folders are unchanged.
     pub fn refresh_folders(&self, account_id: i64) -> Result<Option<i64>, SyncFailure> {
+        // A local-only account never connects (#289): answered here, before
+        // any job thread, so it can't get a `Network` error either.
+        let account = AccountId(account_id);
+        if self.is_local(account)? {
+            let store = self.open_store()?;
+            return Ok(inbox_of(&store, account)?.map(|f| f.0));
+        }
         // Never on the caller's stack (#462).
-        on_job_thread(|| self.refresh_folders_here(account_id))
+        self.account_job(account, || self.refresh_folders_here(account_id))
     }
 }
 
@@ -738,8 +745,11 @@ impl SyncEngine {
         replay: bool,
         job: impl for<'a> FnOnce(&'a mut FolderSyncer<'_>) -> SyncFuture<'a, T> + Send,
     ) -> Result<T, SyncFailure> {
-        // Never on the caller's stack (#462).
-        on_job_thread(|| self.run_replaying_here(folder, replay, job))
+        // The folder's account, a short database read here, so a job thread
+        // that can't run is reported for it (#470 review). Never on the
+        // caller's stack (#462).
+        let account = self.folder_account(folder)?;
+        self.account_job(account, || self.run_replaying_here(folder, replay, job))
     }
 
     /// [`Self::run_replaying`], on the current thread.
@@ -891,7 +901,7 @@ impl SyncEngine {
         mut job: impl for<'a> FnMut(&'a Store, &'a mut Session, &'a dyn EventListener) -> SyncFuture<'a, T>
             + Send,
     ) -> Result<T, SyncFailure> {
-        on_job_thread(|| {
+        self.account_job(account, || {
             let ctx = (
                 self.open_store()?,
                 HoldErrors(ListenerAdapter(self.listener.clone())),
@@ -970,12 +980,36 @@ impl SyncEngine {
     }
 }
 
+impl SyncEngine {
+    /// [`on_job_thread`] for work on `account`'s behalf. A thread that
+    /// couldn't start, or (in the app) work that panicked, also sends a
+    /// `SyncError` event for the account, as a runtime that can't be built
+    /// does, so the app's error display sees it (#468).
+    pub(crate) fn account_job<T: Send>(
+        &self,
+        account: AccountId,
+        work: impl FnOnce() -> Result<T, SyncFailure> + Send,
+    ) -> Result<T, SyncFailure> {
+        self.job_outcome(account, crate::worker::on_job_thread(work))
+    }
+
+    /// What `account`'s job came back as; `None` (it didn't run, or it
+    /// panicked) is reported as `Network`.
+    fn job_outcome<T>(
+        &self,
+        account: AccountId,
+        outcome: Option<Result<T, SyncFailure>>,
+    ) -> Result<T, SyncFailure> {
+        outcome.unwrap_or_else(|| Err(self.report(account, events::SyncErrorKind::Network)))
+    }
+}
+
 /// Runs `work` on a thread with a stack this crate sets (#462), never on the
 /// caller's, whose size the app chooses. A thread that couldn't start, or
 /// work that panicked (in the app; tests let the panic through), comes back
-/// as `Network`, the kind `runtime` gives too. Only the call's result says
-/// so: no `SyncError` event is sent, since this runs before the job knows
-/// its account. `worker::on_job_thread` logs which of the two it was.
+/// as `Network`, the kind `runtime` gives too. This sends no `SyncError`
+/// event: for work done for one account use [`SyncEngine::account_job`],
+/// which does. `worker::on_job_thread` logs which of the two it was.
 pub(crate) fn on_job_thread<T: Send>(
     work: impl FnOnce() -> Result<T, SyncFailure> + Send,
 ) -> Result<T, SyncFailure> {

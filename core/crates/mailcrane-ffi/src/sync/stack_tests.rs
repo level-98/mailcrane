@@ -180,3 +180,29 @@ fn pooled_and_sync_calls_run_from_a_small_stack_thread() {
     assert_eq!(logouts(), before + 1, "the pooled connection logged out");
     assert!(!engine.pool.is_open(account), "and is gone");
 }
+
+#[test]
+fn a_job_that_could_not_run_is_reported_for_its_account() {
+    // #468: a thread that didn't start (or a job that panicked, in the app)
+    // sends a `SyncError` event for the account, as a runtime that couldn't
+    // be built does, and the call fails with `Network`.
+    let dir = tempfile::tempdir().expect("dir");
+    let path = dir.path().join("report.db").to_string_lossy().into_owned();
+    let collect = Arc::new(super::tests::Collect::default());
+    let engine = SyncEngine::new(path, collect.clone());
+    let got: Result<u8, SyncFailure> = engine.job_outcome(AccountId(7), None);
+    assert_eq!(got, Err(failed(events::SyncErrorKind::Network)));
+    let events = collect.0.lock().expect("lock").clone();
+    assert_eq!(events.len(), 1, "reported once");
+    assert!(matches!(
+        events.first(),
+        Some(CoreEvent::SyncError {
+            account_id: 7,
+            kind: SyncErrorKind::Network
+        })
+    ));
+    // A job that ran keeps its own result and sends nothing more.
+    let ran: Result<u8, SyncFailure> = engine.job_outcome(AccountId(7), Some(Ok(3)));
+    assert_eq!(ran, Ok(3));
+    assert_eq!(collect.0.lock().expect("lock").len(), events.len());
+}
