@@ -359,7 +359,7 @@ impl Store {
     }
 
     /// [`Store::store_parsed_body`], but only while row `id` is still the
-    /// JMAP email `email_id` of `account`. Row ids are reused once a row is
+    /// JMAP email `email`, as `(account, email_id)`. Row ids are reused once a row is
     /// deleted (`INTEGER PRIMARY KEY`), so without this a body fetched for
     /// one email could be saved into another that took its id meanwhile
     /// (#488). `false` (nothing written) if the row is gone or is another
@@ -367,21 +367,13 @@ impl Store {
     pub fn store_parsed_body_for_jmap_email(
         &self,
         id: MessageId,
-        account: AccountId,
-        email_id: &str,
+        email: (AccountId, &str),
         raw: &[u8],
         fetched_at: i64,
         snippet: &str,
         attachments: &[NewAttachment],
     ) -> Result<bool, StoreError> {
-        self.store_parsed_body_where(
-            id,
-            Some((account, email_id)),
-            raw,
-            fetched_at,
-            snippet,
-            attachments,
-        )
+        self.store_parsed_body_where(id, Some(email), raw, fetched_at, snippet, attachments)
     }
 
     fn store_parsed_body_where(

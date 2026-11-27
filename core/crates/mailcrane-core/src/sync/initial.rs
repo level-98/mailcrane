@@ -9,7 +9,7 @@ use super::convert::header_row;
 use crate::events::{AccountId, CoreEvent, EventListener, FolderId, SyncErrorKind};
 use mailcrane_imap::{ImapError, SelectInfo, Session};
 use mailcrane_mime::Disposition;
-use mailcrane_store::{AccountId, BodyState, MessageId, NewAttachment, Store, StoreError};
+use mailcrane_store::{BodyState, MessageId, NewAttachment, Store, StoreError};
 use std::collections::HashSet;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -573,8 +573,7 @@ fn store_body_parts(
         )?,
         Some(email) => store.store_parsed_body_for_jmap_email(
             message,
-            email.account,
-            email.email_id,
+            (email.account, email.email_id),
             raw,
             fetched_at,
             &parsed.snippet,
