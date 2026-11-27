@@ -421,14 +421,44 @@ class ComposeViewModel
                 Result.failure(e)
             }
 
+        /** Which signature lookup is the newest; an older one's result is dropped (#449). */
+        private var signatureGeneration = 0L
+
+        /** A new message's first signature hasn't been put in yet: the next lookup to land adds it (#449). */
+        private var signatureToAdd = false
+
         /** Adds the From account's signature to a new message, once. */
         private fun addSignature(accountId: Long) {
             _state.update { it.copy(signatureAdded = true) }
+            signatureToAdd = true
+            lookUpSignature(accountId)
+        }
+
+        /**
+         * Looks up [accountId]'s signature and puts it in the message: added, if the new message has none yet,
+         * otherwise swapped for the current one. Latest wins (#449): the result applies only if no newer lookup
+         * started meanwhile and From is still [accountId], so lookups finishing out of order (a slow first
+         * signature, fast From switches) can't add a second signature or one for the wrong account.
+         */
+        private fun lookUpSignature(accountId: Long) {
+            val generation = ++signatureGeneration
             viewModelScope.launch {
-                val signature = readSignature(accountId).getOrNull() ?: return@launch
+                // One that can't be read: the message keeps the signature it has.
+                val signature = readSignature(accountId).getOrElse { return@launch }
+                if (generation != signatureGeneration || _state.value.fromAccountId != accountId) return@launch
+                val adding = signatureToAdd
+                signatureToAdd = false
                 _state.update {
-                    val signed = core.applySignature(it.body, signature, DraftKind.NEW)
-                    it.withOutsideBody(signed).copy(signature = signature)
+                    if (adding) {
+                        if (signature == null) return@update it
+                        val signed = core.applySignature(it.body, signature, DraftKind.NEW)
+                        return@update it.withOutsideBody(signed).copy(signature = signature)
+                    }
+                    val swapped = core.swapSignature(it.body, it.signature, signature)
+                    // An edited signature stays, and keeps being the one to match.
+                    val kept = swapped == it.body && it.signature != null && it.signature != signature
+                    val changed = if (swapped != it.body) it.withOutsideBody(swapped) else it
+                    changed.copy(signature = if (kept) it.signature else signature)
                 }
             }
         }
@@ -481,17 +511,7 @@ class ComposeViewModel
             val before = _state.value.fromAccountId
             _state.update { it.copy(fromAccountId = accountId, error = null) }
             if (before == accountId) return
-            viewModelScope.launch {
-                // One that can't be read: the old signature stays rather than being removed.
-                val signature = readSignature(accountId).getOrElse { return@launch }
-                _state.update {
-                    val swapped = core.swapSignature(it.body, it.signature, signature)
-                    // An edited signature stays, and keeps being the one to match.
-                    val kept = swapped == it.body && it.signature != null && it.signature != signature
-                    val changed = if (swapped != it.body) it.withOutsideBody(swapped) else it
-                    changed.copy(signature = if (kept) it.signature else signature)
-                }
-            }
+            lookUpSignature(accountId)
         }
 
         /** Text typed into a recipient field. Finished entries (followed by a comma or semicolon) become chips. */
@@ -883,6 +903,9 @@ class ComposeViewModel
             // A load still running belongs to the old message (#435): stop it, and its end mustn't unlock anything.
             loadJob?.cancel()
             loadGeneration++
+            // Nor may a signature lookup for it land on the next one (#449).
+            signatureGeneration++
+            signatureToAdd = false
             _state.update {
                 // New revisions, so the body and subject fields drop whatever they still show (#419, #429).
                 rememberBody(it.bodyRevision, it.body)

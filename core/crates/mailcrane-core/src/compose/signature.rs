@@ -76,12 +76,18 @@ pub fn swap_signature(body: &str, old: Option<&str>, new: Option<&str>) -> Strin
 
 /// Where `block` appears in `body` as a whole signature: followed by the end
 /// of the body or a line break, so "Ann" doesn't match an edited "Ann (on
-/// holiday)".
+/// holiday)". The last such place (#449): the signature goes below what the
+/// user writes, so an earlier copy is text they pasted, such as an old mail
+/// of theirs, and is left alone. A reply's quote can't hold one, as its
+/// lines start with "> ".
 fn whole_block_at(body: &str, block: &str) -> Option<usize> {
-    body.match_indices(block).map(|(at, _)| at).find(|at| {
-        let rest = body.get(at + block.len()..).unwrap_or_default();
-        rest.is_empty() || rest.starts_with('\n')
-    })
+    body.match_indices(block)
+        .map(|(at, _)| at)
+        .filter(|at| {
+            let rest = body.get(at + block.len()..).unwrap_or_default();
+            rest.is_empty() || rest.starts_with('\n')
+        })
+        .last()
 }
 
 #[cfg(test)]
@@ -171,21 +177,9 @@ mod tests {
         let mut body = apply_signature("Notes", Some("Ann"), DraftKind::New);
         for _ in 0..5 {
             body = swap_signature(&body, Some("Ann"), Some("Bea"));
-            assert_eq!(
-                body,
-                "Notes
-
--- 
-Bea"
-            );
+            assert_eq!(body, "Notes\n\n-- \nBea");
             body = swap_signature(&body, Some("Bea"), Some("Ann"));
-            assert_eq!(
-                body,
-                "Notes
-
--- 
-Ann"
-            );
+            assert_eq!(body, "Notes\n\n-- \nAnn");
         }
         assert_eq!(body.lines().filter(|l| *l == SEPARATOR).count(), 1);
     }
@@ -193,41 +187,28 @@ Ann"
     #[test]
     fn text_around_the_signature_stays_where_it_is() {
         // Typed above it, and lines typed below it (a P.S.), are both kept; only the block changes.
-        let body = "Hi there
-
--- 
-Ann
-P.S. see you Friday";
+        let body = "Hi there\n\n-- \nAnn\nP.S. see you Friday";
         assert_eq!(
             swap_signature(body, Some("Ann"), Some("Bea")),
-            "Hi there
-
--- 
-Bea
-P.S. see you Friday"
+            "Hi there\n\n-- \nBea\nP.S. see you Friday"
         );
         // A reply: the block between the cursor line and the quote.
-        let reply = apply_signature(
-            "
-
-Ana wrote:
-> Hi
-",
-            Some("Ann"),
-            DraftKind::Reply,
-        );
+        let reply = apply_signature("\n\nAna wrote:\n> Hi\n", Some("Ann"), DraftKind::Reply);
         let typed = format!("Thanks!{reply}");
         assert_eq!(
             swap_signature(&typed, Some("Ann"), Some("Bea")),
-            "Thanks!
+            "Thanks!\n\n-- \nBea\n\n\nAna wrote:\n> Hi\n"
+        );
+    }
 
--- 
-Bea
-
-
-Ana wrote:
-> Hi
-"
+    #[test]
+    fn a_pasted_copy_above_the_signature_is_left_alone() {
+        // #449: an earlier mail of the user's, pasted unquoted, holds the same block; the swap changes the
+        // real signature at the end, not the copy.
+        let body = "Hi\n\n-- \nAnn\nold text\n\n-- \nAnn";
+        assert_eq!(
+            swap_signature(body, Some("Ann"), Some("Bea")),
+            "Hi\n\n-- \nAnn\nold text\n\n-- \nBea"
         );
     }
 }
