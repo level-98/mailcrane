@@ -801,7 +801,16 @@ impl<'a> JmapSyncer<'a> {
             Err(JmapError::Http(404)) => return Err(SyncError::MessageGone),
             Err(e) => return Err(e.into()),
         };
-        super::initial::save_opened_body(self.store, message, &raw)?;
+        // Only while the row is still this email: ids are reused (#488).
+        super::initial::save_opened_body(
+            self.store,
+            message,
+            Some(super::initial::JmapEmail {
+                account: self.account,
+                email_id: &row.email_id,
+            }),
+            &raw,
+        )?;
         self.listener.on_event(CoreEvent::MessagesChanged {
             folder_id: header.details.folder_id,
         });

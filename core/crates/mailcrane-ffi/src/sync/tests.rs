@@ -1182,9 +1182,16 @@ fn opening_on_one_account_while_another_account_syncs_works() {
                 uid = uid.wrapping_add(50);
             }
         });
-        let fetched = engine.fetch_body(message.id.0);
-        stop.store(true, std::sync::atomic::Ordering::SeqCst);
-        fetched
+        // Stops B however the open ends, a panic included, so the scope
+        // can't wait for B forever.
+        struct Stop<'a>(&'a std::sync::atomic::AtomicBool);
+        impl Drop for Stop<'_> {
+            fn drop(&mut self) {
+                self.0.store(true, std::sync::atomic::Ordering::SeqCst);
+            }
+        }
+        let _stop = Stop(&stop);
+        engine.fetch_body(message.id.0)
     });
     assert_eq!(fetched, Ok(()), "opened beside another account's sync");
     let body = Store::open(&path)

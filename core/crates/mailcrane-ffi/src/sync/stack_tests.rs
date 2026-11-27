@@ -113,7 +113,7 @@ fn pooled_and_sync_calls_run_from_a_small_stack_thread() {
     // when the job starts, after waiting for the connection and before
     // downloading (#473). One entry per pooled attempt (#483).
     let marks = engine.urgent_at_open.lock().expect("lock").clone();
-    assert!(!marks.is_empty(), "both opens ran a pooled job");
+    assert!(marks.len() >= 2, "both opens ran a pooled job: {marks:?}");
     assert!(
         marks.iter().all(|m| !m),
         "not marked while waiting or downloading: {marks:?}"

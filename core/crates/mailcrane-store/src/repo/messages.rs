@@ -1,7 +1,7 @@
 use super::narrow;
 use crate::{
-    BodyState, Flags, FolderId, MessageHeader, MessageId, NewAttachment, NewMessageHeader,
-    RemoteFlags, Store, StoreError, ThreadId,
+    AccountId, BodyState, Flags, FolderId, MessageHeader, MessageId, NewAttachment,
+    NewMessageHeader, RemoteFlags, Store, StoreError, ThreadId,
 };
 use rusqlite::{params, OptionalExtension, Row};
 
@@ -355,12 +355,60 @@ impl Store {
         snippet: &str,
         attachments: &[NewAttachment],
     ) -> Result<bool, StoreError> {
+        self.store_parsed_body_where(id, None, raw, fetched_at, snippet, attachments)
+    }
+
+    /// [`Store::store_parsed_body`], but only while row `id` is still the
+    /// JMAP email `email_id` of `account`. Row ids are reused once a row is
+    /// deleted (`INTEGER PRIMARY KEY`), so without this a body fetched for
+    /// one email could be saved into another that took its id meanwhile
+    /// (#488). `false` (nothing written) if the row is gone or is another
+    /// email now.
+    pub fn store_parsed_body_for_jmap_email(
+        &self,
+        id: MessageId,
+        account: AccountId,
+        email_id: &str,
+        raw: &[u8],
+        fetched_at: i64,
+        snippet: &str,
+        attachments: &[NewAttachment],
+    ) -> Result<bool, StoreError> {
+        self.store_parsed_body_where(
+            id,
+            Some((account, email_id)),
+            raw,
+            fetched_at,
+            snippet,
+            attachments,
+        )
+    }
+
+    fn store_parsed_body_where(
+        &self,
+        id: MessageId,
+        jmap_email: Option<(AccountId, &str)>,
+        raw: &[u8],
+        fetched_at: i64,
+        snippet: &str,
+        attachments: &[NewAttachment],
+    ) -> Result<bool, StoreError> {
         let tx = self.write_tx()?;
-        let n = tx.execute(
-            "UPDATE messages SET body_state = 'fetched', snippet = ?2, has_attachments = ?3 \
-             WHERE id = ?1",
-            params![id.0, snippet, !attachments.is_empty()],
-        )?;
+        let n = match jmap_email {
+            None => tx.execute(
+                "UPDATE messages SET body_state = 'fetched', snippet = ?2, has_attachments = ?3 \
+                 WHERE id = ?1",
+                params![id.0, snippet, !attachments.is_empty()],
+            )?,
+            // Only while the row is still that email of that account.
+            Some((account, email_id)) => tx.execute(
+                "UPDATE messages SET body_state = 'fetched', snippet = ?2, has_attachments = ?3 \
+                 WHERE id = ?1 AND EXISTS (SELECT 1 FROM jmap_emails j \
+                   JOIN folders f ON f.id = messages.folder_id \
+                   WHERE j.message_id = ?1 AND j.email_id = ?4 AND f.account_id = ?5)",
+                params![id.0, snippet, !attachments.is_empty(), email_id, account.0],
+            )?,
+        };
         if n == 0 {
             return Ok(false);
         }

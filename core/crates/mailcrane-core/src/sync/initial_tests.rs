@@ -743,7 +743,7 @@ fn an_opened_body_is_saved_under_the_urgent_mark_and_only_then() {
     let background = stored_header(&store, folder, 2);
     super::OPENED_SAVES.with(|s| s.borrow_mut().clear());
     assert!(!store.urgent_here(), "not marked before");
-    super::save_opened_body(&store, opened, RAW).expect("saved");
+    super::save_opened_body(&store, opened, None, RAW).expect("saved");
     assert!(!store.urgent_here(), "nor after");
     super::save_body(&store, background, RAW).expect("saved");
     assert_eq!(
@@ -787,7 +787,7 @@ fn an_opened_save_writes_only_the_body_and_its_parts() {
     let (store, _, folder) = setup();
     let id = stored_header(&store, folder, 1);
     let before = store.get_message_header(id).expect("get").expect("header");
-    super::save_opened_body(&store, id, RAW).expect("saved");
+    super::save_opened_body(&store, id, None, RAW).expect("saved");
     let after = store.get_message_header(id).expect("get").expect("header");
     assert_eq!(after.body_state, BodyState::Fetched);
     assert_eq!(after.details.folder_id, before.details.folder_id);
@@ -803,7 +803,10 @@ fn a_message_removed_before_its_body_is_saved_is_dropped_quietly() {
     let (store, _, folder) = setup();
     let id = stored_header(&store, folder, 1);
     store.delete_message_row(id).expect("removed by the sync");
-    assert!(matches!(super::save_opened_body(&store, id, RAW), Ok(())));
+    assert!(matches!(
+        super::save_opened_body(&store, id, None, RAW),
+        Ok(())
+    ));
     assert!(store.get_message_header(id).expect("get").is_none());
     assert!(store.get_body(id).expect("body").is_none());
 }
@@ -813,7 +816,7 @@ fn a_sync_writing_the_header_again_keeps_a_stored_body() {
     // #472 condition 3: the sync's header upsert never clears the body.
     let (store, _, folder) = setup();
     let id = stored_header(&store, folder, 1);
-    super::save_opened_body(&store, id, RAW).expect("saved");
+    super::save_opened_body(&store, id, None, RAW).expect("saved");
     let again = stored_header(&store, folder, 1);
     assert_eq!(again, id, "same row");
     assert_eq!(
@@ -825,4 +828,27 @@ fn a_sync_writing_the_header_again_keeps_a_stored_body() {
         BodyState::Fetched
     );
     assert_eq!(store.get_body(id).expect("body").as_deref(), Some(RAW));
+}
+
+#[test]
+fn a_jmap_open_never_saves_into_a_row_that_took_its_id() {
+    // #488 review: row ids are reused (INTEGER PRIMARY KEY). The sync
+    // deletes the newest row and inserts another email, which gets the same
+    // id; the open still holding the old id must not write its body there.
+    let (store, account, folder) = setup();
+    let old = stored_header(&store, folder, 1);
+    store.delete_message_row(old).expect("the sync removes it");
+    let new = stored_header(&store, folder, 2);
+    assert_eq!(new, old, "the id was reused");
+    let email = super::JmapEmail {
+        account,
+        email_id: "M-old",
+    };
+    assert!(matches!(
+        super::save_opened_body(&store, old, Some(email), RAW),
+        Ok(())
+    ));
+    let row = store.get_message_header(new).expect("get").expect("header");
+    assert_eq!(row.body_state, BodyState::None, "the new email has no body");
+    assert!(store.get_body(new).expect("body").is_none());
 }
