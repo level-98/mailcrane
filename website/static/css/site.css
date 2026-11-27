@@ -296,6 +296,14 @@ h1 span,
   color: var(--blue);
 }
 
+.mobile-nav-panel a[aria-current="page"] {
+  background: var(--surface-dim);
+  color: var(--blue);
+  text-decoration: underline;
+  text-decoration-thickness: 2px;
+  text-underline-offset: 4px;
+}
+
 .theme-toggle {
   display: grid;
   width: 40px;
@@ -1011,6 +1019,15 @@ h1 span,
 .group-heading p {
   margin: 0;
   color: var(--muted);
+}
+
+.group-heading .group-status {
+  margin-top: 8px;
+  color: var(--ink);
+}
+
+.group-status .stage-tag {
+  margin-right: 6px;
 }
 
 .cta-band {
