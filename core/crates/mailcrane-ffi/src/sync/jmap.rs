@@ -27,7 +27,7 @@ impl SyncEngine {
                 Err(_) => return Some(Err(failed(events::SyncErrorKind::Storage))),
             }
         };
-        Some(on_job_thread(|| {
+        Some(self.account_job(account, || {
             let store = self.open_store()?;
             self.jmap_inner(&store, account, &session_url, job)
         }))
