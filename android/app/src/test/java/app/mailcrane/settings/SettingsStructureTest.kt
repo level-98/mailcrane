@@ -177,7 +177,10 @@ class SettingsStructureTest {
                     account = accountB,
                     onBack = {},
                     onRemove = {},
-                    sections = { id -> SignatureSection(id, viewModel = AccountSettingsViewModel(core, id)) },
+                    sections = { id ->
+                        val vm = viewModel(key = "account-settings-$id") { AccountSettingsViewModel(core, id) }
+                        SignatureSection(id, viewModel = vm)
+                    },
                 )
             }
         }
