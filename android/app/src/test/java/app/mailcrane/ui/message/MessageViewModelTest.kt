@@ -184,7 +184,12 @@ private class FakeMessageCore(
         calls += "unsnooze"
     }
 
-    override suspend fun snoozeInfo(messageId: Long): SnoozeInfo? = snoozeInfo
+    var snoozeInfoFailure: SnoozeFailure? = null
+
+    override suspend fun snoozeInfo(messageId: Long): SnoozeInfo? {
+        snoozeInfoFailure?.let { throw it }
+        return snoozeInfo
+    }
 
     override suspend fun applyAction(
         messageId: Long,
@@ -547,6 +552,19 @@ class MessageViewModelTest {
             core.snoozeInfo = null
             core.events.emit(CoreEvent.MessagesChanged(folderId = 1L))
             assertEquals(null, ready(vm).snooze)
+        }
+
+    /** #431: when the wake takes the shown row with it, the screen closes rather than offer Snooze. */
+    @Test
+    fun aWokenMessageWhoseRowIsGoneCloses() =
+        runTest {
+            val core = FakeMessageCore()
+            core.snoozeInfo = SnoozeInfo(wakeAt = 1_800_000_000, deviceOnly = false, waking = true)
+            val vm = messageViewModel(core)
+            assertEquals(true, ready(vm).snooze?.waking)
+            core.snoozeInfoFailure = SnoozeFailure.NotFound()
+            core.events.emit(CoreEvent.MessagesChanged(folderId = 1L))
+            assertEquals(MessageEffect.Close, vm.effects.first())
         }
 
     @Test

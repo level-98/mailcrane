@@ -29,16 +29,16 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.filter
-import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.getAndUpdate
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 /** One-off things the message screen does after an action. */
@@ -181,6 +181,9 @@ class MessageViewModel
         private var markedRead = false
         private var loading: Job? = null
 
+        /** Asks for the snooze to be read again; conflated, so an older read never wins over a newer one. */
+        private val snoozeRefresh = Channel<Unit>(Channel.CONFLATED)
+
         init {
             load()
             viewModelScope.launch {
@@ -189,14 +192,29 @@ class MessageViewModel
             }
             viewModelScope.launch {
                 // A wake moving the message lands with a change: "Waking…" and the disabled Snooze
-                // follow the snooze row, with no timer (#431).
-                core.events.filter { it is CoreEvent.MessagesChanged }.collect { refreshSnooze() }
+                // follow the snooze row, with no timer (#431). Only while the message shows a snooze.
+                core.events
+                    .filter { it is CoreEvent.MessagesChanged }
+                    .filter { (_state.value as? MessageState.Ready)?.snooze != null }
+                    .collect { snoozeRefresh.trySend(Unit) }
+            }
+            viewModelScope.launch {
+                for (ask in snoozeRefresh) refreshSnooze()
             }
         }
 
         /** Reads the message's snooze again and applies it to the state as it is now. */
         private suspend fun refreshSnooze() {
-            val info = snoozeOf()
+            val info =
+                try {
+                    core.snoozeInfo(messageId)
+                } catch (_: SnoozeFailure.NotFound) {
+                    // The wake landed and took this row with it: the message is back in its folder.
+                    _effects.send(MessageEffect.Close)
+                    return
+                } catch (_: SnoozeFailure) {
+                    return
+                }
             _state.update { (it as? MessageState.Ready)?.copy(snooze = info) ?: it }
         }
 
@@ -352,7 +370,7 @@ class MessageViewModel
                             else -> ActionRefusal.FAILED
                         }
                     // Waking: the message now shows as waking, with snoozing disabled until it lands.
-                    if (e is SnoozeFailure.Waking) refreshSnooze()
+                    if (e is SnoozeFailure.Waking) snoozeRefresh.trySend(Unit)
                     _effects.send(MessageEffect.ActionRefused(reason))
                 }
             }

@@ -276,17 +276,6 @@ impl Store {
         let Some((state, local, step)) = existing else {
             return Ok(false);
         };
-        // A snooze with no hidden row (`snooze` leaves it out only for a
-        // message in the Snoozed folder) is of a message already in
-        // Snoozed: snoozed again from there, or after its wake was due.
-        // Dropping the row would leave it there, hidden, maybe with its
-        // keyword (invariant 2), whether or not the server keeps keywords.
-        // Unsnoozing wakes it instead.
-        let state = if state == "to_snooze" && step == 0 && local.is_none() {
-            "to_wake".to_owned()
-        } else {
-            state
-        };
         if state == "to_snooze" && step > 0 {
             // The server move has started (#423): dropping the row now would
             // leave a copy in the Snoozed folder. Let it finish (or roll
@@ -333,26 +322,6 @@ impl Store {
 
     /// The server move to the Snoozed folder is done: the hidden local row
     /// is deleted (the next sync of the Snoozed folder brings it back).
-    /// [`Store::finish_snooze`], only while the row still has `wake_at`
-    /// (the time whose keyword was just set). Returns false otherwise.
-    pub fn finish_snooze_at(
-        &self,
-        id: SnoozeId,
-        wake_at: i64,
-        on_server: bool,
-    ) -> Result<bool, StoreError> {
-        let still: bool = self.conn.query_row(
-            "SELECT EXISTS (SELECT 1 FROM snoozes WHERE id = ?1 AND state = 'to_snooze' \
-             AND wake_at = ?2)",
-            params![id.0, wake_at],
-            |r| r.get(0),
-        )?;
-        if still {
-            self.finish_snooze(id, on_server)?;
-        }
-        Ok(still)
-    }
-
     pub fn finish_snooze(&self, id: SnoozeId, on_server: bool) -> Result<(), StoreError> {
         let tx = self.write_tx()?;
         tx.execute(
@@ -386,55 +355,21 @@ impl Store {
         Ok(())
     }
 
-    /// Records step 1 (the target's UIDNEXT, before anything of the move
-    /// is sent), but only while the row is still what the sync read: the
-    /// same state and wake time, not past step 1. Returns false if the
-    /// user changed it meanwhile (snoozed a waking message again at step
-    /// 0, unsnoozed it, or picked another time): then nothing may be sent
-    /// (#431, review of #455).
+    /// Records step 1 (the target's UIDNEXT, just before the COPY or MOVE
+    /// is sent), but only while the row is still in `state` and hasn't
+    /// gone past step 1. Returns false if it has changed meanwhile, for
+    /// example a wake at step 0 the user replaced by snoozing again
+    /// (#431): then nothing may be sent (review of #455).
     pub fn start_snooze_move(
         &self,
         id: SnoozeId,
         state: SnoozeState,
-        wake_at: i64,
         target_uidnext: u32,
     ) -> Result<bool, StoreError> {
         let n = self.conn.execute(
-            "UPDATE snoozes SET step = 1, target_uidnext = ?4 \
-             WHERE id = ?1 AND state = ?2 AND wake_at = ?3 AND step <= 1",
-            params![id.0, state.as_str(), wake_at, target_uidnext],
-        )?;
-        Ok(n > 0)
-    }
-
-    /// Whether the row is still what a sync read (state, step and wake
-    /// time), just before it changes a keyword on the server.
-    pub fn snooze_unchanged(
-        &self,
-        id: SnoozeId,
-        state: SnoozeState,
-        step: u8,
-        wake_at: i64,
-    ) -> Result<bool, StoreError> {
-        Ok(self.conn.query_row(
-            "SELECT EXISTS (SELECT 1 FROM snoozes WHERE id = ?1 AND state = ?2 \
-             AND step = ?3 AND wake_at = ?4)",
-            params![id.0, state.as_str(), step, wake_at],
-            |r| r.get(0),
-        )?)
-    }
-
-    /// Drops a wake's row, only while it is still in `state` at `step`.
-    /// Returns false if the user changed it meanwhile (#431).
-    pub fn delete_snooze_if(
-        &self,
-        id: SnoozeId,
-        state: SnoozeState,
-        step: u8,
-    ) -> Result<bool, StoreError> {
-        let n = self.conn.execute(
-            "DELETE FROM snoozes WHERE id = ?1 AND state = ?2 AND step = ?3",
-            params![id.0, state.as_str(), step],
+            "UPDATE snoozes SET step = 1, target_uidnext = ?3 \
+             WHERE id = ?1 AND state = ?2 AND step <= 1",
+            params![id.0, state.as_str(), target_uidnext],
         )?;
         Ok(n > 0)
     }

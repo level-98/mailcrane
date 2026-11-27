@@ -480,7 +480,7 @@
     <string name="snooze_unsnooze">Unsnooze</string>
     <string name="snooze_no_message_id">This message can’t be snoozed.</string>
     <string name="snooze_waking">Waking…</string>
-    <string name="snooze_waking_try_again">This message is coming back from snooze. Try again in a moment.</string>
+    <string name="snooze_waking_try_again">This message is on its way back from snooze. You can snooze it again once it’s back.</string>
     <string name="snooze_channel_name">Snoozed messages</string>
     <string name="snooze_channel_description">When a snoozed message comes back</string>
     <string name="snooze_woken_title">Back from snooze</string>

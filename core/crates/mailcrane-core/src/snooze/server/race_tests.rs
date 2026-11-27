@@ -1,11 +1,11 @@
 //! The user changes a snooze row while a sync is carrying it out (#431,
-//! review of #455): each test hands `snooze_one` / `wake_one` the row as
-//! the sync read it, after the user's change. Nothing may be sent for a
-//! changed row, and the user's change is kept.
+//! review of #455): the test hands `wake_one` the row as the sync read it,
+//! after the user's change. Nothing may be sent for it, and the change is
+//! kept.
 
 use super::*;
 use crate::events::{CoreEvent, EventListener};
-use crate::snooze::{list_snoozed, snooze, unsnooze, wake_due};
+use crate::snooze::{list_snoozed, snooze, wake_due};
 use crate::sync::{FolderSyncer, SyncConfig};
 use mailcrane_imap::{ImapConfig, ImapSecurity, Secret};
 use mailcrane_store::{MessageId, NewAccount, Security};
@@ -105,15 +105,6 @@ fn row(store: &Store, account: AccountId) -> Snooze {
     list_snoozed(store, Some(account)).expect("list")[0].clone()
 }
 
-async fn flags(imap: &FakeImap, folder: &str) -> Vec<Vec<String>> {
-    imap.mailbox()
-        .messages(folder)
-        .await
-        .into_iter()
-        .map(|m| m.flags)
-        .collect()
-}
-
 /// Lunch snoozed on the server, then due: a `to_wake` row at step 0.
 async fn snoozed_and_due() -> (FakeImap, Store, AccountId) {
     let (imap, store, account) = Box::pin(lunch()).await;
@@ -140,7 +131,10 @@ async fn a_wake_replaced_at_step_0_sends_nothing_and_keeps_the_new_snooze() {
     snooze(&store, &[message], LATER_WAKE, &Quiet).expect("re-snooze");
     let mut session = connect(&imap).await;
     let outcome = Box::pin(wake_one(&store, &mut session, &read)).await;
-    assert!(matches!(outcome, Ok(Outcome::Changed)));
+    assert!(
+        matches!(outcome, Ok(ref changed) if changed.is_empty()),
+        "nothing done"
+    );
     assert!(
         imap.mailbox().messages("INBOX").await.is_empty(),
         "nothing moved"
@@ -150,115 +144,4 @@ async fn a_wake_replaced_at_step_0_sends_nothing_and_keeps_the_new_snooze() {
         (now.state, now.step, now.wake_at),
         (SnoozeState::ToSnooze, 0, LATER_WAKE)
     );
-}
-
-#[tokio::test]
-async fn a_wake_whose_message_left_snoozed_keeps_a_new_snooze() {
-    let (imap, store, account) = Box::pin(snoozed_and_due()).await;
-    let read = row(&store, account);
-    // Another install woke it into the Inbox; the user snoozes it here,
-    // from the Inbox, while this sync is about to wake it.
-    assert!(
-        imap.mailbox()
-            .move_messages("Snoozed", |_| true, "INBOX")
-            .await
-    );
-    Box::pin(sync_all(&imap, &store, account)).await;
-    let inbox = folder(&store, account, "INBOX");
-    let copy = shown(&store, inbox);
-    assert_eq!(copy.len(), 1);
-    snooze(&store, &copy, LATER_WAKE, &Quiet).expect("re-snooze");
-    let mut session = connect(&imap).await;
-    let outcome = Box::pin(wake_one(&store, &mut session, &read)).await;
-    assert!(matches!(outcome, Ok(Outcome::Changed)));
-    let now = row(&store, account);
-    assert_eq!(
-        (now.state, now.wake_at),
-        (SnoozeState::ToSnooze, LATER_WAKE)
-    );
-    assert!(shown(&store, inbox).is_empty(), "still snoozed, so hidden");
-    // The next sync carries the new snooze out.
-    Box::pin(run_sync(&imap, &store, account, LATER_WAKE - 3600)).await;
-    assert_eq!(row(&store, account).state, SnoozeState::Snoozed);
-    assert_eq!(imap.mailbox().messages("Snoozed").await.len(), 1);
-}
-
-#[tokio::test]
-async fn a_snooze_unsnoozed_before_its_move_sends_nothing() {
-    let (imap, store, account) = Box::pin(lunch()).await;
-    let inbox = folder(&store, account, "INBOX");
-    let ids = shown(&store, inbox);
-    snooze(&store, &ids, WAKE, &Quiet).expect("snooze");
-    let read = row(&store, account);
-    // The user takes it back (an Undo) while the sync is about to move it.
-    unsnooze(&store, &ids, NOW, &Quiet).expect("undo");
-    let mut session = connect(&imap).await;
-    let outcome = Box::pin(snooze_one(&store, &mut session, &read)).await;
-    assert!(matches!(outcome, Ok(Outcome::Changed)));
-    assert!(list_snoozed(&store, Some(account))
-        .expect("list")
-        .is_empty());
-    assert_eq!(shown(&store, inbox), ids, "shown again");
-    let inbox_flags = flags(&imap, "INBOX").await;
-    assert!(
-        !inbox_flags
-            .iter()
-            .flatten()
-            .any(|f| f.starts_with(KEYWORD_PREFIX)),
-        "no keyword without a row: {inbox_flags:?}"
-    );
-}
-
-#[tokio::test]
-async fn a_new_time_picked_before_the_move_is_the_one_used() {
-    let (imap, store, account) = Box::pin(lunch()).await;
-    let inbox = folder(&store, account, "INBOX");
-    let ids = shown(&store, inbox);
-    snooze(&store, &ids, WAKE, &Quiet).expect("snooze");
-    let read = row(&store, account);
-    // The user picks another time while the sync is about to move it.
-    snooze(&store, &ids, LATER_WAKE, &Quiet).expect("new time");
-    let mut session = connect(&imap).await;
-    let outcome = Box::pin(snooze_one(&store, &mut session, &read)).await;
-    assert!(matches!(outcome, Ok(Outcome::Changed)));
-    // The next sync snoozes it with the time stored now.
-    Box::pin(run_sync(&imap, &store, account, NOW)).await;
-    let parked = flags(&imap, "Snoozed").await;
-    assert_eq!(parked.len(), 1);
-    let keywords: Vec<_> = parked[0]
-        .iter()
-        .filter(|f| f.starts_with(KEYWORD_PREFIX))
-        .cloned()
-        .collect();
-    assert_eq!(keywords, vec![format_keyword(LATER_WAKE).expect("keyword")]);
-}
-
-#[tokio::test]
-async fn a_keyword_change_in_snoozed_for_a_changed_row_adds_no_keyword() {
-    let (imap, store, account) = Box::pin(lunch()).await;
-    let inbox = folder(&store, account, "INBOX");
-    snooze(&store, &shown(&store, inbox), WAKE, &Quiet).expect("snooze");
-    Box::pin(run_sync(&imap, &store, account, NOW)).await;
-    Box::pin(sync_all(&imap, &store, account)).await;
-    // Snoozed again from Snoozed (a keyword change in place), then the
-    // user takes that back while the sync is about to change the keyword.
-    let snoozed = folder(&store, account, "Snoozed");
-    let parked = shown(&store, snoozed);
-    snooze(&store, &parked, LATER_WAKE, &Quiet).expect("re-snooze");
-    let read = row(&store, account);
-    unsnooze(&store, &parked, NOW + 60, &Quiet).expect("undo");
-    let mut session = connect(&imap).await;
-    let outcome = Box::pin(snooze_one(&store, &mut session, &read)).await;
-    assert!(matches!(outcome, Ok(Outcome::Changed)));
-    let new_keyword = format_keyword(LATER_WAKE).expect("keyword");
-    assert!(
-        !flags(&imap, "Snoozed")
-            .await
-            .iter()
-            .flatten()
-            .any(|f| *f == new_keyword),
-        "the changed row's keyword was not set"
-    );
-    // Taken back: the row wakes it (the message is in Snoozed).
-    assert_eq!(row(&store, account).state, SnoozeState::ToWake);
 }
