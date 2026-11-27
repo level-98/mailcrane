@@ -497,6 +497,11 @@
     <string name="action_undone">The server didn’t accept a change, so it was undone</string>
     <string name="action_dropped_folder_reset">Some changes made offline couldn’t be applied, because the server reset that folder</string>
 
+    <!-- Account setup, debug builds only (#559): their signing key is public, so they must never hold a real account -->
+    <string name="debug_account_warning_title">This is a test build</string>
+    <string name="debug_account_warning_text">Don’t add a real email account. Test builds are signed with a public key, so another app could take over their data. Use a test account, or Load test mail in Settings.</string>
+    <string name="debug_account_warning_ok">I understand</string>
+
     <!-- Reply and forward (M2-03) -->
     <string name="message_reply">Reply</string>
     <string name="message_reply_all">Reply all</string>

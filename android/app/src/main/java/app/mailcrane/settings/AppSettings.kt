@@ -153,6 +153,11 @@ interface AppSettings {
     val afterMoveAction: Flow<AfterMoveAction>
 
     suspend fun setAfterMoveAction(action: AfterMoveAction)
+
+    /** The debug build's "don't add a real account" warning was seen (#559). */
+    val debugAccountWarningSeen: Flow<Boolean>
+
+    suspend fun setDebugAccountWarningSeen()
 }
 
 /** When an opened message is marked read (M4-15). */
@@ -345,6 +350,12 @@ class DataStoreAppSettings(
         dataStore.edit { it[AFTER_MOVE] = action.name }
     }
 
+    override val debugAccountWarningSeen: Flow<Boolean> = prefs.map { it[DEBUG_WARNING_SEEN] ?: false }
+
+    override suspend fun setDebugAccountWarningSeen() {
+        dataStore.edit { it[DEBUG_WARNING_SEEN] = true }
+    }
+
     /**
      * The theme just chosen, shown before the settings file has been written: the app used to wait for the
      * write, so the switch lagged behind the tap (#339). Cleared once the file holds it.
@@ -435,6 +446,7 @@ class DataStoreAppSettings(
         val BACKGROUND_DOWNLOAD = stringPreferencesKey("background_download")
         val MARK_READ = stringPreferencesKey("mark_read_mode")
         val AFTER_MOVE = stringPreferencesKey("after_move_action")
+        val DEBUG_WARNING_SEEN = booleanPreferencesKey("debug_account_warning_seen")
     }
 }
 
