@@ -418,3 +418,86 @@ async fn an_old_rule_moving_into_a_virtual_folder_is_skipped() {
     assert_eq!(imap.mailbox().messages("Deals").await.len(), 1);
     assert!(imap.mailbox().messages("INBOX").await.is_empty());
 }
+
+/// #458 review: a server rule whose move goes into a virtual folder (the
+/// server script drops that move) doesn't count as "already moved", so a
+/// later device rule still moves the message.
+#[tokio::test]
+async fn a_server_rules_move_into_a_virtual_folder_leaves_the_move_to_a_device_rule() {
+    use mailcrane_core::rules::server;
+    use mailcrane_sieve::script::Extensions;
+    use mailcrane_store::{ServerRules, ServerRulesState};
+
+    let imap = FakeImap::builder()
+        .user(USER, PASSWORD)
+        .folder("INBOX", vec![])
+        .folder("Deals", vec![])
+        .folder("Starred", vec![])
+        .special_use("Starred", "\\Flagged")
+        .start()
+        .await
+        .expect("imap");
+    let s = setup(&imap).await;
+    sync_and_run(&imap, &s).await;
+    let starred = s
+        .store
+        .list_folders(s.account)
+        .expect("folders")
+        .into_iter()
+        .find(|f| f.details.remote_name == "Starred")
+        .expect("starred")
+        .id;
+    // Saved before #390; its mark-read reaches the server.
+    let old = s
+        .store
+        .insert_rule(&rule(
+            "Old",
+            vec![RuleCondition::Subject("sale".into())],
+            vec![RuleAction::MarkRead, RuleAction::Move(starred)],
+        ))
+        .expect("rule");
+    // "Has an attachment" needs the device.
+    let mut local = rule(
+        "Deals",
+        vec![
+            RuleCondition::HasAttachment,
+            RuleCondition::Subject("sale".into()),
+        ],
+        vec![RuleAction::Move(s.deals)],
+    );
+    local.match_all = false;
+    s.store.insert_rule(&local).expect("rule");
+    let names = vec!["fileinto".to_string(), "imap4flags".to_string()];
+    let plan = server::plan(&s.store, s.account, &Extensions::from_list(&names)).expect("plan");
+    s.store
+        .save_server_rules(&ServerRules {
+            account_id: s.account,
+            state: ServerRulesState::Active,
+            host: Some("localhost".into()),
+            port: Some(4190),
+            extensions: names,
+            other_script: None,
+            script_hash: Some("h".into()),
+            checked_at: NOW,
+            switch_requested: false,
+            deployed: plan
+                .server
+                .iter()
+                .map(|(id, _, f)| (*id, f.clone()))
+                .collect(),
+        })
+        .expect("state");
+    assert!(server::on_server(&s.store, s.account)
+        .expect("ids")
+        .contains(&old));
+
+    imap.mailbox()
+        .deliver(
+            "INBOX",
+            raw("Shop <news@shop.example>", "Sale", "v2@x", None),
+        )
+        .await;
+    sync_and_run(&imap, &s).await;
+    assert_eq!(imap.mailbox().messages("Deals").await.len(), 1, "moved");
+    assert!(imap.mailbox().messages("Starred").await.is_empty());
+}

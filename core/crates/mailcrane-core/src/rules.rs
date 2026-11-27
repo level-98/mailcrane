@@ -124,7 +124,8 @@ pub fn run_on_existing(
 }
 
 /// Whether `folder` is a virtual folder (#390), which nothing moves into.
-fn is_virtual(store: &Store, folder: FolderId) -> Result<bool, StoreError> {
+/// By id, whatever account it belongs to (a rule can be for every account).
+pub(crate) fn is_virtual(store: &Store, folder: FolderId) -> Result<bool, StoreError> {
     Ok(store
         .get_folder(folder)?
         .is_some_and(|f| f.details.virtual_role.is_some()))
@@ -171,12 +172,15 @@ fn run_rules(
             continue;
         }
         if on_server.contains(&rule.id) {
-            moved |= rule.rule.actions.iter().any(|a| {
-                matches!(
-                    a,
-                    RuleAction::Move(_) | RuleAction::Archive | RuleAction::Delete
-                )
-            });
+            // The server's script dropped a move into a virtual folder (#390),
+            // so that one took no turn.
+            for action in &rule.rule.actions {
+                moved |= match action {
+                    RuleAction::Move(to) => !is_virtual(store, *to)?,
+                    RuleAction::Archive | RuleAction::Delete => true,
+                    RuleAction::MarkRead | RuleAction::Flag => false,
+                };
+            }
             if rule.rule.stop_processing {
                 break;
             }

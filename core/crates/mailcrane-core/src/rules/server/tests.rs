@@ -187,7 +187,8 @@ fn a_move_into_a_virtual_folder_is_dropped_as_on_the_device() {
             ],
         ))
         .expect("rule");
-    // Nothing left to do anywhere: a server rule that the script leaves out.
+    // Nothing left to do anywhere: kept on the device, where it moves
+    // nothing, so it doesn't keep later rules off the server.
     let only_virtual = f
         .store
         .insert_rule(&rule(
@@ -205,15 +206,59 @@ fn a_move_into_a_virtual_folder_is_dropped_as_on_the_device() {
     let p = plan(&f.store, f.account, &ALL).expect("plan");
     assert_eq!(
         p.server.iter().map(|(id, _, _)| *id).collect::<Vec<_>>(),
-        [legacy, only_virtual, later]
+        [legacy, later]
     );
-    assert!(p.device.is_empty());
+    assert_eq!(p.device, [only_virtual]);
     assert_eq!(p.server[0].1.flags, [Flag::Seen]);
     assert_eq!(p.server[0].1.moving, Some(Moving::FileInto("Bills".into())));
     let script = p.script(&ALL).expect("script");
     assert!(
         !script.contains("Starred"),
         "no fileinto for a virtual folder"
+    );
+}
+
+#[test]
+fn a_global_rules_move_into_another_accounts_virtual_folder_is_dropped_too() {
+    // #458 review: a rule for every account can point at another account's
+    // Starred. The device skips that move by folder id, so the plan does too.
+    let f = fixture();
+    let other = f
+        .store
+        .insert_account(&NewAccount {
+            display_name: "Bob".into(),
+            email: "bob@example.net".into(),
+            imap_host: "localhost".into(),
+            imap_port: 993,
+            imap_security: Security::Tls,
+            smtp_host: "localhost".into(),
+            smtp_port: 465,
+            smtp_security: Security::Tls,
+            username: "bob@example.net".into(),
+        })
+        .expect("account");
+    let mut starred = folder(other, "Starred", None);
+    starred.virtual_role = Some(mailcrane_store::VirtualRole::Starred);
+    let starred = f.store.upsert_folder(&starred).expect("folder");
+    let global = f
+        .store
+        .insert_rule(&rule(
+            vec![RuleCondition::Subject("sale".into())],
+            vec![RuleAction::Move(starred)],
+        ))
+        .expect("rule");
+    let later = f
+        .store
+        .insert_rule(&rule(
+            vec![RuleCondition::Subject("Invoice".into())],
+            vec![RuleAction::Move(f.bills)],
+        ))
+        .expect("rule");
+    let p = plan(&f.store, f.account, &ALL).expect("plan");
+    assert_eq!(p.device, [global]);
+    assert_eq!(
+        p.server.iter().map(|(id, _, _)| *id).collect::<Vec<_>>(),
+        [later]
     );
 }
 

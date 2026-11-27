@@ -176,10 +176,22 @@ fn to_script_rule(rule: &NewRule, folders: &Folders) -> Option<ScriptRule> {
 /// device rule that moves mail or stops processing, every later rule stays
 /// on the device too, so the order the rules run in still holds.
 pub fn plan(store: &Store, account: AccountId, ext: &Extensions) -> Result<Plan, StoreError> {
-    let folders = Folders::load(store, account)?;
+    let mut folders = Folders::load(store, account)?;
+    let rules = store.list_rules(Some(account))?;
+    // A rule for every account can move into another account's virtual
+    // folder: decided by id, as the device does (`rules::is_virtual`).
+    for rule in &rules {
+        for action in &rule.rule.actions {
+            if let RuleAction::Move(to) = action {
+                if crate::rules::is_virtual(store, *to)? {
+                    folders.virtual_ids.insert(to.0);
+                }
+            }
+        }
+    }
     let mut plan = Plan::default();
     let mut rest_local = false;
-    for rule in store.list_rules(Some(account))? {
+    for rule in rules {
         if !rule.rule.enabled || rule.rule.conditions.is_empty() || rule.rule.actions.is_empty() {
             continue;
         }
@@ -189,6 +201,13 @@ pub fn plan(store: &Store, account: AccountId, ext: &Extensions) -> Result<Plan,
             to_script_rule(&rule.rule, &folders).filter(|r| r.supported(ext))
         };
         match compiled {
+            // Nothing left for a script, such as a rule whose only action is
+            // a move into a virtual folder (#390): kept off the server (no
+            // empty script uploaded for it), and it moves nothing on the
+            // device either, so later rules may still go to the server.
+            Some(r) if r.flags.is_empty() && r.moving.is_none() && !r.stop => {
+                plan.device.push(rule.id);
+            }
             Some(r) => {
                 let fingerprint = fnv(&format!("{r:?}"));
                 plan.server.push((rule.id, r, fingerprint));
