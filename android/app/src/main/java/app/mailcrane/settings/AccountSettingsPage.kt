@@ -1,5 +1,6 @@
 package app.mailcrane.settings
 
+import androidx.activity.compose.LocalActivity
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
@@ -16,8 +17,11 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
@@ -28,8 +32,17 @@ import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.HasDefaultViewModelProviderFactory
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.ViewModelStore
+import androidx.lifecycle.ViewModelStoreOwner
+import androidx.lifecycle.viewmodel.CreationExtras
+import androidx.lifecycle.viewmodel.compose.LocalViewModelStoreOwner
+import androidx.lifecycle.viewmodel.compose.viewModel
 import app.mailcrane.R
 import app.mailcrane.core.AccountSummary
+import java.util.UUID
 
 /**
  * One account's own settings page (#396), opened from its row in Settings › Accounts: titled with the
@@ -82,7 +95,10 @@ internal fun AccountSettingsPage(
                 .verticalScroll(rememberScrollState())
                 .testTag("account-settings-${account.id}"),
         ) {
-            sections(account.id)
+            // Its own view models, new each time the page opens (#500): an account added after one was
+            // removed can get the same id, and must never see that account's signature, colour or
+            // authentication server name (which decides what "sender verified" trusts).
+            PageViewModels(account.id) { sections(account.id) }
             OutlinedButton(
                 onClick = { confirmRemove = true },
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 24.dp),
@@ -108,6 +124,66 @@ internal fun AccountSettingsPage(
             },
         )
     }
+}
+
+/**
+ * Gives [content] a view model store of its own for one opening of an account's page (#500). It lives
+ * while the page is open, rotation included (a saved token names it), and is cleared when the page
+ * closes, by Back or after Remove, so a later page for a reused account id starts from that account's
+ * own saved settings. Hilt's factory comes from the activity, so `hiltViewModel` works as before.
+ */
+@Composable
+private fun PageViewModels(
+    accountId: Long,
+    content: @Composable () -> Unit,
+) {
+    val parent = LocalViewModelStoreOwner.current
+    if (parent == null) {
+        content()
+        return
+    }
+    val stores: AccountPageStores = viewModel(viewModelStoreOwner = parent)
+    val opening = rememberSaveable(accountId) { UUID.randomUUID().toString() }
+    val key = "account-page-$accountId-$opening"
+    val owner = remember(key) { PageViewModelStoreOwner(stores.store(key), parent) }
+    val activity = LocalActivity.current
+    DisposableEffect(key) {
+        // Kept across a rotation; gone once the page is really closed.
+        onDispose { if (activity?.isChangingConfigurations != true) stores.close(key) }
+    }
+    CompositionLocalProvider(LocalViewModelStoreOwner provides owner) { content() }
+}
+
+/** The view model stores of the account pages that are open, kept by the activity across rotation. */
+internal class AccountPageStores : ViewModel() {
+    private val stores = mutableMapOf<String, ViewModelStore>()
+
+    fun store(key: String): ViewModelStore = stores.getOrPut(key) { ViewModelStore() }
+
+    /** Clears the page's view models and forgets its store. */
+    fun close(key: String) {
+        stores.remove(key)?.clear()
+    }
+
+    override fun onCleared() {
+        stores.values.forEach { it.clear() }
+        stores.clear()
+    }
+}
+
+/** One page's store, with the activity's factory and extras, so Hilt (and assisted) view models still work. */
+private class PageViewModelStoreOwner(
+    override val viewModelStore: ViewModelStore,
+    private val parent: ViewModelStoreOwner,
+) : ViewModelStoreOwner,
+    HasDefaultViewModelProviderFactory {
+    override val defaultViewModelProviderFactory: ViewModelProvider.Factory
+        get() =
+            (parent as? HasDefaultViewModelProviderFactory)?.defaultViewModelProviderFactory
+                ?: ViewModelProvider.NewInstanceFactory()
+
+    override val defaultViewModelCreationExtras: CreationExtras
+        get() = (parent as? HasDefaultViewModelProviderFactory)?.defaultViewModelCreationExtras ?: CreationExtras.Empty
 }
 
 /** The options that belong to one account, each editing that account only. */

@@ -3,6 +3,9 @@ package app.mailcrane.settings
 import android.app.Application
 import androidx.compose.material3.Button
 import androidx.compose.material3.Text
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assertCountEquals
@@ -16,6 +19,7 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
+import androidx.lifecycle.viewmodel.compose.viewModel
 import app.mailcrane.core.AccountSettingsCore
 import app.mailcrane.core.AccountSignature
 import app.mailcrane.core.AccountSummary
@@ -151,6 +155,13 @@ class SettingsStructureTest {
         ) = Unit
 
         override fun automaticAccountColor(accountId: Long) = 0
+
+        override suspend fun getProviderAuthservId(accountId: Long): String? = null
+
+        override suspend fun setProviderAuthservId(
+            accountId: Long,
+            value: String,
+        ): String? = value
     }
 
     /**
@@ -173,6 +184,51 @@ class SettingsStructureTest {
         compose.onNode(hasSetTextAction()).performTextInput("Ben\nExample Ltd")
         compose.onNodeWithText("Save signature").performClick()
         compose.runOnIdle { assertEquals(listOf(accountB.id), core.signatureSavedFor) }
+    }
+
+    /** A core whose saved signature the test can change, as a new account's would be. */
+    private class StoredSignature(
+        var text: String,
+    ) : AccountSettingsCore by RecordingSettings() {
+        override suspend fun getSignature(accountId: Long) = AccountSignature(text, true)
+    }
+
+    /**
+     * #500 (folded into #492): remove account 2, add a new account that gets id 2 again, open its page.
+     * The page must load the new account's own settings, not show the removed one's (a view model kept
+     * under the same key in the activity would).
+     */
+    @Test
+    fun aReAddedAccountWithTheSameIdSeesNoneOfTheOldSettings() {
+        val core = StoredSignature("Old account's signature")
+        var showPage by mutableStateOf(true)
+        var account by mutableStateOf(accountB)
+        compose.setContent {
+            MailcraneTheme {
+                if (showPage) {
+                    AccountSettingsPage(
+                        account = account,
+                        onBack = { showPage = false },
+                        onRemove = {},
+                        sections = { id ->
+                            // The same key the real section uses with hiltViewModel.
+                            val vm = viewModel(key = "account-settings-$id") { AccountSettingsViewModel(core, id) }
+                            SignatureSection(id, viewModel = vm)
+                        },
+                    )
+                }
+            }
+        }
+        compose.onNodeWithText("Old account's signature").assertIsDisplayed()
+        // Removed (the page closes), then a new account comes back with the same id and its own settings.
+        compose.runOnIdle { showPage = false }
+        compose.runOnIdle {
+            core.text = "New account's signature"
+            account = AccountSummary(accountB.id, "new.user@example.com", "New")
+            showPage = true
+        }
+        compose.onNodeWithText("New account's signature").assertIsDisplayed()
+        compose.onNodeWithText("Old account's signature").assertDoesNotExist()
     }
 
     /** #396: Manage folders names the account whose folders it shows. */
