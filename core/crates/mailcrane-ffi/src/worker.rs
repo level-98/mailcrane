@@ -151,7 +151,7 @@ mod tests {
         assert_eq!(got, Some(42));
     }
 
-    /// Uses about `depth` × 32 KiB of stack.
+    /// Uses at least `depth` × 32 KiB of stack.
     fn use_stack(depth: u32) -> u8 {
         let frame = std::hint::black_box([1u8; 32 * 1024]);
         let here = frame.first().copied().unwrap_or(0);
@@ -169,15 +169,17 @@ mod tests {
             let worker = std::thread::current().id();
             // A nested call runs where it is: that thread already has the stack.
             let nested = on_job_thread(|| std::thread::current().id());
-            // About 3 MiB: more than a default 2 MiB thread has, well within
-            // `JOB_STACK_SIZE`. Without the set size this aborts the tests.
-            let deep = use_stack(96);
+            // 72 frames of 32 KiB: more than a default 2 MiB thread has even
+            // with one copy of the array per frame, and under `JOB_STACK_SIZE`
+            // with up to three (a debug build can keep two). Without the set
+            // size this aborts the tests.
+            let deep = use_stack(72);
             (worker, nested, deep)
         })
         .expect("ran");
         assert_ne!(worker, caller);
         assert_eq!(nested, Some(worker));
-        assert_eq!(deep, 97);
+        assert_eq!(deep, 73);
         assert!(!ON_JOB_THREAD.with(Cell::get), "the caller isn't marked");
     }
 
