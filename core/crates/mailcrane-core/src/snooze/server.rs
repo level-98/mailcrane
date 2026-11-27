@@ -78,9 +78,11 @@
 //! a copy surely this install's (a named UID, or step 2 or 3): resuming at
 //! step 1, the copy found could be another install's.
 //!
-//! A sync sends queued actions before snoozes (`push_local_changes`), so a
-//! move or delete accepted at step 0 reaches the server before the wake,
-//! which then finds Snoozed empty and cleans up nothing that isn't its own.
+//! A move or delete accepted at step 0 goes to the server before the wake:
+//! the wake doesn't start while one is queued for the message, even one
+//! queued after this sync's replay or waiting in back-off (the guard in
+//! `start_snooze_move_if`). The wake then finds Snoozed empty and cleans up
+//! nothing that isn't its own.
 
 use super::{format_keyword, snoozed_folder, KEYWORD_PREFIX, SNOOZED_FOLDER_NAME};
 use crate::actions::backoff_secs;
@@ -671,20 +673,21 @@ fn copy_is_ours(s: &Snooze) -> bool {
 /// message's Message-ID, at or above the UIDNEXT recorded before the COPY.
 /// An older message with the same Message-ID is never included.
 async fn find_copies(session: &mut Session, s: &Snooze) -> Result<Vec<u32>, ChangeError> {
+    let found = session.uid_search_message_id(&s.message_id_header).await?;
     // The server named the copy (COPYUID, #450): that one, and nothing a
-    // search could also match.
+    // search could also match. Only while that UID still carries this
+    // Message-ID: a folder renumbered since (a new UIDVALIDITY) may have
+    // given the UID to another message, which must never be flagged or
+    // expunged (#459 review).
     if let Some(uid) = s.copy_uid {
-        return Ok(vec![uid]);
+        if found.contains(&uid) {
+            return Ok(vec![uid]);
+        }
     }
     let Some(floor) = s.target_uidnext else {
         return Ok(Vec::new());
     };
-    Ok(session
-        .uid_search_message_id(&s.message_id_header)
-        .await?
-        .into_iter()
-        .filter(|uid| *uid >= floor)
-        .collect())
+    Ok(found.into_iter().filter(|uid| *uid >= floor).collect())
 }
 
 /// Moves `uids` (in `from`, selected) to `to`: `UID MOVE`, which is atomic,

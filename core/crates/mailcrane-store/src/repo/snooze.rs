@@ -132,6 +132,17 @@ impl SnoozeSeen {
 const SEEN: &str = "id = ?1 AND state IS ?2 AND step IS ?3 AND wake_at IS ?4 \
     AND mark_unread IS ?5 AND target_uidnext IS ?6 AND copy_uid IS ?7";
 
+/// A queued move or delete of the snooze row's message as it is in
+/// Snoozed, in its account (used inside a statement on `snoozes`; 'snoozed'
+/// is mailcrane-core's SNOOZED_FOLDER_NAME, ignoring case).
+const QUEUED_MOVE: &str = "SELECT 1 FROM pending_ops o \
+    JOIN pending_op_messages pm ON pm.op_id = o.id \
+    JOIN messages m ON m.id = pm.message_id \
+    JOIN folders f ON f.id = m.folder_id \
+    WHERE o.account_id = snoozes.account_id AND o.kind IN ('move', 'expunge') \
+    AND f.account_id = snoozes.account_id AND lower(f.remote_name) = 'snoozed' \
+    AND m.message_id_header = snoozes.message_id_header";
+
 fn seen_params(s: &SnoozeSeen) -> Vec<rusqlite::types::Value> {
     use rusqlite::types::Value;
     vec![
@@ -575,6 +586,10 @@ impl Store {
     /// is sent), only if the row is still `seen` and at step 0 or 1.
     /// Returns false if the user changed it meanwhile: then nothing may be
     /// sent (#431, #459).
+    ///
+    /// A wake also waits while a move or delete of the same message is
+    /// queued: the user's action, accepted at step 0, goes first (#459
+    /// review). Once it has run, the wake finds the message gone.
     pub fn start_snooze_move_if(
         &self,
         seen: &SnoozeSeen,
@@ -587,7 +602,8 @@ impl Store {
         let done = Self::guarded(
             &tx,
             &format!(
-                "UPDATE snoozes SET step = 1, target_uidnext = ?8, copy_uid = NULL WHERE {SEEN}"
+                "UPDATE snoozes SET step = 1, target_uidnext = ?8, copy_uid = NULL WHERE {SEEN} \
+                 AND (state <> 'to_wake' OR NOT EXISTS ({QUEUED_MOVE}))"
             ),
             seen,
             &[rusqlite::types::Value::Integer(i64::from(target_uidnext))],

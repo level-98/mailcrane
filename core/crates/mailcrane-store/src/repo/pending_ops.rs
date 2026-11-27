@@ -126,12 +126,21 @@ fn queue_in_tx(
     now: i64,
 ) -> Result<Option<OpId>, StoreError> {
     // Read in this transaction, before anything changes, so no wake can
-    // start in between (lead's decision on G6).
+    // start in between (lead's decision on G6). Only the copies the wake
+    // moves count: the one in Snoozed and the one in its destination (the
+    // original folder, or the Inbox). Other copies of the same Message-ID,
+    // such as Gmail's All Mail or a Sent copy, can still be moved.
+    // ('snoozed' is mailcrane-core's SNOOZED_FOLDER_NAME, matched the same
+    // way, ignoring case.)
     for m in messages {
         let waking: bool = tx.query_row(
             "SELECT EXISTS (SELECT 1 FROM snoozes s JOIN messages msg \
                  ON msg.message_id_header = s.message_id_header \
-                 WHERE msg.id = ?1 AND s.account_id = ?2 AND s.state = 'to_wake' AND s.step > 0)",
+                 JOIN folders f ON f.id = msg.folder_id \
+                 WHERE msg.id = ?1 AND s.account_id = ?2 AND f.account_id = ?2 \
+                 AND s.state = 'to_wake' AND s.step > 0 \
+                 AND (f.id = s.original_folder_id OR f.role = 'inbox' \
+                      OR lower(f.remote_name) = 'snoozed'))",
             params![m.message_id.0, account.0],
             |r| r.get(0),
         )?;

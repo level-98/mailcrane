@@ -10,7 +10,8 @@ use mailcrane_store::{AccountId, Store};
 /// for the Sent folder (M2-07), then snoozes and wakes (M4-06).
 ///
 /// The order matters to snoozes: a move or delete the user made is
-/// replayed before any wake runs. A move or delete of a message whose wake
+/// replayed before any wake runs, and a wake doesn't start while one is
+/// still queued for the message. A move or delete of a message whose wake
 /// is past step 0 is refused when it's made (lead's decision on G6), so a
 /// queued one never crosses a wake.
 ///
@@ -27,5 +28,10 @@ pub async fn push_local_changes(
     let _ = crate::actions::replay(store, session, listener, account, now).await;
     let _ = crate::drafts::upload_drafts(store, session, account, now).await;
     let _ = crate::outbox::save_sent_copies(store, session, account, now).await;
-    let _ = crate::snooze::sync_snoozes(store, session, listener, account, now).await;
+    // Boxed: the snooze sync's future is large, and it runs on threads with
+    // the default 2 MB stack (#459 review).
+    let _ = Box::pin(crate::snooze::sync_snoozes(
+        store, session, listener, account, now,
+    ))
+    .await;
 }

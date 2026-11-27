@@ -638,6 +638,121 @@ async fn after_a_refused_wake_the_user_can_move_the_message() {
     assert!(!act(&store, account, User::Move), "the move is allowed");
 }
 
+/// Live (not `\Deleted`) copies of Lunch in `folder` on the server.
+async fn live_lunch(imap: &FakeImap, folder: &str) -> usize {
+    imap.mailbox()
+        .messages(folder)
+        .await
+        .iter()
+        .filter(|m| is_lunch(m) && !deleted(m))
+        .count()
+}
+
+/// #459 review: a move accepted at step 0 but not replayed yet (queued
+/// after this sync's replay, or waiting in back-off) still goes first. The
+/// wake waits for it, then finds Snoozed empty.
+#[tokio::test]
+async fn a_move_queued_after_the_replay_still_goes_before_the_wake() {
+    for server in Server::ALL {
+        let id = server.id();
+        let (imap, store, account) = Box::pin(due(server)).await;
+        assert!(
+            !act(&store, account, User::Move),
+            "{id}: accepted at step 0"
+        );
+        // The snooze part of a sync whose replay ran before the move was
+        // queued.
+        let work = list_snoozed(&store, Some(account)).expect("rows");
+        let mut session = connect(&imap).await;
+        Box::pin(sync_snooze_rows(&store, &mut session, &Quiet, ACT, work))
+            .await
+            .expect("sync snoozes");
+        session.logout().await;
+        let rows = list_snoozed(&store, Some(account)).expect("rows");
+        assert_eq!(rows.len(), 1, "{id}: {rows:?}");
+        assert_eq!(rows[0].step, 0, "{id}: the wake waited");
+        assert_eq!(live_lunch(&imap, SNOOZED_FOLDER_NAME).await, 1, "{id}");
+        assert_eq!(live_lunch(&imap, "INBOX").await, 0, "{id}");
+
+        // The next syncs: the move goes first; the wake finds nothing.
+        for round in 1..=3_i64 {
+            let now = ACT + round * 3600;
+            Box::pin(push(&imap, &store, account, now)).await;
+            Box::pin(sync_all(&imap, &store, account)).await;
+        }
+        assert_eq!(live_lunch(&imap, "Archive").await, 1, "{id}: archived");
+        assert_eq!(live_lunch(&imap, "INBOX").await, 0, "{id}: not woken");
+        assert!(
+            list_snoozed(&store, Some(account))
+                .expect("rows")
+                .is_empty(),
+            "{id}: no row left"
+        );
+    }
+}
+
+/// #459 review: a COPYUID kept on the row is used only while that UID
+/// still holds this message. After the folder is renumbered it may be
+/// another message's, which must not be taken for the copy.
+#[tokio::test]
+async fn a_stale_copy_uid_is_not_taken_for_the_copy() {
+    let (imap, store, account) = Box::pin(due(Server::NoMove)).await;
+    Box::pin(go_to(&imap, &store, account, Server::NoMove, At::Step2)).await;
+    let other = imap
+        .mailbox()
+        .append(
+            "INBOX",
+            b"From: Carol <carol@example.net>\r\nTo: alice@example.org\r\n\
+              Subject: Other\r\nMessage-ID: <other@example.net>\r\n\r\nHi\r\n"
+                .to_vec(),
+            Vec::new(),
+        )
+        .await
+        .expect("appended");
+    let row = list_snoozed(&store, Some(account)).expect("rows")[0].clone();
+    assert!(store
+        .set_snooze_step_if(&row.seen(), 2, None, Some(other))
+        .expect("copy uid"));
+    let row = list_snoozed(&store, Some(account)).expect("rows")[0].clone();
+    let real: Vec<u32> = imap
+        .mailbox()
+        .messages("INBOX")
+        .await
+        .iter()
+        .filter(|m| is_lunch(m))
+        .map(|m| m.uid)
+        .collect();
+    let mut session = connect(&imap).await;
+    session.select("INBOX").await.expect("select");
+    let found = Box::pin(find_copies(&mut session, &row))
+        .await
+        .expect("search");
+    session.logout().await;
+    assert!(!found.contains(&other), "the other message: {found:?}");
+    assert_eq!(found, real, "the real copy, by Message-ID");
+}
+
+/// #459 review: only the copies a wake moves are locked while it is past
+/// step 0. Another copy of the same Message-ID (in Archive here, as in
+/// Gmail's All Mail) can still be deleted.
+#[tokio::test]
+async fn other_copies_of_a_waking_message_can_still_be_moved() {
+    let (imap, store, account) = Box::pin(due(Server::Full)).await;
+    imap.mailbox().append("Archive", raw(), Vec::new()).await;
+    Box::pin(sync_all(&imap, &store, account)).await;
+    Box::pin(go_to(&imap, &store, account, Server::Full, At::Step1Unsent)).await;
+    let archive = folder(&store, account, "Archive").expect("Archive");
+    let other = store
+        .find_message_by_header(archive, MID)
+        .expect("find")
+        .expect("the Archive copy");
+    assert!(
+        apply_action(&store, &[other], Action::Delete, ACT, &Quiet).is_ok(),
+        "the Archive copy isn't the one waking"
+    );
+    assert!(act(&store, account, User::Delete), "the Snoozed copy is");
+}
+
 /// #459 (invariant 5): every write in the sync that finishes, advances or
 /// deletes a snooze row goes through a guarded `_if` helper. The plain
 /// ones are left for the store's own tests; the sync calls none of them.

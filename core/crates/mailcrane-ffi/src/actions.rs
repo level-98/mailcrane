@@ -321,9 +321,15 @@ impl SyncEngine {
                 let copies =
                     mailcrane_core::outbox::save_sent_copies(store, session, account, now())
                         .await?;
-                let snoozes =
-                    mailcrane_core::snooze::sync_snoozes(store, session, listener, account, now())
-                        .await?;
+                // Boxed: the snooze sync's future is large (#459 review).
+                let snoozes = Box::pin(mailcrane_core::snooze::sync_snoozes(
+                    store,
+                    session,
+                    listener,
+                    account,
+                    now(),
+                ))
+                .await?;
                 Ok(replayed
                     .remaining
                     .saturating_add(drafts_left)
