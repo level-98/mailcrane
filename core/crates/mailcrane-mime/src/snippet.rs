@@ -105,6 +105,16 @@ const MARK: char = '\u{1}';
 /// leaves out (a template, a style), and counts as a block boundary.
 const MARK_BREAK: char = '\u{2}';
 
+/// Like [`MARK_BREAK`], for a line break written as a character reference
+/// (`&#10;`). After one, `html_to_text` puts the collapsed space that
+/// followed in the source; that one space is dropped.
+const MARK_REFERENCE_BREAK: char = '\u{4}';
+
+/// Whether `c` is one of the marks.
+fn is_mark(c: char) -> bool {
+    matches!(c, MARK | MARK_BREAK | MARK_REFERENCE_BREAK)
+}
+
 /// What goes before a block tag: `<>`, which `html_to_text` reads as an
 /// empty tag (ending any tag it was still reading), then the mark as text.
 /// So the mark reaches the output exactly when the block does: inside a
@@ -138,6 +148,11 @@ fn marker_at(bytes: &[u8], lt: usize) -> Option<&'static str> {
         .take(LONGEST_TAG.saturating_add(1))
         .take_while(|b| !matches!(b, b'<' | b'>' | b'/') && !is_tag_space(**b))
         .count();
+    // A name cut off by `<` or the end never makes a tag (#456 review).
+    let after = bytes.get(name_start.saturating_add(len)).copied();
+    if !after.is_some_and(|b| matches!(b, b'>' | b'/') || is_tag_space(b)) {
+        return None;
+    }
     let name = bytes
         .get(name_start..name_start.saturating_add(len))
         .unwrap_or_default();
@@ -169,14 +184,13 @@ fn ends_text_token(b: u8) -> bool {
 /// `html` with nothing in it that `html_to_text` would turn into a mark:
 /// each mark character, raw or as a character reference it decodes
 /// (`&#1;`, `&#x02;`, `&#+1;`), becomes [`NOT_A_MARK`]. A reference that
-/// decodes to a line break (`&#10;`, `&NewLine;`) gets [`MARK_BREAK`] in
-/// front, so its line break stays the sender's (#456 review). References
-/// are found and decoded as `html_to_text` does it, with mail-parser's own
-/// decoder. Adds at most one byte per five.
+/// decodes to a line break (`&#10;`, `&NewLine;`) gets
+/// [`MARK_REFERENCE_BREAK`] in front, so its line break stays the sender's
+/// (#456 review). References are found and decoded as `html_to_text` does
+/// it, with mail-parser's own decoder. Adds at most one byte per five.
 fn without_marks(html: &str) -> String {
     let bytes = html.as_bytes();
-    let is_special =
-        |b: &u8| *b == b'&' || u32::from(*b) == MARK as u32 || u32::from(*b) == MARK_BREAK as u32;
+    let is_special = |b: &u8| *b == b'&' || is_mark(char::from(*b));
     let mut out = String::with_capacity(html.len());
     let mut decoded = String::new();
     let mut copied = 0;
@@ -210,12 +224,12 @@ fn without_marks(html: &str) -> String {
         mail_parser::add_html_token(&mut decoded, token, false);
         let mut chars = decoded.chars();
         match (chars.next(), chars.next()) {
-            (Some(c), None) if c == MARK || c == MARK_BREAK => {
+            (Some(c), None) if is_mark(c) => {
                 out.push_str(NOT_A_MARK);
                 copied = end;
                 pos = end;
             }
-            (Some('\n'), None) => out.push(MARK_BREAK),
+            (Some('\n'), None) => out.push(MARK_REFERENCE_BREAK),
             _ => {}
         }
     }
@@ -228,9 +242,10 @@ fn without_marks(html: &str) -> String {
 /// is changed: what is text is left to `html_to_text` alone, so no content
 /// can be lost here. Names are read as `html_to_text` reads them: after
 /// `<`, spaces and `/` are skipped (a `/` makes it an end tag), and the
-/// name runs up to `<`, `>`, `/` or a space. Marks already in the input
-/// are replaced first. The result is at most twice the input (three bytes
-/// added per `<p>`, one per `&#10;`), allocated exactly; checked
+/// name runs up to `<`, `>`, `/` or a space; one cut off by `<` or the end
+/// gets no marker. Marks already in the input are replaced first. The
+/// result is at most twice the input (three bytes added per tag of at
+/// least three, `<p>`; one per `&#10;`), allocated exactly; checked
 /// positions, no panics on any input.
 fn mark_html_blocks(html: &str) -> String {
     let html = without_marks(html);
@@ -255,37 +270,42 @@ fn mark_html_blocks(html: &str) -> String {
 }
 
 /// `html_to_text`'s output with each run of block marks made one line
-/// break, where text came before it on the line; spaces after a mark or at
-/// the start of a line are dropped. A line break `html_to_text` wrote for a
-/// sender's `<br>`, `</p>` or `&#10;` (right after [`MARK_BREAK`]) is kept,
-/// after the break of a block mark before it, so a blank line the sender
-/// made (`<div><br></div>`, `<br><br>`) stays. Any other line break counts
-/// as a block mark.
+/// break, where text came before it on the line; spaces after a block mark
+/// are dropped. A line break `html_to_text` wrote for a sender's `<br>`,
+/// `</p>` or `&#10;` (the character right after [`MARK_BREAK`] or
+/// [`MARK_REFERENCE_BREAK`]) is kept, after the break of a block mark
+/// before it, so a blank line the sender made (`<div><br></div>`,
+/// `<br><br>`) stays. A break mark followed by anything else was a tag
+/// that never closed (`<br<b>`) and changes nothing. Any other line break
+/// counts as a block mark.
 fn lines_from_marks(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut pending = false;
-    let mut sender_break = false;
+    let mut after_mark: Option<char> = None;
+    let mut after_reference_break = false;
     let line_started = |out: &String| !out.is_empty() && !out.ends_with('\n');
     for c in text.chars() {
+        let mark = after_mark.take();
+        let skip_space = std::mem::take(&mut after_reference_break);
         match c {
             MARK => pending = true,
-            MARK_BREAK => sender_break = true,
-            '\n' if sender_break => {
+            MARK_BREAK | MARK_REFERENCE_BREAK => after_mark = Some(c),
+            '\n' if mark.is_some() => {
                 if pending && line_started(&out) {
                     out.push('\n');
                 }
                 out.push('\n');
                 pending = false;
-                sender_break = false;
+                after_reference_break = mark == Some(MARK_REFERENCE_BREAK);
             }
             '\n' => pending = true,
-            ' ' | '\t' if pending || sender_break || out.ends_with('\n') => {}
+            ' ' | '\t' if pending => {}
+            ' ' if skip_space => {}
             _ => {
                 if pending && line_started(&out) {
                     out.push('\n');
                 }
                 pending = false;
-                sender_break = false;
                 out.push(c);
             }
         }
@@ -459,6 +479,25 @@ mod tests {
         assert_eq!(html_to_lines("A</\u{c}p> B<\u{c}br> C"), "A B C");
     }
 
+    /// #456 review: a `<br>` or `</p>` cut off by `<` makes no tag, so
+    /// no line break, and the words around it stay apart as html_to_text
+    /// keeps them.
+    #[test]
+    fn a_tag_that_never_closes_changes_nothing() {
+        for html in [
+            "A<br<b> B",
+            "A</p<i> B",
+            "A<br <b> B",
+            "A<br/<b> B",
+            "A<div<b> B",
+            "A<br",
+        ] {
+            let plain = mail_parser::html_to_text(html);
+            assert_eq!(html_to_lines(html), tidy_lines(&plain), "{html:?}");
+        }
+        assert_eq!(html_to_lines("A<br<b> B"), "A B");
+    }
+
     /// #456 review: a mark character in the input, raw or in any form of
     /// character reference html_to_text decodes, is no line break and
     /// swallows no spaces.
@@ -497,7 +536,12 @@ mod tests {
     fn a_line_break_reference_is_the_senders() {
         assert_eq!(html_to_lines("a<br>&#10;b"), "a\n\nb");
         assert_eq!(html_to_lines("A&#10;&#10;B"), "A\n\nB");
+        // The source space html_to_text puts after it is dropped.
         assert_eq!(html_to_lines("A&#xA;B &NewLine; C"), "A\nB\nC");
+        // Indentation the sender wrote is kept.
+        assert_eq!(html_to_lines("a<br>&#32;&#32;x"), "a\n  x");
+        assert_eq!(html_to_lines("a<br>&Tab;x"), "a\n\tx");
+        assert_eq!(html_to_lines("a&#10;&#32;&#32;x"), "a\n x");
         assert_eq!(
             html_to_lines("<div>A</div><div>&#10;</div><div>B</div>"),
             "A\n\nB"
@@ -518,6 +562,12 @@ mod tests {
             "< /div>".repeat(50_000),
             "<p>&#10;".repeat(50_000),
             "<p>&#1;\u{1}".repeat(50_000),
+            // Cut off by `<`: no tag, so no marker.
+            "<p".repeat(100_000),
+            "</p".repeat(100_000),
+            "<br".repeat(100_000),
+            "<p ".repeat(100_000),
+            "<p/".repeat(100_000),
         ] {
             let marked = mark_html_blocks(&html);
             assert!(
