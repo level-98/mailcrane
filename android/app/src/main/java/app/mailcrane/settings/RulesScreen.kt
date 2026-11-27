@@ -449,6 +449,7 @@ fun RulesScreen(
             folders = state.folders,
             onChange = { editing = it },
             onSave = { d -> if (viewModel.save(d) { editing = d }) editing = null },
+            snackbar = snackbar,
             onCancel = { editing = null },
             onDelete =
                 draft.id?.let { id ->
@@ -637,9 +638,12 @@ internal fun RuleEditor(
     onCancel: () -> Unit,
     onDelete: (() -> Unit)? = null,
     onRunNow: (() -> Unit)? = null,
+    // The screen's messages, so a save the core refuses, which opens the editor again, is explained here (#482).
+    snackbar: SnackbarHostState? = null,
 ) {
     var tried by rememberSaveable { mutableStateOf(false) }
     Scaffold(
+        snackbarHost = { snackbar?.let { SnackbarHost(it) } },
         topBar = {
             TopAppBar(
                 title = { Text(stringResource(if (draft.id == null) R.string.rules_new else R.string.rules_edit)) },
