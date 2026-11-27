@@ -4,8 +4,8 @@ use super::{FailureLog, FolderSyncer, SyncConfig, SyncError};
 use crate::events::{CoreEvent, EventListener, SyncErrorKind};
 use mailcrane_imap::{ImapConfig, ImapSecurity, Secret, Session};
 use mailcrane_store::{
-    AccountId, BodyState, FolderId, FolderRole, MessageId, NewAccount, NewFolder, Security, Store,
-    VirtualRole,
+    AccountId, BodyState, FolderId, FolderRole, MessageId, NewAccount, NewFolder, RowIdentity,
+    Security, Store, VirtualRole,
 };
 use mailcrane_testkit::{FakeImap, Fault};
 use std::sync::Mutex;
@@ -702,6 +702,27 @@ fn stored_header(store: &Store, folder: FolderId, uid: u32) -> MessageId {
 
 const RAW: &[u8] = b"From: ana@example.net\r\nSubject: Lunch\r\n\r\nSee you at noon\r\n";
 
+/// The `UIDVALIDITY` [`setup_synced`] stores.
+const UV: i64 = 7;
+
+/// [`setup`], with the folder's `UIDVALIDITY` stored as a sync does.
+fn setup_synced() -> (Store, AccountId, FolderId) {
+    let (store, account, folder) = setup();
+    store
+        .reset_folder_reporting(folder, UV, 1)
+        .expect("uidvalidity");
+    (store, account, folder)
+}
+
+/// UID `uid` of `folder` under [`UV`].
+fn imap(folder: FolderId, uid: u32) -> RowIdentity<'static> {
+    RowIdentity::Imap {
+        folder,
+        uidvalidity: UV,
+        uid,
+    }
+}
+
 #[test]
 fn an_opened_body_is_saved_under_the_urgent_mark_and_only_then() {
     // #473: the mark covers the save itself, on the thread that writes, and
@@ -730,7 +751,7 @@ fn an_opened_body_is_saved_under_the_urgent_mark_and_only_then() {
                 display_name: "INBOX".into(),
                 delimiter: Some("/".into()),
                 role: None,
-                uidvalidity: None,
+                uidvalidity: Some(UV),
                 uidnext: None,
                 highestmodseq: None,
                 is_subscribed: true,
@@ -743,9 +764,9 @@ fn an_opened_body_is_saved_under_the_urgent_mark_and_only_then() {
     let background = stored_header(&store, folder, 2);
     super::OPENED_SAVES.with(|s| s.borrow_mut().clear());
     assert!(!store.urgent_here(), "not marked before");
-    super::save_opened_body(&store, opened, None, RAW).expect("saved");
+    super::save_opened_body(&store, opened, imap(folder, 1), RAW).expect("saved");
     assert!(!store.urgent_here(), "nor after");
-    super::save_body(&store, background, RAW).expect("saved");
+    super::save_body(&store, background, Some(imap(folder, 2)), RAW).expect("saved");
     assert_eq!(
         super::OPENED_SAVES.with(|s| s.borrow().clone()),
         [true],
@@ -784,10 +805,10 @@ async fn opening_a_message_on_imap_saves_through_the_opened_path() {
 fn an_opened_save_writes_only_the_body_and_its_parts() {
     // #472 condition 1: it can run beside a sync because it never touches
     // the flags, folder or other columns the sync owns.
-    let (store, _, folder) = setup();
+    let (store, _, folder) = setup_synced();
     let id = stored_header(&store, folder, 1);
     let before = store.get_message_header(id).expect("get").expect("header");
-    super::save_opened_body(&store, id, None, RAW).expect("saved");
+    super::save_opened_body(&store, id, imap(folder, 1), RAW).expect("saved");
     let after = store.get_message_header(id).expect("get").expect("header");
     assert_eq!(after.body_state, BodyState::Fetched);
     assert_eq!(after.details.folder_id, before.details.folder_id);
@@ -800,11 +821,11 @@ fn an_opened_save_writes_only_the_body_and_its_parts() {
 #[test]
 fn a_message_removed_before_its_body_is_saved_is_dropped_quietly() {
     // #472 condition 2: no error for the opener, and no row comes back.
-    let (store, _, folder) = setup();
+    let (store, _, folder) = setup_synced();
     let id = stored_header(&store, folder, 1);
     store.delete_message_row(id).expect("removed by the sync");
     assert!(matches!(
-        super::save_opened_body(&store, id, None, RAW),
+        super::save_opened_body(&store, id, imap(folder, 1), RAW),
         Ok(())
     ));
     assert!(store.get_message_header(id).expect("get").is_none());
@@ -814,9 +835,9 @@ fn a_message_removed_before_its_body_is_saved_is_dropped_quietly() {
 #[test]
 fn a_sync_writing_the_header_again_keeps_a_stored_body() {
     // #472 condition 3: the sync's header upsert never clears the body.
-    let (store, _, folder) = setup();
+    let (store, _, folder) = setup_synced();
     let id = stored_header(&store, folder, 1);
-    super::save_opened_body(&store, id, None, RAW).expect("saved");
+    super::save_opened_body(&store, id, imap(folder, 1), RAW).expect("saved");
     let again = stored_header(&store, folder, 1);
     assert_eq!(again, id, "same row");
     assert_eq!(
@@ -840,15 +861,56 @@ fn a_jmap_open_never_saves_into_a_row_that_took_its_id() {
     store.delete_message_row(old).expect("the sync removes it");
     let new = stored_header(&store, folder, 2);
     assert_eq!(new, old, "the id was reused");
-    let email = super::JmapEmail {
+    let email = RowIdentity::Jmap {
         account,
         email_id: "M-old",
     };
     assert!(matches!(
-        super::save_opened_body(&store, old, Some(email), RAW),
+        super::save_opened_body(&store, old, email, RAW),
         Ok(())
     ));
     let row = store.get_message_header(new).expect("get").expect("header");
     assert_eq!(row.body_state, BodyState::None, "the new email has no body");
+    assert!(store.get_body(new).expect("body").is_none());
+}
+
+#[test]
+fn an_imap_save_never_lands_in_a_row_that_took_its_id() {
+    // #503: the sync deletes UID 1 and stores UID 2, which gets the same row
+    // id. An open or a background download still holding the old id must
+    // not write UID 1's body there.
+    let (store, _, folder) = setup_synced();
+    let old = stored_header(&store, folder, 1);
+    store.delete_message_row(old).expect("the sync removes it");
+    let new = stored_header(&store, folder, 2);
+    assert_eq!(new, old, "the id was reused");
+    assert!(matches!(
+        super::save_opened_body(&store, old, imap(folder, 1), RAW),
+        Ok(())
+    ));
+    assert!(matches!(
+        super::save_body(&store, old, Some(imap(folder, 1)), RAW),
+        Err(SyncError::UnknownMessage)
+    ));
+    let row = store.get_message_header(new).expect("get").expect("header");
+    assert_eq!(row.body_state, BodyState::None, "UID 2 has no body");
+    assert!(store.get_body(new).expect("body").is_none());
+}
+
+#[test]
+fn an_imap_save_never_lands_in_a_renumbered_folder() {
+    // #503: same folder and UID, but the server renumbered the folder
+    // (RFC 9051 §2.3.1.1), so UID 1 is another message now.
+    let (store, _, folder) = setup_synced();
+    let old = stored_header(&store, folder, 1);
+    store
+        .reset_folder_reporting(folder, UV + 1, 1)
+        .expect("renumbered");
+    let new = stored_header(&store, folder, 1);
+    assert_eq!(new, old, "the id was reused");
+    assert!(matches!(
+        super::save_body(&store, old, Some(imap(folder, 1)), RAW),
+        Err(SyncError::UnknownMessage)
+    ));
     assert!(store.get_body(new).expect("body").is_none());
 }

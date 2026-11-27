@@ -345,21 +345,28 @@ impl Link<'_> {
                 uidvalidity,
             } => {
                 let login = || imap_login(store, job.account, job.extra_root_cert.as_deref());
-                let ctx = (store, remote_name.as_str(), *uidvalidity, batch);
+                let ctx = (store, remote_name.as_str(), *uidvalidity, job.folder, batch);
                 job.pool
                     .run(
                         job.account,
                         login,
                         Retry::Idempotent,
                         &ctx,
-                        |session, &(store, remote_name, uidvalidity, batch)| {
+                        |session, &(store, remote_name, uidvalidity, folder, batch)| {
                             Box::pin(async move {
                                 let info = session.select_reusing(remote_name).await?;
                                 if uidvalidity != Some(i64::from(info.uidvalidity)) {
                                     // The next sync starts the folder over.
                                     return Err(CoreSyncError::FolderReset);
                                 }
-                                prefetch::imap_batch(store, session, batch).await
+                                prefetch::imap_batch(
+                                    store,
+                                    session,
+                                    folder,
+                                    info.uidvalidity,
+                                    batch,
+                                )
+                                .await
                             })
                         },
                     )

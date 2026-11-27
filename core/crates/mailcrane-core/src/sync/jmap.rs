@@ -223,7 +223,11 @@ impl<'a> JmapSyncer<'a> {
             if raw.len() > limit {
                 continue;
             }
-            match save_body(self.store, candidate.id, &raw) {
+            let identity = mailcrane_store::RowIdentity::Jmap {
+                account: self.account,
+                email_id: &row.email_id,
+            };
+            match save_body(self.store, candidate.id, Some(identity), &raw) {
                 Ok(()) => outcome.saved = outcome.saved.saturating_add(1),
                 Err(SyncError::UnknownMessage) => {}
                 Err(e) => return Err(e),
@@ -830,10 +834,10 @@ impl<'a> JmapSyncer<'a> {
         super::initial::save_opened_body(
             self.store,
             message,
-            Some(super::initial::JmapEmail {
+            mailcrane_store::RowIdentity::Jmap {
                 account: self.account,
                 email_id: &row.email_id,
-            }),
+            },
             &raw,
         )?;
         self.listener.on_event(CoreEvent::MessagesChanged {

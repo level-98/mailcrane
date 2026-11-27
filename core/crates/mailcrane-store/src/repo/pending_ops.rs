@@ -127,7 +127,7 @@ fn queue_in_tx(
 ) -> Result<Option<OpId>, StoreError> {
     let mut kept: Vec<OpMessage> = Vec::new();
     for m in messages {
-        apply_local(tx, kind, m.message_id)?;
+        apply_local(tx, kind, folder, *m)?;
         if let Some(opposite) = kind.opposite() {
             // The newest queued action on this message, if untried.
             let latest: Option<(i64, String)> = tx
@@ -179,16 +179,21 @@ fn queue_in_tx(
 
 /// [`Store::cancel_queued`]'s work inside an open transaction.
 fn cancel_in_tx(tx: &Transaction<'_>, message: MessageId) -> Result<Option<FolderId>, StoreError> {
-    let latest: Option<(i64, String, i64)> = tx
+    // Only an action queued for the message the row holds now: row ids are
+    // reused, so an older action may name an id that is another message
+    // now (#503).
+    let latest: Option<(i64, String, i64, u32)> = tx
         .query_row(
-            "SELECT o.id, o.kind, o.folder_id FROM pending_ops o \
+            "SELECT o.id, o.kind, o.folder_id, pm.uid FROM pending_ops o \
                  JOIN pending_op_messages pm ON pm.op_id = o.id \
+                 JOIN messages m ON m.id = pm.message_id \
+                   AND m.folder_id = o.folder_id AND m.uid = pm.uid \
                  WHERE pm.message_id = ?1 ORDER BY o.id DESC LIMIT 1",
             params![message.0],
-            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
         )
         .optional()?;
-    let Some((op, kind, folder)) = latest else {
+    let Some((op, kind, folder, uid)) = latest else {
         return Ok(None);
     };
     let untried: bool = tx.query_row(
@@ -199,7 +204,11 @@ fn cancel_in_tx(tx: &Transaction<'_>, message: MessageId) -> Result<Option<Folde
     if !untried {
         return Ok(None);
     }
-    revert_local(tx, OpKind::parse(&kind)?, message)?;
+    let target = OpMessage {
+        message_id: message,
+        uid,
+    };
+    revert_local(tx, OpKind::parse(&kind)?, FolderId(folder), target)?;
     tx.execute(
         "DELETE FROM pending_op_messages WHERE op_id = ?1 AND message_id = ?2",
         params![op, message.0],
@@ -212,29 +221,61 @@ fn cancel_in_tx(tx: &Transaction<'_>, message: MessageId) -> Result<Option<Folde
     Ok(Some(FolderId(folder)))
 }
 
-fn apply_local(tx: &Transaction<'_>, kind: OpKind, id: MessageId) -> Result<(), StoreError> {
-    let sql = match kind {
-        OpKind::MarkRead => "UPDATE messages SET seen = 1 WHERE id = ?1",
-        OpKind::MarkUnread => "UPDATE messages SET seen = 0 WHERE id = ?1",
-        OpKind::Flag => "UPDATE messages SET flagged = 1 WHERE id = ?1",
-        OpKind::Unflag => "UPDATE messages SET flagged = 0 WHERE id = ?1",
-        OpKind::Move | OpKind::Expunge => "UPDATE messages SET hidden = 1 WHERE id = ?1",
+/// The rows a queued action may change: `m`'s row only while it is still
+/// that UID of the action's folder. Row ids are reused once a row is
+/// deleted, so an undo or a revert that runs later could otherwise change
+/// another message that took the id (#503).
+const SAME_MESSAGE: &str = "WHERE id = ?1 AND folder_id = ?2 AND uid = ?3";
+
+fn apply_local(
+    tx: &Transaction<'_>,
+    kind: OpKind,
+    folder: FolderId,
+    m: OpMessage,
+) -> Result<(), StoreError> {
+    let set = match kind {
+        OpKind::MarkRead => "seen = 1",
+        OpKind::MarkUnread => "seen = 0",
+        OpKind::Flag => "flagged = 1",
+        OpKind::Unflag => "flagged = 0",
+        OpKind::Move | OpKind::Expunge => "hidden = 1",
     };
-    tx.execute(sql, params![id.0])?;
+    tx.execute(
+        &format!("UPDATE messages SET {set} {SAME_MESSAGE}"),
+        params![m.message_id.0, folder.0, m.uid],
+    )?;
     Ok(())
 }
 
-fn revert_local(tx: &Transaction<'_>, kind: OpKind, id: MessageId) -> Result<(), StoreError> {
+fn revert_local(
+    tx: &Transaction<'_>,
+    kind: OpKind,
+    folder: FolderId,
+    m: OpMessage,
+) -> Result<(), StoreError> {
     match kind.opposite() {
-        Some(opposite) => apply_local(tx, opposite, id),
+        Some(opposite) => apply_local(tx, opposite, folder, m),
         None => {
             tx.execute(
-                "UPDATE messages SET hidden = 0 WHERE id = ?1",
-                params![id.0],
+                &format!("UPDATE messages SET hidden = 0 {SAME_MESSAGE}"),
+                params![m.message_id.0, folder.0, m.uid],
             )?;
             Ok(())
         }
     }
+}
+
+/// The folder an action's messages are in, if the action is still queued.
+fn op_folder(tx: &Transaction<'_>, op: OpId) -> Result<Option<(OpKind, FolderId)>, StoreError> {
+    let row: Option<(String, i64)> = tx
+        .query_row(
+            "SELECT kind, folder_id FROM pending_ops WHERE id = ?1",
+            params![op.0],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .optional()?;
+    row.map(|(kind, folder)| Ok((OpKind::parse(&kind)?, FolderId(folder))))
+        .transpose()
 }
 
 /// A queued action dropped because its folder's `UIDVALIDITY` changed
@@ -376,9 +417,12 @@ impl Store {
     pub fn complete_op(&self, op: OpId, remove_messages: bool) -> Result<(), StoreError> {
         let tx = self.write_tx()?;
         if remove_messages {
+            // Only rows that are still those messages (#503).
             tx.execute(
-                "DELETE FROM messages WHERE hidden = 1 AND id IN \
-                 (SELECT message_id FROM pending_op_messages WHERE op_id = ?1)",
+                "DELETE FROM messages WHERE hidden = 1 AND EXISTS \
+                 (SELECT 1 FROM pending_op_messages pm JOIN pending_ops o ON o.id = pm.op_id \
+                  WHERE pm.op_id = ?1 AND pm.message_id = messages.id \
+                    AND pm.uid = messages.uid AND o.folder_id = messages.folder_id)",
                 params![op.0],
             )?;
         }
@@ -392,20 +436,12 @@ impl Store {
     /// local ids it was applied to.
     pub fn fail_op(&self, op: OpId) -> Result<Vec<MessageId>, StoreError> {
         let tx = self.write_tx()?;
-        let kind: Option<String> = tx
-            .query_row(
-                "SELECT kind FROM pending_ops WHERE id = ?1",
-                params![op.0],
-                |r| r.get(0),
-            )
-            .optional()?;
-        let Some(kind) = kind else {
+        let Some((kind, folder)) = op_folder(&tx, op)? else {
             return Ok(Vec::new());
         };
-        let kind = OpKind::parse(&kind)?;
         let messages = load_messages(&tx, op)?;
         for m in &messages {
-            revert_local(&tx, kind, m.message_id)?;
+            revert_local(&tx, kind, folder, *m)?;
         }
         delete_op(&tx, op)?;
         tx.commit()?;
@@ -422,21 +458,13 @@ impl Store {
         refused: &[MessageId],
     ) -> Result<Vec<MessageId>, StoreError> {
         let tx = self.write_tx()?;
-        let kind: Option<String> = tx
-            .query_row(
-                "SELECT kind FROM pending_ops WHERE id = ?1",
-                params![op.0],
-                |r| r.get(0),
-            )
-            .optional()?;
-        let Some(kind) = kind else {
+        let Some((kind, folder)) = op_folder(&tx, op)? else {
             return Ok(Vec::new());
         };
-        let kind = OpKind::parse(&kind)?;
         let mut undone = Vec::new();
         for m in load_messages(&tx, op)? {
             if refused.contains(&m.message_id) {
-                revert_local(&tx, kind, m.message_id)?;
+                revert_local(&tx, kind, folder, m)?;
                 tx.execute(
                     "DELETE FROM pending_op_messages WHERE op_id = ?1 AND message_id = ?2",
                     params![op.0, m.message_id.0],

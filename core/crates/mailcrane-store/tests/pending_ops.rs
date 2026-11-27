@@ -348,3 +348,33 @@ fn a_folder_reset_drops_only_that_folders_queued_actions() -> R {
         .is_none());
     Ok(())
 }
+
+#[test]
+fn a_late_revert_or_undo_leaves_a_row_that_took_the_id_alone() -> R {
+    // #503: row ids are reused. A flag queued for UID 3; the sync deletes
+    // it and stores UID 9, which gets the same row id and is flagged.
+    let f = fixture(Store::open_in_memory()?)?;
+    let third = f.messages[2];
+    let op = f
+        .store
+        .queue_op(f.account, OpKind::Flag, f.inbox, None, &[third], 100)?
+        .ok_or("queued")?;
+    f.store.delete_message_row(third.message_id)?;
+    let mut newer = header(f.inbox, 9);
+    newer.flags.flagged = true;
+    let reused = f.store.upsert_message_header(&newer)?;
+    assert_eq!(reused, third.message_id, "the id was reused");
+    let flagged = |store: &Store| -> Result<bool, StoreError> {
+        Ok(store
+            .get_message_header(reused)?
+            .is_some_and(|h| h.details.flags.flagged))
+    };
+
+    // Undo finds no action for the message the row holds now.
+    assert_eq!(f.store.cancel_queued(reused)?, None);
+    assert!(flagged(&f.store)?);
+    // Nor does the server refusing the flag unflag UID 9.
+    f.store.fail_op(op)?;
+    assert!(flagged(&f.store)?);
+    Ok(())
+}
