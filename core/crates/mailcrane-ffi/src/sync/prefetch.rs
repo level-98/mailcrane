@@ -284,9 +284,10 @@ impl Prefetcher {
         }
         let account = job.account.0;
         let prefetcher = self.clone();
-        let spawned = std::thread::Builder::new()
-            .name(format!("mailcrane-prefetch-{account}"))
-            .spawn(move || download(&prefetcher, &job));
+        let spawned =
+            crate::worker::job_thread(format!("mailcrane-prefetch-{account}"), move || {
+                download(&prefetcher, &job)
+            });
         if let Ok(thread) = spawned {
             running.insert(account, Running { thread });
         }
