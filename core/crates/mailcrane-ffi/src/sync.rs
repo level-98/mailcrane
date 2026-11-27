@@ -8,16 +8,17 @@ use std::sync::{mpsc, Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
+use mailcrane_core::account::stored;
 use mailcrane_core::events::{self, EventListener};
 use mailcrane_core::secrets::SecretKey;
 use mailcrane_core::sync::{
     live_stop, log_failure, run_live_updates, FolderSyncer, ImapLogin, LiveAccount, LiveConfig,
     LiveStop, SyncConfig, SyncError as CoreSyncError,
 };
-use mailcrane_imap::{
-    save_folder_list, ImapAuth, ImapConfig, ImapError, ImapSecurity, Secret, Session,
-};
-use mailcrane_store::{AccountId, FolderId, FolderRole, MessageId, Security, Store};
+use mailcrane_imap::{ImapConfig, ImapError, Session};
+use mailcrane_store::{AccountId, FolderId, MessageId, Store};
+#[cfg(test)]
+use mailcrane_store::{FolderRole, Security};
 
 /// Why a sync failed. Never carries server text.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
@@ -384,30 +385,14 @@ impl SyncEngine {
         let store = self.open_store()?;
         let report = |kind| self.report(account, kind);
         let runtime = runtime().map_err(report)?;
-        runtime.block_on(async {
+        let listener = ListenerAdapter(self.listener.clone());
+        let inbox = runtime.block_on(async {
             let mut session = self.connect(&store, account).await.map_err(report)?;
-            let listed = session.list_folders().await;
-            let command = session.last_command();
+            let refreshed = stored::refresh_folders(&store, &mut session, account, &listener).await;
             session.logout().await;
-            let folders = listed.map_err(|e| {
-                let e = CoreSyncError::from(e);
-                log_failure("list folders", &e, command);
-                report(e.kind())
-            })?;
-            let saved = save_folder_list(&store, account, &folders).map_err(|e| {
-                let e = CoreSyncError::from(e);
-                log_failure("save folders", &e, None);
-                report(e.kind())
-            })?;
-            // Folders gone from the server (#323): the apps re-read the list
-            // and leave a removed folder that was open.
-            for folder in saved.removed {
-                self.listener
-                    .on_event(events::CoreEvent::FolderChanged { folder_id: folder }.into());
-            }
-            Ok::<(), SyncFailure>(())
+            refreshed.map_err(|e| report(e.kind()))
         })?;
-        Ok(inbox_of(&store, account)?.map(|f| f.0))
+        Ok(inbox.map(|f| f.0))
     }
 }
 
@@ -924,35 +909,17 @@ impl SyncEngine {
         store: &Store,
         account: AccountId,
     ) -> Result<Session, events::SyncErrorKind> {
-        // An OAuth account (M3-02) gets a fresh access token first.
-        if let Ok(secrets) = crate::secrets::secret_store() {
-            match mailcrane_core::account::credentials::refresh_if_needed(
-                store,
-                secrets.as_ref(),
-                account,
-                &[],
-                OAUTH_TIMEOUT,
-            )
-            .await
-            {
-                Err(mailcrane_core::account::credentials::CredentialError::ReauthRequired) => {
-                    return Err(events::SyncErrorKind::Auth)
-                }
-                Err(mailcrane_core::account::credentials::CredentialError::Storage) => {
-                    return Err(events::SyncErrorKind::Storage)
-                }
-                // Not reachable now: try the cached token.
-                Err(mailcrane_core::account::credentials::CredentialError::Missing) | Ok(()) => {}
-            }
-        }
-        let login = imap_login(store, account, self.extra_root_cert().as_deref())?;
-        Session::connect_auth(&login.config, &login.username, &login.auth)
-            .await
-            .map_err(|e: ImapError| {
-                let e = CoreSyncError::from(e);
-                log_failure("connect", &e, None);
-                e.kind()
-            })
+        // Same order as before #520: no connection for a missing or
+        // local-only account, whatever the secret store says.
+        stored::remote_account(store, account)?;
+        let secrets = crate::secrets::secret_store().map_err(|_| events::SyncErrorKind::Auth)?;
+        stored::connect(
+            store,
+            secrets.as_ref(),
+            account,
+            self.extra_root_cert().as_deref(),
+        )
+        .await
     }
 }
 
@@ -1002,18 +969,7 @@ pub(crate) fn runtime() -> Result<tokio::runtime::Runtime, events::SyncErrorKind
 /// The account's inbox: the folder with the inbox role, otherwise the one
 /// named `INBOX` in any case (RFC 9051 §5.1).
 fn inbox_of(store: &Store, account: AccountId) -> Result<Option<FolderId>, SyncFailure> {
-    let folders = store
-        .list_folders(account)
-        .map_err(|_| failed(events::SyncErrorKind::Storage))?;
-    let by_role = folders
-        .iter()
-        .find(|f| f.details.role == Some(FolderRole::Inbox));
-    let by_name = || {
-        folders
-            .iter()
-            .find(|f| f.details.remote_name.eq_ignore_ascii_case("INBOX"))
-    };
-    Ok(by_role.or_else(by_name).map(|f| f.id))
+    stored::inbox_of(store, account).map_err(|_| failed(events::SyncErrorKind::Storage))
 }
 
 /// The account's IMAP server and credentials, from the store and the
@@ -1023,18 +979,9 @@ fn imap_login(
     account: AccountId,
     extra_root_cert: Option<&[u8]>,
 ) -> Result<ImapLogin, events::SyncErrorKind> {
-    let row = store
-        .get_account(account)
-        .map_err(|_| events::SyncErrorKind::Storage)?
-        .ok_or(events::SyncErrorKind::NotFound)?;
-    // Never connect for a local-only account (#289), whatever path got here.
-    // An unreadable marker is a storage failure: no connection either.
-    if store
-        .is_local_account(account)
-        .map_err(|_| events::SyncErrorKind::Storage)?
-    {
-        return Err(events::SyncErrorKind::NotFound);
-    }
+    // Never for a missing or local-only account (#289), whatever path got
+    // here, and before the secret store is asked.
+    stored::remote_account(store, account)?;
     let secrets = crate::secrets::secret_store().map_err(|_| events::SyncErrorKind::Auth)?;
     // Outside an async runtime (the connection pool), an OAuth account's
     // token is refreshed here; inside one, the async paths did it first.
@@ -1045,34 +992,12 @@ fn imap_login(
                 secrets.as_ref(),
                 account,
                 &[],
-                OAUTH_TIMEOUT,
+                stored::OAUTH_TIMEOUT,
             ));
         }
     }
-    use mailcrane_core::account::credentials::{credential, Credential, CredentialError};
-    let auth = match credential(store, secrets.as_ref(), account) {
-        Ok(Credential::Password(p)) => ImapAuth::Password(Secret::new(p)),
-        Ok(Credential::OAuth(token)) => ImapAuth::XOAuth2(Secret::new(token.as_str())),
-        Err(CredentialError::Storage) => return Err(events::SyncErrorKind::Storage),
-        Err(_) => return Err(events::SyncErrorKind::Auth),
-    };
-    let security = match row.details.imap_security {
-        Security::Tls => ImapSecurity::ImplicitTls,
-        Security::Starttls => ImapSecurity::StartTls,
-    };
-    let mut config = ImapConfig::new(row.details.imap_host, row.details.imap_port, security);
-    if let Some(der) = extra_root_cert {
-        config = config.with_extra_root_cert(der.to_vec());
-    }
-    Ok(ImapLogin {
-        config,
-        username: row.details.username,
-        auth,
-    })
+    stored::imap_login(store, secrets.as_ref(), account, extra_root_cert)
 }
-
-/// How long refreshing an OAuth access token may take (M3-02).
-const OAUTH_TIMEOUT: Duration = Duration::from_secs(20);
 
 /// How long the background check waits for background downloads before
 /// returning its notifications.
