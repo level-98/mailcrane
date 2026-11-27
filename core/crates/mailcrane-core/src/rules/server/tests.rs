@@ -25,6 +25,7 @@ fn folder(account: AccountId, remote: &str, role: Option<FolderRole>) -> NewFold
         highestmodseq: None,
         is_subscribed: true,
         selectable: true,
+        virtual_role: None,
     }
 }
 

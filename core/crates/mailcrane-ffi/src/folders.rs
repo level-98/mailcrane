@@ -5,7 +5,7 @@
 use std::cmp::Ordering;
 use std::collections::HashSet;
 
-use mailcrane_store::{AccountId, Folder, FolderRole as StoreRole, Store};
+use mailcrane_store::{AccountId, Folder, FolderRole as StoreRole, NewFolder, Store, VirtualRole};
 
 use crate::messages::one_line;
 use crate::sync::{SyncErrorKind, SyncFailure};
@@ -33,6 +33,10 @@ pub enum FolderRole {
     Trash,
     /// All mail.
     AllMail,
+    /// Starred (flagged) mail, a virtual folder such as Gmail's (#390).
+    Starred,
+    /// Gmail's Important, a virtual folder (#390).
+    Important,
 }
 
 impl From<StoreRole> for FolderRole {
@@ -50,16 +54,30 @@ impl From<StoreRole> for FolderRole {
 }
 
 impl FolderRole {
+    /// What the apps show the folder as: its role, or for a virtual folder
+    /// such as Gmail's Starred, that (#390). The store keeps the two apart,
+    /// so a virtual folder never has a role that actions look up.
+    fn of(details: &NewFolder) -> Option<Self> {
+        details.role.map(Self::from).or(match details.virtual_role {
+            Some(VirtualRole::Starred) => Some(Self::Starred),
+            Some(VirtualRole::Important) => Some(Self::Important),
+            None => None,
+        })
+    }
+
     /// Position among the standard folders, which come before all others.
+    /// Starred and Important follow the inbox, where Gmail shows them (#390).
     fn rank(self) -> u8 {
         match self {
             Self::Inbox => 0,
-            Self::Drafts => 1,
-            Self::Sent => 2,
-            Self::Archive => 3,
-            Self::Spam => 4,
-            Self::Trash => 5,
-            Self::AllMail => 6,
+            Self::Starred => 1,
+            Self::Important => 2,
+            Self::Drafts => 3,
+            Self::Sent => 4,
+            Self::Archive => 5,
+            Self::Spam => 6,
+            Self::Trash => 7,
+            Self::AllMail => 8,
         }
     }
 }
@@ -110,7 +128,7 @@ pub fn list_folders(db_path: String, account_id: i64) -> Result<Vec<FolderSummar
         rows.push(FolderSummary {
             id: folder.id.0,
             display_name: one_line(&place.name),
-            role: folder.details.role.map(FolderRole::from),
+            role: FolderRole::of(&folder.details),
             depth: place.depth,
             unread_count: u32::try_from(unread).unwrap_or(u32::MAX),
             can_change: manageable && folder_admin::can_change(&folders, folder),
@@ -226,11 +244,12 @@ fn segments(folder: &Folder) -> Vec<&str> {
 /// `namespace` is the account's personal namespace prefix (#325, such as
 /// `INBOX.`): folders under it are labelled without it.
 fn arrange<'a>(folders: &'a [Folder], namespace: Option<&str>) -> Vec<(&'a Folder, Place)> {
-    let (mut standard, mut other): (Vec<&Folder>, Vec<&Folder>) =
-        folders.iter().partition(|f| f.details.role.is_some());
+    let (mut standard, mut other): (Vec<&Folder>, Vec<&Folder>) = folders
+        .iter()
+        .partition(|f| FolderRole::of(&f.details).is_some());
 
     standard.sort_by(|a, b| {
-        let rank = |f: &Folder| f.details.role.map(|r| FolderRole::from(r).rank());
+        let rank = |f: &Folder| FolderRole::of(&f.details).map(FolderRole::rank);
         rank(a)
             .cmp(&rank(b))
             .then_with(|| by_path(a, b))
@@ -332,6 +351,7 @@ mod tests {
             highestmodseq: None,
             is_subscribed: true,
             selectable: true,
+            virtual_role: None,
         }
     }
 
@@ -382,6 +402,42 @@ mod tests {
         rows.iter()
             .map(|r| (r.display_name.clone(), r.depth))
             .collect()
+    }
+
+    #[test]
+    fn gmails_starred_and_important_come_straight_after_the_inbox() {
+        // #390: with roles they're system folders, named by the app, not
+        // "[Gmail]/Starred" sorted in among the user's own folders.
+        let (_dir, path, account, _) = setup(&[
+            ("Work", None),
+            ("[Gmail]/Important", None),
+            ("[Gmail]/Sent Mail", Some(StoreRole::Sent)),
+            ("[Gmail]/Starred", None),
+            ("INBOX", Some(StoreRole::Inbox)),
+        ]);
+        let store = Store::open(&path).expect("store");
+        for (name, kind) in [
+            ("[Gmail]/Starred", VirtualRole::Starred),
+            ("[Gmail]/Important", VirtualRole::Important),
+        ] {
+            let mut row = folder(account, name, None);
+            row.virtual_role = Some(kind);
+            store.upsert_folder(&row).expect("virtual folder");
+        }
+        drop(store);
+        let rows = list_folders(path, account.0).expect("list");
+        let roles: Vec<_> = rows.iter().map(|r| r.role).collect();
+        assert_eq!(
+            roles,
+            [
+                Some(FolderRole::Inbox),
+                Some(FolderRole::Starred),
+                Some(FolderRole::Important),
+                Some(FolderRole::Sent),
+                None,
+            ]
+        );
+        assert!(rows.iter().all(|r| r.depth == 0));
     }
 
     #[test]

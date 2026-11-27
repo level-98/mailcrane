@@ -686,6 +686,7 @@ mod tests {
                 highestmodseq: None,
                 is_subscribed: true,
                 selectable: true,
+                virtual_role: None,
             })
             .expect("folder");
         (dir, path, folder)

@@ -226,6 +226,8 @@ internal fun roleName(role: FolderRole): Int =
         FolderRole.SPAM -> R.string.folder_spam
         FolderRole.TRASH -> R.string.folder_trash
         FolderRole.ALL_MAIL -> R.string.folder_all_mail
+        FolderRole.STARRED -> R.string.folder_starred
+        FolderRole.IMPORTANT -> R.string.folder_important
     }
 
 @DrawableRes
@@ -238,8 +240,17 @@ internal fun folderIcon(role: FolderRole?): Int =
         FolderRole.SPAM -> R.drawable.ic_mc_spam
         FolderRole.TRASH -> R.drawable.ic_mc_trash
         FolderRole.ALL_MAIL -> R.drawable.ic_mc_mail
+        FolderRole.STARRED -> R.drawable.ic_mc_star
+        FolderRole.IMPORTANT -> R.drawable.ic_mc_important
         null -> R.drawable.ic_mc_folder
     }
+
+/**
+ * Whether messages can be moved into this folder. Starred and Gmail's Important are virtual folders (#390): a
+ * message is in them because of a flag or Gmail's own judgement, so they're never offered as a destination.
+ */
+val FolderSummary.takesMoves: Boolean
+    get() = role != FolderRole.STARRED && role != FolderRole.IMPORTANT
 
 @Composable
 private fun unreadBadge(count: UInt): String =

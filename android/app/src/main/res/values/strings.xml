@@ -217,6 +217,8 @@
     <string name="folder_spam">Spam</string>
     <string name="folder_trash">Trash</string>
     <string name="folder_all_mail">All mail</string>
+    <string name="folder_starred">Starred</string>
+    <string name="folder_important">Important</string>
     <!-- Unread badge next to a folder -->
     <string name="folder_unread_count">%1$d</string>
     <string name="folder_unread_overflow">%1$d+</string>

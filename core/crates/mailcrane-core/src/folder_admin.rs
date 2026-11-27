@@ -206,10 +206,12 @@ fn is_under(child: &str, parent: &str, delimiter: Option<char>) -> bool {
         .is_some_and(|rest| rest.starts_with(d))
 }
 
-/// A standard folder or Mailcrane's own Snoozed folder.
+/// A standard folder, a virtual one such as Gmail's Starred (#390), or
+/// Mailcrane's own Snoozed folder.
 pub fn is_system_folder(f: &Folder) -> bool {
     let remote = &f.details.remote_name;
     f.details.role.is_some()
+        || f.details.virtual_role.is_some()
         || remote.eq_ignore_ascii_case("INBOX")
         || decode(last_segment(remote, delimiter_of(f))) == SNOOZED_FOLDER_NAME
 }
@@ -512,6 +514,7 @@ pub fn save_created(store: &Store, plan: &CreatePlan) -> Result<FolderId, Folder
         highestmodseq: None,
         is_subscribed: true,
         selectable: true,
+        virtual_role: None,
     })?)
 }
 

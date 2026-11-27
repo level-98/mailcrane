@@ -1,10 +1,10 @@
 //! Folder roles: SPECIAL-USE attributes (RFC 6154 §2) first, then
 //! well-known names for servers that do not mark their folders.
 
-use mailcrane_store::FolderRole;
+use mailcrane_store::{FolderRole, VirtualRole};
 
 /// The role a SPECIAL-USE attribute names, if any (RFC 6154 §2).
-/// `\Flagged` is a virtual folder and has no role here.
+/// `\Flagged` is a virtual folder and has no role here: see [`virtual_role`].
 pub fn role_from_attribute(attribute: &str) -> Option<FolderRole> {
     const TABLE: [(&str, FolderRole); 6] = [
         ("\\All", FolderRole::All),
@@ -18,6 +18,22 @@ pub fn role_from_attribute(attribute: &str) -> Option<FolderRole> {
         .iter()
         .find(|(name, _)| name.eq_ignore_ascii_case(attribute))
         .map(|(_, role)| *role)
+}
+
+/// The virtual folder a folder's attributes mark, if any (#390): RFC 6154
+/// `\Flagged` is starred mail, and Gmail's own `\Important` its Important
+/// folder. Kept out of [`role_from_attribute`] so these folders never get a
+/// [`FolderRole`]: nothing moves, archives or deletes into them.
+pub fn virtual_role(attributes: &[String]) -> Option<VirtualRole> {
+    attributes.iter().find_map(|a| {
+        if a.eq_ignore_ascii_case("\\Flagged") {
+            Some(VirtualRole::Starred)
+        } else if a.eq_ignore_ascii_case("\\Important") {
+            Some(VirtualRole::Important)
+        } else {
+            None
+        }
+    })
 }
 
 /// Names that mean a role, in order of preference.
@@ -111,6 +127,25 @@ mod tests {
         assert_eq!(role_from_attribute("\\junk"), Some(FolderRole::Spam));
         assert_eq!(role_from_attribute("\\Flagged"), None);
         assert_eq!(role_from_attribute("\\HasNoChildren"), None);
+    }
+
+    #[test]
+    fn gmails_starred_and_important_are_virtual_folders_with_no_role() {
+        // #390: "[Gmail]/Starred" carries \Flagged and "[Gmail]/Important"
+        // Gmail's own \Important, in any case. They get a virtual role and
+        // no role, so nothing can move into them.
+        let starred = vec!["\\HasNoChildren".to_string(), "\\Flagged".to_string()];
+        let important = vec!["\\important".to_string()];
+        assert_eq!(virtual_role(&starred), Some(VirtualRole::Starred));
+        assert_eq!(virtual_role(&important), Some(VirtualRole::Important));
+        assert_eq!(virtual_role(&["\\Sent".to_string()]), None);
+        assert_eq!(virtual_role(&[]), None);
+        let folders = [
+            cand("INBOX", &[]),
+            cand("[Gmail]/Starred", &starred),
+            cand("[Gmail]/Important", &important),
+        ];
+        assert_eq!(assign(&folders), vec![Some(FolderRole::Inbox), None, None]);
     }
 
     #[test]

@@ -93,6 +93,7 @@ import app.mailcrane.core.TrackerInfo
 import app.mailcrane.core.sanitizeFilename
 import app.mailcrane.ui.compose.ComposePrefill
 import app.mailcrane.ui.compose.ReplyRequest
+import app.mailcrane.ui.folders.takesMoves
 import app.mailcrane.ui.messagelist.errorText
 import app.mailcrane.ui.theme.LocalDarkMessageBodies
 import app.mailcrane.ui.theme.LocalDarkTheme
@@ -288,7 +289,7 @@ fun MessageContent(
                     if (state is MessageState.Ready) {
                         MessageToolbarActions(
                             flagged = state.message.isFlagged,
-                            moveTargets = folders.filter { it.id != state.message.folderId },
+                            moveTargets = folders.filter { it.id != state.message.folderId && it.takesMoves },
                             actions = actions,
                         )
                     }

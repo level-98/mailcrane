@@ -555,6 +555,13 @@ pub fn save_folder_list(
                     .attributes
                     .iter()
                     .any(|a| a.eq_ignore_ascii_case("\\Noselect")),
+                // Starred and Gmail's Important (#390); a folder with a role
+                // is never also virtual.
+                virtual_role: f
+                    .role
+                    .is_none()
+                    .then(|| crate::roles::virtual_role(&f.attributes))
+                    .flatten(),
             }
         })
         .collect();
