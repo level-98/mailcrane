@@ -300,27 +300,24 @@ impl SyncEngine {
         // From here on a background download gives way (M4-25).
         let gate = self.account_lock(account);
         let _waiting = gate.announce();
-        if let Some(r) = self.run_jmap(account, |s| {
-            Box::pin(async move { s.fetch_body(MessageId(message_id)).await })
-        }) {
-            return r;
-        }
-        // On the account's reused connection, without the sync's writer
-        // lock (issue #294): opening never waits for a sync. Its only writes
-        // are the body's own short transactions, marked urgent so they take
-        // the next turn for SQLite's write lock: a sync writing batch after
-        // batch would otherwise win every race and the save would end in
-        // SQLITE_BUSY. The mark is per thread, so it's made on the job
-        // thread that writes (#462); `pooled` then runs right there.
+        // Without the sync's writer lock (issue #294): opening never waits
+        // for a sync. Its only writes are the body's own short transactions,
+        // marked urgent so they take the next turn for SQLite's write lock: a
+        // sync writing batch after batch would otherwise win every race and
+        // the save would end in SQLITE_BUSY. JMAP and IMAP alike (#468).
         let config = self.config;
-        on_job_thread(|| {
-            mailcrane_store::urgent_writes(&self.db_path, || {
-                self.pooled(account, Retry::Idempotent, |store, session, listener| {
-                    Box::pin(async move {
-                        FolderSyncer::new(store, session, listener, account, config)
-                            .fetch_body(MessageId(message_id))
-                            .await
-                    })
+        self.urgent_job(|| {
+            if let Some(r) = self.run_jmap(account, |s| {
+                Box::pin(async move { s.fetch_body(MessageId(message_id)).await })
+            }) {
+                return r;
+            }
+            // On the account's reused connection.
+            self.pooled(account, Retry::Idempotent, |store, session, listener| {
+                Box::pin(async move {
+                    FolderSyncer::new(store, session, listener, account, config)
+                        .fetch_body(MessageId(message_id))
+                        .await
                 })
             })
         })
@@ -957,6 +954,19 @@ impl SyncEngine {
                 log_failure("connect", &e, None);
                 e.kind()
             })
+    }
+}
+
+impl SyncEngine {
+    /// Runs `work` on a job thread (see [`on_job_thread`]) with that
+    /// thread's writes to this engine's database marked urgent (#294). The
+    /// mark is per thread, so it's made on the thread that writes; jobs
+    /// started inside `work` run right there and keep it (#462, #468).
+    pub(crate) fn urgent_job<T: Send>(
+        &self,
+        work: impl FnOnce() -> Result<T, SyncFailure> + Send,
+    ) -> Result<T, SyncFailure> {
+        on_job_thread(|| mailcrane_store::urgent_writes(&self.db_path, work))
     }
 }
 

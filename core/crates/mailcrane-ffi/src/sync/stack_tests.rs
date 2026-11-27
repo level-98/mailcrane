@@ -105,20 +105,11 @@ fn pooled_and_sync_calls_run_from_a_small_stack_thread() {
     drop(store);
     let (first, second) = (ids[0], ids[1]);
 
-    // Opening a message: the first call opens the pooled connection.
+    // Opening a message, twice: the first call opens the pooled connection.
+    // (That its writes are urgent on the thread that writes is checked
+    // directly in `urgent_job_work_is_urgent_on_the_job_thread`, #468.)
     on_small_stack(|| assert_eq!(engine.fetch_body(second), Ok(())));
-    // With the connection open, a body save takes no turn behind its own
-    // urgent mark (#463 review): `urgent_writes` is entered on the thread
-    // that writes, so the store doesn't wait `URGENT_WAIT` (500 ms) for it.
-    let took = on_small_stack(|| {
-        let started = std::time::Instant::now();
-        assert_eq!(engine.fetch_body(first), Ok(()));
-        started.elapsed()
-    });
-    assert!(
-        took < std::time::Duration::from_millis(400),
-        "opening a message waited {took:?}"
-    );
+    on_small_stack(|| assert_eq!(engine.fetch_body(first), Ok(())));
     // Searching the server: pooled, under the account's writer lock. Both
     // matches are stored already, so it stores none.
     on_small_stack(|| {
@@ -167,14 +158,48 @@ fn pooled_and_sync_calls_run_from_a_small_stack_thread() {
         );
     });
 
-    // Closing the pooled connection (LOGOUT) from a small stack, too.
-    on_small_stack(|| engine.close_connections(CloseReason::Background));
-    assert_eq!(
+    // Closing the pooled connection (LOGOUT) from a small stack, too. Every
+    // connection ends with LOGOUT, so count them: exactly one more (#468).
+    let logouts = || {
         runtime
             .block_on(imap.received_commands())
-            .last()
-            .map(String::as_str),
-        Some("LOGOUT"),
-        "the pooled connection logged out"
+            .iter()
+            .filter(|c| c.as_str() == "LOGOUT")
+            .count()
+    };
+    let before = logouts();
+    on_small_stack(|| engine.close_connections(CloseReason::Background));
+    assert_eq!(logouts(), before + 1, "the pooled connection logged out");
+    assert!(!engine.pool.is_open(account), "and is gone");
+}
+
+#[test]
+fn urgent_job_work_is_urgent_on_the_job_thread() {
+    // #468: the urgent mark is per thread, so it must be made on the job
+    // thread that writes, not on the caller's (where it once was, and every
+    // body save then waited `URGENT_WAIT` behind its own mark).
+    let dir = tempfile::tempdir().expect("dir");
+    let path = dir.path().join("urgent.db").to_string_lossy().into_owned();
+    let engine = SyncEngine::new(path.clone(), Arc::new(super::tests::Collect::default()));
+    let caller = std::thread::current().id();
+    let (urgent, nested_urgent, thread) = on_small_stack(|| {
+        engine
+            .urgent_job(|| {
+                // A job started inside runs right here and keeps the mark.
+                let nested = on_job_thread(|| Ok(mailcrane_store::urgent_here(&path)))?;
+                Ok((
+                    mailcrane_store::urgent_here(&path),
+                    nested,
+                    std::thread::current().id(),
+                ))
+            })
+            .expect("ran")
+    });
+    assert!(urgent, "the job thread writes urgently");
+    assert!(nested_urgent, "so does a job started inside it");
+    assert_ne!(thread, caller);
+    assert!(
+        !mailcrane_store::urgent_here(&path),
+        "the caller isn't marked"
     );
 }
