@@ -126,7 +126,10 @@ struct State {
     /// Emails left out of `Email/set` replies (in neither the done nor the
     /// not-done map, against RFC 8620 §5.3), with whether the change is
     /// still carried out (#448).
-    omitted: Vec<(String, bool)>,
+    omitted: std::collections::BTreeMap<String, bool>,
+    /// `maxObjectsInGet` (RFC 8620 §2), when set: advertised, and a larger
+    /// `Email/get` is refused with `requestTooLarge`.
+    max_objects_in_get: Option<usize>,
     /// Submissions still to refuse (`Fault::RefuseSubmissions`).
     refuse_submissions: usize,
     push_subscriptions: Vec<FakePushSubscription>,
@@ -488,7 +491,13 @@ impl FakeJmap {
     /// buggy server might do (#448). With `applied`, the change is still
     /// carried out; without, it isn't.
     pub fn omit_from_set_reply(&self, id: &str, applied: bool) {
-        lock(&self.state).omitted.push((id.to_owned(), applied));
+        lock(&self.state).omitted.insert(id.to_owned(), applied);
+    }
+
+    /// Advertises `maxObjectsInGet` = `n` in the session and refuses a
+    /// larger `Email/get` with `requestTooLarge` (RFC 8620 §3.6.2).
+    pub fn set_max_objects_in_get(&self, n: usize) {
+        lock(&self.state).max_objects_in_get = Some(n);
     }
 
     /// The submissions accepted so far.
@@ -567,9 +576,13 @@ fn authorized(value: Option<&str>, config: &Config) -> bool {
 
 fn session(config: &Config) -> String {
     let base = format!("https://localhost:{}", config.port);
+    let mut core_caps = json!({"maxSizeRequest": 10_000_000, "maxSizeUpload": 50_000_000});
+    if let Some(n) = lock(&config.state).max_objects_in_get {
+        core_caps["maxObjectsInGet"] = json!(n);
+    }
     json!({
         "capabilities": {
-            "urn:ietf:params:jmap:core": {"maxSizeRequest": 10_000_000, "maxSizeUpload": 50_000_000},
+            "urn:ietf:params:jmap:core": core_caps,
             "urn:ietf:params:jmap:mail": {},
             CAP_SUBMISSION: {}
         },
@@ -667,11 +680,7 @@ fn email_set(state: &mut State, args: &Value, id: &str) -> Value {
                 not_updated.insert(eid.clone(), json!({"type": "forbidden"}));
                 continue;
             }
-            let omitted = state
-                .omitted
-                .iter()
-                .find(|(o, _)| o == eid)
-                .map(|(_, applied)| *applied);
+            let omitted = state.omitted.get(eid).copied();
             if omitted == Some(false) {
                 continue;
             }
@@ -700,11 +709,7 @@ fn email_set(state: &mut State, args: &Value, id: &str) -> Value {
                 not_destroyed.insert(eid.to_owned(), json!({"type": "forbidden"}));
                 continue;
             }
-            let omitted = state
-                .omitted
-                .iter()
-                .find(|(o, _)| o == eid)
-                .map(|(_, applied)| *applied);
+            let omitted = state.omitted.get(eid).copied();
             if omitted == Some(false) {
                 continue;
             }
@@ -949,6 +954,9 @@ fn method_responses(
                 .and_then(Value::as_array)
                 .map(|a| a.iter().filter_map(Value::as_str).collect())
                 .unwrap_or_default();
+            if state.max_objects_in_get.is_some_and(|n| wanted.len() > n) {
+                return vec![json!(["error", {"type": "requestTooLarge"}, id])];
+            }
             let list: Vec<Value> = wanted
                 .iter()
                 .filter_map(|w| state.emails.iter().find(|e| e.id == *w))

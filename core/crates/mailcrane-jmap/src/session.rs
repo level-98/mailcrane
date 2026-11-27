@@ -19,6 +19,9 @@ pub struct Session {
     pub mail_account_id: String,
     /// Changes when the session does.
     pub state: String,
+    /// The most ids one `/get` call may ask for (RFC 8620 §2,
+    /// `maxObjectsInGet` of the core capability), when the server says.
+    pub max_objects_in_get: Option<usize>,
 }
 
 /// The session URL for what the user typed: a domain becomes
@@ -72,8 +75,15 @@ pub fn parse_session(body: &[u8], base: &url::Url) -> Result<Session, JmapError>
         .and_then(Value::as_str)
         .map(str::to_owned)
         .ok_or(JmapError::NotJmap)?;
+    let max_objects_in_get = caps
+        .and_then(|c| c.get(CAP_CORE))
+        .and_then(|core| core.get("maxObjectsInGet"))
+        .and_then(Value::as_u64)
+        .and_then(|n| usize::try_from(n).ok())
+        .filter(|n| *n > 0);
     Ok(Session {
         api_url,
+        max_objects_in_get,
         download_url: text("downloadUrl").unwrap_or_default(),
         upload_url: text("uploadUrl").unwrap_or_default(),
         username: text("username").unwrap_or_default(),
