@@ -801,7 +801,7 @@ impl<'a> JmapSyncer<'a> {
             Err(JmapError::Http(404)) => return Err(SyncError::MessageGone),
             Err(e) => return Err(e.into()),
         };
-        save_body(self.store, message, &raw)?;
+        super::initial::save_opened_body(self.store, message, &raw)?;
         self.listener.on_event(CoreEvent::MessagesChanged {
             folder_id: header.details.folder_id,
         });

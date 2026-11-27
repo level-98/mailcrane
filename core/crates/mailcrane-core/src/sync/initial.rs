@@ -453,10 +453,47 @@ impl<'a> FolderSyncer<'a> {
             .uid_fetch_body(header.details.uid)
             .await?
             .ok_or(SyncError::MessageGone)?;
-        save_body(self.store, message, &raw)?;
+        save_opened_body(self.store, message, &raw)?;
         self.listener
             .on_event(CoreEvent::MessagesChanged { folder_id: folder });
         Ok(())
+    }
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Tests: for each [`save_opened_body`] on this thread, whether its save
+    /// ran with the store's urgent mark.
+    pub(crate) static OPENED_SAVES: std::cell::RefCell<Vec<bool>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// [`save_body`] for a message the user opened (#294, #472, #473). Only its
+/// save runs under the store's urgent mark, made on this thread, so other
+/// writers give it the next turn for SQLite's write lock, but not while the
+/// opener waits for a connection or downloads (#473). It writes only the
+/// body and its parts, never the flags, folder or state columns a sync owns,
+/// so it can run beside a sync. A message the sync removed meanwhile is
+/// dropped quietly: nothing is recreated (#472).
+pub(crate) fn save_opened_body(
+    store: &Store,
+    message: MessageId,
+    raw: &[u8],
+) -> Result<(), SyncError> {
+    let saved = store.urgent(|| {
+        #[cfg(test)]
+        OPENED_SAVES.with(|s| s.borrow_mut().push(store.urgent_here()));
+        save_body(store, message, raw)
+    });
+    match saved {
+        Err(SyncError::UnknownMessage) => {
+            tracing::debug!(
+                message = message.0,
+                "an opened message was removed before its body was saved"
+            );
+            Ok(())
+        }
+        other => other,
     }
 }
 

@@ -669,3 +669,160 @@ fn a_database_failure_logs_the_sqlite_code_but_no_values() {
         ("Invalid", "uid", "none")
     );
 }
+
+/// A message header in `folder`, seen and flagged.
+fn stored_header(store: &Store, folder: FolderId, uid: u32) -> MessageId {
+    store
+        .upsert_message_header(&mailcrane_store::NewMessageHeader {
+            folder_id: folder,
+            uid,
+            message_id_header: Some(format!("<{uid}@example.net>")),
+            in_reply_to: None,
+            references_json: "[]".into(),
+            thread_id: None,
+            subject: "Lunch".into(),
+            from_name: None,
+            from_addr: Some("ana@example.net".into()),
+            to_json: "[]".into(),
+            cc_json: "[]".into(),
+            date: 1_790_000_000,
+            internal_date: 1_790_000_000,
+            size: 40,
+            flags: mailcrane_store::Flags {
+                seen: true,
+                flagged: true,
+                ..Default::default()
+            },
+            keywords_json: "[]".into(),
+            has_attachments: false,
+            snippet: String::new(),
+        })
+        .expect("header")
+}
+
+const RAW: &[u8] = b"From: ana@example.net\r\nSubject: Lunch\r\n\r\nSee you at noon\r\n";
+
+#[test]
+fn an_opened_body_is_saved_under_the_urgent_mark_and_only_then() {
+    // #473: the mark covers the save itself, on the thread that writes, and
+    // nothing else; background saves (prefetch, sync) aren't marked.
+    let dir = tempfile::tempdir().expect("dir");
+    let path = dir.path().join("urgent.db");
+    let store = Store::open(&path).expect("store");
+    let folder = {
+        let account = store
+            .insert_account(&NewAccount {
+                display_name: "Alice".into(),
+                email: USER.into(),
+                imap_host: "localhost".into(),
+                imap_port: 993,
+                imap_security: Security::Tls,
+                smtp_host: "localhost".into(),
+                smtp_port: 587,
+                smtp_security: Security::Starttls,
+                username: USER.into(),
+            })
+            .expect("account");
+        store
+            .upsert_folder(&NewFolder {
+                account_id: account,
+                remote_name: "INBOX".into(),
+                display_name: "INBOX".into(),
+                delimiter: Some("/".into()),
+                role: None,
+                uidvalidity: None,
+                uidnext: None,
+                highestmodseq: None,
+                is_subscribed: true,
+                selectable: true,
+                virtual_role: None,
+            })
+            .expect("folder")
+    };
+    let opened = stored_header(&store, folder, 1);
+    let background = stored_header(&store, folder, 2);
+    super::OPENED_SAVES.with(|s| s.borrow_mut().clear());
+    assert!(!store.urgent_here(), "not marked before");
+    super::save_opened_body(&store, opened, RAW).expect("saved");
+    assert!(!store.urgent_here(), "nor after");
+    super::save_body(&store, background, RAW).expect("saved");
+    assert_eq!(
+        super::OPENED_SAVES.with(|s| s.borrow().clone()),
+        [true],
+        "one opened save, under the mark; the background save isn't counted"
+    );
+    assert!(store.get_body(background).expect("body").is_some());
+}
+
+#[tokio::test]
+async fn opening_a_message_on_imap_saves_through_the_opened_path() {
+    let imap = fake(raws(1), &[]).await;
+    let (store, account, folder) = setup();
+    let events = Events::default();
+    let mut session = connect(&imap).await;
+    let mut syncer = FolderSyncer::new(
+        &store,
+        &mut session,
+        &events,
+        account,
+        SyncConfig::default(),
+    );
+    syncer.sync_folder(folder).await.expect("syncs");
+    let id = store
+        .list_messages(folder, 10, 0)
+        .expect("page")
+        .first()
+        .expect("message")
+        .id;
+    super::OPENED_SAVES.with(|s| s.borrow_mut().clear());
+    syncer.fetch_body(id).await.expect("fetches");
+    // In memory there's no shared file, so no mark; what counts is the path.
+    assert_eq!(super::OPENED_SAVES.with(|s| s.borrow().len()), 1);
+}
+
+#[test]
+fn an_opened_save_writes_only_the_body_and_its_parts() {
+    // #472 condition 1: it can run beside a sync because it never touches
+    // the flags, folder or other columns the sync owns.
+    let (store, _, folder) = setup();
+    let id = stored_header(&store, folder, 1);
+    let before = store.get_message_header(id).expect("get").expect("header");
+    super::save_opened_body(&store, id, RAW).expect("saved");
+    let after = store.get_message_header(id).expect("get").expect("header");
+    assert_eq!(after.body_state, BodyState::Fetched);
+    assert_eq!(after.details.folder_id, before.details.folder_id);
+    assert_eq!(after.details.uid, before.details.uid);
+    assert_eq!(after.details.flags, before.details.flags);
+    assert_eq!(after.details.subject, before.details.subject);
+    assert_eq!(after.details.keywords_json, before.details.keywords_json);
+}
+
+#[test]
+fn a_message_removed_before_its_body_is_saved_is_dropped_quietly() {
+    // #472 condition 2: no error for the opener, and no row comes back.
+    let (store, _, folder) = setup();
+    let id = stored_header(&store, folder, 1);
+    store.delete_message_row(id).expect("removed by the sync");
+    assert!(matches!(super::save_opened_body(&store, id, RAW), Ok(())));
+    assert!(store.get_message_header(id).expect("get").is_none());
+    assert!(store.get_body(id).expect("body").is_none());
+}
+
+#[test]
+fn a_sync_writing_the_header_again_keeps_a_stored_body() {
+    // #472 condition 3: the sync's header upsert never clears the body.
+    let (store, _, folder) = setup();
+    let id = stored_header(&store, folder, 1);
+    super::save_opened_body(&store, id, RAW).expect("saved");
+    let again = stored_header(&store, folder, 1);
+    assert_eq!(again, id, "same row");
+    assert_eq!(
+        store
+            .get_message_header(id)
+            .expect("get")
+            .expect("header")
+            .body_state,
+        BodyState::Fetched
+    );
+    assert_eq!(store.get_body(id).expect("body").as_deref(), Some(RAW));
+}
