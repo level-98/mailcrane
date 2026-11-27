@@ -87,6 +87,9 @@ class ComposeViewModelTest {
         var loadGate: CompletableDeferred<Unit>? = null
         var signatures = mapOf<Long, String>()
 
+        /** The quote header the last signature swap was given (#449). */
+        var lastQuoteHeader: String? = null
+
         /** A signature lookup for an account in here waits for its gate, as a slow one would (#449). */
         val signatureGates = mutableMapOf<Long, CompletableDeferred<Unit>>()
 
@@ -180,7 +183,9 @@ class ComposeViewModelTest {
             body: String,
             old: String?,
             new: String?,
+            quoteHeader: String?,
         ): String {
+            lastQuoteHeader = quoteHeader
             val oldBlock = old?.let { "\n\n-- \n$it" }
             val newBlock = new?.let { "\n\n-- \n$it" }.orEmpty()
             return when {
@@ -1006,6 +1011,39 @@ class ComposeViewModelTest {
         assertEquals("Hi\n\n-- \nBea", vm.state.value.body)
         assertEquals("Bea", vm.state.value.signature)
         assertEquals(2L, vm.state.value.fromAccountId)
+    }
+
+    @Test
+    fun fallingBackFromARemovedAccountGivesTheFallbackAccountsSignature() {
+        // #449 review: account 1 is gone by the time the account list loads, so From falls back to account 2.
+        // That is a change of From too: account 2's signature goes in, and account 1's late one is dropped.
+        val scheduler = steppedScheduler()
+        val first = CompletableDeferred<Unit>()
+        val core =
+            FakeCore().apply {
+                accounts = listOf(AccountSummary(2, "bea@example.org", "Bea"))
+                signatures = mapOf(1L to "Ann", 2L to "Bea")
+                signatureGates[1L] = first
+            }
+        val vm = ComposeViewModel(core, FakeAppSettings())
+        vm.start(1)
+        scheduler.runCurrent()
+        assertEquals(2L, vm.state.value.fromAccountId)
+        first.complete(Unit)
+        scheduler.runCurrent()
+        assertEquals("\n\n-- \nBea", vm.state.value.body)
+        assertEquals("Bea", vm.state.value.signature)
+    }
+
+    @Test
+    fun aRepliesFromSwitchOnlyLooksAboveItsQuote() {
+        // #449 review: the core is told where the user's own text ends (the quote header), so a forwarded or
+        // quoted copy of their signature is never the one swapped.
+        val core = FakeCore().apply { signatures = mapOf(1L to "Ann", 2L to "Bea") }
+        val vm = ComposeViewModel(core, FakeAppSettings())
+        vm.start(1, ReplyRequest(42, ReplyKind.FORWARD, "Forwarded message:"))
+        vm.onFromChange(1)
+        assertEquals("Forwarded message:", core.lastQuoteHeader)
     }
 
     @Test

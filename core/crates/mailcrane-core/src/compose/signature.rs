@@ -53,23 +53,44 @@ pub fn apply_signature(body: &str, signature: Option<&str>, kind: DraftKind) -> 
 /// removes it when `new` is `None` or empty), for when the user changes the
 /// From account. Only an exact, unedited copy of the old block is replaced;
 /// if the user changed it, or there is none, `body` comes back unchanged.
-pub fn swap_signature(body: &str, old: Option<&str>, new: Option<&str>) -> String {
+///
+/// `quote_header` is the line a reply's quote or a forward starts with (the
+/// `quote_header` given to `prepare_reply`). Only the part above it is the
+/// user's own (#449): a forwarded mail of theirs can hold the same block,
+/// and is never touched. Without it (a new message, or a draft reopened
+/// later) the whole body is searched.
+pub fn swap_signature(
+    body: &str,
+    old: Option<&str>,
+    new: Option<&str>,
+    quote_header: Option<&str>,
+) -> String {
     let new_block = new.and_then(block).unwrap_or_default();
+    let header_at = quote_header
+        .filter(|h| !h.trim().is_empty())
+        .and_then(|h| body.find(&format!("\n{h}\n")));
+    let own = body.get(..header_at.unwrap_or(body.len())).unwrap_or(body);
+    let rest = body.get(own.len()..).unwrap_or_default();
     match old.and_then(block) {
-        Some(old_block) => match whole_block_at(body, &old_block) {
+        Some(old_block) => match whole_block_at(own, &old_block) {
             Some(at) => {
                 let mut out = String::with_capacity(body.len() + new_block.len());
-                out.push_str(body.get(..at).unwrap_or_default());
+                out.push_str(own.get(..at).unwrap_or_default());
                 out.push_str(&new_block);
-                out.push_str(body.get(at + old_block.len()..).unwrap_or_default());
+                out.push_str(own.get(at + old_block.len()..).unwrap_or_default());
+                out.push_str(rest);
                 out
             }
             None => body.to_owned(),
         },
         // There was no old signature: add the new one only to an empty body
-        // (a fresh new message); anywhere else it might land in the wrong
-        // place.
+        // (a fresh new message), or just above a reply's quote or a forward,
+        // where `apply_signature` puts it; anywhere else it might land in the
+        // wrong place.
         None if body.is_empty() => new_block,
+        None if header_at.is_some() && !new_block.is_empty() => {
+            format!("{}{new_block}\n\n{rest}", own.trim_end_matches('\n'))
+        }
         None => body.to_owned(),
     }
 }
@@ -147,28 +168,37 @@ mod tests {
     fn switching_from_swaps_only_an_unedited_signature() {
         let new_message = apply_signature("Hello", Some("Ann"), DraftKind::New);
         assert_eq!(
-            swap_signature(&new_message, Some("Ann"), Some("Bob")),
+            swap_signature(&new_message, Some("Ann"), Some("Bob"), None),
             "Hello\n\n-- \nBob"
         );
         let reply = apply_signature("\n\nq\n> x\n", Some("Ann"), DraftKind::Reply);
         assert_eq!(
-            swap_signature(&reply, Some("Ann"), Some("Bob")),
+            swap_signature(&reply, Some("Ann"), Some("Bob"), None),
             "\n\n-- \nBob\n\n\nq\n> x\n"
         );
         // To an account without a signature: the block goes, separator too.
-        assert_eq!(swap_signature(&new_message, Some("Ann"), None), "Hello");
-        assert_eq!(swap_signature(&new_message, Some("Ann"), Some("")), "Hello");
+        assert_eq!(
+            swap_signature(&new_message, Some("Ann"), None, None),
+            "Hello"
+        );
+        assert_eq!(
+            swap_signature(&new_message, Some("Ann"), Some(""), None),
+            "Hello"
+        );
         // Edited by the user: left alone.
         let edited = new_message.replace("Ann", "Ann (on holiday)");
-        assert_eq!(swap_signature(&edited, Some("Ann"), Some("Bob")), edited);
+        assert_eq!(
+            swap_signature(&edited, Some("Ann"), Some("Bob"), None),
+            edited
+        );
         let separator_gone = new_message.replace("-- \n", "");
         assert_eq!(
-            swap_signature(&separator_gone, Some("Ann"), Some("Bob")),
+            swap_signature(&separator_gone, Some("Ann"), Some("Bob"), None),
             separator_gone
         );
         // From an account without one: only an empty body gets the new one.
-        assert_eq!(swap_signature("", None, Some("Bob")), "\n\n-- \nBob");
-        assert_eq!(swap_signature("Typed", None, Some("Bob")), "Typed");
+        assert_eq!(swap_signature("", None, Some("Bob"), None), "\n\n-- \nBob");
+        assert_eq!(swap_signature("Typed", None, Some("Bob"), None), "Typed");
     }
 
     #[test]
@@ -176,9 +206,9 @@ mod tests {
         // #430: the block is matched as a whole `-- ` block with the old signature's text, wherever it is.
         let mut body = apply_signature("Notes", Some("Ann"), DraftKind::New);
         for _ in 0..5 {
-            body = swap_signature(&body, Some("Ann"), Some("Bea"));
+            body = swap_signature(&body, Some("Ann"), Some("Bea"), None);
             assert_eq!(body, "Notes\n\n-- \nBea");
-            body = swap_signature(&body, Some("Bea"), Some("Ann"));
+            body = swap_signature(&body, Some("Bea"), Some("Ann"), None);
             assert_eq!(body, "Notes\n\n-- \nAnn");
         }
         assert_eq!(body.lines().filter(|l| *l == SEPARATOR).count(), 1);
@@ -189,14 +219,14 @@ mod tests {
         // Typed above it, and lines typed below it (a P.S.), are both kept; only the block changes.
         let body = "Hi there\n\n-- \nAnn\nP.S. see you Friday";
         assert_eq!(
-            swap_signature(body, Some("Ann"), Some("Bea")),
+            swap_signature(body, Some("Ann"), Some("Bea"), None),
             "Hi there\n\n-- \nBea\nP.S. see you Friday"
         );
         // A reply: the block between the cursor line and the quote.
         let reply = apply_signature("\n\nAna wrote:\n> Hi\n", Some("Ann"), DraftKind::Reply);
         let typed = format!("Thanks!{reply}");
         assert_eq!(
-            swap_signature(&typed, Some("Ann"), Some("Bea")),
+            swap_signature(&typed, Some("Ann"), Some("Bea"), None),
             "Thanks!\n\n-- \nBea\n\n\nAna wrote:\n> Hi\n"
         );
     }
@@ -207,8 +237,56 @@ mod tests {
         // real signature at the end, not the copy.
         let body = "Hi\n\n-- \nAnn\nold text\n\n-- \nAnn";
         assert_eq!(
-            swap_signature(body, Some("Ann"), Some("Bea")),
+            swap_signature(body, Some("Ann"), Some("Bea"), None),
             "Hi\n\n-- \nAnn\nold text\n\n-- \nBea"
         );
+    }
+
+    #[test]
+    fn forwarding_your_own_signed_mail_swaps_only_your_signature() {
+        // #449 review: a forward is unquoted, so a forwarded mail of the
+        // user's holds the same block as their signature. Only the part above
+        // the forward's intro line is theirs.
+        let intro = "---------- Forwarded message ---------";
+        let forwarded = format!(
+            "\n\n{intro}\nFrom: Ann <ann@example.org>\nSubject: Plans\n\nSee you\n\n-- \nAnn\n"
+        );
+        let draft = apply_signature(&forwarded, Some("Ann"), DraftKind::Forward);
+        let typed = format!("FYI{draft}");
+        let swapped = swap_signature(&typed, Some("Ann"), Some("Bea"), Some(intro));
+        assert_eq!(
+            swapped,
+            format!("FYI\n\n-- \nBea\n\n\n{intro}\nFrom: Ann <ann@example.org>\nSubject: Plans\n\nSee you\n\n-- \nAnn\n")
+        );
+        // Without the boundary, the last block (the forwarded copy) would be the one changed.
+        assert_ne!(
+            swap_signature(&typed, Some("Ann"), Some("Bea"), None),
+            swapped
+        );
+        // Edited above the intro: nothing changes, below it included.
+        let edited = typed.replacen("Ann\n", "Ann (away)\n", 1);
+        assert_eq!(
+            swap_signature(&edited, Some("Ann"), Some("Bea"), Some(intro)),
+            edited
+        );
+    }
+
+    #[test]
+    fn with_no_old_signature_a_reply_gets_the_new_one_above_its_quote() {
+        // #449: From switched to an account with a signature, from one without.
+        let header = "Ana wrote:";
+        let reply = format!("Thanks!\n\n{header}\n> Hi\n");
+        assert_eq!(
+            swap_signature(&reply, None, Some("Bea"), Some(header)),
+            format!("Thanks!\n\n-- \nBea\n\n\n{header}\n> Hi\n")
+        );
+        // The same layout apply_signature gives a fresh reply.
+        let fresh = format!("\n\n{header}\n> Hi\n");
+        assert_eq!(
+            swap_signature(&fresh, None, Some("Bea"), Some(header)),
+            apply_signature(&fresh, Some("Bea"), DraftKind::Reply)
+        );
+        // And nothing when the new account has none either.
+        assert_eq!(swap_signature(&reply, None, None, Some(header)), reply);
     }
 }

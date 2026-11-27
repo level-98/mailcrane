@@ -74,6 +74,7 @@ private class FakeOutboxCore : ComposeCore {
         body: String,
         old: String?,
         new: String?,
+        quoteHeader: String?,
     ) = body
 
     override suspend fun saveDraft(

@@ -80,6 +80,7 @@ private class FakeUndoCore(
         body: String,
         old: String?,
         new: String?,
+        quoteHeader: String?,
     ) = body
 
     override suspend fun getDraft(draftId: Long): ComposeDraft = error("unused")

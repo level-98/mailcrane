@@ -56,6 +56,7 @@ interface ComposeCore {
         body: String,
         old: String?,
         new: String?,
+        quoteHeader: String?,
     ): String
 
     /** Saves [draft] locally (new when [draftId] is null); returns its id. Uploads happen later. */
@@ -165,7 +166,8 @@ class UniffiComposeCore(
         body: String,
         old: String?,
         new: String?,
-    ): String = app.mailcrane.core.swapSignature(body, old, new)
+        quoteHeader: String?,
+    ): String = app.mailcrane.core.swapSignature(body, old, new, quoteHeader)
 
     override suspend fun saveDraft(
         draftId: Long?,

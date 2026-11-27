@@ -282,10 +282,19 @@ class ComposeViewModel
                     } catch (e: Exception) {
                         emptyList()
                     }
+                val before = _state.value.fromAccountId
                 _state.update { s ->
                     // Keep the picked account if it still exists; otherwise fall back to the first one.
                     val from = s.fromAccountId?.takeIf { id -> accounts.isEmpty() || accounts.any { it.id == id } }
                     s.copy(accounts = accounts, fromAccountId = from ?: accounts.firstOrNull()?.id)
+                }
+                // A fallback is a change of From too (#449 review): the fallback account's signature goes in
+                // through the same latest-wins lookup, and the removed account's late result is dropped. A draft
+                // or reply still loading sets From itself.
+                val now = _state.value
+                val fellBack = now.fromAccountId
+                if (fellBack != null && fellBack != before && now.signatureAdded && !now.loadingContent) {
+                    lookUpSignature(fellBack)
                 }
             }
         }
@@ -454,7 +463,8 @@ class ComposeViewModel
                         val signed = core.applySignature(it.body, signature, DraftKind.NEW)
                         return@update it.withOutsideBody(signed).copy(signature = signature)
                     }
-                    val swapped = core.swapSignature(it.body, it.signature, signature)
+                    // Only above a reply's quote or a forward: a forwarded mail of the user's can hold the same block.
+                    val swapped = core.swapSignature(it.body, it.signature, signature, it.prefilledFor?.quoteHeader)
                     // An edited signature stays, and keeps being the one to match.
                     val kept = swapped == it.body && it.signature != null && it.signature != signature
                     val changed = if (swapped != it.body) it.withOutsideBody(swapped) else it
