@@ -347,9 +347,11 @@ impl<'a> JmapSyncer<'a> {
             // destroy can be repeated safely); a refusal undoes the change for
             // those emails, since it can't be confirmed.
             //
-            // An email with a later queued op is left to that op (lead's
-            // decision on #451): its own replay changes the server, and
-            // Email/changes then reports it, so the later intent survives.
+            // An email with a later queued op is still fetched and checked,
+            // so this op is never counted done for it unconfirmed (that
+            // would be #448 again). Only the server's state isn't applied
+            // to it, so the later op's local result survives until its own
+            // replay settles it (lead's decision on #451).
             let later_op = |email: &String| {
                 rows.iter().filter(|(e, _)| e == email).any(|(_, m)| {
                     ops.get(index.saturating_add(1)..)
@@ -360,8 +362,6 @@ impl<'a> JmapSyncer<'a> {
             };
             let result = match result {
                 Ok((mut refused, unanswered)) if !unanswered.is_empty() => {
-                    let unanswered: Vec<String> =
-                        unanswered.into_iter().filter(|e| !later_op(e)).collect();
                     tracing::warn!(
                         unanswered = unanswered.len(),
                         "JMAP server left emails out of its Email/set reply; reconciling"
@@ -398,14 +398,27 @@ impl<'a> JmapSyncer<'a> {
                     // database failure at any point leaves the email shown,
                     // never lost (lead's decision on #451).
                     if let Some((unanswered, emails)) = &reconcile {
+                        let later: Vec<&String> =
+                            unanswered.iter().filter(|e| later_op(e)).collect();
+                        let is_applied = |email: &String| {
+                            action
+                                .as_ref()
+                                .is_some_and(|a| applied(a, emails.iter().find(|e| &e.id == email)))
+                        };
+                        // An email with a later op stays in this op only when
+                        // the server's state confirms the change; otherwise
+                        // this op's change is undone for it too.
                         let unconfirmed: Vec<MessageId> = rows
                             .iter()
-                            .filter(|(email, _)| unanswered.contains(email))
+                            .filter(|(email, _)| {
+                                unanswered.contains(email)
+                                    && (!later.contains(&email) || !is_applied(email))
+                            })
                             .map(|(_, m)| *m)
                             .collect();
                         self.store.fail_op_messages(op.id, &unconfirmed)?;
                         let mut changed: BTreeSet<FolderId> = BTreeSet::new();
-                        for id in unanswered {
+                        for id in unanswered.iter().filter(|id| !later.contains(id)) {
                             if !emails.iter().any(|e| &e.id == id) {
                                 for row in self.store.jmap_rows(self.account, id)? {
                                     changed.insert(row.folder_id);
@@ -413,7 +426,7 @@ impl<'a> JmapSyncer<'a> {
                                 }
                             }
                         }
-                        for e in emails {
+                        for e in emails.iter().filter(|e| !later.contains(&&e.id)) {
                             self.place(e, &mut changed)?;
                         }
                         changed.insert(op.folder_id);
@@ -423,12 +436,11 @@ impl<'a> JmapSyncer<'a> {
                         }
                         // The ones the server didn't change are a refusal the
                         // user should hear about, like any other.
-                        if let Some(action) = &action {
+                        {
                             let not_applied: Vec<MessageId> = rows
                                 .iter()
                                 .filter(|(email, _)| {
-                                    unanswered.contains(email)
-                                        && !applied(action, emails.iter().find(|e| &e.id == email))
+                                    unanswered.contains(email) && !is_applied(email)
                                 })
                                 .map(|(_, m)| *m)
                                 .collect();

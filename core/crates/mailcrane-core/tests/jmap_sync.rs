@@ -871,6 +871,60 @@ async fn the_reconcile_keeps_a_later_queued_change() {
     );
 }
 
+/// #451, lead: an omitted email with a later queued op is never counted
+/// done by this op while unconfirmed (#448 again). Not applied, this op's
+/// flag is undone for it and the user is told, while the later op's local
+/// mark-read stays. Applied, the flag is confirmed and nothing is reported.
+#[tokio::test]
+async fn an_omission_with_a_later_op_is_confirmed_or_undone() {
+    use mailcrane_core::actions::{apply_action, Action};
+    for applied in [false, true] {
+        let s = setup().await;
+        let events = Events::default();
+        let mut j = syncer_with(&s, &events).await;
+        let inbox = j
+            .refresh_mailboxes()
+            .await
+            .expect("mailboxes")
+            .expect("inbox");
+        j.sync_folder(inbox).await.expect("sync");
+        let m2 = s
+            .store
+            .list_messages(inbox, 10, 0)
+            .expect("list")
+            .into_iter()
+            .find(|m| m.details.subject == "Subject m2")
+            .map(|m| m.id)
+            .expect("m2");
+        s.server.omit_from_set_reply("m2", applied);
+        apply_action(&s.store, &[m2], Action::Flag, 0, &NoListener).expect("flag");
+        apply_action(&s.store, &[m2], Action::MarkRead, 1_000, &NoListener).expect("read");
+        let report = j.replay_actions(0).await.expect("replay");
+        let after = s
+            .store
+            .list_messages(inbox, 10, 0)
+            .expect("list")
+            .into_iter()
+            .find(|m| m.id == m2)
+            .expect("m2 still listed");
+        assert_eq!(
+            after.details.flags.flagged, applied,
+            "applied={applied}: local flag matches the server"
+        );
+        assert!(
+            after.details.flags.seen,
+            "applied={applied}: the queued mark-read survives"
+        );
+        if applied {
+            assert_eq!(report.failed, 0, "confirmed");
+            assert!(events.failed_ids().is_empty());
+        } else {
+            assert_eq!(report.failed, 1, "undone, not done");
+            assert_eq!(events.failed_ids(), vec![m2], "the user hears about m2");
+        }
+    }
+}
+
 /// #451 review: an unconfirmed email is detached from its op, with its
 /// local change undone, before the op is completed. So completing the op
 /// (which deletes a delete's hidden rows) can't take the email with it,
