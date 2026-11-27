@@ -953,28 +953,21 @@ mod tests {
         proptest::collection::vec(proptest::sample::select(pieces), 0..24)
     }
 
-    /// Whether `pieces` hold a line break piece and, somewhere after it, a
-    /// closing `</p>` piece: the only way html_to_lines can differ from
+    /// Whether `pieces` hold a line break and, somewhere after it, a
+    /// paragraph end: the only way html_to_lines can differ from
     /// html_to_text without block tags (#460 drops the `</p>`'s line break
-    /// right after a `<br>`'s). Decided on the pieces, not by searching the
-    /// text, so a `</p` that closes nothing (cut off, in a comment or a
-    /// quoted value) doesn't count (review of #498). Generous on purpose:
-    /// what sits between them (a cut-off tag swallows what follows it)
-    /// isn't modelled.
+    /// right after a `<br>`'s). Read on the joined text, lower-cased, since
+    /// pieces combine (`</p` then `>` is a `</p>`, `<br` then `>` a
+    /// `<br>`). Generous on purpose: what sits between them isn't modelled
+    /// (a cut-off tag swallows what follows it), but both have to be there,
+    /// in that order (review of #498).
     fn may_end_a_paragraph(pieces: &[&str]) -> bool {
-        // `</br>` breaks the line too, in html_to_text.
-        const BREAKS: [&str; 5] = ["<br>", "<BR/>", "</br>", "&#10;", "&NewLine;"];
-        const CLOSERS: [&str; 2] = ["</p>", "</P >"];
-        pieces
+        let html = pieces.concat().to_ascii_lowercase();
+        ["<br", "</br", "&#10;", "&newline;"]
             .iter()
-            .position(|p| BREAKS.contains(p))
-            .is_some_and(|first| {
-                pieces
-                    .get(first..)
-                    .unwrap_or_default()
-                    .iter()
-                    .any(|p| CLOSERS.contains(p))
-            })
+            .filter_map(|b| html.find(b))
+            .min()
+            .is_some_and(|first| html.get(first..).is_some_and(|rest| rest.contains("</p")))
     }
 
     /// An HTML string and its twin ([`BLOCK_PIECES`]), from inline and block
@@ -1135,6 +1128,13 @@ mod tests {
         assert_eq!(html_to_lines("<p>A</p><p><br></p><p>B</p>"), "A\n\nB");
         assert_eq!(html_to_lines("<p>A<br><br></p><p>B</p>"), "A\n\nB");
         assert_eq!(html_to_lines("A<br></p></p>B"), html_to_lines("A</p></p>B"));
+        // CI's shrunk inputs (review of #498): a `</p>` built from two
+        // generator pieces, `</p` and `>`.
+        assert_eq!(
+            html_to_lines("&#57344;<br></p>&#57344;"),
+            "\u{e000}\n\u{e000}"
+        );
+        assert_eq!(html_to_lines("&#57344;&#10;</p>&amp;"), "\u{e000}\n&");
         // A space the sender wrote after the `<br>` is content: the `</p>`
         // ends that line as html_to_text has it.
         assert_eq!(html_to_lines("A<br>&#32;</p>B"), "A\n\nB");
