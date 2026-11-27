@@ -207,6 +207,9 @@ pub struct SyncEngine {
     dns: Mutex<Option<Arc<dyn crate::autoconfig::PlatformDns>>>,
     #[cfg(test)]
     extra_root_cert: Mutex<Option<Vec<u8>>>,
+    /// For each IMAP open's body save, whether its thread wrote urgently.
+    #[cfg(test)]
+    pub(crate) urgent_at_open: Mutex<Vec<bool>>,
 }
 
 #[uniffi::export]
@@ -226,6 +229,8 @@ impl SyncEngine {
             dns: Mutex::new(None),
             #[cfg(test)]
             extra_root_cert: Mutex::new(None),
+            #[cfg(test)]
+            urgent_at_open: Mutex::new(Vec::new()),
         })
     }
 
@@ -300,6 +305,9 @@ impl SyncEngine {
         // From here on a background download gives way (M4-25).
         let gate = self.account_lock(account);
         let _waiting = gate.announce();
+        // JMAP opens take the account's writer lock (`jmap_inner`), so they
+        // wait for that account's sync and get no urgent mark: marked while
+        // waiting, they'd slow the very sync they wait for (#469 review).
         if let Some(r) = self.run_jmap(account, |s| {
             Box::pin(async move { s.fetch_body(MessageId(message_id)).await })
         }) {
@@ -310,17 +318,21 @@ impl SyncEngine {
         // are the body's own short transactions, marked urgent so they take
         // the next turn for SQLite's write lock: a sync writing batch after
         // batch would otherwise win every race and the save would end in
-        // SQLITE_BUSY. The mark is per thread, so it's made on the job
-        // thread that writes (#462); `pooled` then runs right there.
+        // SQLITE_BUSY. The mark is made on the job thread that writes.
         let config = self.config;
-        on_job_thread(|| {
-            mailcrane_store::urgent_writes(&self.db_path, || {
-                self.pooled(account, Retry::Idempotent, |store, session, listener| {
-                    Box::pin(async move {
-                        FolderSyncer::new(store, session, listener, account, config)
-                            .fetch_body(MessageId(message_id))
-                            .await
-                    })
+        self.urgent_job(|| {
+            self.pooled(account, Retry::Idempotent, |store, session, listener| {
+                // Tests: whether the thread about to save the body writes
+                // urgently (#468).
+                #[cfg(test)]
+                self.urgent_at_open
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .push(mailcrane_store::urgent_here(&self.db_path));
+                Box::pin(async move {
+                    FolderSyncer::new(store, session, listener, account, config)
+                        .fetch_body(MessageId(message_id))
+                        .await
                 })
             })
         })
@@ -957,6 +969,19 @@ impl SyncEngine {
                 log_failure("connect", &e, None);
                 e.kind()
             })
+    }
+}
+
+impl SyncEngine {
+    /// Runs `work` on a job thread (see [`on_job_thread`]) with that
+    /// thread's writes to this engine's database marked urgent (#294). The
+    /// mark is per thread, so it's made on the thread that writes; jobs
+    /// started inside `work` run right there and keep it (#462, #468).
+    pub(crate) fn urgent_job<T: Send>(
+        &self,
+        work: impl FnOnce() -> Result<T, SyncFailure> + Send,
+    ) -> Result<T, SyncFailure> {
+        on_job_thread(|| mailcrane_store::urgent_writes(&self.db_path, work))
     }
 }
 

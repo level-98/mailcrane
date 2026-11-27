@@ -197,6 +197,16 @@ pub fn urgent_writes<T>(db_path: &str, f: impl FnOnce() -> T) -> T {
     f()
 }
 
+/// Whether this thread is inside [`urgent_writes`] for the database at
+/// `db_path`, so its write transactions there never wait for other urgent
+/// writers. The mark is per thread: work moved to another thread doesn't
+/// carry it (#468). `db_path` must be spelled exactly as it was given to
+/// [`urgent_writes`] (and [`Store::open`]): the same file under another
+/// spelling isn't recognised.
+pub fn urgent_here(db_path: &str) -> bool {
+    URGENT_HERE.with(|here| here.borrow().iter().any(|k| k == db_path))
+}
+
 /// Whether another thread is writing urgently to the database `key`.
 fn others_urgent(key: &str) -> bool {
     URGENT_WRITERS
