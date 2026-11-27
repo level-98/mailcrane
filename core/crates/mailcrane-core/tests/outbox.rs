@@ -14,6 +14,11 @@ use mailcrane_store::{
 use mailcrane_testkit::{FakeImap, FakeSmtp, Fault, MemorySecretStore, Quirk};
 use std::time::Duration;
 
+/// Only a hang guard: a busy machine (a Gradle build, disk or memory
+/// pressure) can stall the fake servers for seconds, and a short limit
+/// would fail the test for that alone (#409, as in #362).
+const HANG_GUARD: Duration = Duration::from_secs(60);
+
 const NOW: i64 = 1_800_000_000;
 const USER: &str = "ann@example.org";
 const PASSWORD: &str = "s3cret-value";
@@ -72,7 +77,7 @@ async fn setup(faults: &[Fault]) -> Setup {
 
 fn options(s: &Setup) -> SendOptions {
     SendOptions {
-        timeout: Duration::from_secs(5),
+        timeout: HANG_GUARD,
         extra_root_certs: vec![s.smtp.root_cert_der().to_vec()],
     }
 }
@@ -287,7 +292,7 @@ async fn imap_with_sent(message_id: Option<&str>) -> FakeImap {
 async fn recover(s: &Setup, imap: &FakeImap) -> usize {
     let mut config = ImapConfig::new("localhost", imap.addr().port(), ImapSecurity::ImplicitTls)
         .with_extra_root_cert(imap.root_cert_der().to_vec());
-    config.command_timeout = Duration::from_millis(500);
+    config.command_timeout = HANG_GUARD;
     let mut session =
         mailcrane_imap::Session::connect(&config, USER, &mailcrane_imap::Secret::new(PASSWORD))
             .await

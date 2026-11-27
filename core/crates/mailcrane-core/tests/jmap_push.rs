@@ -15,6 +15,11 @@ use mailcrane_store::{AccountId, NewAccount, Security, Store};
 use mailcrane_testkit::{FakeEmail, FakeJmap};
 use std::time::Duration;
 
+/// Only a hang guard: a busy machine (a Gradle build, disk or memory
+/// pressure) can stall the fake servers for seconds, and a short limit
+/// would fail the test for that alone (#409, as in #362).
+const HANG_GUARD: Duration = Duration::from_secs(60);
+
 const NOW: i64 = 1_764_144_000; // 2025-11-26T08:00:00Z
 const URL: &str = "https://push.example.org/up/one";
 
@@ -47,7 +52,7 @@ async fn setup() -> Setup {
         )
         .expect("account");
     let config = ClientConfig {
-        timeout: Duration::from_secs(10),
+        timeout: HANG_GUARD,
         extra_roots: vec![server.root_cert_der().to_vec()],
     };
     let auth = Auth::Bearer("token".into());

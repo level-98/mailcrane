@@ -184,6 +184,12 @@ fn sync_load_older_and_fetch_body_through_the_ffi() {
     let _ = std::fs::remove_file(&path);
 }
 
+/// How long a test waits for something that should take milliseconds,
+/// only a hang guard: a busy machine (a Gradle build, disk or memory
+/// pressure) can stall the fake server for seconds (#409). The checks of a
+/// latency ("within 2 seconds") keep their own short limit.
+const HANG_GUARD: std::time::Duration = std::time::Duration::from_secs(60);
+
 /// Waits up to `limit` for `done`.
 fn wait_for(limit: std::time::Duration, mut done: impl FnMut() -> bool) -> std::time::Duration {
     let started = std::time::Instant::now();
@@ -271,9 +277,7 @@ fn live_updates_start_once_deliver_and_stop_through_the_ffi() {
     // Idempotent: two starts, one connection.
     assert_eq!(engine.start_live_updates(account.0), Ok(()));
     assert_eq!(engine.start_live_updates(account.0), Ok(()));
-    wait_for(std::time::Duration::from_secs(10), || {
-        uids() == 2 && idles() >= 1
-    });
+    wait_for(HANG_GUARD, || uids() == 2 && idles() >= 1);
     assert_eq!(imap.connections_accepted(), 1);
 
     collect.0.lock().expect("lock").clear();
@@ -301,7 +305,7 @@ fn live_updates_start_once_deliver_and_stop_through_the_ffi() {
     std::thread::sleep(std::time::Duration::from_millis(500));
     assert_eq!(uids(), 3, "live updates wrote while the account was locked");
     drop(guard);
-    wait_for(std::time::Duration::from_secs(5), || uids() == 4);
+    wait_for(HANG_GUARD, || uids() == 4);
 
     // Stop ends IDLE and logs out within 2 seconds.
     let started = std::time::Instant::now();
@@ -319,9 +323,7 @@ fn live_updates_start_once_deliver_and_stop_through_the_ffi() {
     // Start after stop opens a new connection, which idles too.
     let idles_before = idles();
     assert_eq!(engine.start_live_updates(account.0), Ok(()));
-    wait_for(std::time::Duration::from_secs(10), || {
-        idles() > idles_before
-    });
+    wait_for(HANG_GUARD, || idles() > idles_before);
     assert_eq!(imap.connections_accepted(), 2);
     engine.stop_live_updates(account.0);
 
