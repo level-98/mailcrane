@@ -6,6 +6,7 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.test.junit4.StateRestorationTester
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performTouchInput
@@ -216,5 +217,65 @@ class SwipeUiTest {
         compose.mainClock.advanceTimeBy(2_000)
         assertEquals("the second swipe did nothing", listOf(1L to SwipeAction.READ_UNREAD), swiped)
         assertEquals("at rest", start, left("Subject 1"), 1f)
+    }
+
+    /**
+     * #466: a row restored while swiped away (rotation or process death during an archive's wait) comes
+     * back at rest and doesn't send its action again.
+     */
+    @Test
+    fun aRowRestoredMidSwipeDoesNotRunItsActionAgain() {
+        val restoration = StateRestorationTester(compose)
+        restoration.setContent {
+            MailcraneTheme {
+                MessageListContent(
+                    state = state,
+                    title = "Inbox",
+                    snackbar = SnackbarHostState(),
+                    onRefresh = {},
+                    onLoadMore = {},
+                    swipe =
+                        SwipeHandlers(
+                            right = SwipeAction.FLAG,
+                            left = SwipeAction.ARCHIVE,
+                            onSwipe = { message, action -> swiped += message.id to action },
+                        ),
+                )
+            }
+        }
+        val start = left("Subject 2")
+        compose.mainClock.autoAdvance = false
+        compose.onNodeWithText("Subject 2", useUnmergedTree = true).performTouchInput { swipeLeft() }
+        // Swiped away, waiting for the list to drop the row: saved and restored in that state.
+        compose.mainClock.advanceTimeBy(1_000)
+        assertEquals(listOf(2L to SwipeAction.ARCHIVE), swiped)
+        // The clock must run for the restore to take the content out and put it back; paused, the old row
+        // would just carry on and nothing would be restored.
+        compose.mainClock.autoAdvance = true
+        restoration.emulateSavedInstanceStateRestore()
+        compose.waitForIdle()
+        assertEquals("the archive was sent once", listOf(2L to SwipeAction.ARCHIVE), swiped)
+        assertEquals("the restored row is at rest", start, left("Subject 2"), 1f)
+    }
+
+    /**
+     * #466, by removal (and #467's report): a row removed while it waits and shown again (the list drops it,
+     * then an undo or a refresh brings it back) comes back at rest, and nothing runs twice. Review traced
+     * that on main the row's saved swipe state would be restored here and archive it again (#516 review).
+     */
+    @Test
+    fun aRowRemovedWhileItWaitsComesBackAtRest() {
+        show()
+        val start = left("Subject 2")
+        compose.mainClock.autoAdvance = false
+        compose.onNodeWithText("Subject 2", useUnmergedTree = true).performTouchInput { swipeLeft() }
+        compose.mainClock.advanceTimeBy(1_000)
+        val all = state.messages
+        state = state.copy(messages = all.filter { it.id != 2L })
+        compose.mainClock.advanceTimeBy(1_000)
+        state = state.copy(messages = all)
+        compose.mainClock.advanceTimeBy(SWIPE_REMOVE_TIMEOUT_MS + 1_000)
+        assertEquals(listOf(2L to SwipeAction.ARCHIVE), swiped)
+        assertEquals("back at rest", start, left("Subject 2"), 1f)
     }
 }

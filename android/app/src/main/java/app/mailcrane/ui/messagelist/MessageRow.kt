@@ -88,7 +88,7 @@ fun MessageRow(
     val date =
         remember(message.date, now.toLocalDate(), now.zone, locale, dateStyle, is24Hour) {
             when (dateStyle) {
-                RowDateStyle.LIST -> formatListDate(message.date, now, locale)
+                RowDateStyle.LIST -> formatListDate(message.date, now, locale, is24Hour)
                 RowDateStyle.CONVERSATION -> formatConversationDate(message.date, now, locale, is24Hour)
             }
         }
@@ -311,12 +311,15 @@ internal fun rowDescription(
 /**
  * The list date for [epochSeconds]: the time if it is today, the weekday if it is in the last
  * week, otherwise a short date, in [locale] and [now]'s time zone. Empty for a date outside the
- * years 1 to 9999 (the value comes from the message and may be anything).
+ * years 1 to 9999 (the value comes from the message and may be anything). Today's time follows
+ * [is24Hour], the device's 12/24-hour setting, through the locale's own ICU pattern (#509), as
+ * conversation dates do; when it isn't given, the locale's default.
  */
 internal fun formatListDate(
     epochSeconds: Long,
     now: ZonedDateTime,
     locale: Locale,
+    is24Hour: Boolean? = null,
 ): String =
     try {
         val seconds = epochSeconds.coerceIn(Instant.MIN.epochSecond, Instant.MAX.epochSecond)
@@ -324,18 +327,29 @@ internal fun formatListDate(
         if (time.year !in 1..9999) return ""
         val day = time.toLocalDate()
         val today = now.toLocalDate()
-        val formatter =
-            when {
-                day == today -> DateTimeFormatter.ofLocalizedTime(FormatStyle.SHORT)
-                day.isBefore(today) && day.isAfter(today.minusDays(7)) -> DateTimeFormatter.ofPattern("EEE")
-                else -> DateTimeFormatter.ofLocalizedDate(FormatStyle.SHORT)
-            }
-        formatter.withLocale(locale).format(time)
+        when {
+            day == today && is24Hour != null -> formatSkeleton(time, if (is24Hour) "Hm" else "hm", locale)
+            day == today -> DateTimeFormatter.ofLocalizedTime(FormatStyle.SHORT).withLocale(locale).format(time)
+            day.isBefore(today) && day.isAfter(today.minusDays(7)) ->
+                DateTimeFormatter.ofPattern("EEE").withLocale(locale).format(time)
+            else -> DateTimeFormatter.ofLocalizedDate(FormatStyle.SHORT).withLocale(locale).format(time)
+        }
     } catch (_: DateTimeException) {
         ""
     } catch (_: ArithmeticException) {
         ""
     }
+
+/** [time] in [locale]'s own pattern for the ICU [skeleton], in [time]'s zone. */
+private fun formatSkeleton(
+    time: ZonedDateTime,
+    skeleton: String,
+    locale: Locale,
+): String {
+    val format = IcuDateFormat.getInstanceForSkeleton(skeleton, locale)
+    format.timeZone = TimeZone.getTimeZone(time.zone.id)
+    return format.format(java.util.Date(time.toInstant().toEpochMilli()))
+}
 
 /**
  * A message's date inside a conversation, with its time (#399): the time if it is today, the weekday
@@ -363,9 +377,7 @@ internal fun formatConversationDate(
                 day.isBefore(today) && day.isAfter(today.minusDays(7)) -> "EEE$clock"
                 else -> "yMd$clock"
             }
-        val format = IcuDateFormat.getInstanceForSkeleton(skeleton, locale)
-        format.timeZone = TimeZone.getTimeZone(now.zone.id)
-        format.format(java.util.Date(time.toInstant().toEpochMilli()))
+        formatSkeleton(time, skeleton, locale)
     } catch (_: DateTimeException) {
         ""
     } catch (_: ArithmeticException) {

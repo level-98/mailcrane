@@ -50,7 +50,7 @@ The plan is in [ROADMAP.md](ROADMAP.md). The live to-do list is the [issues](../
 Mailcrane is pre-alpha: expect rough edges, and don't rely on it for mail you can't lose.
 
 - **Nightly test build:** the [Download page](https://mailcrane.app/download/) links the newest one, built from `main` every night ([docs/releasing.md](docs/releasing.md#nightly-test-builds)). It's signed with a development key, so it updates earlier test builds but not a store or release version.
-- **Debug build:** every CI run uploads `android-debug-apk` (see [CONTRIBUTING.md](CONTRIBUTING.md#ci)). It's `app.mailcrane.debug`, so it installs alongside the release app (#406). Its Settings has **Load test mail**, which adds made-up messages that never touch a server.
+- **Debug build:** every CI run except a docs-only one uploads `android-debug-apk` (see [CONTRIBUTING.md](CONTRIBUTING.md#ci)). It's `app.mailcrane.debug`, so it installs alongside the release app (#406). Its Settings has **Load test mail**, which adds made-up messages that never touch a server.
 - **What's built:** IMAP and SMTP accounts with automatic setup, JMAP accounts, reading, sending, search, rules and notifications. **Not yet:** Sign in with Google for everyone (waiting for Google), Sign in with Microsoft, and OpenPGP.
 - **Reporting a bug:** never include real addresses, message content or passwords. For screenshots, use Load test mail in a debug build.
 
@@ -101,7 +101,7 @@ Mail logic is written in Rust; the app has a native UI on top. Details and reaso
 | inkMuted | `#5A6380` | `#9AA3BF` |
 | surface | `#FFFFFF` | `#0F1424` |
 | outline | `#D5DBEA` | `#2A3350` |
-| error / success | `#D93B3B` / `#1F9D63` | |
+| error / success | `#C62828` / `#157A4C` | `#F28B82` / `#3DBE83` |
 
 The colours live in [`design/colors.json`](design/colors.json), and apps read them from there. Never hard-code a colour.
 
