@@ -274,6 +274,29 @@ fn html_blocks_are_separated_in_the_snippet() -> R {
     Ok(())
 }
 
+/// #460: in an HTML-only message, a `<br>` that only ends a paragraph adds
+/// no blank line to `text_plain`, a blank paragraph keeps its one, and
+/// `<pre>` keeps its lines and indentation. The snippet collapses it all.
+#[test]
+fn paragraph_final_breaks_and_pre_in_the_text() -> R {
+    let m = load("html-br-pre.eml")?;
+    assert_eq!(
+        m.text_plain.as_deref(),
+        Some(
+            "Hi Bob,\n\
+             the build failed:\n\
+             error: linking failed\n  at step 3\n\texit code 1\n\
+             \n\
+             Thanks"
+        )
+    );
+    assert_eq!(
+        m.snippet,
+        "Hi Bob, the build failed: error: linking failed at step 3 exit code 1 Thanks"
+    );
+    Ok(())
+}
+
 /// #446: in an HTML-only message, `text_plain` (the body of a draft opened
 /// from the server and the reply quote) keeps one line per block and per
 /// `<br>`; inline tags join as before. The snippet is unchanged (#391).
