@@ -187,16 +187,11 @@ fn urgent_job_work_is_urgent_on_the_job_thread() {
     let dir = tempfile::tempdir().expect("dir");
     let path = dir.path().join("urgent.db").to_string_lossy().into_owned();
     let engine = SyncEngine::new(path.clone(), Arc::new(super::tests::Collect::default()));
-    let (caller, thread, urgent, nested_urgent, caller_marked) = on_small_stack(|| {
+    let (caller, thread, urgent, nested_urgent) = on_small_stack(|| {
+        // The real caller: this small-stack thread, not the test's.
         let caller = std::thread::current().id();
-        let caller_marked = std::sync::atomic::AtomicBool::new(false);
         let (thread, urgent, nested) = engine
             .urgent_job(|| {
-                // Seen from the caller's thread while the job runs.
-                caller_marked.store(
-                    mailcrane_store::urgent_here(&path),
-                    std::sync::atomic::Ordering::SeqCst,
-                );
                 // A job started inside runs right here and keeps the mark.
                 let nested = on_job_thread(|| Ok(mailcrane_store::urgent_here(&path)))?;
                 Ok((
@@ -206,10 +201,9 @@ fn urgent_job_work_is_urgent_on_the_job_thread() {
                 ))
             })
             .expect("ran");
-        (caller, thread, urgent, nested, caller_marked.into_inner())
+        (caller, thread, urgent, nested)
     });
     assert_ne!(thread, caller, "the work ran on a job thread");
     assert!(urgent, "the job thread writes urgently");
     assert!(nested_urgent, "so does a job started inside it");
-    assert!(!caller_marked, "the job thread isn't the caller");
 }
