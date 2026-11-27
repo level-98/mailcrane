@@ -365,7 +365,8 @@ fn without_marks(html: &str) -> String {
 /// can be lost here. Only tags `html_to_text` closes get one
 /// ([`each_marker`]); names are read as it reads them: after `<`, spaces
 /// and `/` are skipped (a `/` makes it an end tag), and the name runs up to
-/// `<`, `>`, `/` or a space. Marks already in the input are replaced first.
+/// `<`, `>` or a space, without trailing `/` (`<br/>` is `br`, `<br/x>` is
+/// `br/x`). Marks already in the input are replaced first.
 /// The result is at most twice the input (three bytes added per closed tag,
 /// which is at least three, `<p>`; one per `&#9;`), allocated exactly;
 /// checked positions, no panics on any input.
@@ -392,12 +393,14 @@ fn mark_html_blocks(html: &str) -> String {
 /// after a block mark are dropped. A line break `html_to_text` wrote for a
 /// sender's `<br>`, `</p>` or `&#10;` (the character right after
 /// [`MARK_BREAK`]) is kept, after the break of a block mark before it, so
-/// a blank line the sender made (`<div><br></div>`, `<br><br>`) stays. A
-/// break mark followed by anything else changes nothing (`<br/x>`, which
-/// html_to_text reads as a tag named `br/x`). The character after
+/// a blank line the sender made (`<div><br></div>`, `<br><br>`) stays. Only
+/// tags html_to_text closes get a break mark, so one is always followed by
+/// its line break; that the mark counts for the next character only is a
+/// guard, with no input known to need it. The character after
 /// [`MARK_KEEP`] is always kept. Any other line break counts as a block
-/// mark. Without block marks, the result is `html_to_text`'s output
-/// exactly (a property test checks it).
+/// mark. Property tests check the result against `html_to_text`: equal
+/// without block tags, and equal to its output for the same HTML with
+/// each block tag made a `<br>`, but for runs of blank lines.
 fn lines_from_marks(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut pending = false;
@@ -640,8 +643,9 @@ mod tests {
 
     /// Pieces of HTML for the differential property tests: text, spaces,
     /// inline tags, references, cut-off and quoted tags, comments, mark
-    /// characters. No block tags, and no hidden content (whose `<br>`
-    /// html_to_text writes as a bare line break).
+    /// characters, and block tags nothing can close (`<div <b>`), which
+    /// must get no marker. No closed block tags, and no hidden content
+    /// (whose `<br>` html_to_text writes as a bare line break).
     const INLINE_PIECES: &[&str] = &[
         "A",
         "bc",
@@ -657,6 +661,7 @@ mod tests {
         "<span class=\"x\">",
         "<a title=\"1 > 0\">",
         "<a alt='<b>'>",
+        "<a title=\"<br>\">",
         "<a x=y>",
         "<a =x>",
         "<br>",
@@ -703,37 +708,71 @@ mod tests {
         "<!-->",
         "\u{c}",
         "\u{a0}",
+        "<div <b>",
+        "</div <i>",
+        "<td <span>",
+        "<p class=x <b>",
+        "<div/<i>",
     ];
 
-    /// The same with block tags and hidden content added.
-    const BLOCK_PIECES: &[&str] = &[
-        "<div>",
-        "<p/>",
-        "</div>",
-        "<td>",
-        "</td>",
-        "<li>",
-        "<DIV class=\"a>b\">",
-        "< /div>",
-        "<p>",
-        "<p ",
-        "<div ",
-        "<div/",
-        "<td ",
-        "<pre>",
-        "</pre>",
-        "<style>",
-        "</style>",
-        "<script>",
-        "</script>",
-        "<template>",
-        "</template>",
-        "<head>",
-        "</head>",
+    /// Block pieces, each with its twin: the same piece with the block
+    /// name made `br`. html_to_text reads a tag the same way whatever its
+    /// name, so in the twin it writes a line break for exactly the block
+    /// tags it closes, and drops the collapsed space after each, as a
+    /// block boundary should. Hidden content comes only as whole elements
+    /// with no block tag inside.
+    const BLOCK_PIECES: &[(&str, &str)] = &[
+        ("<div>", "<br>"),
+        ("</div>", "</br>"),
+        ("<p/>", "<br/>"),
+        ("<p>", "<br>"),
+        ("<td>", "<br>"),
+        ("</td>", "</br>"),
+        ("<li>", "<br>"),
+        ("<pre>", "<br>"),
+        ("</pre>", "</br>"),
+        ("<DIV class=\"a>b\">", "<br class=\"a>b\">"),
+        ("< /div>", "< /br>"),
+        ("<p ", "<br "),
+        ("<div ", "<br "),
+        ("<div/", "<br/"),
+        ("<td ", "<br "),
+        ("</div ", "</br "),
+        ("<div", "<br"),
+        ("<a title=\"<div>\">", "<a title=\"<br>\">"),
+        ("<img alt='<p>'>", "<img alt='<br>'>"),
+        ("<style>p{}</style>", "<style>p{}</style>"),
+        (
+            "<script>if (a < b) {}</script>",
+            "<script>if (a < b) {}</script>",
+        ),
+        ("<template>x</template>", "<template>x</template>"),
+        (
+            "<head><title>t</title></head>",
+            "<head><title>t</title></head>",
+        ),
+        ("<style>a<br>b</style>", "<style>a<br>b</style>"),
+        ("<template>a</p>b</template>", "<template>a</p>b</template>"),
     ];
 
     fn html_from(pieces: &'static [&'static str]) -> impl Strategy<Value = String> {
         proptest::collection::vec(proptest::sample::select(pieces), 0..24).prop_map(|p| p.concat())
+    }
+
+    /// An HTML string and its twin ([`BLOCK_PIECES`]), from inline and block
+    /// pieces drawn one by one from a single list, so text, references
+    /// and cut-off tags land inside and between blocks.
+    fn html_and_twin() -> impl Strategy<Value = (String, String)> {
+        let pieces: Vec<(&'static str, &'static str)> = INLINE_PIECES
+            .iter()
+            .map(|p| (*p, *p))
+            .chain(BLOCK_PIECES.iter().copied())
+            .collect();
+        proptest::collection::vec(proptest::sample::select(pieces), 0..32).prop_map(|p| {
+            let html = p.iter().map(|(h, _)| *h).collect::<String>();
+            let twin = p.iter().map(|(_, t)| *t).collect::<String>();
+            (html, twin)
+        })
     }
 
     /// html_to_text's output as html_to_lines gives it: mark characters
@@ -743,33 +782,43 @@ mod tests {
         tidy_lines(&text.replace(['\u{1}', '\u{2}', '\u{4}'], NOT_A_MARK))
     }
 
+    /// `text` with each run of line breaks made one.
+    fn one_break_per_run(text: &str) -> String {
+        let mut out = String::with_capacity(text.len());
+        for c in text.chars() {
+            if !(c == '\n' && out.ends_with('\n')) {
+                out.push(c);
+            }
+        }
+        out
+    }
+
     use proptest::prelude::*;
 
     proptest! {
         #![proptest_config(ProptestConfig::with_cases(4096))]
 
-        /// #456 (lead's decision): without block tags, html_to_lines is
-        /// html_to_text exactly. The markers are the only difference.
+        /// #456 (lead's decision): without closed block tags,
+        /// html_to_lines is html_to_text exactly. The markers are the
+        /// only difference.
         #[test]
         fn without_blocks_it_is_html_to_text(html in html_from(INLINE_PIECES)) {
             prop_assert_eq!(html_to_lines(&html), plain(&html), "{:?}", html);
         }
 
-        /// With block tags, only whitespace differs: no character is
-        /// lost, added or moved.
+        /// #456 review: with block tags, html_to_lines is html_to_text on
+        /// the twin, where html_to_text itself breaks the line at each
+        /// block tag it closes, whitespace included. Only runs of blank
+        /// lines may differ (a run of block tags is one line break).
         #[test]
-        fn blocks_change_only_whitespace(
-            html in (html_from(INLINE_PIECES), html_from(BLOCK_PIECES), html_from(INLINE_PIECES))
-                .prop_map(|(a, b, c)| {
-                    // Interleave so block pieces land between inline ones.
-                    let mut s = a;
-                    s.push_str(&b);
-                    s.push_str(&c);
-                    s
-                })
-        ) {
-            let squeeze = |s: &str| s.chars().filter(|c| !c.is_whitespace()).collect::<String>();
-            prop_assert_eq!(squeeze(&html_to_lines(&html)), squeeze(&plain(&html)), "{:?}", html);
+        fn blocks_are_html_to_text_with_a_break_at_each(case in html_and_twin()) {
+            let (html, twin) = case;
+            prop_assert_eq!(
+                one_break_per_run(&html_to_lines(&html)),
+                one_break_per_run(&plain(&twin)),
+                "{:?}",
+                html
+            );
         }
     }
 
