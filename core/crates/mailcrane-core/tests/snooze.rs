@@ -1217,14 +1217,25 @@ async fn run_case(dir: Dir, with_move_cap: bool, case: Case, after: After) -> bo
             assert!(rows.is_empty(), "{name}: woken: {rows:?}");
             assert_eq!(in_inbox, 1, "{name}: back in the Inbox");
             let refused_cleanup = matches!(case, Case::Refuse(Some("INBOX"), "-FLAGS"));
+            // The MOVE's or COPY's reply was lost and the original is gone:
+            // no COPYUID names the copy, so it might be another install's
+            // read copy, and the wake leaves its read state (the lead's
+            // decision on G6, ADR 0009).
+            let copy_unnamed = match &case {
+                Case::Drop("UID MOVE") => with_move_cap,
+                Case::MissingOriginal => !with_move_cap,
+                _ => false,
+            };
             if !refused_cleanup {
                 let back = Box::pin(live_messages(&base, "INBOX")).await;
                 assert!(
-                    !back[0]
-                        .flags
-                        .iter()
-                        .any(|f| f.starts_with("$snoozed") || f == "\\Seen"),
-                    "{name}: unsnoozed and unread: {:?}",
+                    !back[0].flags.iter().any(|f| f.starts_with("$snoozed")),
+                    "{name}: unsnoozed: {:?}",
+                    back[0].flags
+                );
+                assert!(
+                    copy_unnamed || !back[0].flags.iter().any(|f| f == "\\Seen"),
+                    "{name}: unread: {:?}",
                     back[0].flags
                 );
             }
