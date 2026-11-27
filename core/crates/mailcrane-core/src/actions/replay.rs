@@ -3,7 +3,7 @@
 use crate::events::{ActionKind, CoreEvent, EventListener, SyncErrorKind};
 use crate::sync::SyncError;
 use mailcrane_imap::{ChangeError, ImapError, Session, SystemFlag};
-use mailcrane_store::{AccountId, OpKind, PendingOp, Store};
+use mailcrane_store::{AccountId, DroppedOp, FolderId, OpKind, PendingOp, Store};
 
 /// The first retry waits this long.
 const FIRST_RETRY_SECS: i64 = 5;
@@ -24,7 +24,8 @@ pub fn backoff_secs(attempts: u32) -> i64 {
 pub struct ReplayReport {
     /// Actions now done on the server.
     pub done: usize,
-    /// Actions the server refused for good; their local changes were undone.
+    /// Actions the server refused for good (their local changes were
+    /// undone), or dropped because the server renumbered their folder.
     pub failed: usize,
     /// Actions still queued (not due yet, or deferred after a failure).
     pub remaining: usize,
@@ -35,6 +36,9 @@ enum Outcome {
     /// Done. `expunged` says whether the messages are gone from their
     /// folder on the server, so their hidden local rows can go too.
     Done { expunged: bool },
+    /// The server renumbered the folder (RFC 9051 §2.3.1.1): nothing was
+    /// applied, and the folder must be reset with these values.
+    Renumbered { uidvalidity: u32, uidnext: u32 },
 }
 
 /// Replays the account's queued actions on `session`, oldest first, until
@@ -50,7 +54,12 @@ pub async fn replay(
 ) -> Result<ReplayReport, SyncError> {
     let ops = store.pending_ops(account)?;
     let mut report = ReplayReport::default();
+    // Folders reset during this replay: their queued actions are gone.
+    let mut reset: Vec<FolderId> = Vec::new();
     for (index, op) in ops.iter().enumerate() {
+        if reset.contains(&op.folder_id) {
+            continue;
+        }
         if op.next_attempt_at > now {
             report.remaining = ops.len().saturating_sub(index);
             break;
@@ -59,6 +68,23 @@ pub async fn replay(
             Ok(Outcome::Done { expunged }) => {
                 store.complete_op(op.id, expunged)?;
                 report.done = report.done.saturating_add(1);
+            }
+            Ok(Outcome::Renumbered {
+                uidvalidity,
+                uidnext,
+            }) => {
+                // Reset the folder here and go on: waiting for its own sync
+                // would hold up every later action of the account (#517).
+                let dropped = store
+                    .reset_folder_reporting(
+                        op.folder_id,
+                        i64::from(uidvalidity),
+                        i64::from(uidnext),
+                    )?
+                    .unwrap_or_default();
+                reset.push(op.folder_id);
+                report.failed = report.failed.saturating_add(dropped.len());
+                report_folder_reset(listener, account, op.folder_id, dropped);
             }
             Err(error) if error.is_transient() => {
                 let attempts = op.attempts.saturating_add(1);
@@ -85,6 +111,31 @@ pub async fn replay(
         }
     }
     Ok(report)
+}
+
+/// Tells the app that `folder` was emptied because the server renumbered
+/// it, and that the changes queued for it were dropped: their UIDs name
+/// other messages now (#517).
+pub(crate) fn report_folder_reset(
+    listener: &dyn EventListener,
+    account: AccountId,
+    folder: FolderId,
+    dropped: Vec<DroppedOp>,
+) {
+    listener.on_event(CoreEvent::FolderChanged { folder_id: folder });
+    for op in dropped {
+        tracing::warn!(
+            folder = folder.0,
+            kind = ?op.kind,
+            "queued action dropped: the server reset the folder"
+        );
+        listener.on_event(CoreEvent::ActionFailed {
+            account_id: account,
+            action: action_kind(op.kind),
+            message_ids: op.message_ids,
+            reason: SyncErrorKind::FolderReset,
+        });
+    }
 }
 
 pub(crate) fn action_kind(kind: OpKind) -> ActionKind {
@@ -145,14 +196,16 @@ async fn run(store: &Store, session: &mut Session, op: &PendingOp) -> Result<Out
     let uids: Vec<u32> = op.messages.iter().map(|m| m.uid).collect();
     let info = session.select(&folder.details.remote_name).await?;
     // The server renumbered the folder (RFC 9051 §2.3.1.1): the stored UIDs
-    // name other messages now, so apply nothing. The folder's next sync
-    // resets it and drops this action, telling the user (#517).
+    // name other messages now, so apply nothing (#517).
     if folder
         .details
         .uidvalidity
         .is_some_and(|v| v != i64::from(info.uidvalidity))
     {
-        return Err(ChangeError::Refused { transient: true });
+        return Ok(Outcome::Renumbered {
+            uidvalidity: info.uidvalidity,
+            uidnext: info.uidnext,
+        });
     }
     match op.kind {
         OpKind::MarkRead | OpKind::MarkUnread | OpKind::Flag | OpKind::Unflag => {

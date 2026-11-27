@@ -707,10 +707,11 @@ async fn a_renumbered_folder_drops_its_queued_actions_and_says_so() {
         .replace_folder("INBOX", (1..=3).map(|n| raw(n + 100)).collect())
         .await;
 
-    // Replay first, as a sync does: the renumbered folder applies nothing.
+    // Replay first, as a sync does: the renumbered folder applies nothing;
+    // replay resets it and drops the actions, saying why.
     let report = replay_now(&imap, &s, &events, NOW + 1).await;
-    assert_eq!(report.done, 0);
-    // The folder's sync resets it and drops the actions, saying why.
+    assert_eq!((report.done, report.failed), (0, 2));
+    // The folder's sync then refills it from the server.
     let mut session = connect(&imap).await;
     FolderSyncer::new(
         &s.store,
@@ -751,4 +752,58 @@ async fn a_renumbered_folder_drops_its_queued_actions_and_says_so() {
         [ActionKind::Move, ActionKind::Move],
         "archive and delete (to Trash)"
     );
+}
+
+#[tokio::test]
+async fn a_renumbered_folder_does_not_hold_up_other_folders_actions() {
+    // #517 review: an action in a renumbered folder must not stall the
+    // account's queue until that folder happens to be synced.
+    let imap = fake(&[], &[]).await;
+    let s = setup(&imap, Store::open_in_memory().expect("store")).await;
+    let events = Events::default();
+    imap.mailbox().replace_folder("Work", vec![raw(50)]).await;
+    // The server renumbers its folders; Work is synced after that, the
+    // inbox not yet.
+    imap.mailbox().set_uidvalidity(2);
+    let work = s.folder("Work");
+    let mut session = connect(&imap).await;
+    FolderSyncer::new(
+        &s.store,
+        &mut session,
+        &events,
+        s.account,
+        SyncConfig::default(),
+    )
+    .sync_folder(work)
+    .await
+    .expect("sync");
+    session.logout().await;
+    let work_message = s
+        .store
+        .list_messages(work, 10, 0)
+        .expect("list")
+        .first()
+        .map(|m| m.id)
+        .expect("synced");
+
+    // Queued first: an archive in the stale inbox; then a flag in Work.
+    act(&s, 1, Action::Archive, &events);
+    apply_action(&s.store, &[work_message], Action::Flag, NOW, &events).expect("flag");
+
+    let report = replay_now(&imap, &s, &events, NOW + 1).await;
+    assert_eq!((report.done, report.failed, report.remaining), (1, 1, 0));
+    assert_eq!(server_flags(&imap, "Work", 1).await, ["\\Flagged"]);
+    assert!(
+        imap.mailbox().messages("Archive").await.is_empty(),
+        "nothing archived"
+    );
+    assert_eq!(s.store.count_pending_ops(s.account).expect("count"), 0);
+    assert!(events.all().iter().any(|e| matches!(
+        e,
+        CoreEvent::ActionFailed {
+            action: ActionKind::Move,
+            reason: SyncErrorKind::FolderReset,
+            ..
+        }
+    )));
 }

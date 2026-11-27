@@ -293,23 +293,9 @@ impl<'a> FolderSyncer<'a> {
                     i64::from(info.uidnext),
                 )?
                 .unwrap_or_default();
-            self.listener
-                .on_event(CoreEvent::FolderChanged { folder_id: folder });
-            // Changes queued for this folder can't be applied any more: the
-            // server renumbered it, so their UIDs name other messages (#517).
-            for op in dropped {
-                tracing::warn!(
-                    folder = folder.0,
-                    kind = ?op.kind,
-                    "queued action dropped: the server reset the folder"
-                );
-                self.listener.on_event(CoreEvent::ActionFailed {
-                    account_id: self.account,
-                    action: crate::actions::action_kind(op.kind),
-                    message_ids: op.message_ids,
-                    reason: SyncErrorKind::FolderReset,
-                });
-            }
+            // With no stored UIDVALIDITY (first sync) no action can be queued
+            // for the folder: actions need its messages, which need a sync.
+            crate::actions::report_folder_reset(self.listener, self.account, folder, dropped);
         }
         Ok(changed)
     }
