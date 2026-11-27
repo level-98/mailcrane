@@ -96,6 +96,9 @@ pub enum AddAccountError {
     Timeout { server: MailServer },
     #[error("the account could not be saved")]
     SaveFailed,
+    /// The same account is already in the app (#346). Nothing was saved.
+    #[error("this account is already added")]
+    AlreadyAdded,
     /// The app has not called `install_secret_store` yet. A bug in the app,
     /// not something the user can fix.
     #[error("the core is not ready")]
@@ -198,6 +201,7 @@ impl From<core::AddAccountError> for AddAccountError {
                 server: server.into(),
             },
             E::SaveFailed => Self::SaveFailed,
+            E::AlreadyAdded => Self::AlreadyAdded,
         }
     }
 }
@@ -310,6 +314,82 @@ async fn add_jmap_with(
     Ok(id.0)
 }
 
+/// Adds a Google account (M3-02) after "Sign in with Google": logs in to
+/// Gmail's IMAP and SMTP with the sign-in's access token (XOAUTH2), saves
+/// the account, and keeps the refresh token in secure storage. Returns the
+/// new account's id; on any failure nothing is saved. `sign_in_id` is what
+/// `oauth_complete` returned.
+#[uniffi::export(async_runtime = "tokio")]
+pub async fn add_account_google(
+    db_path: String,
+    sign_in_id: String,
+    email: String,
+    display_name: String,
+) -> Result<i64, AddAccountError> {
+    crate::worker::on_worker_thread(move || async move {
+        let secrets = secrets::secret_store().map_err(|_| AddAccountError::NotReady)?;
+        add_google_with(
+            &db_path,
+            secrets.as_ref(),
+            &sign_in_id,
+            &email,
+            &display_name,
+            &core::SetupOptions::default(),
+        )
+        .await
+    })
+    .await
+    .unwrap_or(Err(AddAccountError::NotReady))
+}
+
+pub(crate) async fn add_google_with(
+    db_path: &str,
+    secrets: &dyn SecretStore,
+    sign_in_id: &str,
+    email: &str,
+    display_name: &str,
+    options: &core::SetupOptions,
+) -> Result<i64, AddAccountError> {
+    use mailcrane_core::oauth::providers::google;
+    let config = google::account_config(email, display_name);
+    add_oauth_with(db_path, secrets, sign_in_id, &config, google::ID, options).await
+}
+
+/// Adds an account for a finished OAuth sign-in with `config`'s servers.
+async fn add_oauth_with(
+    db_path: &str,
+    secrets: &dyn SecretStore,
+    sign_in_id: &str,
+    config: &core::ManualAccountConfig,
+    provider: &str,
+    options: &core::SetupOptions,
+) -> Result<i64, AddAccountError> {
+    // A sign-in that expired or was never finished: sign in again.
+    let token =
+        crate::oauth::finished_access_token(sign_in_id).ok_or(AddAccountError::AuthFailed {
+            server: MailServer::Imap,
+        })?;
+    // A duplicate (#346) is refused before Google's servers are contacted.
+    // The store is dropped before the await: it isn't `Sync`.
+    {
+        let store = Store::open(db_path).map_err(|_| AddAccountError::SaveFailed)?;
+        core::ensure_not_added(
+            &store,
+            core::IncomingServer::Imap(config.imap.host.trim()),
+            config.username.trim(),
+            config.email.trim(),
+        )?;
+    }
+    core::check_oauth_account(config, &token, options).await?;
+    let store = Store::open(db_path).map_err(|_| AddAccountError::SaveFailed)?;
+    let id = core::save_oauth_account(&store, config, provider)?;
+    if crate::oauth::attach_with(secrets, &Store::scope_of(db_path), sign_in_id, id.0).is_err() {
+        let _ = store.delete_account(id);
+        return Err(AddAccountError::SaveFailed);
+    }
+    Ok(id.0)
+}
+
 async fn add_with(
     db_path: &str,
     secrets: &dyn SecretStore,
@@ -319,6 +399,17 @@ async fn add_with(
 ) -> Result<i64, AddAccountError> {
     let config: core::ManualAccountConfig = config.into();
     let password = Secret::from_string(password);
+    // A duplicate is refused before any server is contacted (#346). The
+    // store is dropped before the await: it isn't `Sync`.
+    {
+        let store = Store::open(db_path).map_err(|_| AddAccountError::SaveFailed)?;
+        core::ensure_not_added(
+            &store,
+            core::IncomingServer::Imap(config.imap.host.trim()),
+            config.username.trim(),
+            config.email.trim(),
+        )?;
+    }
     core::check_account(&config, &password, options).await?;
     // Opened only after the checks, so the future holds no `Store` (which is
     // not `Sync`) across an await.
@@ -459,6 +550,179 @@ mod tests {
         assert_eq!(secrets.keys(), vec![format!("account/{id}/password")]);
     }
 
+    /// Signs in through the fake token endpoint; returns the sign-in id and
+    /// its access token.
+    async fn signed_in(server: &mailcrane_testkit::FakeTokenEndpoint) -> (String, String) {
+        let provider = crate::oauth::OAuthProviderConfig {
+            id: "google".into(),
+            authorization_endpoint: "https://auth.example.org/authorize".into(),
+            token_endpoint: server.token_url(),
+            client_id: "client-1".into(),
+            scopes: vec!["https://mail.google.com/".into()],
+            redirect_uri: "app.mailcrane:/oauth2redirect".into(),
+            extra_auth_params: vec![],
+        };
+        let start =
+            crate::oauth::oauth_begin(provider, Some("ann@gmail.com".into())).expect("begin");
+        let url = url::Url::parse(&start.url).expect("url");
+        let q: std::collections::HashMap<String, String> = url.query_pairs().into_owned().collect();
+        let code = server.authorize(
+            &q["code_challenge"],
+            "app.mailcrane:/oauth2redirect",
+            "client-1",
+        );
+        let redirect = format!(
+            "app.mailcrane:/oauth2redirect?code={code}&state={}",
+            q["state"]
+        );
+        let id = crate::oauth::complete_with(redirect, vec![server.root_cert_der().to_vec()])
+            .await
+            .expect("signed in");
+        let token = crate::oauth::finished_access_token(&id).expect("token");
+        (id, token)
+    }
+
+    #[tokio::test]
+    async fn adds_an_oauth_account_end_to_end() {
+        // M3-02: Sign in with Google, then both servers with XOAUTH2.
+        use mailcrane_core::secrets::SecretKey;
+        use mailcrane_testkit::{FakeImap, FakeSmtp, FakeTokenEndpoint};
+        let tokens = FakeTokenEndpoint::start().await.expect("token endpoint");
+        let (sign_in, token) = signed_in(&tokens).await;
+        let imap = FakeImap::builder()
+            .user("ann@gmail.com", "unused")
+            .xoauth2_token(token.clone())
+            .start()
+            .await
+            .expect("fake imap");
+        let smtp = FakeSmtp::builder().start().await.expect("fake smtp");
+        let secrets = mailcrane_testkit::MemorySecretStore::new();
+        let dir = tempfile::tempdir().expect("temp dir");
+        let db_path = dir.path().join("mailcrane.sqlite");
+        let db_path = db_path.to_str().expect("utf-8 path");
+        let mut config =
+            mailcrane_core::oauth::providers::google::account_config("ann@gmail.com", "Ann");
+        config.imap.host = "localhost".into();
+        config.imap.port = u32::from(imap.addr().port());
+        config.smtp.host = "localhost".into();
+        config.smtp.port = u32::from(smtp.addr().port());
+        let options = core::SetupOptions {
+            timeout: std::time::Duration::from_secs(10),
+            extra_root_certs: vec![imap.root_cert_der().to_vec(), smtp.root_cert_der().to_vec()],
+        };
+
+        // A sign-in that doesn't exist: nothing happens.
+        assert_eq!(
+            add_oauth_with(
+                db_path,
+                &secrets,
+                "signin-nope",
+                &config,
+                "google",
+                &options
+            )
+            .await,
+            Err(AddAccountError::AuthFailed {
+                server: MailServer::Imap
+            })
+        );
+
+        let id = add_oauth_with(db_path, &secrets, &sign_in, &config, "google", &options)
+            .await
+            .expect("account added");
+        let store = Store::open(db_path).expect("open");
+        let account = mailcrane_store::AccountId(id);
+        assert_eq!(
+            store.oauth_provider(account).expect("read").as_deref(),
+            Some("google")
+        );
+        // The refresh token is in secure storage; there is no password.
+        assert_eq!(
+            secrets.keys(),
+            vec![SecretKey::oauth_refresh_token(id).as_str().to_owned()]
+        );
+        // Sync logs in with the cached access token.
+        let credential =
+            mailcrane_core::account::credentials::credential(&store, &secrets, account)
+                .expect("credential");
+        match credential {
+            mailcrane_core::account::credentials::Credential::OAuth(t) => {
+                assert_eq!(t.as_str(), token)
+            }
+            other => panic!("expected a token, got {other:?}"),
+        }
+        // The sign-in is used up.
+        assert!(crate::oauth::finished_access_token(&sign_in).is_none());
+    }
+
+    #[tokio::test]
+    async fn a_refused_token_saves_nothing() {
+        use mailcrane_testkit::{FakeImap, FakeSmtp, FakeTokenEndpoint};
+        let tokens = FakeTokenEndpoint::start().await.expect("token endpoint");
+        let (sign_in, _) = signed_in(&tokens).await;
+        let imap = FakeImap::builder()
+            .user("ann@gmail.com", "unused")
+            .xoauth2_token("some-other-token")
+            .start()
+            .await
+            .expect("fake imap");
+        let smtp = FakeSmtp::builder().start().await.expect("fake smtp");
+        let secrets = mailcrane_testkit::MemorySecretStore::new();
+        let dir = tempfile::tempdir().expect("temp dir");
+        let db_path = dir.path().join("mailcrane.sqlite");
+        let db_path = db_path.to_str().expect("utf-8 path");
+        let mut config =
+            mailcrane_core::oauth::providers::google::account_config("ann@gmail.com", "");
+        config.imap.host = "localhost".into();
+        config.imap.port = u32::from(imap.addr().port());
+        config.smtp.host = "localhost".into();
+        config.smtp.port = u32::from(smtp.addr().port());
+        let options = core::SetupOptions {
+            timeout: std::time::Duration::from_secs(10),
+            extra_root_certs: vec![imap.root_cert_der().to_vec(), smtp.root_cert_der().to_vec()],
+        };
+        assert_eq!(
+            add_oauth_with(db_path, &secrets, &sign_in, &config, "google", &options).await,
+            Err(AddAccountError::AuthFailed {
+                server: MailServer::Imap
+            })
+        );
+        assert!(Store::open(db_path)
+            .expect("open")
+            .list_accounts()
+            .expect("list")
+            .is_empty());
+        assert!(secrets.keys().is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_duplicate_is_refused_before_any_server_is_contacted() {
+        // #346: the account is already in the database; its servers don't
+        // exist, so reaching them would fail with CannotConnect instead.
+        let secrets = mailcrane_testkit::MemorySecretStore::new();
+        let dir = tempfile::tempdir().expect("temp dir");
+        let db = dir.path().join("mail.db").to_string_lossy().into_owned();
+        let core_config: core::ManualAccountConfig = config().into();
+        let store = Store::open(&db).expect("store");
+        core::save_account(
+            &store,
+            &secrets,
+            &core_config,
+            &Secret::from_string("pw".into()),
+        )
+        .expect("first");
+        drop(store);
+        let got = add_with(
+            &db,
+            &secrets,
+            config(),
+            "pw".into(),
+            &core::SetupOptions::default(),
+        )
+        .await;
+        assert_eq!(got, Err(AddAccountError::AlreadyAdded));
+    }
+
     #[tokio::test]
     async fn adds_an_account_end_to_end() {
         use mailcrane_testkit::{FakeImap, FakeSmtp};
@@ -527,8 +791,18 @@ pub enum RemoveAccountFailure {
 /// rules…, by the database's cascades). The app stops its sync jobs.
 #[uniffi::export]
 pub fn remove_account(db_path: String, account_id: i64) -> Result<(), RemoveAccountFailure> {
-    let store =
-        mailcrane_store::Store::open(&db_path).map_err(|_| RemoveAccountFailure::Storage)?;
+    let secrets = crate::secrets::secret_store().map_err(|_| RemoveAccountFailure::Storage)?;
+    remove_account_with(&db_path, secrets.as_ref(), account_id)
+}
+
+/// [`remove_account`] with the secret store given, so tests needn't install
+/// the process-wide one (which parallel tests share).
+pub(crate) fn remove_account_with(
+    db_path: &str,
+    secrets: &dyn SecretStore,
+    account_id: i64,
+) -> Result<(), RemoveAccountFailure> {
+    let store = mailcrane_store::Store::open(db_path).map_err(|_| RemoveAccountFailure::Storage)?;
     let id = mailcrane_store::AccountId(account_id);
     if store
         .get_account(id)
@@ -537,12 +811,52 @@ pub fn remove_account(db_path: String, account_id: i64) -> Result<(), RemoveAcco
     {
         return Err(RemoveAccountFailure::NotFound);
     }
-    let secrets = crate::secrets::secret_store().map_err(|_| RemoveAccountFailure::Storage)?;
-    mailcrane_core::secrets::delete_account_secrets(secrets.as_ref(), account_id)
+    // While its password is still there: stop the server pushing to this
+    // phone for an account it no longer has (M4-27). Best effort; a
+    // subscription the server isn't told about expires there.
+    destroy_push_subscription(&store, id, None);
+    mailcrane_core::secrets::delete_account_secrets(secrets, account_id)
         .map_err(|_| RemoveAccountFailure::Storage)?;
+    // An OAuth account's access token (M3-02) goes from memory too: this
+    // database's only, never another's account with the same ID (#434).
+    mailcrane_core::oauth::token_cache().forget(store.cache_scope(), account_id);
     match store.delete_account(id) {
         Ok(true) => Ok(()),
         Ok(false) => Err(RemoveAccountFailure::NotFound),
         Err(_) => Err(RemoveAccountFailure::Storage),
+    }
+}
+
+/// Destroys the account's JMAP push subscription on its server, if it has
+/// one, within a few seconds; failures are only logged. `extra_root` is a
+/// test server's certificate.
+pub(crate) fn destroy_push_subscription(
+    store: &mailcrane_store::Store,
+    id: mailcrane_store::AccountId,
+    extra_root: Option<Vec<u8>>,
+) {
+    let Ok(Some(_)) = store.push_subscription(id) else {
+        return;
+    };
+    let Ok(Some(mailcrane_store::Protocol::Jmap { session_url })) = store.account_protocol(id)
+    else {
+        return;
+    };
+    let Ok(auth) = crate::sync::jmap_auth(store, id) else {
+        return;
+    };
+    let config = mailcrane_jmap::ClientConfig {
+        timeout: std::time::Duration::from_secs(5),
+        extra_roots: extra_root.into_iter().collect(),
+    };
+    let Ok(runtime) = crate::sync::runtime() else {
+        return;
+    };
+    let done = runtime.block_on(async {
+        let session = mailcrane_jmap::discover(&session_url, &auth, &config).await?;
+        mailcrane_core::sync::push::teardown(store, id, &session, &auth, &config).await
+    });
+    if let Err(e) = done {
+        tracing::info!(account = id.0, kind = ?e.kind(), "push subscription left to expire");
     }
 }

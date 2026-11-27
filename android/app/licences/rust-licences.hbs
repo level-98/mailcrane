@@ -1,0 +1,9 @@
+{{#each licenses}}
+@@licence {{id}}
+{{#each used_by}}
+@@crate {{crate.name}} {{crate.version}} {{#if crate.repository}}{{crate.repository}}{{/if}}
+{{/each}}
+@@text
+{{{text}}}
+@@end
+{{/each}}

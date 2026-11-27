@@ -105,16 +105,21 @@ fn idle_network_change_and_a_dropped_connection_all_reconnect_cleanly() {
     assert_eq!(engine.sync_folder(folder.0), Ok(6));
     let account = account_of(&path, folder);
     let list = messages(&path, folder);
-    engine.pool.set_config(PoolConfig {
+    // No timing window to hit: while checking the NOOP path the close limit
+    // is far away, so a slow machine (the Windows CI runner, #357) can
+    // oversleep as much as it likes; the sweeper phase below shortens it.
+    let checking = PoolConfig {
         check_after: Duration::from_millis(150),
-        close_after: Duration::from_millis(600),
+        close_after: Duration::from_secs(600),
         sweep_every: Duration::from_millis(100),
-    });
+    };
+    engine.pool.set_config(checking);
 
     assert_eq!(engine.fetch_body(list[0].id.0), Ok(()));
     assert_eq!(engine.pool.opened(account), 1);
 
-    // Idle past the check: NOOP first, same connection.
+    // Idle past the check: NOOP first, same connection. Sleeping longer
+    // than asked is fine here.
     std::thread::sleep(Duration::from_millis(300));
     assert_eq!(engine.fetch_body(list[1].id.0), Ok(()));
     assert_eq!(engine.pool.opened(account), 1);
@@ -124,11 +129,18 @@ fn idle_network_change_and_a_dropped_connection_all_reconnect_cleanly() {
         .any(|c| c == "NOOP"));
 
     // Idle past the limit: the sweeper closes it, the next open reconnects.
+    engine.pool.set_config(PoolConfig {
+        close_after: Duration::from_millis(200),
+        ..checking
+    });
     let started = Instant::now();
     while engine.pool.is_open(account) {
-        assert!(started.elapsed() < Duration::from_secs(5), "never closed");
+        assert!(started.elapsed() < Duration::from_secs(60), "never closed");
         std::thread::sleep(Duration::from_millis(50));
     }
+    // Far away again, so the sweeper can't close the next connection
+    // between an open and the count below.
+    engine.pool.set_config(checking);
     assert_eq!(engine.fetch_body(list[2].id.0), Ok(()));
     assert_eq!(engine.pool.opened(account), 2);
 
@@ -329,6 +341,12 @@ fn an_open_saves_its_body_while_a_sync_holds_the_lock_and_writes() {
         let writer = scope.spawn(|| {
             // A "sync": holds the account's WriteLock and writes batches of
             // 200 header rows, one transaction each, without pause.
+            //
+            // What's tested is that the opens never fail. A batch of this
+            // stand-in sync may still end in SQLITE_BUSY on a starved
+            // machine (the Windows CI runner ran this test for over a
+            // minute, #357), as a real sync's could; the real sync reports
+            // it and tries again later, so this one counts it and goes on.
             let _syncing = gate.lock();
             let store = Store::open(&path).expect("store");
             let mut uid = 100_000u32;
@@ -360,13 +378,19 @@ fn an_open_saves_its_body_while_a_sync_holds_the_lock_and_writes() {
                         }
                     })
                     .collect();
-                store.upsert_message_headers(&rows).expect("sync writes");
-                uid += 200;
-                batches += 1;
+                match store.upsert_message_headers(&rows) {
+                    Ok(_) => {
+                        uid += 200;
+                        batches += 1;
+                    }
+                    Err(e) => assert!(e.is_busy(), "sync writes: {e:?}"),
+                }
             }
             batches
         });
-        started.recv().expect("writer started");
+        started
+            .recv_timeout(Duration::from_secs(60))
+            .expect("writer started");
         let opened: Vec<_> = ids
             .iter()
             .map(|id| (Instant::now(), engine.fetch_body(id.0)))

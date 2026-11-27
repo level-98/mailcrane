@@ -16,7 +16,9 @@ Passwords and sign-in tokens are kept in Android's secure storage (Android Keyst
 - **Remote images.** Images stored on the sender's servers load only when you tap "Load remote images", for that one message, without cookies. Loading them tells the sender's server that the message was opened.
 - **Unsubscribe.** If you confirm a one-tap unsubscribe, the app contacts the sender's server to remove you from the list. Other unsubscribe options open an email for you to send or the sender's web page.
 - **Links.** Tapping a link in a message opens it in your browser, after showing where it goes (unless you turn that off).
+- **About Mailcrane.** In Settings, the links to this website, this policy, the source code and the licence open in your browser, only when you tap one.
 - **Signing in with Google or Microsoft** (when the app adds it) opens their sign-in page, and their privacy policies apply. The app then talks to their mail servers like any other provider.
+- **Push wake-ups** (optional, off unless you turn them on). Mailcrane registers with the UnifiedPush distributor app you chose, and that distributor's push server can then wake the app to check your mail. No mail content, address or password goes through it: a wake-up only makes Mailcrane check your own mail servers. Who runs the push server depends on the distributor you pick, and their policy applies. For JMAP accounts, Mailcrane also gives your JMAP mail server the push address and the keys to encrypt what it sends there, so the server can wake the app itself when mail arrives.
 - **Downloads and updates** through Google Play, F-Droid or GitHub are covered by those services' own policies.
 
 Nothing else. If a future version adds a connection, for example for push notifications, this policy will name it before that version is released.

@@ -59,11 +59,14 @@
             android:name=".notify.NotificationActionReceiver"
             android:exported="false" />
 
+        <!-- Starts always-on sync again after a reboot or an app update (M4-05). -->
         <receiver
             android:name=".sync.BootReceiver"
             android:exported="false">
             <intent-filter>
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <!-- An app update stops the running service; this starts it again. -->
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
             </intent-filter>
         </receiver>
 
@@ -74,6 +77,16 @@
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="Keeps a connection to the user's own mail server open (IMAP IDLE) so new mail is notified within a minute. Turned on by the user in Settings." />
+        </service>
+        <!-- Push wake-ups through the user's UnifiedPush distributor (M4-05), off by default.
+             Not exported: the connector library's own receiver hands events to it after
+             checking this app's registration token. -->
+        <service
+            android:name=".push.MailcranePushService"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="org.unifiedpush.android.connector.PUSH_EVENT" />
+            </intent-filter>
         </service>
         <!-- OAuth sign-in (M3-01): the browser comes back here. Exported so the browser can
              reach it; the core trusts nothing in the intent until `state` matches a sign-in it
@@ -91,6 +104,9 @@
                 <category android:name="android.intent.category.BROWSABLE" />
                 <!-- The scheme only: a private-use redirect has no host (RFC 8252 §7.1), and
                      a path filter needs one. OAuthSignIn.isRedirect checks the path. -->
+                <!-- OAuthSignIn.REDIRECT_URI's scheme, the release package that Google's client
+                     is registered for. Debug builds remove this activity (#405), and
+                     CheckOAuthRedirect in build.gradle.kts fails the build if either changes. -->
                 <data android:scheme="app.mailcrane" />
             </intent-filter>
         </activity>

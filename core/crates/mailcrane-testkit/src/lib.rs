@@ -17,12 +17,13 @@ mod tls;
 pub use fault::{Fault, Quirk};
 pub use https::{FakeHttps, HttpsRequest};
 pub use imap::{FakeImap, FakeImapBuilder};
-pub use jmap::{FakeEmail, FakeJmap, FakeMailbox, JmapSentRequest};
+pub use jmap::{FakeEmail, FakeJmap, FakeMailbox, FakePush, FakePushSubscription, JmapSentRequest};
 pub use mailbox::{Mailbox, Message};
 pub use oauth::FakeTokenEndpoint;
 pub use secrets::MemorySecretStore;
 pub use sieve::{FakeSieve, FakeSieveBuilder, SieveFault};
 pub use smtp::{FakeSmtp, SentMessage};
+pub use tls::{DevCertificates, TestTls};
 
 /// Start a fake IMAP server, deliver a synthetic message, and inspect the mailbox.
 ///

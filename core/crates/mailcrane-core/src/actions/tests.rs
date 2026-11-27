@@ -278,6 +278,36 @@ async fn delete_in_trash_deletes_for_good_with_uid_expunge() {
 }
 
 #[tokio::test]
+async fn gmail_archive_moves_to_all_mail_delete_to_trash_and_flag_stars() {
+    // M3-02: Gmail has no Archive folder. Archive = remove the Inbox label
+    // = UID MOVE to [Gmail]/All Mail; delete goes to [Gmail]/Trash; a flag
+    // is Gmail's star.
+    let imap = FakeImap::builder()
+        .user(USER, PASSWORD)
+        .folder("INBOX", vec![raw(1), raw(2), raw(3)])
+        .gmail_layout()
+        .start()
+        .await
+        .expect("fake imap");
+    let s = setup(&imap, Store::open_in_memory().expect("store")).await;
+    let events = Events::default();
+    act(&s, 1, Action::Archive, &events);
+    act(&s, 2, Action::Delete, &events);
+    act(&s, 3, Action::Flag, &events);
+    let report = replay_now(&imap, &s, &events, NOW).await;
+    assert_eq!(report.done, 3);
+    assert_eq!(server_uids(&imap, "INBOX").await, vec![3]);
+    assert_eq!(server_uids(&imap, "[Gmail]/All Mail").await.len(), 1);
+    assert_eq!(server_uids(&imap, "[Gmail]/Trash").await.len(), 1);
+    assert!(server_flags(&imap, "INBOX", 3)
+        .await
+        .iter()
+        .any(|f| f == "\\Flagged"));
+    let received = imap.received_commands().await;
+    assert!(received.iter().any(|c| c == "UID MOVE"));
+}
+
+#[tokio::test]
 async fn archive_without_an_archive_folder_is_an_error_and_changes_nothing() {
     let imap = FakeImap::builder()
         .user(USER, PASSWORD)

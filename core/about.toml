@@ -1,0 +1,22 @@
+# cargo-about (#366): the licences of the crates in the Android core, for the
+# in-app "Open-source licences" list. `cargo xtask licences` writes
+# android/app/licences/rust-licences.txt with licences/rust-licences.hbs, and
+# `cargo xtask ci` checks it is current. Keep `accepted` the same as `allow` in
+# deny.toml.
+accepted = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "MPL-2.0",
+    "CDLA-Permissive-2.0",
+    "Zlib",
+    "Unicode-3.0",
+    "CC0-1.0",
+]
+# What ships in the APK: the core for Android, without build or dev dependencies.
+targets = ["aarch64-linux-android", "x86_64-linux-android"]
+ignore-build-dependencies = true
+ignore-dev-dependencies = true

@@ -14,11 +14,20 @@ mod flow;
 mod http;
 pub mod pkce;
 mod provider;
+pub mod providers;
 mod tokens;
 
 pub use flow::{begin, complete, refresh, AuthRequest, PendingAuth, Tokens};
 pub use provider::OAuthProvider;
 pub use tokens::{AccessToken, TokenCache};
+
+/// The process-wide access-token cache (memory only), shared by sync,
+/// sending and setup. Entries are per database ([`TokenCache`]), so one
+/// process can hold several databases (#434).
+pub fn token_cache() -> &'static TokenCache {
+    static CACHE: std::sync::OnceLock<TokenCache> = std::sync::OnceLock::new();
+    CACHE.get_or_init(TokenCache::new)
+}
 
 /// Why OAuth failed. Never carries a token, code or server text.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]

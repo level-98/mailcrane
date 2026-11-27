@@ -65,6 +65,30 @@ pub struct FakeSubmission {
     pub rcpt_to: Vec<String>,
 }
 
+/// A push subscription the fake holds (RFC 8620 §7.2).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FakePushSubscription {
+    pub id: String,
+    pub device_client_id: String,
+    pub url: String,
+    pub types: Vec<String>,
+    /// `(p256dh, auth)` when the client sent keys.
+    pub keys: Option<(String, String)>,
+    /// The `expires` the fake holds.
+    pub expires: Option<String>,
+    /// Whether the client set the right `verificationCode`.
+    pub verified: bool,
+    verification_code: String,
+}
+
+/// A push the fake would have POSTed to a subscription's URL. Tests hand
+/// `body` to the client themselves, as the Web Push service would.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FakePush {
+    pub url: String,
+    pub body: String,
+}
+
 /// An email as the fake holds it, after any changes.
 #[derive(Debug, Clone)]
 struct Stored {
@@ -99,8 +123,20 @@ struct State {
     log: Vec<(u64, Change, String)>,
     /// Emails whose updates and destroys are refused with `forbidden`.
     refused: BTreeSet<String>,
+    /// Emails left out of `Email/set` replies (in neither the done nor the
+    /// not-done map, against RFC 8620 §5.3), with whether the change is
+    /// still carried out (#448).
+    omitted: std::collections::BTreeMap<String, bool>,
+    /// `maxObjectsInGet` (RFC 8620 §2), when set: advertised, and a larger
+    /// `Email/get` is refused with `requestTooLarge`.
+    max_objects_in_get: Option<usize>,
     /// Submissions still to refuse (`Fault::RefuseSubmissions`).
     refuse_submissions: usize,
+    push_subscriptions: Vec<FakePushSubscription>,
+    /// Pushes "sent", oldest first, until a test takes them.
+    pushes: Vec<FakePush>,
+    /// If set, every `expires` a client asks for becomes this.
+    push_expiry_cap: Option<String>,
 }
 
 impl State {
@@ -411,12 +447,57 @@ impl FakeJmap {
             from: e.from,
         });
         state.bump(Change::Created, &e.id);
+        // RFC 8620 §7.1: tell every verified subscription.
+        let body =
+            json!({"@type": "StateChange", "changed": {"A1": {"Email": state.email_state()}}})
+                .to_string();
+        let urls: Vec<String> = state
+            .push_subscriptions
+            .iter()
+            .filter(|p| p.verified)
+            .map(|p| p.url.clone())
+            .collect();
+        for url in urls {
+            state.pushes.push(FakePush {
+                url,
+                body: body.clone(),
+            });
+        }
+    }
+
+    /// The push subscriptions as they are now.
+    pub fn push_subscriptions(&self) -> Vec<FakePushSubscription> {
+        lock(&self.state).push_subscriptions.clone()
+    }
+
+    /// Takes the pushes "sent" so far (verifications and state changes).
+    pub fn take_pushes(&self) -> Vec<FakePush> {
+        std::mem::take(&mut lock(&self.state).pushes)
+    }
+
+    /// From now on, every `expires` a client asks for becomes `utc_date`,
+    /// as a server with a shorter limit would answer (RFC 8620 §7.2).
+    pub fn cap_push_expiry(&self, utc_date: &str) {
+        lock(&self.state).push_expiry_cap = Some(utc_date.to_owned());
     }
 
     /// From now on, changes to email `id` are refused with `forbidden`
     /// (RFC 8620 §5.3 SetError), as for a message the user may not change.
     pub fn refuse_changes(&self, id: &str) {
         lock(&self.state).refused.insert(id.to_owned());
+    }
+
+    /// From now on, email `id` is left out of `Email/set` replies, as a
+    /// buggy server might do (#448). With `applied`, the change is still
+    /// carried out; without, it isn't.
+    pub fn omit_from_set_reply(&self, id: &str, applied: bool) {
+        lock(&self.state).omitted.insert(id.to_owned(), applied);
+    }
+
+    /// Advertises `maxObjectsInGet` = `n` in the session and refuses a
+    /// larger `Email/get` with `requestTooLarge` (RFC 8620 §3.6.2).
+    pub fn set_max_objects_in_get(&self, n: usize) {
+        lock(&self.state).max_objects_in_get = Some(n);
     }
 
     /// The submissions accepted so far.
@@ -495,9 +576,13 @@ fn authorized(value: Option<&str>, config: &Config) -> bool {
 
 fn session(config: &Config) -> String {
     let base = format!("https://localhost:{}", config.port);
+    let mut core_caps = json!({"maxSizeRequest": 10_000_000, "maxSizeUpload": 50_000_000});
+    if let Some(n) = lock(&config.state).max_objects_in_get {
+        core_caps["maxObjectsInGet"] = json!(n);
+    }
     json!({
         "capabilities": {
-            "urn:ietf:params:jmap:core": {"maxSizeRequest": 10_000_000, "maxSizeUpload": 50_000_000},
+            "urn:ietf:params:jmap:core": core_caps,
             "urn:ietf:params:jmap:mail": {},
             CAP_SUBMISSION: {}
         },
@@ -595,10 +680,16 @@ fn email_set(state: &mut State, args: &Value, id: &str) -> Value {
                 not_updated.insert(eid.clone(), json!({"type": "forbidden"}));
                 continue;
             }
+            let omitted = state.omitted.get(eid).copied();
+            if omitted == Some(false) {
+                continue;
+            }
             match (state.email(eid), patch.as_object()) {
                 (Some(e), Some(p)) => {
                     apply_patch(e, p);
-                    updated.insert(eid.clone(), Value::Null);
+                    if omitted.is_none() {
+                        updated.insert(eid.clone(), Value::Null);
+                    }
                     state.bump(Change::Updated, eid);
                 }
                 (None, _) => {
@@ -618,10 +709,16 @@ fn email_set(state: &mut State, args: &Value, id: &str) -> Value {
                 not_destroyed.insert(eid.to_owned(), json!({"type": "forbidden"}));
                 continue;
             }
+            let omitted = state.omitted.get(eid).copied();
+            if omitted == Some(false) {
+                continue;
+            }
             let before = state.emails.len();
             state.emails.retain(|e| e.id != eid);
             if state.emails.len() < before {
-                destroyed.push(eid.to_owned());
+                if omitted.is_none() {
+                    destroyed.push(eid.to_owned());
+                }
                 state.bump(Change::Destroyed, eid);
             } else {
                 not_destroyed.insert(eid.to_owned(), json!({"type": "notFound"}));
@@ -804,6 +901,7 @@ fn method_responses(
     let state = &mut *state;
     let one = match name {
         "Mailbox/set" => mailbox_set(state, args, id),
+        "PushSubscription/set" => push_set(state, args, id),
         "Mailbox/get" => {
             let list: Vec<Value> = state
                 .mailboxes
@@ -856,6 +954,9 @@ fn method_responses(
                 .and_then(Value::as_array)
                 .map(|a| a.iter().filter_map(Value::as_str).collect())
                 .unwrap_or_default();
+            if state.max_objects_in_get.is_some_and(|n| wanted.len() > n) {
+                return vec![json!(["error", {"type": "requestTooLarge"}, id])];
+            }
             let list: Vec<Value> = wanted
                 .iter()
                 .filter_map(|w| state.emails.iter().find(|e| e.id == *w))
@@ -1018,6 +1119,128 @@ async fn jmap_response(
 /// is all the app sends. Names must be unique among siblings, a mailbox
 /// can't move under itself, and destroying one with children or (without
 /// `onDestroyRemoveEmails`) emails is refused.
+/// `PushSubscription/set` (RFC 8620 §7.2): create sends a verification
+/// push, `verificationCode` must match it, and destroying an unknown id is
+/// `notFound`.
+fn push_set(state: &mut State, args: &Value, id: &str) -> Value {
+    let mut created = Map::new();
+    let mut not_created = Map::new();
+    let mut updated = Map::new();
+    let mut not_updated = Map::new();
+    let mut destroyed = Vec::new();
+    let mut not_destroyed = Map::new();
+    let invalid = || json!({"type": "invalidProperties"});
+    for (key, sub) in args
+        .get("create")
+        .and_then(Value::as_object)
+        .into_iter()
+        .flatten()
+    {
+        let text = |name: &str| sub.get(name).and_then(Value::as_str).map(str::to_owned);
+        let (Some(device), Some(url)) = (text("deviceClientId"), text("url")) else {
+            not_created.insert(key.clone(), invalid());
+            continue;
+        };
+        let types: Vec<String> = sub
+            .get("types")
+            .and_then(Value::as_array)
+            .map(|t| {
+                t.iter()
+                    .filter_map(Value::as_str)
+                    .map(str::to_owned)
+                    .collect()
+            })
+            .unwrap_or_default();
+        // RFC 8620 §7.2: the URL must be https, and a client may not set
+        // its own verification code.
+        if !url.starts_with("https://") || sub.get("verificationCode").is_some() {
+            not_created.insert(key.clone(), invalid());
+            continue;
+        }
+        let keys = sub.get("keys").and_then(|k| {
+            Some((
+                k.get("p256dh")?.as_str()?.to_owned(),
+                k.get("auth")?.as_str()?.to_owned(),
+            ))
+        });
+        let push_id = state.next_id("P");
+        let code = format!("code-{push_id}");
+        let cap = state.push_expiry_cap.clone();
+        let expires = cap.clone().or_else(|| text("expires"));
+        state.pushes.push(FakePush {
+            url: url.clone(),
+            body: json!({"@type": "PushVerification", "pushSubscriptionId": push_id, "verificationCode": code})
+                .to_string(),
+        });
+        state.push_subscriptions.push(FakePushSubscription {
+            id: push_id.clone(),
+            device_client_id: device,
+            url,
+            types,
+            keys,
+            expires,
+            verified: false,
+            verification_code: code,
+        });
+        // `expires` comes back only when the server changed it (RFC 8620 §5.3).
+        created.insert(
+            key.clone(),
+            json!({"id": push_id, "keys": null, "expires": cap}),
+        );
+    }
+    for (push_id, patch) in args
+        .get("update")
+        .and_then(Value::as_object)
+        .into_iter()
+        .flatten()
+    {
+        let cap = state.push_expiry_cap.clone();
+        let Some(sub) = state
+            .push_subscriptions
+            .iter_mut()
+            .find(|p| &p.id == push_id)
+        else {
+            not_updated.insert(push_id.clone(), json!({"type": "notFound"}));
+            continue;
+        };
+        if let Some(code) = patch.get("verificationCode") {
+            if code.as_str() != Some(sub.verification_code.as_str()) {
+                not_updated.insert(push_id.clone(), invalid());
+                continue;
+            }
+            sub.verified = true;
+        }
+        let mut echo = Value::Null;
+        if let Some(asked) = patch.get("expires").and_then(Value::as_str) {
+            sub.expires = Some(cap.clone().unwrap_or_else(|| asked.to_owned()));
+            if let Some(cap) = cap {
+                echo = json!({"expires": cap});
+            }
+        }
+        updated.insert(push_id.clone(), echo);
+    }
+    for gone in args
+        .get("destroy")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        let Some(gone) = gone.as_str() else { continue };
+        let before = state.push_subscriptions.len();
+        state.push_subscriptions.retain(|p| p.id != gone);
+        if state.push_subscriptions.len() < before {
+            destroyed.push(json!(gone));
+        } else {
+            not_destroyed.insert(gone.to_owned(), json!({"type": "notFound"}));
+        }
+    }
+    json!(["PushSubscription/set", {
+        "created": created, "notCreated": not_created,
+        "updated": updated, "notUpdated": not_updated,
+        "destroyed": destroyed, "notDestroyed": not_destroyed,
+    }, id])
+}
+
 fn mailbox_set(state: &mut State, args: &Value, id: &str) -> Value {
     let err = |kind: &str| json!({"type": kind});
     let taken = |state: &State, name: &str, parent: Option<&str>, except: Option<&str>| {

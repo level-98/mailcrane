@@ -209,7 +209,8 @@ class UniffiMailboxCore(
     FolderAdminCore,
     MessageCore,
     LiveUpdatesEngine,
-    NotificationsCore {
+    NotificationsCore,
+    JmapPushCore {
     private val hub = EventHub()
 
     // Created on first use, so the native library loads only when mail is needed. The system
@@ -221,6 +222,14 @@ class UniffiMailboxCore(
     /** Closes the reused mail connections (issue #294). Blocking: call it off the main thread. */
     fun closeConnections(reason: CloseReason) {
         engine.closeConnections(reason)
+    }
+
+    /**
+     * Makes every running live update (IMAP IDLE) reconnect now, skipping its back-off (M4-05):
+     * the default network changed or came back. Returns at once; any thread.
+     */
+    fun reconnectLiveUpdates() {
+        engine.reconnectLiveUpdates()
     }
 
     /** Reports the device conditions for background downloads (M4-25). Cheap; any thread. */
@@ -271,6 +280,25 @@ class UniffiMailboxCore(
     }
 
     override suspend fun takeNewMail(): List<NewMailNotification> = withContext(io) { engine.takeNewMail() }
+
+    override suspend fun registerPush(
+        endpoint: String,
+        p256dh: String?,
+        auth: String?,
+    ): Int =
+        withContext(io) {
+            try {
+                engine.registerJmapPush(endpoint, p256dh, auth).toInt()
+            } catch (_: SyncFailure) {
+                0
+            }
+        }
+
+    override suspend fun answerPush(body: ByteArray): Boolean = withContext(io) { engine.answerJmapPush(body) }
+
+    override suspend fun unregisterPush() {
+        withContext(io) { engine.unregisterJmapPush() }
+    }
 
     override suspend fun backgroundSync(deadlineSeconds: Int): List<NewMailNotification> =
         withContext(io) { engine.backgroundSync(deadlineSeconds.coerceAtLeast(1).toUInt()) }

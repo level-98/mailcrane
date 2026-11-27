@@ -133,8 +133,8 @@ fn sessions() -> MutexGuard<'static, Sessions> {
 
 /// The process-wide access-token cache (memory only).
 pub(crate) fn token_cache() -> &'static TokenCache {
-    static C: OnceLock<TokenCache> = OnceLock::new();
-    C.get_or_init(TokenCache::new)
+    // The core's, so sync and sending see the tokens a sign-in saved.
+    core::token_cache()
 }
 
 /// Starts a sign-in with `provider`: returns the URL to open in the system
@@ -191,16 +191,29 @@ pub(crate) async fn complete_with(
     .unwrap_or(Err(OAuthFailure::Network))
 }
 
-/// Keeps a finished sign-in's tokens for `account_id`: the refresh token in
-/// secure storage, the access token in memory. The sign-in id is then used up.
+/// Keeps a finished sign-in's tokens for `account_id` in the database at
+/// `db_path`: the refresh token in secure storage, the access token in
+/// memory. The sign-in id is then used up.
 #[uniffi::export]
-pub fn oauth_attach(sign_in_id: String, account_id: i64) -> Result<(), OAuthFailure> {
+pub fn oauth_attach(
+    db_path: String,
+    sign_in_id: String,
+    account_id: i64,
+) -> Result<(), OAuthFailure> {
     let secrets = secrets::secret_store().map_err(|_| OAuthFailure::Storage)?;
-    attach_with(secrets.as_ref(), &sign_in_id, account_id)
+    attach_with(
+        secrets.as_ref(),
+        &mailcrane_store::Store::scope_of(&db_path),
+        &sign_in_id,
+        account_id,
+    )
 }
 
+/// [`oauth_attach`] with the secret store given, and the database named by
+/// its `Store::cache_scope`.
 pub(crate) fn attach_with(
     secrets: &dyn mailcrane_core::secrets::SecretStore,
+    scope: &str,
     sign_in_id: &str,
     account_id: i64,
 ) -> Result<(), OAuthFailure> {
@@ -208,8 +221,44 @@ pub(crate) fn attach_with(
         .finished
         .remove(sign_in_id)
         .ok_or(OAuthFailure::NoSuchSignIn)?;
-    token_cache().save(secrets, account_id, &tokens, now())?;
+    token_cache().save(secrets, scope, account_id, &tokens, now())?;
     Ok(())
+}
+
+/// The access token of a finished sign-in, still waiting for an account.
+pub(crate) fn finished_access_token(sign_in_id: &str) -> Option<String> {
+    sessions()
+        .finished
+        .get(sign_in_id)
+        .map(|(tokens, _)| tokens.access_token.clone())
+}
+
+/// The Google provider's settings (M3-02), for `oauth_begin`.
+#[uniffi::export]
+pub fn google_oauth_provider() -> Result<OAuthProviderConfig, OAuthFailure> {
+    let p = mailcrane_core::oauth::providers::google::provider()
+        .ok_or(OAuthFailure::InvalidProvider)?;
+    Ok(OAuthProviderConfig {
+        id: p.id,
+        authorization_endpoint: p.authorization_endpoint.to_string(),
+        token_endpoint: p.token_endpoint.to_string(),
+        client_id: p.client_id,
+        scopes: p.scopes,
+        redirect_uri: p.redirect_uri,
+        extra_auth_params: p
+            .extra_auth_params
+            .into_iter()
+            .map(|(name, value)| OAuthParam { name, value })
+            .collect(),
+    })
+}
+
+/// Whether setup should offer "Sign in with Google" first for `email`: a
+/// gmail.com or googlemail.com address. Google Workspace accounts can use
+/// it too.
+#[uniffi::export]
+pub fn is_gmail_address(email: String) -> bool {
+    mailcrane_core::oauth::providers::google::is_gmail_address(&email)
 }
 
 fn now() -> i64 {
@@ -265,13 +314,13 @@ mod tests {
         );
 
         let secrets = MemorySecretStore::new();
-        attach_with(&secrets, &id, 42).expect("attach");
+        attach_with(&secrets, "file:test.db", &id, 42).expect("attach");
         assert_eq!(
             secrets.keys(),
             vec![SecretKey::oauth_refresh_token(42).as_str().to_owned()]
         );
         assert_eq!(
-            attach_with(&secrets, &id, 42),
+            attach_with(&secrets, "file:test.db", &id, 42),
             Err(OAuthFailure::NoSuchSignIn)
         );
     }

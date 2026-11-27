@@ -232,6 +232,11 @@ async fn a_v15_database_with_partial_gmail_rows_syncs_with_v16_code() {
              ALTER TABLE accounts DROP COLUMN local_only;
              ALTER TABLE rules DROP COLUMN missing_folder;
              ALTER TABLE accounts DROP COLUMN provider_authserv_id;
+             ALTER TABLE accounts DROP COLUMN oauth_provider;
+             ALTER TABLE snoozes DROP COLUMN step;
+             ALTER TABLE snoozes DROP COLUMN target_uidnext;
+             ALTER TABLE snoozes DROP COLUMN rollback_since;
+             DROP TABLE jmap_push_subscriptions;
              DROP TABLE server_rules_deployed;
              DROP TABLE server_rules;
              PRAGMA user_version = 15;",

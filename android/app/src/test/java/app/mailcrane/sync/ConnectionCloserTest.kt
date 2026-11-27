@@ -13,7 +13,9 @@ import org.junit.Test
 class ConnectionCloserTest {
     private val scope = TestScope(StandardTestDispatcher())
     private val closed = mutableListOf<CloseReason>()
-    private val closer = ConnectionCloser(scope, backgroundDelayMs = 60_000L) { closed += it }
+    private var reconnects = 0
+    private val closer =
+        ConnectionCloser(scope, backgroundDelayMs = 60_000L, reconnect = { reconnects++ }) { closed += it }
 
     @Test
     fun aNewDefaultNetworkClosesButTheFirstOneDoesNot() {
@@ -56,5 +58,29 @@ class ConnectionCloserTest {
         scope.advanceTimeBy(60_000L)
         scope.runCurrent()
         assertEquals(emptyList<CloseReason>(), closed)
+    }
+
+    @Test
+    fun liveUpdatesReconnectOnANewNetworkButNotOnTheFirst() {
+        closer.onNetworkAvailable(1L)
+        closer.onNetworkAvailable(1L)
+        scope.runCurrent()
+        assertEquals(0, reconnects)
+        closer.onNetworkAvailable(2L)
+        scope.runCurrent()
+        assertEquals(1, reconnects)
+    }
+
+    @Test
+    fun liveUpdatesReconnectWhenANetworkComesBack() {
+        closer.onNetworkAvailable(1L)
+        closer.onNetworkLost(1L)
+        scope.runCurrent()
+        assertEquals(0, reconnects)
+        // The same network back after an outage counts too: the back-off may be minutes long.
+        closer.onNetworkAvailable(1L)
+        scope.runCurrent()
+        assertEquals(1, reconnects)
+        assertEquals(listOf(CloseReason.NETWORK_CHANGED), closed)
     }
 }

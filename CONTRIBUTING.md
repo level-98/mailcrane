@@ -23,7 +23,7 @@ That's it. There's no sign-up, CLA or coordination thread.
 - Comment `/claim` on an unassigned issue. The first claim stands.
 - A claim lapses after **14 days** with no comment, commit or draft PR. A bot unassigns it automatically, and anyone can claim it again.
 - Changed your mind? Comment `/unclaim`.
-- Hold at most **2 claims** at once.
+- Hold at most **2 claims** at once. Maintainers (and so the agent fleet) have no limit.
 - An open PR holds its issue. If a review asks for changes and there's no reply within 14 days, the issue becomes free again.
 
 ### Found a bug and already fixed it?
@@ -50,11 +50,9 @@ Every pull request and every push to `main` runs [`ci.yml`](.github/workflows/ci
 
 | Job | Runs on | Checks |
 |---|---|---|
-| `linux` | Ubuntu | Every step except iOS (`--strict --skip ios`): fmt, clippy, tests, `cargo deny`, the design check and the release-notes script tests, and the Android lint, unit tests, debug and release builds (the core cross-compiled for arm64-v8a and x86_64), with a check that each APK packages its own core. The debug APK is uploaded as the `android-debug-apk` artifact for 7 days, so you can install it with `adb install` without building. |
+| `linux` | Ubuntu | Every step (`--strict`): fmt, clippy, tests, `cargo deny` and the open-source licences check (cargo-about; after changing Rust dependencies run `cargo xtask licences` and commit the result), the design check and the release-notes script tests, and the Android lint, unit tests, debug and release builds (the core cross-compiled for arm64-v8a and x86_64), with a check that each APK packages its own core. The debug APK is uploaded as the `android-debug-apk` artifact for 7 days, so you can install it with `adb install` without building. |
 | `windows` | Windows | fmt, clippy and tests of the core (`--strict --only fmt,lint,test`), so it stays portable. |
 | `ci-ok` | Ubuntu | Passes only if every job above passed. Look here first. |
-
-The iOS job comes back in M7-02 (#144). Until then, iOS checks run only when a maintainer starts `ios.yml` by hand.
 
 ## Review
 
@@ -62,8 +60,9 @@ Mailcrane may have only one maintainer, so review is set up not to block:
 
 | Change | What's needed to merge |
 |---|---|
-| Docs, tests, UI, most code | CI green + one maintainer approval. A maintainer may merge their own PR once CI is green and it has been open 24 hours. |
-| Labelled `security` (sign-in, OAuth, credential storage, TLS, the HTML sanitiser, encryption) | CI green + a maintainer's review. If there is a second maintainer, they must approve too. Never self-merged in under 72 hours. |
+| Docs, tests, UI, most code | CI green + one maintainer approval. A maintainer may merge their own PR once CI is green. |
+| Labelled `security` (sign-in, OAuth, credential storage, TLS, the HTML sanitiser, encryption) | CI green + a maintainer's review. If there is a second maintainer, they must approve too. |
+| Opened by the maintainer's agent fleet (labelled `fleet`) | The fleet lead merges on the maintainer's behalf when CI is green on the exact commit, its review seat's findings are resolved, and QA has checked UI changes. There is no waiting period. See [docs/fleet.md](docs/fleet.md#merging). |
 
 ## Decisions that only maintainers make
 
@@ -84,6 +83,8 @@ AI-written contributions are welcome on the same terms as any other.
 - Say in the PR that it was AI-assisted, and which tool and model.
 - Read the diff yourself before marking it ready.
 - Please don't open lots of low-effort PRs at once. Maintainers may close them without review.
+
+A maintainer may also run the local agent fleet (up to six Claude Code sessions coordinated over Synapse, acting through the maintainer's account): see [docs/fleet.md](docs/fleet.md). Its PRs carry the `fleet` label.
 
 Maintainers can also hand an `agent-ready` issue straight to the project's own agent by adding the `agent-go` label. It opens a draft PR for a human to review.
 
@@ -106,13 +107,18 @@ The agent runs on a maintainer's Claude token, so:
 | `security` | Touches sign-in, credentials, TLS, encryption or the sanitiser |
 | `post-1.0` | Not until after 1.0. Please don't claim yet. |
 | `m0` … `m8` | Milestone (see ROADMAP.md) |
-| `area:core` · `area:android` · `area:ios` · `area:design` · `area:docs` · `area:ci` | Which part of the project |
+| `area:core` · `area:android` · `area:design` · `area:docs` · `area:ci` | Which part of the project |
 
 ## Other ways to help
 
 - **Try it with your own provider** and fill in a [provider test report](../../issues/new?template=provider_report.yml), even when everything works. Results are collected in [docs/providers.md](docs/providers.md). Never share your account details.
-- **Design**: mockups and UX feedback, following Material 3 and Apple's guidelines.
-- **Write docs**, and later **translate** (once Weblate is set up).
+- **Design**: mockups and UX feedback, following Material 3.
+- **Write docs.**
+- **Translate** the app on Weblate. See [Translations](#translations).
+
+## Translations
+
+Translations are done on Weblate, not in pull requests. Weblate opens a pull request with its changes, and CI checks it like any other. The Weblate project is being set up; [docs/translations.md](docs/translations.md) will link it and has the guide for translators (placeholders, plurals, licence) and for developers adding strings. Please don't edit `values-*/strings.xml` by hand.
 
 ## Code of conduct
 

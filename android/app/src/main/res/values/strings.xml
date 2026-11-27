@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">Mailcrane</string>
+    <string name="app_name" translatable="false">Mailcrane</string>
     <string name="hello_from_core">%1$s</string>
 
     <!-- Manual account setup (M1-03) -->
@@ -9,6 +9,11 @@
     <string name="setup_auto_continue">Continue</string>
     <string name="setup_auto_looking">Looking up settings…</string>
     <string name="setup_auto_manual">Set up manually</string>
+    <!-- Sign in with Google (M3-02). Google's wording for the button. -->
+    <string name="setup_google_sign_in">Sign in with Google</string>
+    <string name="setup_google_signing_in">Signing in…</string>
+    <string name="setup_google_gmail_note">Gmail accounts sign in with Google in your browser. Mailcrane never sees your Google password.</string>
+    <string name="setup_error_google">Signing in with Google didn’t finish. Try again.</string>
     <string name="setup_auto_found_title">Check these settings</string>
     <string name="setup_auto_source_autoconfig">From %1$s’s own settings file.</string>
     <string name="setup_auto_source_srv">From the DNS records of %1$s.</string>
@@ -57,6 +62,7 @@
     <string name="setup_error_auth_smtp">The outgoing mail server didn’t accept the username or password.</string>
     <string name="setup_error_timeout_imap">The incoming mail server took too long to answer. Check the server name and port, or try again later.</string>
     <string name="setup_error_timeout_smtp">The outgoing mail server took too long to answer. Check the server name and port, or try again later.</string>
+    <string name="setup_error_already_added">This account is already added.</string>
     <string name="setup_error_save_failed">Both servers accepted the sign-in, but the account couldn’t be saved on this device. Try again.</string>
     <string name="setup_error_unexpected">Something went wrong while checking the settings. Nothing was saved.</string>
 
@@ -245,6 +251,8 @@
     <string name="compose_cc_bcc">Cc/Bcc</string>
     <string name="compose_subject">Subject</string>
     <string name="compose_body">Message</string>
+    <!-- Read aloud while a saved draft or a reply's quote loads; the message can't be typed into until then. -->
+    <string name="compose_loading_content">Loading the message…</string>
     <string name="compose_remove_recipient">Remove %1$s</string>
     <!-- TalkBack description of a chip whose address can't be used -->
     <string name="compose_recipient_invalid">%1$s, not a valid email address</string>
@@ -359,6 +367,30 @@
     <string name="rules_title">Rules</string>
     <string name="rules_settings_row">Rules</string>
     <string name="rules_settings_summary">Sort new mail automatically on this device</string>
+    <!-- About Mailcrane (Settings, #75) -->
+    <string name="about_title">About Mailcrane</string>
+    <string name="about_settings_summary">Version, privacy policy and source code</string>
+    <!-- %1$s: version name such as 0.1.0; %2$d: the build number -->
+    <string name="about_version">Version %1$s (%2$d)</string>
+    <!-- %1$s: the short git commit the app was built from, such as 81755b8 -->
+    <string name="about_commit">Built from commit %1$s</string>
+    <string name="about_website">Website</string>
+    <string name="about_website_summary">mailcrane.app</string>
+    <string name="about_privacy">Privacy policy</string>
+    <string name="about_privacy_summary">Mailcrane collects nothing. Read the details</string>
+    <string name="about_source">Source code</string>
+    <string name="about_source_summary">Mailcrane is open source, on GitHub</string>
+    <string name="about_licence">Licence</string>
+    <string name="about_licence_summary">Mozilla Public License 2.0</string>
+    <string name="about_licences">Open-source licences</string>
+    <string name="about_licences_summary">The free software Mailcrane is built with</string>
+    <!-- %1$d: how many libraries are listed -->
+    <string name="about_licences_intro">Mailcrane is built with %1$d open-source libraries. Tap one to read its licence.</string>
+    <!-- Under a library's name. %1$s: its version; %2$s: its licence, such as Apache-2.0 -->
+    <string name="about_licence_rust">Rust library %1$s · %2$s</string>
+    <!-- Under a library's name. %1$s: its version; %2$s: its licence, such as Apache-2.0 -->
+    <string name="about_licence_android">Android library %1$s · %2$s</string>
+    <string name="about_links_note">These links open in your browser. Mailcrane contacts these sites only when you tap one.</string>
     <string name="rules_explain">Rules run on this device, in this order, on new mail in your inbox. Text is matched anywhere, ignoring case and accents.</string>
     <string name="rules_empty">No rules yet.</string>
     <string name="rules_add">Add</string>
@@ -667,6 +699,21 @@
     <string name="settings_notifications_blocked">Notifications are turned off for Mailcrane in your phone’s settings</string>
     <string name="settings_always_on">Always-on sync</string>
     <string name="settings_always_on_summary">Notify within a minute of new mail by keeping a connection open. Uses more battery and shows a permanent notification. When off, Mailcrane checks about every 15 minutes.</string>
+    <!-- Battery optimisation and always-on sync (M4-05). -->
+    <string name="settings_battery_warning">Battery optimisation may delay notifications</string>
+    <string name="settings_battery_warning_summary">Tap to see why and how to turn it off for Mailcrane</string>
+    <string name="settings_battery_exempt">Battery optimisation is off for Mailcrane</string>
+    <string name="battery_explain_title">Let always-on sync keep running</string>
+    <string name="battery_explain_body">Android saves battery by pausing apps in the background. While Mailcrane is paused, its connection to your mail server can drop, and new mail notifications may come many minutes late.
+
+To get notified within a minute, turn off battery optimisation for Mailcrane: on the next screen, choose “All apps”, find Mailcrane and select “Don’t optimise” (the wording differs between phones).
+
+Some phones have a further setting of their own, often called “Allow background activity” or “Auto-launch”, in the app’s battery settings. Turn that on too if notifications still come late.
+
+Mailcrane uses the connection only to wait for new mail, so the extra battery use is small.</string>
+    <string name="battery_explain_open">Open battery settings</string>
+    <string name="battery_explain_later">Not now</string>
+    <string name="battery_explain_failed">Your phone has no battery optimisation screen Mailcrane can open. Look for Mailcrane under Settings → Apps → Battery.</string>
     <!-- JMAP accounts (M3-04) -->
     <string name="setup_section_type">Type of account</string>
     <string name="setup_type_imap">IMAP</string>
@@ -674,4 +721,20 @@
     <string name="setup_section_jmap">JMAP server</string>
     <string name="setup_jmap_server">Server</string>
     <string name="setup_jmap_server_hint">Your provider’s domain (such as example.org) or its JMAP session URL. Use an app password if your provider has them.</string>
+    <!-- Push wake-ups (UnifiedPush, M4-05). -->
+    <string name="push_title">Push wake-ups (UnifiedPush)</string>
+    <string name="push_summary">Let a UnifiedPush distributor app wake Mailcrane to check for mail, without a permanent connection. JMAP accounts are told the address below and push by themselves. IMAP servers don’t: they need a push gateway on your side that watches your mailbox and sends to that address.</string>
+    <string name="push_no_distributor">Needs a UnifiedPush distributor app on this phone</string>
+    <string name="push_registering">Asking the distributor for an address…</string>
+    <string name="push_ready">Ready. Give this address to your push gateway:</string>
+    <string name="push_temporary">The distributor’s own server is unavailable; this stand-in address may change.</string>
+    <string name="push_copy">Copy address</string>
+    <string name="push_failed_network">No network. Turn this off and on again once you’re online.</string>
+    <string name="push_failed_action">The distributor app needs your attention (for example to sign in). Open it, then turn this off and on again.</string>
+    <string name="push_failed_vapid">This distributor only accepts servers that identify themselves, and Mailcrane has no server key to give it. Choose another distributor.</string>
+    <string name="push_failed_other">The distributor couldn’t register Mailcrane. Turn this off and on again to retry.</string>
+    <string name="push_failed_unregistered">The distributor ended the registration. Turn this off and on again to register anew.</string>
+    <string name="push_check_channel">Push checks</string>
+    <string name="push_check_notification">Checking for new mail</string>
+    <string name="push_setup_notification">Setting up push from your mail server</string>
 </resources>

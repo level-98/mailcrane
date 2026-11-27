@@ -1,5 +1,6 @@
 package app.mailcrane.ui.compose
 
+import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import app.mailcrane.contacts.DeviceContacts
@@ -10,6 +11,7 @@ import app.mailcrane.core.AccountSummary
 import app.mailcrane.core.ComposeAttachment
 import app.mailcrane.core.ComposeCore
 import app.mailcrane.core.ComposeDraft
+import app.mailcrane.core.CoreLog
 import app.mailcrane.core.DraftKind
 import app.mailcrane.core.RecipientEntry
 import app.mailcrane.core.RecipientField
@@ -27,6 +29,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import javax.inject.Inject
 
 /** One recipient chip. [text] is what the user typed and goes back to the core unchanged. */
@@ -117,7 +120,34 @@ data class ComposeUiState(
     val bcc: RecipientFieldState = RecipientFieldState(),
     val showCcBcc: Boolean = false,
     val subject: String = "",
+    /**
+     * Counts changes to [subject] from outside the subject field (prefill, draft, reply, reset), never the
+     * field's own typing (#429): the field takes [subject] over its own text only when this moves. An edit typed
+     * against an older revision also moves it, so the field takes the current subject back.
+     */
+    val subjectRevision: Long = 0,
     val body: String = "",
+    /**
+     * Where the cursor goes when [body] is loaded into an empty field: the end for a saved draft
+     * the user is coming back to, the start otherwise (a new message, reply or forward) (#419).
+     */
+    val bodyCursorAtEnd: Boolean = false,
+    /**
+     * Counts the changes to [body] that came from outside the body field (reply, draft, signature, From swap,
+     * list toggle, reset), never the field's own typing (#419). The field takes [body] over its own text only
+     * when this has moved, so its own edits coming back late can't be mistaken for an outside change.
+     */
+    val bodyRevision: Long = 0,
+    /**
+     * Where the field's cursor goes with this [bodyRevision], when the view model knows better than the field:
+     * right after a late keystroke it moved onto newer text (#419). Null for every other change.
+     */
+    val bodyCursor: Int? = null,
+    /**
+     * A saved draft or a reply's quote is still loading (#435). The whole form is read-only until it lands or
+     * fails (the load overwrites recipients, From, subject and body), Send waits, and autosave pauses.
+     */
+    val loadingContent: Boolean = false,
     val sending: Boolean = false,
     val error: ComposeError? = null,
     /** Addresses named in [error], for "all recipients were refused". */
@@ -163,7 +193,7 @@ data class ComposeUiState(
 
     val hasValidRecipient: Boolean get() = to.hasValid || cc.hasValid || bcc.hasValid
 
-    val canSend: Boolean get() = !sending && fromAccountId != null && hasValidRecipient
+    val canSend: Boolean get() = !sending && !loadingContent && fromAccountId != null && hasValidRecipient
 
     val hasContent: Boolean
         get() = !to.isEmpty || !cc.isEmpty || !bcc.isEmpty || subject.isNotBlank() || body.isNotBlank()
@@ -185,6 +215,36 @@ class ComposeViewModel
         val state: StateFlow<ComposeUiState> = _state.asStateFlow()
 
         /**
+         * The body as each recent revision left it, newest last, for edits the field typed against an older
+         * revision (#419). Only the last few: the field catches up within a frame or two. Like [_state], only
+         * touched on the main thread: the `_state.update` blocks that change it never run concurrently.
+         */
+        private val bodyByRevision = ArrayDeque<Pair<Long, String>>()
+
+        private fun rememberBody(
+            revision: Long,
+            body: String,
+        ) {
+            bodyByRevision.removeAll { it.first == revision }
+            bodyByRevision.addLast(revision to body)
+            while (bodyByRevision.size > KEPT_REVISIONS) bodyByRevision.removeFirst()
+        }
+
+        /** An outside change to the body: a new revision, which the field takes over its own text. */
+        private fun ComposeUiState.withOutsideBody(
+            newBody: String,
+            cursorAtEnd: Boolean = false,
+        ): ComposeUiState {
+            rememberBody(bodyRevision, body)
+            return copy(
+                body = newBody,
+                bodyRevision = bodyRevision + 1,
+                bodyCursorAtEnd = cursorAtEnd,
+                bodyCursor = null,
+            )
+        }
+
+        /**
          * Opens the screen for [accountId]. Keeps what is already typed (e.g. after rotation) and only
          * picks the sender if none is picked yet.
          */
@@ -197,11 +257,11 @@ class ComposeViewModel
             _state.update { if (it.fromAccountId == null) it.copy(fromAccountId = accountId) else it }
             if (prefill != null && _state.value.prefilledWith != prefill) {
                 _state.update {
-                    it.copy(
+                    it.withOutsideBody(prefill.body).copy(
                         prefilledWith = prefill,
                         to = chipsOf(listOf(prefill.to)),
                         subject = prefill.subject,
-                        body = prefill.body,
+                        subjectRevision = it.subjectRevision + 1,
                         // No signature in a message to a machine.
                         signatureAdded = true,
                     )
@@ -222,47 +282,86 @@ class ComposeViewModel
                     } catch (e: Exception) {
                         emptyList()
                     }
+                val before = _state.value.fromAccountId
                 _state.update { s ->
                     // Keep the picked account if it still exists; otherwise fall back to the first one.
                     val from = s.fromAccountId?.takeIf { id -> accounts.isEmpty() || accounts.any { it.id == id } }
                     s.copy(accounts = accounts, fromAccountId = from ?: accounts.firstOrNull()?.id)
                 }
+                // A fallback is a change of From too (#449 review): the fallback account's signature goes in
+                // through the same latest-wins lookup, and the removed account's late result is dropped. A draft
+                // or reply still loading sets From itself.
+                val now = _state.value
+                val fellBack = now.fromAccountId
+                if (fellBack != null && fellBack != before && now.signatureAdded && !now.loadingContent) {
+                    lookUpSignature(fellBack)
+                }
             }
+        }
+
+        /** The running draft or reply load, if any, and which one it is (#435). */
+        private var loadJob: Job? = null
+        private var loadGeneration = 0L
+
+        /**
+         * Runs a draft or reply load with the form locked. A newer load replaces an older one, so only the
+         * newest unlocks the form; however it ends (applied, failed, timed out, nothing to open), it does.
+         */
+        private fun startLoad(
+            onTimeout: ComposeError,
+            load: suspend () -> Unit,
+        ) {
+            loadJob?.cancel()
+            val generation = ++loadGeneration
+            _state.update { it.copy(loadingContent = true) }
+            loadJob =
+                viewModelScope.launch {
+                    try {
+                        if (withTimeoutOrNull(LOAD_TIMEOUT_MS) { load() } == null) {
+                            _state.update { it.copy(error = onTimeout) }
+                        }
+                    } finally {
+                        if (generation == loadGeneration) _state.update { it.copy(loadingContent = false) }
+                    }
+                }
         }
 
         /** Fills the screen from a saved draft (opening a Drafts folder message first if needed). */
         private fun openDraft(request: DraftRequest) {
             _state.update { it.copy(openedDraft = request, signatureAdded = true) }
-            viewModelScope.launch {
-                val loaded =
-                    try {
-                        val id = request.draftId ?: request.messageId?.let { core.openDraft(it) } ?: return@launch
-                        id to core.getDraft(id)
-                    } catch (e: CancellationException) {
-                        throw e
-                    } catch (e: Exception) {
-                        _state.update { it.copy(error = ComposeError.DRAFT_UNAVAILABLE) }
-                        return@launch
-                    }
-                val (id, draft) = loaded
-                val cc = chipsOf(draft.cc)
-                val bcc = chipsOf(draft.bcc)
-                _state.update {
-                    it.copy(
-                        draftId = id,
-                        fromAccountId = draft.accountId,
-                        to = chipsOf(draft.to),
-                        cc = cc,
-                        bcc = bcc,
-                        showCcBcc = it.showCcBcc || !cc.isEmpty || !bcc.isEmpty,
-                        subject = draft.subject,
-                        body = draft.bodyText,
-                        inReplyTo = draft.inReplyTo,
-                        references = draft.references,
-                        forwardAttachmentsOf = draft.forwardAttachmentsOf,
-                        plainTextOnly = true,
-                    )
+            startLoad(ComposeError.DRAFT_UNAVAILABLE) { loadDraft(request) }
+        }
+
+        private suspend fun loadDraft(request: DraftRequest) {
+            val loaded =
+                try {
+                    val id = request.draftId ?: request.messageId?.let { core.openDraft(it) } ?: return
+                    id to core.getDraft(id)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    _state.update { it.copy(error = ComposeError.DRAFT_UNAVAILABLE) }
+                    return
                 }
+            val (id, draft) = loaded
+            val cc = chipsOf(draft.cc)
+            val bcc = chipsOf(draft.bcc)
+            _state.update {
+                // Back to a saved draft: carry on writing at its end (#419).
+                it.withOutsideBody(draft.bodyText, cursorAtEnd = true).copy(
+                    draftId = id,
+                    fromAccountId = draft.accountId,
+                    to = chipsOf(draft.to),
+                    cc = cc,
+                    bcc = bcc,
+                    showCcBcc = it.showCcBcc || !cc.isEmpty || !bcc.isEmpty,
+                    subject = draft.subject,
+                    subjectRevision = it.subjectRevision + 1,
+                    inReplyTo = draft.inReplyTo,
+                    references = draft.references,
+                    forwardAttachmentsOf = draft.forwardAttachmentsOf,
+                    plainTextOnly = true,
+                )
             }
         }
 
@@ -281,6 +380,8 @@ class ComposeViewModel
         /** Saves the message as a draft now, if there is anything to keep. Returns whether it is saved. */
         private suspend fun saveNow(): Boolean {
             val s = _state.value
+            // Nothing new to keep while a draft or reply loads; saving now would make a second draft (#435).
+            if (s.loadingContent) return true
             if (!s.hasContent || s.sending || s.result != null) return false
             val draft = s.toDraft() ?: return false
             return try {
@@ -315,13 +416,68 @@ class ComposeViewModel
             )
         }
 
+        /**
+         * The account's signature. A signature that can't be read must not crash compose (#435 review): the
+         * failure is logged by account id only, and the caller goes on without changing the signature.
+         */
+        private suspend fun readSignature(accountId: Long): Result<String?> =
+            try {
+                Result.success(core.signatureFor(accountId))
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                runCatching { Log.w(CoreLog.TAG, "compose: no signature for account $accountId") }
+                Result.failure(e)
+            }
+
+        /** Which signature lookup is the newest; an older one's result is dropped (#449). */
+        private var signatureGeneration = 0L
+
+        /** A new message's first signature hasn't been put in yet: the next lookup to land adds it (#449). */
+        private var signatureToAdd = false
+
         /** Adds the From account's signature to a new message, once. */
         private fun addSignature(accountId: Long) {
             _state.update { it.copy(signatureAdded = true) }
+            signatureToAdd = true
+            lookUpSignature(accountId)
+        }
+
+        /**
+         * Looks up [accountId]'s signature and puts it in the message: added, if the new message has none yet,
+         * otherwise swapped for the current one. Latest wins (#449): the result applies only if no newer lookup
+         * started meanwhile and From is still [accountId], so lookups finishing out of order (a slow first
+         * signature, fast From switches) can't add a second signature or one for the wrong account.
+         */
+        private fun lookUpSignature(accountId: Long) {
+            val generation = ++signatureGeneration
             viewModelScope.launch {
-                val signature = core.signatureFor(accountId) ?: return@launch
+                // One that can't be read: the message keeps the signature it has.
+                val signature = readSignature(accountId).getOrElse { return@launch }
+                if (generation != signatureGeneration || _state.value.fromAccountId != accountId) return@launch
+                val adding = signatureToAdd
+                signatureToAdd = false
                 _state.update {
-                    it.copy(body = core.applySignature(it.body, signature, DraftKind.NEW), signature = signature)
+                    if (adding) {
+                        if (signature == null) return@update it
+                        val signed = core.applySignature(it.body, signature, DraftKind.NEW)
+                        return@update it.withOutsideBody(signed).copy(signature = signature)
+                    }
+                    // Only above a reply's quote or a forward: a forwarded mail of the user's can hold the same block.
+                    // A reopened draft's kind isn't known, so the core takes the topmost copy there.
+                    val kind =
+                        when {
+                            it.prefilledFor != null ->
+                                if (it.prefilledFor.kind == ReplyKind.FORWARD) DraftKind.FORWARD else DraftKind.REPLY
+                            it.openedDraft != null -> null
+                            else -> DraftKind.NEW
+                        }
+                    val swapped =
+                        core.swapSignature(it.body, it.signature, signature, it.prefilledFor?.quoteHeader, kind)
+                    // An edited signature stays, and keeps being the one to match.
+                    val kept = swapped == it.body && it.signature != null && it.signature != signature
+                    val changed = if (swapped != it.body) it.withOutsideBody(swapped) else it
+                    changed.copy(signature = if (kept) it.signature else signature)
                 }
             }
         }
@@ -329,35 +485,38 @@ class ComposeViewModel
         /** Fills the screen with the core's reply draft: recipients as chips, subject, quoted body. */
         private fun prefill(reply: ReplyRequest) {
             _state.update { it.copy(prefilledFor = reply, signatureAdded = true) }
-            viewModelScope.launch {
-                val draft =
-                    try {
-                        core.prepareReply(reply.messageId, reply.kind, reply.quoteHeader)
-                    } catch (e: CancellationException) {
-                        throw e
-                    } catch (e: Exception) {
-                        _state.update { it.copy(error = ComposeError.REPLY_UNAVAILABLE) }
-                        return@launch
-                    }
-                val cc = chipsOf(draft.cc)
-                val signature = core.signatureFor(draft.accountId)
-                val kind = if (reply.kind == ReplyKind.FORWARD) DraftKind.FORWARD else DraftKind.REPLY
-                val body = core.applySignature(draft.bodyText, signature, kind)
-                _state.update {
-                    it.copy(
-                        fromAccountId = draft.accountId,
-                        to = chipsOf(draft.to),
-                        cc = cc,
-                        showCcBcc = it.showCcBcc || !cc.isEmpty,
-                        subject = draft.subject,
-                        body = body,
-                        signature = signature,
-                        inReplyTo = draft.inReplyTo,
-                        references = draft.references,
-                        forwardAttachmentsOf = draft.forwardAttachmentsOf,
-                        plainTextOnly = true,
-                    )
+            startLoad(ComposeError.REPLY_UNAVAILABLE) { loadReply(reply) }
+        }
+
+        private suspend fun loadReply(reply: ReplyRequest) {
+            val draft =
+                try {
+                    core.prepareReply(reply.messageId, reply.kind, reply.quoteHeader)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    _state.update { it.copy(error = ComposeError.REPLY_UNAVAILABLE) }
+                    return
                 }
+            val cc = chipsOf(draft.cc)
+            // One that can't be read: the reply goes without it.
+            val signature = readSignature(draft.accountId).getOrNull()
+            val kind = if (reply.kind == ReplyKind.FORWARD) DraftKind.FORWARD else DraftKind.REPLY
+            val body = core.applySignature(draft.bodyText, signature, kind)
+            _state.update {
+                it.withOutsideBody(body).copy(
+                    fromAccountId = draft.accountId,
+                    to = chipsOf(draft.to),
+                    cc = cc,
+                    showCcBcc = it.showCcBcc || !cc.isEmpty,
+                    subject = draft.subject,
+                    subjectRevision = it.subjectRevision + 1,
+                    signature = signature,
+                    inReplyTo = draft.inReplyTo,
+                    references = draft.references,
+                    forwardAttachmentsOf = draft.forwardAttachmentsOf,
+                    plainTextOnly = true,
+                )
             }
         }
 
@@ -371,15 +530,7 @@ class ComposeViewModel
             val before = _state.value.fromAccountId
             _state.update { it.copy(fromAccountId = accountId, error = null) }
             if (before == accountId) return
-            viewModelScope.launch {
-                val signature = core.signatureFor(accountId)
-                _state.update {
-                    val swapped = core.swapSignature(it.body, it.signature, signature)
-                    // An edited signature stays, and keeps being the one to match.
-                    val kept = swapped == it.body && it.signature != null && it.signature != signature
-                    it.copy(body = swapped, signature = if (kept) it.signature else signature)
-                }
-            }
+            lookUpSignature(accountId)
         }
 
         /** Text typed into a recipient field. Finished entries (followed by a comma or semicolon) become chips. */
@@ -497,13 +648,61 @@ class ComposeViewModel
 
         fun showCcBcc() = _state.update { it.copy(showCcBcc = true) }
 
-        fun onSubjectChange(value: String) {
-            _state.update { it.copy(subject = value) }
+        /**
+         * Text typed into the subject field. [baseRevision] is the [ComposeUiState.subjectRevision] the
+         * field's text was based on (#429). An edit typed against an older revision doesn't replace the loaded
+         * subject; the field takes the new one over. While a draft or reply loads the subject is read-only (#435),
+         * and a refused edit also moves the revision, so the field drops it.
+         */
+        fun onSubjectChange(
+            value: String,
+            baseRevision: Long = _state.value.subjectRevision,
+        ) {
+            _state.update {
+                if (!it.loadingContent && baseRevision == it.subjectRevision) {
+                    it.copy(subject = value)
+                } else {
+                    it.copy(subjectRevision = it.subjectRevision + 1)
+                }
+            }
             scheduleSave()
         }
 
-        fun onBodyChange(value: String) {
-            _state.update { it.copy(body = value, bodyStyles = restyle(it.body, value, it.bodyStyles)) }
+        /**
+         * Text typed into the body field. [baseRevision] is the [ComposeUiState.bodyRevision] the field's text
+         * was based on. When an outside change landed since (a signature arriving while the user types), the
+         * edit is moved onto the current body rather than replacing it, so neither is lost (#419, #430); if it
+         * can't be placed, the outside change stays and the field takes it over. Main thread only (see
+         * [bodyByRevision]).
+         */
+        fun onBodyChange(
+            value: String,
+            baseRevision: Long = _state.value.bodyRevision,
+        ) {
+            // Read-only while a draft or reply loads (#435): the load would overwrite it. A new revision tells
+            // the field to drop what it shows and take the view model's body back.
+            if (_state.value.loadingContent) {
+                _state.update { it.copy(bodyRevision = it.bodyRevision + 1) }
+                return
+            }
+            _state.update {
+                if (baseRevision == it.bodyRevision) {
+                    return@update it.copy(body = value, bodyStyles = restyle(it.body, value, it.bodyStyles))
+                }
+                val base = bodyByRevision.lastOrNull { (revision, _) -> revision == baseRevision }?.second
+                val merged = base?.let { b -> rebaseEdit(b, value, it.body) }
+                // The next late edit against the same revision starts from this one.
+                rememberBody(baseRevision, value)
+                if (merged == null) {
+                    it.withOutsideBody(it.body)
+                } else {
+                    it.withOutsideBody(merged.text).copy(
+                        bodyStyles = restyle(it.body, merged.text, it.bodyStyles),
+                        // The cursor follows the keystroke, not the offset it had in the older text.
+                        bodyCursor = merged.cursor,
+                    )
+                }
+            }
             scheduleSave()
         }
 
@@ -529,7 +728,8 @@ class ComposeViewModel
         ): Pair<Int, Int> {
             val s = _state.value
             val edit = toggleList(s.body, s.bodyStyles, start, end, kind)
-            _state.update { it.copy(body = edit.text, bodyStyles = edit.styles) }
+            // A new revision even when the text is unchanged, so the field applies the selection (#419).
+            _state.update { it.withOutsideBody(edit.text).copy(bodyStyles = edit.styles) }
             scheduleSave()
             return edit.selectionStart to edit.selectionEnd
         }
@@ -718,13 +918,32 @@ class ComposeViewModel
         fun keepEditing() = _state.update { it.copy(confirmingDiscard = false) }
 
         /** Clears the message once the screen has handled [ComposeUiState.result], ready for the next one. */
-        fun reset() = _state.update { ComposeUiState(accounts = it.accounts) }
+        fun reset() {
+            // A load still running belongs to the old message (#435): stop it, and its end mustn't unlock anything.
+            loadJob?.cancel()
+            loadGeneration++
+            // Nor may a signature lookup for it land on the next one (#449).
+            signatureGeneration++
+            signatureToAdd = false
+            _state.update {
+                // New revisions, so the body and subject fields drop whatever they still show (#419, #429).
+                rememberBody(it.bodyRevision, it.body)
+                ComposeUiState(
+                    accounts = it.accounts,
+                    bodyRevision = it.bodyRevision + 1,
+                    subjectRevision = it.subjectRevision + 1,
+                )
+            }
+        }
 
         private fun hasCcBcc(s: ComposeUiState) = !s.cc.isEmpty || !s.bcc.isEmpty
 
         companion object {
             /** A draft is saved this long after the last edit. */
             const val AUTOSAVE_MS = 2_000L
+
+            /** A draft or reply load that hasn't landed by now is given up, so the form unlocks (#435). */
+            const val LOAD_TIMEOUT_MS = 30_000L
         }
 
         private fun ComposeUiState.withFailure(e: Throwable): ComposeUiState {
@@ -835,3 +1054,69 @@ val ComposeUiState.attachmentsTooLarge: Boolean
 /** The rich version of the body to send, or null for plain text (none needed, or plain chosen). */
 fun ComposeUiState.richDoc(): app.mailcrane.core.RichDoc? =
     if (plainTextOnly || !hasFormatting(body, bodyStyles)) null else toRichDoc(body, bodyStyles)
+
+/** How many recent body revisions [ComposeViewModel] keeps for late field edits. */
+private const val KEPT_REVISIONS = 16
+
+/** A late edit moved onto newer text: the result, and where the cursor goes (right after the edit). */
+internal data class Rebased(
+    val text: String,
+    val cursor: Int,
+)
+
+/**
+ * Moves the field's edit of [base] (giving [mine]) onto [theirs], the body after an outside change (#419). The
+ * edit is the one span where [base] and [mine] differ (common prefix and suffix). It goes back in at the same
+ * place, found from the unchanged text before it, or else after it, and only when that anchor still reads the
+ * same in [theirs]. An empty anchor counts only when [base] was empty: typing before a signature arrives keeps
+ * both, but a body cleared from outside (a reset) isn't refilled by a stray late keystroke. An edit that replaced
+ * all of [base] (select all, then type or paste) replaces the span of [theirs] that still reads as [base]. Null
+ * when the edit can't be placed.
+ */
+internal fun rebaseEdit(
+    base: String,
+    mine: String,
+    theirs: String,
+): Rebased? {
+    if (mine == base) return Rebased(theirs, theirs.length)
+    var prefix = 0
+    val shortest = minOf(base.length, mine.length)
+    while (prefix < shortest && base[prefix] == mine[prefix]) prefix++
+    var suffix = 0
+    while (suffix < shortest - prefix &&
+        base[base.length - 1 - suffix] == mine[mine.length - 1 - suffix]
+    ) {
+        suffix++
+    }
+    val removed = base.substring(prefix, base.length - suffix)
+    val inserted = mine.substring(prefix, mine.length - suffix)
+    val before = base.substring(0, prefix)
+    val after = base.substring(base.length - suffix)
+
+    // `inserted` replaces `removed` at `at` in theirs.
+    fun place(at: Int) =
+        Rebased(theirs.substring(0, at) + inserted + theirs.substring(at + removed.length), at + inserted.length)
+
+    val anchorOk = { anchor: String -> anchor.isNotEmpty() || base.isEmpty() }
+    if (anchorOk(before) && theirs.startsWith(before) && theirs.startsWith(removed, before.length)) {
+        return place(before.length)
+    }
+    val end = theirs.length - after.length - removed.length
+    if (anchorOk(after) && end >= 0 && theirs.endsWith(after) && theirs.startsWith(removed, end)) {
+        return place(end)
+    }
+    // An edit at the very end, with text added in front of it ("H" typed on, "• " put before it).
+    if (before.isNotEmpty() && after.isEmpty() && theirs.endsWith(before + removed)) {
+        return place(theirs.length - removed.length)
+    }
+    // An edit at the very start, with text added after it (a signature below).
+    if (after.isNotEmpty() && before.isEmpty() && theirs.startsWith(removed + after)) {
+        return place(0)
+    }
+    // All of base replaced (select all, then type or paste): replace it where theirs still has it.
+    if (before.isEmpty() && after.isEmpty() && base.isNotEmpty()) {
+        val at = theirs.indexOf(base)
+        if (at >= 0) return place(at)
+    }
+    return null
+}

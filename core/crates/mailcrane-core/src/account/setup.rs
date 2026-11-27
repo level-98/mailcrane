@@ -129,6 +129,70 @@ pub enum AddAccountError {
     /// not be saved. Anything partly saved was removed again.
     #[error("the account could not be saved")]
     SaveFailed,
+    /// An account for the same mailbox (incoming server and username or
+    /// address) is already in the app (#346). Nothing was saved.
+    #[error("this account is already added")]
+    AlreadyAdded,
+}
+
+/// The server an account reads its mail from, as stored.
+#[derive(Debug, Clone, Copy)]
+pub enum IncomingServer<'a> {
+    /// An IMAP host name.
+    Imap(&'a str),
+    /// A JMAP session URL.
+    Jmap(&'a str),
+}
+
+/// Host names and URLs compared ignoring case and a trailing dot.
+fn same_server(a: &str, b: &str) -> bool {
+    let norm = |s: &str| s.trim().trim_end_matches('.').to_lowercase();
+    norm(a) == norm(b)
+}
+
+/// Fails with [`AddAccountError::AlreadyAdded`] if `store` already has an
+/// account for this mailbox: the same incoming server and the same username
+/// or address, ignoring case (#346). Local-only accounts don't count.
+pub fn ensure_not_added(
+    store: &Store,
+    server: IncomingServer<'_>,
+    username: &str,
+    email: &str,
+) -> Result<(), AddAccountError> {
+    let same = |a: &str, b: &str| {
+        !a.trim().is_empty() && a.trim().to_lowercase() == b.trim().to_lowercase()
+    };
+    let accounts = store
+        .list_accounts()
+        .map_err(|_| AddAccountError::SaveFailed)?;
+    for account in accounts {
+        let d = &account.details;
+        if !(same(&d.username, username) || same(&d.email, email)) {
+            continue;
+        }
+        if store
+            .is_local_account(account.id)
+            .map_err(|_| AddAccountError::SaveFailed)?
+        {
+            continue;
+        }
+        let protocol = store
+            .account_protocol(account.id)
+            .map_err(|_| AddAccountError::SaveFailed)?;
+        let matches = match (server, protocol) {
+            (IncomingServer::Imap(host), Some(mailcrane_store::Protocol::Imap)) => {
+                same_server(&d.imap_host, host)
+            }
+            (IncomingServer::Jmap(url), Some(mailcrane_store::Protocol::Jmap { session_url })) => {
+                same_server(&session_url, url)
+            }
+            _ => false,
+        };
+        if matches {
+            return Err(AddAccountError::AlreadyAdded);
+        }
+    }
+    Ok(())
 }
 
 /// The usual port for a protocol and security choice: IMAP 993 (TLS) or 143
@@ -304,11 +368,19 @@ fn map_smtp(err: mailcrane_smtp::SmtpError) -> AddAccountError {
     }
 }
 
+/// What a check logs in with.
+#[derive(Clone, Copy)]
+enum LoginWith<'a> {
+    Password(&'a str),
+    /// An OAuth access token, for XOAUTH2 (M3-02).
+    Token(&'a str),
+}
+
 async fn check_imap(
     server: &ServerConfig,
     port: u16,
     username: &str,
-    password: &str,
+    login: LoginWith<'_>,
     options: &SetupOptions,
 ) -> Result<(), AddAccountError> {
     let security = match server.security {
@@ -321,9 +393,14 @@ async fn check_imap(
     for der in &options.extra_root_certs {
         config = config.with_extra_root_cert(der.clone());
     }
-    let secret = mailcrane_imap::Secret::new(password);
+    let auth = match login {
+        LoginWith::Password(p) => {
+            mailcrane_imap::ImapAuth::Password(mailcrane_imap::Secret::new(p))
+        }
+        LoginWith::Token(t) => mailcrane_imap::ImapAuth::XOAuth2(mailcrane_imap::Secret::new(t)),
+    };
     let attempt = async {
-        let session = mailcrane_imap::Session::connect(&config, username, &secret).await?;
+        let session = mailcrane_imap::Session::connect_auth(&config, username, &auth).await?;
         session.logout().await;
         Ok::<(), mailcrane_imap::ImapError>(())
     };
@@ -339,7 +416,7 @@ async fn check_smtp(
     server: &ServerConfig,
     port: u16,
     username: &str,
-    password: &str,
+    login: LoginWith<'_>,
     options: &SetupOptions,
 ) -> Result<(), AddAccountError> {
     let security = match server.security {
@@ -350,9 +427,15 @@ async fn check_smtp(
     config.connect_timeout = options.timeout;
     config.command_timeout = options.timeout;
     config.extra_root_certs = options.extra_root_certs.clone();
-    let auth = mailcrane_smtp::SmtpAuth::Password {
-        username: username.to_owned(),
-        password: mailcrane_smtp::Secret::new(password),
+    let auth = match login {
+        LoginWith::Password(p) => mailcrane_smtp::SmtpAuth::Password {
+            username: username.to_owned(),
+            password: mailcrane_smtp::Secret::new(p),
+        },
+        LoginWith::Token(t) => mailcrane_smtp::SmtpAuth::XOAuth2 {
+            username: username.to_owned(),
+            token: mailcrane_smtp::Secret::new(t),
+        },
     };
     match tokio::time::timeout(options.timeout, mailcrane_smtp::check_login(&config, &auth)).await {
         Ok(result) => result.map_err(map_smtp),
@@ -403,12 +486,70 @@ pub async fn check_account(
             problem: FieldProblem::InvalidCharacters,
         }])
     })?;
+    let login = LoginWith::Password(password);
     let (imap, smtp) = tokio::join!(
-        check_imap(&config.imap, imap_port, &config.username, password, options),
-        check_smtp(&config.smtp, smtp_port, &config.username, password, options),
+        check_imap(&config.imap, imap_port, &config.username, login, options),
+        check_smtp(&config.smtp, smtp_port, &config.username, login, options),
     );
     imap?;
     smtp
+}
+
+/// [`check_account`] for an account that signs in with OAuth (M3-02): both
+/// servers with XOAUTH2 and `access_token`, without saving anything.
+pub async fn check_oauth_account(
+    config: &ManualAccountConfig,
+    access_token: &str,
+    options: &SetupOptions,
+) -> Result<(), AddAccountError> {
+    validate(config).map_err(AddAccountError::Invalid)?;
+    let (imap_port, smtp_port) = ports(config)?;
+    let login = LoginWith::Token(access_token);
+    let (imap, smtp) = tokio::join!(
+        check_imap(&config.imap, imap_port, &config.username, login, options),
+        check_smtp(&config.smtp, smtp_port, &config.username, login, options),
+    );
+    imap?;
+    smtp
+}
+
+/// Saves a checked account that signs in with OAuth `provider` (such as
+/// `"google"`): its details only. No password is stored; the caller keeps
+/// the refresh token in secure storage and removes the account if that fails.
+pub fn save_oauth_account(
+    store: &Store,
+    config: &ManualAccountConfig,
+    provider: &str,
+) -> Result<AccountId, AddAccountError> {
+    let (imap_port, smtp_port) = ports(config)?;
+    let account = NewAccount {
+        display_name: config.display_name.trim().to_owned(),
+        email: config.email.trim().to_owned(),
+        imap_host: config.imap.host.trim().to_owned(),
+        imap_port,
+        imap_security: store_security(config.imap.security),
+        smtp_host: config.smtp.host.trim().to_owned(),
+        smtp_port,
+        smtp_security: store_security(config.smtp.security),
+        username: config.username.trim().to_owned(),
+    };
+    // The same account can't be added twice (#346), whichever way it signs in.
+    ensure_not_added(
+        store,
+        IncomingServer::Imap(&account.imap_host),
+        &account.username,
+        &account.email,
+    )?;
+    let id = store
+        .insert_account(&account)
+        .map_err(|_| AddAccountError::SaveFailed)?;
+    match store.set_oauth_provider(id, Some(provider)) {
+        Ok(true) => Ok(id),
+        _ => {
+            let _ = store.delete_account(id);
+            Err(AddAccountError::SaveFailed)
+        }
+    }
 }
 
 fn store_security(security: Security) -> mailcrane_store::Security {
@@ -440,6 +581,13 @@ pub fn save_account(
         smtp_security: store_security(config.smtp.security),
         username: config.username.clone(),
     };
+    // Checked again here, right before saving, whichever way the caller came.
+    ensure_not_added(
+        store,
+        IncomingServer::Imap(&account.imap_host),
+        &account.username,
+        &account.email,
+    )?;
     let id = store
         .insert_account(&account)
         .map_err(|_| AddAccountError::SaveFailed)?;
@@ -482,6 +630,13 @@ pub async fn add_account_manual_with(
     password: Secret,
     options: &SetupOptions,
 ) -> Result<AccountId, AddAccountError> {
+    // Before any login, so a duplicate is refused without contacting a server.
+    ensure_not_added(
+        store,
+        IncomingServer::Imap(config.imap.host.trim()),
+        config.username.trim(),
+        config.email.trim(),
+    )?;
     check_account(config, &password, options).await?;
     save_account(store, secrets, config, &password)
 }

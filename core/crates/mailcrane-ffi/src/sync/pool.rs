@@ -395,10 +395,10 @@ fn open(
     let login = login().map_err(PoolError::Connect)?;
     let runtime = runtime().map_err(PoolError::Connect)?;
     let session = runtime
-        .block_on(Session::connect(
+        .block_on(Session::connect_auth(
             &login.config,
             &login.username,
-            &login.password,
+            &login.auth,
         ))
         .map_err(|e| {
             let e = CoreSyncError::from(e);

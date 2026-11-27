@@ -82,6 +82,7 @@ class ManualSetupViewModelTest {
                 ) to SetupError(SetupFailure.AUTH_FAILED, MailServer.SMTP),
                 AddAccountException.Timeout(MailServer.IMAP) to SetupError(SetupFailure.TIMEOUT, MailServer.IMAP),
                 AddAccountException.SaveFailed() to SetupError(SetupFailure.SAVE_FAILED),
+                AddAccountException.AlreadyAdded() to SetupError(SetupFailure.ALREADY_ADDED),
                 IllegalStateException("boom") to SetupError(SetupFailure.UNEXPECTED),
             )
         for ((thrown, expected) in cases) {
@@ -140,5 +141,120 @@ class ManualSetupViewModelTest {
         assertEquals("", vm.state.value.password)
         assertEquals(SetupStep.EMAIL, vm.state.value.step)
         assertEquals("993", vm.state.value.imapPort)
+    }
+
+    @Test
+    fun gmailSignsInWithGoogleAndAddsTheAccount() {
+        // M3-02: a Gmail address goes through Sign in with Google.
+        val core = FakeSetupCore({ 9 })
+        val vm = ManualSetupViewModel(core, googleSignIn = true)
+        vm.onEmailChange("ann@gmail.com")
+        assertEquals(true, vm.state.value.gmail)
+        val (provider, email) = vm.startGoogleSignIn() ?: error("started")
+        assertEquals("google", provider.id)
+        assertEquals("ann@gmail.com", email)
+        assertEquals(true, vm.state.value.checking)
+
+        vm.onGoogleResult(
+            app.mailcrane.oauth.OAuthResult
+                .SignedIn("signin-1"),
+        )
+        assertEquals(9L, vm.state.value.addedAccountId)
+        assertEquals(Triple("signin-1", "ann@gmail.com", ""), core.lastGoogle)
+    }
+
+    @Test
+    fun googleSignInNeedsAnAddressAndReportsFailures() {
+        val vm = ManualSetupViewModel(FakeSetupCore({ 9 }), googleSignIn = true)
+        assertNull(vm.startGoogleSignIn())
+        assertEquals(FieldProblem.MALFORMED_EMAIL, vm.state.value.fieldErrors[Field.EMAIL])
+
+        vm.onEmailChange("ann@example.com")
+        assertEquals(false, vm.state.value.gmail)
+        vm.startGoogleSignIn()
+        // Cancelled in the browser: back to the form, no error.
+        vm.onGoogleResult(
+            app.mailcrane.oauth.OAuthResult
+                .Failed(
+                    app.mailcrane.core.OAuthFailure
+                        .Denied(),
+                ),
+        )
+        assertFalse(vm.state.value.checking)
+        assertNull(vm.state.value.error)
+        // Anything else (or no browser) says so.
+        vm.startGoogleSignIn()
+        vm.onGoogleResult(
+            app.mailcrane.oauth.OAuthResult
+                .Failed(null),
+        )
+        assertEquals(SetupError(SetupFailure.GOOGLE_SIGN_IN_FAILED), vm.state.value.error)
+        assertEquals(
+            app.mailcrane.R.string.setup_error_google,
+            SetupError(SetupFailure.GOOGLE_SIGN_IN_FAILED).message(),
+        )
+    }
+
+    @Test
+    fun aDuplicateAccountIsSaidPlainly() {
+        // #346: the core refuses a second copy of an account; the screen says why.
+        assertEquals(
+            app.mailcrane.R.string.setup_error_already_added,
+            SetupError(SetupFailure.ALREADY_ADDED).message(),
+        )
+    }
+
+    @Test
+    fun closingTheBrowserTabLeavesSigningInButAReturnStaysWaiting() {
+        // #376: back in the app with nothing from the browser means the tab was closed.
+        val vm = ManualSetupViewModel(FakeSetupCore({ 9 }), googleSignIn = true)
+        vm.onEmailChange("ann@gmail.com")
+        vm.startGoogleSignIn()
+        assertEquals(true, vm.state.value.waitingForGoogle)
+        vm.googleNotReturned()
+        assertFalse(vm.state.value.checking)
+        assertNull(vm.state.value.error)
+
+        // A redirect that arrived: the code is being exchanged, so don't give up.
+        vm.startGoogleSignIn()
+        vm.onGoogleResult(app.mailcrane.oauth.OAuthResult.Returned)
+        vm.googleNotReturned()
+        assertEquals(true, vm.state.value.checking)
+    }
+
+    @Test
+    fun withoutGoogleSignInAGmailAddressUsesAPassword() {
+        // #405: debug builds can't receive Google's redirect, so they don't offer it. A Gmail
+        // address takes the password path (an app password) and no sign-in starts.
+        val core = FakeSetupCore({ 9 })
+        val vm = ManualSetupViewModel(core, googleSignIn = false)
+        // No Google button at all, Workspace one included.
+        assertFalse(vm.state.value.googleSignIn)
+        vm.onEmailChange("ann@gmail.com")
+        assertEquals(false, vm.state.value.gmail)
+        assertNull(vm.startGoogleSignIn())
+        assertFalse(vm.state.value.checking)
+        assertFalse(vm.state.value.waitingForGoogle)
+        assertNull(core.lastGoogle)
+        // A new form after an account was added still offers none.
+        vm.accountHandled()
+        assertFalse(vm.state.value.googleSignIn)
+    }
+
+    @Test
+    fun withGoogleSignInTheFormOffersIt() {
+        val vm = ManualSetupViewModel(FakeSetupCore({ 9 }), googleSignIn = true)
+        assertEquals(true, vm.state.value.googleSignIn)
+        vm.accountHandled()
+        assertEquals(true, vm.state.value.googleSignIn)
+    }
+
+    @Test
+    fun onlyReleaseBuildsOfferGoogleSignIn() {
+        assertEquals(
+            app.mailcrane.BuildConfig.BUILD_TYPE == "release",
+            app.mailcrane.oauth.OAuthSignIn.AVAILABLE,
+        )
+        assertEquals("app.mailcrane:/oauth2redirect", app.mailcrane.oauth.OAuthSignIn.REDIRECT_URI)
     }
 }

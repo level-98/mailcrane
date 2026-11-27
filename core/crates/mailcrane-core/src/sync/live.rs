@@ -5,8 +5,10 @@
 //! the one user actions use, so nothing waits behind it. It:
 //!
 //! 1. connects and runs an incremental sync of the inbox;
-//! 2. waits with `IDLE` (RFC 2177), re-issued every 25 minutes because a
-//!    server may drop a client that idles for 30 (§3);
+//! 2. waits with `IDLE` (RFC 2177), re-issued every 10 minutes: a server
+//!    may drop a client that idles for 30 (§3), and mobile networks often
+//!    forget an idle connection sooner, so re-issuing keeps it alive and
+//!    finds a dead one (`DONE` gets no answer) within minutes;
 //! 3. when the server reports `EXISTS`, `EXPUNGE` or `FETCH`, sends `DONE`
 //!    after a 500 ms debounce, syncs the inbox again and goes back to 2;
 //! 4. without the `IDLE` capability, syncs every 5 minutes instead;
@@ -14,6 +16,9 @@
 //!    back-off from 2 s to 5 minutes, with jitter; a successful sync resets
 //!    the back-off. A refused login is not retried: the loop reports it and
 //!    ends, so a wrong password can't get the account locked.
+//! 6. when the app says the network changed ([`LiveStop::reconnect`]),
+//!    drops the connection (its socket belongs to the old network) and
+//!    connects again at once, skipping any back-off wait.
 //!
 //! Stopping sends `DONE` and `LOGOUT`, and returns within 2 seconds even
 //! if the server does not answer.
@@ -21,7 +26,7 @@
 use super::initial::{log_failure, FolderSyncer, SyncConfig, SyncError};
 use super::WriteLock;
 use crate::events::{AccountId, CoreEvent, EventListener, FolderId, SyncErrorKind};
-use mailcrane_imap::{save_folders, IdleOutcome, ImapConfig, ImapError, Secret, Session};
+use mailcrane_imap::{save_folders, IdleOutcome, ImapAuth, ImapConfig, ImapError, Session};
 use mailcrane_store::{FolderRole, Store};
 use std::future::Future;
 use std::time::Duration;
@@ -32,7 +37,8 @@ use tokio::sync::watch;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LiveConfig {
     /// How long one `IDLE` lasts before it is re-issued. Must stay under
-    /// 29 minutes (RFC 2177 §3). Default 25 minutes.
+    /// 29 minutes (RFC 2177 §3). Default 10 minutes, short enough that a
+    /// connection a mobile network dropped silently is noticed soon.
     pub reissue_after: Duration,
     /// How often to sync when the server has no `IDLE`. Default 5 minutes.
     pub poll_every: Duration,
@@ -55,7 +61,7 @@ pub struct LiveConfig {
 impl Default for LiveConfig {
     fn default() -> Self {
         Self {
-            reissue_after: Duration::from_secs(25 * 60),
+            reissue_after: Duration::from_secs(10 * 60),
             poll_every: Duration::from_secs(5 * 60),
             debounce: Duration::from_millis(500),
             backoff_min: Duration::from_secs(2),
@@ -74,39 +80,77 @@ pub struct ImapLogin {
     pub config: ImapConfig,
     /// The account's user name.
     pub username: String,
-    /// The password or token.
-    pub password: Secret,
+    /// The password, or an OAuth access token (M3-02).
+    pub auth: ImapAuth,
 }
 
-/// Tells a running [`run_live_updates`] to stop. Dropping it stops it too.
+/// What [`LiveStop`] has asked for so far.
+#[derive(Debug, Clone, Copy, Default)]
+struct Asked {
+    stop: bool,
+    /// How many reconnects were asked for; only changes matter.
+    reconnects: u64,
+}
+
+/// Tells a running [`run_live_updates`] to stop, or to reconnect now.
+/// Dropping it stops it too.
 #[derive(Debug)]
-pub struct LiveStop(watch::Sender<bool>);
+pub struct LiveStop(watch::Sender<Asked>);
 
 impl LiveStop {
     /// Asks the live loop to stop. It returns within
     /// [`LiveConfig::stop_within`].
     pub fn stop(&self) {
-        self.0.send_replace(true);
+        self.0.send_modify(|asked| asked.stop = true);
+    }
+
+    /// Asks the live loop to drop its connection and connect again now,
+    /// without waiting out the back-off: the device moved to another
+    /// network, or got one back. The old connection is dropped without
+    /// `LOGOUT`, because its socket most likely leads nowhere now.
+    pub fn reconnect(&self) {
+        self.0
+            .send_modify(|asked| asked.reconnects = asked.reconnects.wrapping_add(1));
     }
 }
 
 /// The receiving side of [`LiveStop`].
 #[derive(Debug, Clone)]
-pub struct LiveStopSignal(watch::Receiver<bool>);
+pub struct LiveStopSignal {
+    rx: watch::Receiver<Asked>,
+    /// The reconnect count last acted on.
+    seen: u64,
+}
 
 impl LiveStopSignal {
     fn is_stopped(&self) -> bool {
-        *self.0.borrow()
+        self.rx.borrow().stop
     }
 
     /// Finishes once a stop was asked for, or the [`LiveStop`] is gone.
     async fn stopped(&mut self) {
         loop {
-            if *self.0.borrow_and_update() {
+            if self.rx.borrow_and_update().stop {
                 return;
             }
-            if self.0.changed().await.is_err() {
+            if self.rx.changed().await.is_err() {
                 return;
+            }
+        }
+    }
+
+    /// Finishes once a reconnect was asked for since the last time this
+    /// finished. Never finishes once the [`LiveStop`] is gone (that is a
+    /// stop, which [`Self::stopped`] reports).
+    async fn reconnect_asked(&mut self) {
+        loop {
+            let reconnects = self.rx.borrow_and_update().reconnects;
+            if reconnects != self.seen {
+                self.seen = reconnects;
+                return;
+            }
+            if self.rx.changed().await.is_err() {
+                std::future::pending::<()>().await;
             }
         }
     }
@@ -114,8 +158,8 @@ impl LiveStopSignal {
 
 /// A stop handle and the signal to pass to [`run_live_updates`].
 pub fn live_stop() -> (LiveStop, LiveStopSignal) {
-    let (tx, rx) = watch::channel(false);
-    (LiveStop(tx), LiveStopSignal(rx))
+    let (tx, rx) = watch::channel(Asked::default());
+    (LiveStop(tx), LiveStopSignal { rx, seen: 0 })
 }
 
 /// Keeps the account's inbox up to date until stopped; see the module
@@ -186,6 +230,8 @@ trait Conn {
 enum Served {
     Stopped,
     Failed,
+    /// A reconnect was asked for: connect again now.
+    Reconnect,
 }
 
 async fn run<S: Source>(
@@ -196,10 +242,18 @@ async fn run<S: Source>(
     mut stop: LiveStopSignal,
 ) {
     let mut backoff = Backoff::new(&config, seed(account));
+    // Its own receiver, so waiting for a reconnect and for a stop can
+    // happen side by side.
+    let mut wake = stop.clone();
     while !stop.is_stopped() {
         let connected = tokio::select! {
             biased;
             () = stop.stopped() => return,
+            // A connect on the old network may hang until its timeout.
+            () = wake.reconnect_asked() => {
+                backoff.reset();
+                continue;
+            }
             connected = source.connect() => connected,
         };
         match connected {
@@ -233,9 +287,20 @@ async fn run<S: Source>(
                         hard.stopped().await;
                         tokio::time::sleep(config.stop_within).await;
                     } => Served::Stopped,
+                    () = wake.reconnect_asked() => Served::Reconnect,
                 };
-                if served == Served::Stopped {
-                    return;
+                match served {
+                    Served::Stopped => return,
+                    Served::Reconnect => {
+                        tracing::debug!(
+                            account = account.0,
+                            "live updates reconnect: network changed"
+                        );
+                        drop(conn);
+                        backoff.reset();
+                        continue;
+                    }
+                    Served::Failed => {}
                 }
             }
         }
@@ -244,6 +309,8 @@ async fn run<S: Source>(
         tokio::select! {
             biased;
             () = stop.stopped() => return,
+            // The network is back: no reason to wait out the back-off.
+            () = wake.reconnect_asked() => backoff.reset(),
             () = tokio::time::sleep(delay) => {}
         }
     }
@@ -358,7 +425,7 @@ impl<'a, L: Fn() -> Result<ImapLogin, SyncErrorKind>> Source for ImapSource<'a, 
 
     async fn connect(&mut self) -> Result<ImapConn<'a>, SyncErrorKind> {
         let login = (self.login)()?;
-        let mut session = Session::connect(&login.config, &login.username, &login.password)
+        let mut session = Session::connect_auth(&login.config, &login.username, &login.auth)
             .await
             .map_err(|e| {
                 let e = SyncError::from(e);

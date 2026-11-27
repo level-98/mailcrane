@@ -1,0 +1,1 @@
+Settings → About Mailcrane shows the app version and the commit it was built from, with links to the website, the privacy policy, the source code and the licence. They open in your browser, and only when you tap one.
