@@ -8,13 +8,20 @@ import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.hasAnyDescendant
+import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performTextInput
+import app.mailcrane.core.AccountSettingsCore
+import app.mailcrane.core.AccountSignature
 import app.mailcrane.core.AccountSummary
+import app.mailcrane.core.SaveSentSetting
+import app.mailcrane.ui.folders.ManageFoldersContent
+import app.mailcrane.ui.folders.ManageFoldersState
 import app.mailcrane.ui.theme.MailcraneTheme
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -82,7 +89,8 @@ class SettingsStructureTest {
         compose.setContent {
             MailcraneTheme { AccountsSection(listOf(unnamed, accountA), onAdd = {}, onRemove = {}) }
         }
-        compose.onAllNodes(hasText("c.user@example.com")).assertCountEquals(1)
+        // Unmerged: the clickable row merges its texts into one node (#492 review).
+        compose.onAllNodes(hasText("c.user@example.com"), useUnmergedTree = true).assertCountEquals(1)
         // A named account still shows its address under the name.
         compose.onNodeWithText("Ann").assertIsDisplayed()
         compose.onNodeWithText("a.user@example.com").assertIsDisplayed()
@@ -113,6 +121,82 @@ class SettingsStructureTest {
         compose.onNodeWithText("b.user@example.com").assertIsDisplayed()
         compose.onNodeWithText("Save signature").performClick()
         assertEquals(listOf(accountB.id), edits)
+    }
+
+    /** Remembers which account each call was for. */
+    private class RecordingSettings : AccountSettingsCore {
+        val signatureSavedFor = mutableListOf<Long>()
+
+        override suspend fun getSignature(accountId: Long) = AccountSignature("", true)
+
+        override suspend fun setSignature(
+            accountId: Long,
+            signature: AccountSignature,
+        ) {
+            signatureSavedFor += accountId
+        }
+
+        override suspend fun getSaveSent(accountId: Long) = SaveSentSetting.AUTOMATIC
+
+        override suspend fun setSaveSent(
+            accountId: Long,
+            setting: SaveSentSetting,
+        ) = Unit
+
+        override suspend fun getAccountColor(accountId: Long): Int? = null
+
+        override suspend fun setAccountColor(
+            accountId: Long,
+            color: Int?,
+        ) = Unit
+
+        override fun automaticAccountColor(accountId: Long) = 0
+    }
+
+    /**
+     * #492 review: through the real signature section and its view model, a signature saved on
+     * account B's page reaches the core for B (id 2), whatever mailbox is current.
+     */
+    @Test
+    fun aSignatureSavedOnBsPageIsSavedForB() {
+        val core = RecordingSettings()
+        compose.setContent {
+            MailcraneTheme {
+                AccountSettingsPage(
+                    account = accountB,
+                    onBack = {},
+                    onRemove = {},
+                    sections = { id -> SignatureSection(id, viewModel = AccountSettingsViewModel(core, id)) },
+                )
+            }
+        }
+        compose.onNode(hasSetTextAction()).performTextInput("Ben\nExample Ltd")
+        compose.onNodeWithText("Save signature").performClick()
+        compose.runOnIdle { assertEquals(listOf(accountB.id), core.signatureSavedFor) }
+    }
+
+    /** #396: Manage folders names the account whose folders it shows. */
+    @Test
+    fun manageFoldersNamesItsAccount() {
+        compose.setContent {
+            MailcraneTheme {
+                ManageFoldersContent(
+                    state = ManageFoldersState(),
+                    onBack = {},
+                    onCreate = {},
+                    onRename = {},
+                    onMove = {},
+                    onDelete = {},
+                    onDismiss = {},
+                    onConfirmCreate = {},
+                    onConfirmRename = {},
+                    onConfirmMove = {},
+                    onConfirmDelete = {},
+                    accountEmail = "b.user@example.com",
+                )
+            }
+        }
+        compose.onNode(heading and hasText("b.user@example.com", substring = true)).assertIsDisplayed()
     }
 
     @Test

@@ -361,6 +361,8 @@
     <string name="settings_theme_label">Theme</string>
     <!-- Settings: heading above the Rules row, so it doesn't read as a security setting (#394). -->
     <string name="settings_rules_header">Rules</string>
+    <!-- Settings: heading above the About row at the bottom, so it isn't read as part of Advanced (#394). -->
+    <string name="settings_about_header">About</string>
 
     <!-- Attachments (M2-04) -->
     <string name="compose_attach">Attach files</string>

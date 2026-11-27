@@ -5,6 +5,7 @@ import android.content.pm.PackageManager
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
@@ -150,8 +151,9 @@ class SettingsViewModel
     }
 
 /**
- * The app's settings. Per-account options live on each account's own page, opened from its row
- * under Accounts (#396), so none here depends on which mailbox was open behind Settings.
+ * The app's settings. Per-account options (signature, Sent copy, colour, Advanced) live on each
+ * account's own page, opened from its row under Accounts (#396). Rules still opens the rules of
+ * the mailbox open behind Settings (#500).
  */
 @Composable
 fun SettingsScreen(
@@ -163,6 +165,8 @@ fun SettingsScreen(
     onAccountsChanged: () -> Unit = {},
     viewModel: SettingsViewModel = hiltViewModel(),
 ) {
+    // Made before the pages below replace the list, so Back from them lands where the user was.
+    val listScroll = rememberScrollState()
     var showAbout by rememberSaveable { mutableStateOf(false) }
     if (showAbout) {
         BackHandler { showAbout = false }
@@ -203,6 +207,7 @@ fun SettingsScreen(
     val swipeRight by viewModel.swipeRight.collectAsStateWithLifecycle()
     val swipeLeft by viewModel.swipeLeft.collectAsStateWithLifecycle()
     SettingsContent(
+        scroll = listScroll,
         cleanLinks = cleanLinks,
         onCleanLinksChange = viewModel::setCleanLinks,
         confirmLinks = confirmLinks,
@@ -263,6 +268,8 @@ fun SettingsScreen(
             )
         }
         AdvancedSection()
+        // Its own heading, so TalkBack doesn't read it as part of Advanced (#394, #492 review).
+        SectionHeading(R.string.settings_about_header)
         ListItem(
             headlineContent = { Text(stringResource(R.string.about_title)) },
             supportingContent = { Text(stringResource(R.string.about_settings_summary)) },
@@ -284,6 +291,8 @@ fun SettingsContent(
     appearance: AppearanceSettings = AppearanceSettings(),
     swipe: SwipeSettings = SwipeSettings(),
     accountSection: @Composable () -> Unit = {},
+    /** The list's scroll position, kept by the caller so it survives an account page or About (#492 review). */
+    scroll: ScrollState = rememberScrollState(),
 ) {
     Scaffold(
         topBar = {
@@ -300,7 +309,7 @@ fun SettingsContent(
             )
         },
     ) { padding ->
-        Column(Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState())) {
+        Column(Modifier.fillMaxSize().padding(padding).verticalScroll(scroll)) {
             // Every group has a heading, this first one too (#394).
             SectionHeading(R.string.settings_links_header)
             // The whole row is one switch for TalkBack and touch; the Switch itself stays silent.
