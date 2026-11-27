@@ -962,11 +962,12 @@ async fn a_detached_email_survives_completing_its_op() {
 }
 
 #[tokio::test]
-async fn flagged_and_important_mailboxes_are_virtual_folders() {
+async fn a_flagged_mailbox_is_virtual_and_an_important_one_ordinary() {
     // #461: RFC 8621 mailbox roles come from the same IANA registry as the
-    // IMAP attributes, so "flagged" and "important" are virtual folders, as
-    // `\Flagged` and Gmail's `\Important` are on IMAP: no folder role, so
-    // nothing moves, archives or deletes into them.
+    // IMAP attributes, so "flagged" is a virtual folder, as `\Flagged` is on
+    // IMAP: no folder role, so nothing moves, archives or deletes into it.
+    // "important" (RFC 8457 §3) may be a real folder; IMAP counts it only on
+    // Gmail, which has no JMAP, so it stays ordinary (#482 review).
     let server = FakeJmap::builder()
         .mailbox("mb-inbox", "Inbox", Some("inbox"), None)
         .mailbox("mb-flagged", "Starred", Some("flagged"), None)
@@ -1017,7 +1018,7 @@ async fn flagged_and_important_mailboxes_are_virtual_folders() {
     assert_eq!(starred.virtual_role, Some(VirtualRole::Starred));
     assert_eq!(starred.role, None);
     let important = by_name("Important");
-    assert_eq!(important.virtual_role, Some(VirtualRole::Important));
+    assert_eq!(important.virtual_role, None, "an ordinary folder");
     assert_eq!(important.role, None);
     assert_eq!(by_name("Work").virtual_role, None);
     assert_eq!(by_name("Inbox").role, Some(FolderRole::Inbox));

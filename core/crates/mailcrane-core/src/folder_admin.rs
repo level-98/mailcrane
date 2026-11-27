@@ -65,6 +65,10 @@ pub enum FolderAdminError {
     /// The server has no subfolders.
     #[error("the server has no subfolders")]
     NoSubfolders,
+    /// The chosen parent can't hold folders: a virtual folder such as
+    /// Gmail's Starred (#461), which holds mail by flag.
+    #[error("that folder can't hold folders")]
+    NotAParent,
     /// The folder (or the chosen parent) isn't in this account.
     #[error("no such folder")]
     NotFound,
@@ -239,7 +243,7 @@ fn find(folders: &[Folder], id: FolderId) -> Result<&Folder, FolderAdminError> {
 fn find_parent(folders: &[Folder], id: FolderId) -> Result<&Folder, FolderAdminError> {
     let parent = find(folders, id)?;
     if parent.details.virtual_role.is_some() {
-        return Err(FolderAdminError::NoSubfolders);
+        return Err(FolderAdminError::NotAParent);
     }
     Ok(parent)
 }

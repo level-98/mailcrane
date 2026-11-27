@@ -17,11 +17,12 @@ pub enum MailboxRole {
     Junk,
     Trash,
     All,
-    /// Messages with the `$flagged` keyword (RFC 8621 §2, IANA mailbox
-    /// roles): a virtual mailbox, nothing is moved into it (#461).
+    /// Messages with the `$flagged` keyword (RFC 8621 §4.1.1), a role from
+    /// the IANA mailbox roles that RFC 8621 §2 uses: a virtual mailbox,
+    /// nothing is moved into it (#461).
     Flagged,
-    /// Messages the server judges important, as Gmail's Important: virtual
-    /// too (#461).
+    /// Important messages (RFC 8457 §3). It may be a real folder that mail is
+    /// filed into, so it stays an ordinary mailbox (#461 review).
     Important,
 }
 

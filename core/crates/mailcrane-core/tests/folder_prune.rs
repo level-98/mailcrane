@@ -276,3 +276,46 @@ async fn a_renamed_virtual_folder_keeps_its_row() {
         Some(mailcrane_store::VirtualRole::Starred)
     );
 }
+
+#[tokio::test]
+async fn ambiguous_virtual_folders_are_not_paired_by_order() {
+    // #482 review: every \\Flagged folder has the same virtual role, so two
+    // gone and two new ones can't be told apart: they're removed and added,
+    // never paired by LIST order.
+    let imap = FakeImap::builder()
+        .user(USER, PASSWORD)
+        .folder("INBOX", vec![raw(1)])
+        .folder("Pins", Vec::new())
+        .folder("Marked", Vec::new())
+        .special_use("Pins", "\\Flagged")
+        .special_use("Marked", "\\Flagged")
+        .special_use("Pins 2", "\\Flagged")
+        .special_use("Marked 2", "\\Flagged")
+        .start()
+        .await
+        .expect("fake imap starts");
+    let store = Store::open_in_memory().expect("store");
+    let account = account(&store);
+    let mut session = connect(&imap).await.expect("connects");
+    save_folder_list(
+        &store,
+        account,
+        &session.list_folders().await.expect("list"),
+    )
+    .expect("save");
+    let pins = id_of(&store, account, "Pins").expect("pins");
+    let marked = id_of(&store, account, "Marked").expect("marked");
+    assert!(imap.mailbox().rename_folder("Pins", "Pins 2").await);
+    assert!(imap.mailbox().rename_folder("Marked", "Marked 2").await);
+    let saved = save_folder_list(
+        &store,
+        account,
+        &session.list_folders().await.expect("list"),
+    )
+    .expect("save");
+    session.logout().await;
+    assert!(saved.removed.contains(&pins) && saved.removed.contains(&marked));
+    assert_eq!(names(&store, account), ["INBOX", "Marked 2", "Pins 2"]);
+    assert_ne!(id_of(&store, account, "Pins 2"), Some(pins));
+    assert_ne!(id_of(&store, account, "Pins 2"), Some(marked));
+}

@@ -666,11 +666,11 @@ fn a_virtual_folder_is_never_a_parent() {
     let starred = FolderId(11);
     assert!(matches!(
         plan_create(&list, ACCOUNT, Some(starred), "Work", None),
-        Err(FolderAdminError::NoSubfolders)
+        Err(FolderAdminError::NotAParent)
     ));
     assert!(matches!(
         plan_move(&list, FolderId(7), Some(starred)),
-        Err(FolderAdminError::NoSubfolders)
+        Err(FolderAdminError::NotAParent)
     ));
     let (_, under) = move_targets(&list, FolderId(7));
     assert!(!under.contains(&starred), "not offered in the move picker");

@@ -318,15 +318,20 @@ class RulesViewModel
             }
         }
 
-        /** Runs [block], then re-reads the rules. [refused] is what to say when the core says `Invalid`. */
+        /**
+         * Runs [block], then re-reads the rules. [refused] is what to say when the core says `Invalid`, and
+         * [onRefused] runs then too.
+         */
         private fun act(
             refused: Int = R.string.rules_failed,
+            onRefused: () -> Unit = {},
             block: suspend () -> Unit,
         ) {
             viewModelScope.launch {
                 try {
                     block()
                 } catch (_: RulesFailure.Invalid) {
+                    onRefused()
                     _results.send(refused to -1)
                 } catch (_: RulesFailure) {
                     _results.send(R.string.rules_failed to -1)
@@ -335,10 +340,17 @@ class RulesViewModel
             }
         }
 
-        /** Saves [draft]; returns false (nothing saved) when something is missing. */
-        fun save(draft: RuleDraft): Boolean {
+        /**
+         * Saves [draft]; returns false (nothing saved) when something is missing. Once the draft is complete only
+         * a move into a folder that can't take messages makes the core refuse it (#465): [onRefused] then runs, so
+         * the editor can open again with the user's edits.
+         */
+        fun save(
+            draft: RuleDraft,
+            onRefused: () -> Unit = {},
+        ): Boolean {
             val input = draft.toInput(accountId) ?: return false
-            act { core.saveRule(draft.id, input) }
+            act(refused = R.string.rules_target_refused, onRefused = onRefused) { core.saveRule(draft.id, input) }
             return true
         }
 
@@ -427,13 +439,16 @@ fun RulesScreen(
             snackbar.showSnackbar(text)
         }
     }
+    // Folders that arrive after the rule was opened (#465 review): a move into one that can't take messages
+    // is cleared then too, so the editor never shows "Pick folder" while the draft still holds it.
+    LaunchedEffect(state.folders) { editing = editing?.withoutVirtualTargets(state.folders) }
     val draft = editing
     if (draft != null) {
         RuleEditor(
             draft = draft,
             folders = state.folders,
             onChange = { editing = it },
-            onSave = { if (viewModel.save(it)) editing = null },
+            onSave = { d -> if (viewModel.save(d) { editing = d }) editing = null },
             onCancel = { editing = null },
             onDelete =
                 draft.id?.let { id ->

@@ -495,10 +495,13 @@ pub fn save_folders(
 /// `folders` must be a complete, successful `LIST`. Stored folders it
 /// doesn't contain are gone from the server (deleted or renamed by another
 /// client) and are removed with their messages and queued changes; rules
-/// that moved mail to them are turned off with a note. Two exceptions: a
+/// that moved mail to them are turned off with a note. Three exceptions: a
 /// standard folder (a role from SPECIAL-USE or its name) that is gone under
 /// its old name but whose role now belongs to a newly listed folder is
-/// renamed to it instead, keeping its row; and the Inbox is never removed.
+/// renamed to it instead, keeping its row; a virtual folder (#390), such as
+/// Gmail's Starred, is renamed the same way by its virtual role, but only
+/// when exactly one such folder is gone and exactly one is newly listed
+/// (#461); and the Inbox is never removed.
 /// An empty list removes nothing: a server always has an Inbox, so an empty
 /// answer can't be trusted.
 pub fn save_folder_list(
@@ -530,6 +533,11 @@ pub fn save_folder_list(
     // again (#461).
     let mut renames = Vec::new();
     let mut removed = Vec::new();
+    let gone_virtual: Vec<VirtualRole> = gone
+        .iter()
+        .filter(|f| f.details.role.is_none())
+        .filter_map(|f| f.details.virtual_role)
+        .collect();
     for f in gone {
         let free = |l: &&ImapFolder| {
             !existing.contains_key(&l.raw_name)
@@ -539,10 +547,20 @@ pub fn save_folder_list(
         };
         let found = match (f.details.role, f.details.virtual_role) {
             (Some(role), _) => folders.iter().filter(free).find(|l| l.role == Some(role)),
-            (None, Some(kind)) => folders
-                .iter()
-                .filter(free)
-                .find(|l| l.role.is_none() && l.virtual_role == Some(kind)),
+            // Several folders can share a virtual role (every `\Flagged`
+            // one), so only an unambiguous pair is the same folder renamed:
+            // exactly one gone and exactly one newly listed (#482 review).
+            (None, Some(kind)) => {
+                let gone_alike = gone_virtual.iter().filter(|k| **k == kind).count();
+                let mut listed = folders
+                    .iter()
+                    .filter(free)
+                    .filter(|l| l.role.is_none() && l.virtual_role == Some(kind));
+                match (gone_alike, listed.next(), listed.next()) {
+                    (1, Some(only), None) => Some(only),
+                    _ => None,
+                }
+            }
             (None, None) => None,
         };
         match found {

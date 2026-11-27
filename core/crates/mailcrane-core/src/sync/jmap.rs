@@ -831,8 +831,8 @@ fn transient(e: &JmapError) -> bool {
 }
 
 /// A mailbox role as a folder role (RFC 8621 §2, the IANA mailbox roles).
-/// The virtual ones (flagged, important) get no folder role: nothing moves,
-/// archives or deletes into them ([`virtual_role`], #461).
+/// `flagged` is virtual ([`virtual_role`], #461) and `important` an
+/// ordinary mailbox: neither gets a folder role.
 fn folder_role(role: &MailboxRole) -> Option<FolderRole> {
     Some(match *role {
         MailboxRole::Inbox => FolderRole::Inbox,
@@ -846,12 +846,12 @@ fn folder_role(role: &MailboxRole) -> Option<FolderRole> {
     })
 }
 
-/// A mailbox role as a virtual folder (#390, #461): the same IANA roles
-/// as IMAP's `\Flagged` and Gmail's `\Important`.
+/// A mailbox role as a virtual folder (#390, #461). Only `flagged`, as
+/// IMAP's `\Flagged`: `important` (RFC 8457 §3) can be a real folder, and
+/// IMAP counts it as virtual only on Gmail, which has no JMAP.
 fn virtual_role(role: &MailboxRole) -> Option<VirtualRole> {
     match *role {
         MailboxRole::Flagged => Some(VirtualRole::Starred),
-        MailboxRole::Important => Some(VirtualRole::Important),
         _ => None,
     }
 }
