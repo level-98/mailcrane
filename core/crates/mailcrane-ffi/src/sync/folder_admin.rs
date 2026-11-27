@@ -348,13 +348,8 @@ impl SyncEngine {
                 Ok(result?)
             })
         })
-        .unwrap_or_else(|| {
-            tracing::error!(
-                stage = "job thread",
-                "the folder change couldn't run on a thread of its own"
-            );
-            Err(sync(events::SyncErrorKind::Network))
-        })
+        // `worker::on_job_thread` has logged why (#468).
+        .unwrap_or(Err(sync(events::SyncErrorKind::Network)))
     }
 }
 

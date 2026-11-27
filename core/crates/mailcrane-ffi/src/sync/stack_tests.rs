@@ -105,19 +105,16 @@ fn pooled_and_sync_calls_run_from_a_small_stack_thread() {
     drop(store);
     let (first, second) = (ids[0], ids[1]);
 
-    // Opening a message: the first call opens the pooled connection.
+    // Opening a message, twice: the first call opens the pooled connection.
     on_small_stack(|| assert_eq!(engine.fetch_body(second), Ok(())));
-    // With the connection open, a body save takes no turn behind its own
-    // urgent mark (#463 review): `urgent_writes` is entered on the thread
-    // that writes, so the store doesn't wait `URGENT_WAIT` (500 ms) for it.
-    let took = on_small_stack(|| {
-        let started = std::time::Instant::now();
-        assert_eq!(engine.fetch_body(first), Ok(()));
-        started.elapsed()
-    });
-    assert!(
-        took < std::time::Duration::from_millis(400),
-        "opening a message waited {took:?}"
+    on_small_stack(|| assert_eq!(engine.fetch_body(first), Ok(())));
+    // Each body was saved by a thread that wrote urgently (#294): the mark
+    // is made where the save happens, not on the caller's thread (#468). No
+    // clock involved.
+    assert_eq!(
+        *engine.urgent_at_open.lock().expect("lock"),
+        [true, true],
+        "both opens saved their body under the urgent mark"
     );
     // Searching the server: pooled, under the account's writer lock. Both
     // matches are stored already, so it stores none.
@@ -167,14 +164,72 @@ fn pooled_and_sync_calls_run_from_a_small_stack_thread() {
         );
     });
 
-    // Closing the pooled connection (LOGOUT) from a small stack, too.
-    on_small_stack(|| engine.close_connections(CloseReason::Background));
-    assert_eq!(
+    // Closing the pooled connection (LOGOUT) from a small stack, too. Every
+    // connection ends with LOGOUT, so count them: exactly one more (#468).
+    let logouts = || {
         runtime
             .block_on(imap.received_commands())
-            .last()
-            .map(String::as_str),
-        Some("LOGOUT"),
-        "the pooled connection logged out"
-    );
+            .iter()
+            .filter(|c| c.as_str() == "LOGOUT")
+            .count()
+    };
+    let before = logouts();
+    on_small_stack(|| engine.close_connections(CloseReason::Background));
+    assert_eq!(logouts(), before + 1, "the pooled connection logged out");
+    assert!(!engine.pool.is_open(account), "and is gone");
+}
+
+#[test]
+fn a_job_that_could_not_run_is_reported_for_its_account() {
+    // #468: a thread that didn't start (or a job that panicked, in the app)
+    // sends a `SyncError` event for the account, as a runtime that couldn't
+    // be built does, and the call fails with `Network`.
+    let dir = tempfile::tempdir().expect("dir");
+    let path = dir.path().join("report.db").to_string_lossy().into_owned();
+    let collect = Arc::new(super::tests::Collect::default());
+    let engine = SyncEngine::new(path, collect.clone());
+    let got: Result<u8, SyncFailure> = engine.job_outcome(AccountId(7), None);
+    assert_eq!(got, Err(failed(events::SyncErrorKind::Network)));
+    let events = collect.0.lock().expect("lock").clone();
+    assert_eq!(events.len(), 1, "reported once");
+    assert!(matches!(
+        events.first(),
+        Some(CoreEvent::SyncError {
+            account_id: 7,
+            kind: SyncErrorKind::Network
+        })
+    ));
+    // A job that ran keeps its own result and sends nothing more.
+    let ran: Result<u8, SyncFailure> = engine.job_outcome(AccountId(7), Some(Ok(3)));
+    assert_eq!(ran, Ok(3));
+    assert_eq!(collect.0.lock().expect("lock").len(), events.len());
+}
+
+#[test]
+fn urgent_job_work_is_urgent_on_the_job_thread() {
+    // #468: the urgent mark is per thread, so it must be made on the job
+    // thread that writes, not on the caller's (where it once was, and every
+    // body save then waited `URGENT_WAIT` behind its own mark).
+    let dir = tempfile::tempdir().expect("dir");
+    let path = dir.path().join("urgent.db").to_string_lossy().into_owned();
+    let engine = SyncEngine::new(path.clone(), Arc::new(super::tests::Collect::default()));
+    let (caller, thread, urgent, nested_urgent) = on_small_stack(|| {
+        // The real caller: this small-stack thread, not the test's.
+        let caller = std::thread::current().id();
+        let (thread, urgent, nested) = engine
+            .urgent_job(AccountId(1), || {
+                // A job started inside runs right here and keeps the mark.
+                let nested = on_job_thread(|| Ok(mailcrane_store::urgent_here(&path)))?;
+                Ok((
+                    std::thread::current().id(),
+                    mailcrane_store::urgent_here(&path),
+                    nested,
+                ))
+            })
+            .expect("ran");
+        (caller, thread, urgent, nested)
+    });
+    assert_ne!(thread, caller, "the work ran on a job thread");
+    assert!(urgent, "the job thread writes urgently");
+    assert!(nested_urgent, "so does a job started inside it");
 }
