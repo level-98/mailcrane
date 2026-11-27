@@ -175,7 +175,10 @@ fn run_rules(
             // The server's script dropped a move into a virtual folder (#390),
             // so that one took no turn.
             for action in &rule.rule.actions {
-                moved |= match action {
+                if moved {
+                    break;
+                }
+                moved = match action {
                     RuleAction::Move(to) => !is_virtual(store, *to)?,
                     RuleAction::Archive | RuleAction::Delete => true,
                     RuleAction::MarkRead | RuleAction::Flag => false,

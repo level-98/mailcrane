@@ -180,7 +180,7 @@ pub fn plan(store: &Store, account: AccountId, ext: &Extensions) -> Result<Plan,
     let rules = store.list_rules(Some(account))?;
     // A rule for every account can move into another account's virtual
     // folder: decided by id, as the device does (`rules::is_virtual`).
-    for rule in &rules {
+    for rule in rules.iter().filter(|r| r.rule.enabled) {
         for action in &rule.rule.actions {
             if let RuleAction::Move(to) = action {
                 if crate::rules::is_virtual(store, *to)? {
@@ -203,9 +203,13 @@ pub fn plan(store: &Store, account: AccountId, ext: &Extensions) -> Result<Plan,
         match compiled {
             // Nothing left for a script, such as a rule whose only action is
             // a move into a virtual folder (#390): kept off the server (no
-            // empty script uploaded for it), and it moves nothing on the
-            // device either, so later rules may still go to the server.
-            Some(r) if r.flags.is_empty() && r.moving.is_none() && !r.stop => {
+            // empty script uploaded for it). It moves nothing on the device,
+            // so later rules may still go to the server, unless it stops
+            // processing: then they stay here too, so the order still holds.
+            Some(r) if r.flags.is_empty() && r.moving.is_none() => {
+                if r.stop {
+                    rest_local = true;
+                }
                 plan.device.push(rule.id);
             }
             Some(r) => {

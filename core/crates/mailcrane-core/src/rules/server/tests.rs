@@ -263,6 +263,33 @@ fn a_global_rules_move_into_another_accounts_virtual_folder_is_dropped_too() {
 }
 
 #[test]
+fn a_stop_rule_whose_only_move_is_virtual_stays_on_the_device_with_what_follows() {
+    // #458 review: such a rule compiles to "stop" and nothing else. On the
+    // server it would mean an empty script uploaded and activated, so it
+    // stays on the device, and so does every rule after it (it stops them).
+    let f = fixture();
+    let mut starred = folder(f.account, "Starred", None);
+    starred.virtual_role = Some(mailcrane_store::VirtualRole::Starred);
+    let starred = f.store.upsert_folder(&starred).expect("folder");
+    let mut stop = rule(
+        vec![RuleCondition::Subject("sale".into())],
+        vec![RuleAction::Move(starred)],
+    );
+    stop.stop_processing = true;
+    let stop = f.store.insert_rule(&stop).expect("rule");
+    let later = f
+        .store
+        .insert_rule(&rule(
+            vec![RuleCondition::Subject("Invoice".into())],
+            vec![RuleAction::Move(f.bills)],
+        ))
+        .expect("rule");
+    let p = plan(&f.store, f.account, &ALL).expect("plan");
+    assert!(p.server.is_empty(), "no script for it");
+    assert_eq!(p.device, [stop, later]);
+}
+
+#[test]
 fn folder_names_are_decoded_and_escaped() {
     let f = fixture();
     let ete = mailcrane_imap::mutf7::encode("Été/\"Quoted\" \\ box");
