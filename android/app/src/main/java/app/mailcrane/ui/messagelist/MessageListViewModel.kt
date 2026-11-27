@@ -122,7 +122,7 @@ class MessageListViewModel
          */
         val errors: Flow<SyncErrorKind> = _errors.receiveAsFlow().filter { it != SyncErrorKind.BUSY }
 
-        private val _actionsUndone = Channel<Unit>(Channel.CONFLATED)
+        private val _actionsUndone = Channel<Int>(Channel.CONFLATED)
 
         /** The swipe settings (right, left). */
         val swipes: StateFlow<Pair<SwipeAction, SwipeAction>> =
@@ -418,8 +418,8 @@ class MessageListViewModel
             }
         }
 
-        /** The server refused a message action and it was undone; shown in a snackbar. */
-        val actionsUndone: Flow<Unit> = _actionsUndone.receiveAsFlow()
+        /** What to tell the user when a queued change couldn't be applied: a string resource. */
+        val actionsUndone: Flow<Int> = _actionsUndone.receiveAsFlow()
 
         /** How many of the newest messages the list holds; grows as you scroll. */
         private var window = PAGE_SIZE
@@ -434,7 +434,7 @@ class MessageListViewModel
             viewModelScope.launch {
                 core.events
                     .filter { it is CoreEvent.ActionFailed }
-                    .collect { _actionsUndone.send(Unit) }
+                    .collect { _actionsUndone.send(undoneMessage(it as CoreEvent.ActionFailed)) }
             }
             viewModelScope.launch {
                 reload()
@@ -588,3 +588,10 @@ private fun CoreEvent.isAbout(folderId: Long): Boolean =
         is CoreEvent.SyncError -> false
         is CoreEvent.ActionFailed -> false
     }
+
+/**
+ * The message for a change that couldn't be applied: the server refused it (and it was undone), or the server
+ * reset the folder, so changes queued there no longer point at the right messages (#517).
+ */
+internal fun undoneMessage(failed: CoreEvent.ActionFailed): Int =
+    if (failed.reason == SyncErrorKind.FOLDER_RESET) R.string.action_dropped_folder_reset else R.string.action_undone
