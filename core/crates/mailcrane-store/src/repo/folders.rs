@@ -1,9 +1,10 @@
 use super::narrow;
-use crate::{AccountId, Folder, FolderId, FolderRole, NewFolder, Store, StoreError};
+use crate::{AccountId, Folder, FolderId, FolderRole, NewFolder, Store, StoreError, VirtualRole};
 use rusqlite::{params, Row};
 
 fn from_row(r: &Row<'_>) -> Result<Folder, StoreError> {
     let role: Option<String> = r.get(5)?;
+    let virtual_role: Option<String> = r.get(11)?;
     Ok(Folder {
         id: FolderId(r.get(0)?),
         details: NewFolder {
@@ -17,6 +18,7 @@ fn from_row(r: &Row<'_>) -> Result<Folder, StoreError> {
             highestmodseq: r.get(8)?,
             is_subscribed: narrow::<u8>(r.get(9)?, "is_subscribed")? != 0,
             selectable: narrow::<u8>(r.get(10)?, "selectable")? != 0,
+            virtual_role: virtual_role.as_deref().and_then(VirtualRole::parse),
         },
     })
 }
@@ -26,13 +28,14 @@ impl Store {
     pub fn upsert_folder(&self, f: &NewFolder) -> Result<FolderId, StoreError> {
         let id: i64 = self.conn.query_row(
             "INSERT INTO folders (account_id, remote_name, display_name, delimiter, role, \
-             uidvalidity, uidnext, highestmodseq, is_subscribed, selectable) \
-             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10) \
+             uidvalidity, uidnext, highestmodseq, is_subscribed, selectable, virtual_role) \
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11) \
              ON CONFLICT (account_id, remote_name) DO UPDATE SET \
                display_name = excluded.display_name, delimiter = excluded.delimiter, \
                role = excluded.role, uidvalidity = excluded.uidvalidity, \
                uidnext = excluded.uidnext, highestmodseq = excluded.highestmodseq, \
-               is_subscribed = excluded.is_subscribed, selectable = excluded.selectable \
+               is_subscribed = excluded.is_subscribed, selectable = excluded.selectable, \
+               virtual_role = excluded.virtual_role \
              RETURNING id",
             params![
                 f.account_id.0,
@@ -44,7 +47,8 @@ impl Store {
                 f.uidnext,
                 f.highestmodseq,
                 f.is_subscribed,
-                f.selectable
+                f.selectable,
+                f.virtual_role.map(VirtualRole::as_str)
             ],
             |r| r.get(0),
         )?;
@@ -141,7 +145,7 @@ impl Store {
     pub fn get_folder(&self, id: FolderId) -> Result<Option<Folder>, StoreError> {
         let mut stmt = self.conn.prepare(
             "SELECT id, account_id, remote_name, display_name, delimiter, role, uidvalidity, \
-             uidnext, highestmodseq, is_subscribed, selectable FROM folders WHERE id = ?1",
+             uidnext, highestmodseq, is_subscribed, selectable, virtual_role FROM folders WHERE id = ?1",
         )?;
         let mut rows = stmt.query(params![id.0])?;
         rows.next()?.map(from_row).transpose()
@@ -192,7 +196,7 @@ impl Store {
     pub fn list_folders(&self, account: AccountId) -> Result<Vec<Folder>, StoreError> {
         let mut stmt = self.conn.prepare(
             "SELECT id, account_id, remote_name, display_name, delimiter, role, uidvalidity, \
-             uidnext, highestmodseq, is_subscribed, selectable FROM folders WHERE account_id = ?1 \
+             uidnext, highestmodseq, is_subscribed, selectable, virtual_role FROM folders WHERE account_id = ?1 \
              ORDER BY remote_name",
         )?;
         let mut rows = stmt.query(params![account.0])?;

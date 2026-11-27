@@ -38,6 +38,7 @@ fn setup() -> (Store, AccountId, FolderId) {
             highestmodseq: None,
             is_subscribed: true,
             selectable: true,
+            virtual_role: None,
         })
         .expect("folder");
     (store, account, folder)

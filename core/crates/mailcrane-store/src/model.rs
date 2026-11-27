@@ -135,6 +135,38 @@ pub struct Account {
     pub created_at: i64,
 }
 
+/// A virtual folder's kind (#390): a folder whose contents follow from a flag
+/// or the server's own judgement, such as Gmail's Starred and Important.
+/// Kept apart from [`FolderRole`] on purpose: it only gives the folder a name,
+/// an icon and a place among the system folders, and nothing that moves,
+/// archives or deletes by role can pick it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum VirtualRole {
+    /// Starred (flagged) mail, RFC 6154 `\Flagged`.
+    Starred,
+    /// Gmail's Important, Gmail's own `\Important` attribute.
+    Important,
+}
+
+impl VirtualRole {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            VirtualRole::Starred => "starred",
+            VirtualRole::Important => "important",
+        }
+    }
+
+    /// The stored text's kind. Unknown text (say, from a newer app) is none,
+    /// never an error: the folder just shows as an ordinary one.
+    pub(crate) fn parse(s: &str) -> Option<Self> {
+        match s {
+            "starred" => Some(VirtualRole::Starred),
+            "important" => Some(VirtualRole::Important),
+            _ => None,
+        }
+    }
+}
+
 /// A folder to insert or update, keyed by `(account, remote_name)`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NewFolder {
@@ -160,6 +192,9 @@ pub struct NewFolder {
     /// (RFC 9051 §7.3.1) such as Gmail's `[Gmail]` parent: it only holds
     /// other folders and is never `SELECT`ed.
     pub selectable: bool,
+    /// A virtual folder's kind, such as Gmail's Starred (#390). Such a
+    /// folder has no [`NewFolder::role`].
+    pub virtual_role: Option<VirtualRole>,
 }
 
 /// A stored folder.

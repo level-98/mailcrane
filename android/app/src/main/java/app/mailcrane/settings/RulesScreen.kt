@@ -66,6 +66,7 @@ import app.mailcrane.core.RulesFailure
 import app.mailcrane.core.ServerRulesNotice
 import app.mailcrane.core.SyncFailure
 import app.mailcrane.ui.folders.folderName
+import app.mailcrane.ui.folders.takesMoves
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedFactory
 import dagger.assisted.AssistedInject
@@ -694,7 +695,7 @@ internal fun RuleEditor(
                         val current = folders.firstOrNull { it.id == a.folderId }?.let { folderName(it) }
                         KindMenu(
                             current ?: stringResource(R.string.rules_pick_folder),
-                            folders.map {
+                            folders.filter { it.takesMoves }.map {
                                 it.id to
                                     folderName(it)
                             },

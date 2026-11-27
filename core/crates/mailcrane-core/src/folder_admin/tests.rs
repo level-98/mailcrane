@@ -17,6 +17,7 @@ fn folder(id: i64, remote: &str, role: Option<FolderRole>) -> Folder {
             highestmodseq: None,
             is_subscribed: true,
             selectable: true,
+            virtual_role: None,
         },
     }
 }

@@ -207,6 +207,12 @@ pub fn list_rules(db_path: String) -> Result<Vec<RuleInfo>, RulesFailure> {
 pub fn save_rule(db_path: String, id: Option<i64>, rule: RuleInput) -> Result<i64, RulesFailure> {
     let store = open(&db_path)?;
     let new = to_store(&rule)?;
+    // Nothing moves into a virtual folder such as Gmail's Starred (#390).
+    match mailcrane_core::rules::targets_take_moves(&store, &new) {
+        Ok(true) => {}
+        Ok(false) => return Err(RulesFailure::Invalid),
+        Err(_) => return Err(RulesFailure::Storage),
+    }
     match id {
         None => store
             .insert_rule(&new)
@@ -448,6 +454,66 @@ mod tests {
         assert_eq!(listed.len(), 1);
         assert_eq!(listed[0].rule.name, "Renamed");
         assert_eq!(listed[0].rule.actions, [RuleActionInfo::Archive]);
+    }
+
+    #[test]
+    fn a_rule_moving_into_a_virtual_folder_is_refused() {
+        // #390 review: nothing moves into a virtual folder such as Gmail's
+        // Starred, so a rule can't be saved with one as its target.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("m.db").to_string_lossy().into_owned();
+        let store = Store::open(&path).expect("store");
+        let account = store
+            .insert_account(&NewAccount {
+                display_name: "A".into(),
+                email: "a@example.org".into(),
+                imap_host: "imap.example.org".into(),
+                imap_port: 993,
+                imap_security: Security::Tls,
+                smtp_host: "smtp.example.org".into(),
+                smtp_port: 465,
+                smtp_security: Security::Tls,
+                username: "a@example.org".into(),
+            })
+            .expect("account");
+        let folder = |name: &str, virtual_role| mailcrane_store::NewFolder {
+            account_id: account,
+            remote_name: name.into(),
+            display_name: name.into(),
+            delimiter: Some("/".into()),
+            role: None,
+            uidvalidity: None,
+            uidnext: None,
+            highestmodseq: None,
+            is_subscribed: true,
+            selectable: true,
+            virtual_role,
+        };
+        let starred = store
+            .upsert_folder(&folder(
+                "[Gmail]/Starred",
+                Some(mailcrane_store::VirtualRole::Starred),
+            ))
+            .expect("starred");
+        let bills = store.upsert_folder(&folder("Bills", None)).expect("bills");
+        drop(store);
+        let mut r = input("To Starred");
+        r.actions = vec![
+            RuleActionInfo::MarkRead,
+            RuleActionInfo::Move {
+                folder_id: starred.0,
+            },
+        ];
+        assert_eq!(
+            save_rule(path.clone(), None, r.clone()),
+            Err(RulesFailure::Invalid)
+        );
+        assert!(
+            list_rules(path.clone()).expect("list").is_empty(),
+            "nothing saved"
+        );
+        r.actions[1] = RuleActionInfo::Move { folder_id: bills.0 };
+        assert!(save_rule(path, None, r).is_ok());
     }
 
     #[test]

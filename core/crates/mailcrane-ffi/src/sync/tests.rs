@@ -94,6 +94,7 @@ fn sync_load_older_and_fetch_body_through_the_ffi() {
             highestmodseq: None,
             is_subscribed: true,
             selectable: true,
+            virtual_role: None,
         })
         .expect("folder");
     drop(store);
@@ -240,6 +241,7 @@ fn live_updates_start_once_deliver_and_stop_through_the_ffi() {
             highestmodseq: None,
             is_subscribed: true,
             selectable: true,
+            virtual_role: None,
         })
         .expect("folder");
 
@@ -606,6 +608,7 @@ fn a_local_only_account_never_connects() {
             highestmodseq: None,
             is_subscribed: true,
             selectable: true,
+            virtual_role: None,
         })
         .expect("folder");
     let message = store
@@ -731,6 +734,7 @@ fn an_unreadable_local_marker_fails_loudly_and_never_connects() {
             highestmodseq: None,
             is_subscribed: true,
             selectable: true,
+            virtual_role: None,
         })
         .expect("folder");
     drop(store);

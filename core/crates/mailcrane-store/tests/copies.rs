@@ -33,6 +33,7 @@ fn folder(account_id: AccountId, name: &str, role: Option<FolderRole>) -> NewFol
         highestmodseq: None,
         is_subscribed: true,
         selectable: true,
+        virtual_role: None,
     }
 }
 

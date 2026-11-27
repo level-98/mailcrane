@@ -98,6 +98,7 @@ impl<'a> JmapSyncer<'a> {
             highestmodseq: None,
             is_subscribed: true,
             selectable: true,
+            virtual_role: None,
         })?;
         self.store.set_jmap_mailbox(folder, &id)?;
         Ok(folder)
@@ -557,6 +558,7 @@ impl<'a> JmapSyncer<'a> {
                 highestmodseq: None,
                 is_subscribed: true,
                 selectable: true,
+                virtual_role: None,
             })?;
             self.store.set_jmap_mailbox(id, &m.id)?;
             if role == Some(FolderRole::Inbox) {

@@ -4,7 +4,8 @@ use super::{FailureLog, FolderSyncer, SyncConfig, SyncError};
 use crate::events::{CoreEvent, EventListener, SyncErrorKind};
 use mailcrane_imap::{ImapConfig, ImapSecurity, Secret, Session};
 use mailcrane_store::{
-    AccountId, BodyState, FolderId, MessageId, NewAccount, NewFolder, Security, Store,
+    AccountId, BodyState, FolderId, FolderRole, MessageId, NewAccount, NewFolder, Security, Store,
+    VirtualRole,
 };
 use mailcrane_testkit::{FakeImap, Fault};
 use std::sync::Mutex;
@@ -91,6 +92,7 @@ fn setup() -> (Store, AccountId, FolderId) {
             highestmodseq: None,
             is_subscribed: true,
             selectable: true,
+            virtual_role: None,
         })
         .expect("folder");
     (store, account, folder)
@@ -411,6 +413,93 @@ async fn a_folder_too_big_for_one_search_line_syncs_newest_first() {
 }
 
 #[tokio::test]
+async fn gmails_starred_and_important_are_virtual_folders_with_no_role() {
+    // #390: listed with \Flagged and \Important, "[Gmail]/Starred" and
+    // "[Gmail]/Important" are virtual folders, shown like the rest of
+    // "[Gmail]" instead of by their raw paths.
+    let imap = FakeImap::builder()
+        .user(USER, PASSWORD)
+        .folder("INBOX", raws(1))
+        .gmail_layout()
+        .start()
+        .await
+        .expect("fake imap starts");
+    let (store, account, _) = setup();
+    let mut session = connect(&imap).await;
+    let listed = session.list_folders().await.expect("list");
+    mailcrane_imap::save_folders(&store, account, &listed).expect("save");
+
+    let folders = store.list_folders(account).expect("folders");
+    let details = |name: &str| {
+        folders
+            .iter()
+            .find(|f| f.details.remote_name == name)
+            .unwrap_or_else(|| panic!("{name} listed"))
+            .details
+            .clone()
+    };
+    let role = |name: &str| details(name).role;
+    // Virtual folders: a virtual role and no role, so nothing moves into them.
+    assert_eq!(
+        details("[Gmail]/Starred").virtual_role,
+        Some(VirtualRole::Starred)
+    );
+    assert_eq!(
+        details("[Gmail]/Important").virtual_role,
+        Some(VirtualRole::Important)
+    );
+    assert_eq!(role("[Gmail]/Starred"), None);
+    assert_eq!(role("[Gmail]/Important"), None);
+    assert!(folders
+        .iter()
+        .filter(|f| f.details.role.is_some())
+        .all(|f| f.details.virtual_role.is_none()));
+    // The others are unchanged.
+    assert_eq!(role("INBOX"), Some(FolderRole::Inbox));
+    assert_eq!(role("[Gmail]/All Mail"), Some(FolderRole::All));
+    assert_eq!(role("[Gmail]/Sent Mail"), Some(FolderRole::Sent));
+    assert_eq!(role("[Gmail]/Drafts"), Some(FolderRole::Drafts));
+    assert_eq!(role("[Gmail]/Spam"), Some(FolderRole::Spam));
+    assert_eq!(role("[Gmail]/Trash"), Some(FolderRole::Trash));
+    assert_eq!(role("[Gmail]"), None);
+}
+
+#[tokio::test]
+async fn important_counts_only_on_gmail_but_flagged_counts_anywhere() {
+    // #390 review: \Important isn't in RFC 6154, so on a server without the
+    // Gmail quirk (no X-GM-EXT-1) a folder carrying it stays an ordinary
+    // folder. \Flagged is RFC 6154 and means starred everywhere.
+    let imap = FakeImap::builder()
+        .user(USER, PASSWORD)
+        .folder("INBOX", raws(1))
+        .folder("Important", Vec::new())
+        .special_use("Important", "\\Important")
+        .folder("Flagged", Vec::new())
+        .special_use("Flagged", "\\Flagged")
+        .start()
+        .await
+        .expect("fake imap starts");
+    let (store, account, _) = setup();
+    let mut session = connect(&imap).await;
+    assert!(!session
+        .quirks()
+        .contains(&mailcrane_imap::ServerQuirk::GmailLabels));
+    let listed = session.list_folders().await.expect("list");
+    mailcrane_imap::save_folders(&store, account, &listed).expect("save");
+    let folders = store.list_folders(account).expect("folders");
+    let virtual_role = |name: &str| {
+        folders
+            .iter()
+            .find(|f| f.details.remote_name == name)
+            .unwrap_or_else(|| panic!("{name} listed"))
+            .details
+            .virtual_role
+    };
+    assert_eq!(virtual_role("Important"), None);
+    assert_eq!(virtual_role("Flagged"), Some(VirtualRole::Starred));
+}
+
+#[tokio::test]
 async fn gmail_layout_syncs_every_folder_and_never_selects_the_noselect_parent() {
     let imap = FakeImap::builder()
         .user(USER, PASSWORD)
@@ -499,6 +588,7 @@ async fn a_refused_select_logs_the_command_and_error_but_no_server_text() {
             highestmodseq: None,
             is_subscribed: true,
             selectable: true,
+            virtual_role: None,
         })
         .expect("folder");
     let events = Events::default();

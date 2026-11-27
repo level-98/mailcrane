@@ -171,6 +171,7 @@ fn inbox_folder(account_id: AccountId, uidnext: i64) -> NewFolder {
         highestmodseq: None,
         is_subscribed: true,
         selectable: true,
+        virtual_role: None,
     }
 }
 
