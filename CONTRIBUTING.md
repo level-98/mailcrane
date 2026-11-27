@@ -46,13 +46,16 @@ Open a **feature request** first and wait for a maintainer to label it `accepted
 
 ## CI
 
-Every pull request and every push to `main` runs [`ci.yml`](.github/workflows/ci.yml), with no path filters, so docs-only PRs get the same checks. Each job only installs tools and runs `cargo xtask ci`:
+Every pull request, merge queue group and push to `main` runs [`ci.yml`](.github/workflows/ci.yml). Each job only installs tools and runs `cargo xtask ci`.
+
+A pull request runs only the jobs its files need (the `changes` job decides, #530): a docs-only change (`docs/`, `website/`, top-level `*.md`) skips `linux` and `windows`, and an `android/`-only change skips `windows`. Every other change and every push to `main` run both. `ci-ok` passes when every needed job passed.
 
 | Job | Runs on | Checks |
 |---|---|---|
-| `linux` | Ubuntu | Every step (`--strict`): fmt, clippy, tests, `cargo deny` and the open-source licences check (cargo-about; after changing Rust dependencies run `cargo xtask licences` and commit the result), the design check and the release-notes script tests, and the Android lint, unit tests, debug and release builds (the core cross-compiled for arm64-v8a and x86_64), with a check that each APK packages its own core. The debug APK is uploaded as the `android-debug-apk` artifact for 7 days, so you can install it with `adb install` without building. |
+| `linux` | Ubuntu | Every step (`--strict`; skipped for docs-only changes): fmt, clippy, tests, `cargo deny` and the open-source licences check (cargo-about; after changing Rust dependencies run `cargo xtask licences` and commit the result), the design check and the release-notes script tests, and the Android lint, unit tests, debug and release builds (the core cross-compiled for arm64-v8a and x86_64), with a check that each APK packages its own core. The debug APK is uploaded as the `android-debug-apk` artifact for 7 days, so you can install it with `adb install` without building. |
 | `windows` | Windows | fmt, clippy and tests of the core (`--strict --only fmt,lint,test`), so it stays portable. |
-| `ci-ok` | Ubuntu | Passes only if every job above passed. Look here first. |
+| `changes` | Ubuntu | Which jobs the change needs, from its files. |
+| `ci-ok` | Ubuntu | Passes only if every job the change needs passed. Look here first. |
 
 ## Review
 
@@ -114,7 +117,7 @@ The agent runs on a maintainer's Claude token, so:
 To try Mailcrane or check a change, you don't need to build it:
 
 - **Nightly test build:** linked from the [Download page](https://mailcrane.app/download/). It's a release build signed with a development key, so it updates earlier test builds but not a store or release version.
-- **Debug build:** the `android-debug-apk` artifact from any CI run (see [CI](#ci)). It installs as `app.mailcrane.debug`, alongside the release app (#406), and its Settings has **Load test mail**, which adds made-up messages without connecting anywhere.
+- **Debug build:** the `android-debug-apk` artifact from any CI run except a docs-only one (see [CI](#ci)). It installs as `app.mailcrane.debug`, alongside the release app (#406), and its Settings has **Load test mail**, which adds made-up messages without connecting anywhere.
 
 The README's [Try it](README.md#try-it) section says what's built and what isn't yet. In bug reports and screenshots, never show a real address or real mail: use Load test mail.
 
