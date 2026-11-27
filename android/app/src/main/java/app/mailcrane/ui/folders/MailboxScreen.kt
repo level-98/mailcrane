@@ -107,7 +107,12 @@ fun MailboxScreen(
             var openThread by rememberSaveable { mutableStateOf<Pair<Long, String>?>(null) }
             if (showManageFolders) {
                 BackHandler { showManageFolders = false }
-                ManageFoldersScreen(accountId = accountId, onBack = { showManageFolders = false })
+                ManageFoldersScreen(
+                    accountId = accountId,
+                    onBack = { showManageFolders = false },
+                    // Names whose folders these are (#396).
+                    accountEmail = accounts.firstOrNull { it.id == accountId }?.email,
+                )
                 return
             }
             if (showOutbox) {
@@ -145,7 +150,6 @@ fun MailboxScreen(
                 BackHandler { showSettings = false }
                 SettingsScreen(
                     onBack = { showSettings = false },
-                    accountId = accountId,
                     accounts = accounts,
                     onAddAccount = onAddAccount,
                     onRemoveAccount = onRemoveAccount,

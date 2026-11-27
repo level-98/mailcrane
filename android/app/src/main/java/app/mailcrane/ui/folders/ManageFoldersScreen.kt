@@ -44,6 +44,7 @@ import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -58,6 +59,7 @@ private val LEVEL_INDENT = 16.dp
 fun ManageFoldersScreen(
     accountId: Long,
     onBack: () -> Unit,
+    accountEmail: String? = null,
     viewModel: ManageFoldersViewModel =
         hiltViewModel<ManageFoldersViewModel, ManageFoldersViewModel.Factory>(
             key = "manage-folders-$accountId",
@@ -77,6 +79,7 @@ fun ManageFoldersScreen(
         onConfirmRename = viewModel::confirmRename,
         onConfirmMove = viewModel::confirmMove,
         onConfirmDelete = viewModel::confirmDelete,
+        accountEmail = accountEmail,
     )
 }
 
@@ -94,12 +97,25 @@ fun ManageFoldersContent(
     onConfirmRename: (String) -> Unit,
     onConfirmMove: (Long?) -> Unit,
     onConfirmDelete: () -> Unit,
+    /** The account whose folders these are, shown under the title (#396). */
+    accountEmail: String? = null,
 ) {
     Scaffold(
         topBar = {
             TopAppBar(
                 title = {
-                    Text(stringResource(R.string.folders_manage_title), modifier = Modifier.semantics { heading() })
+                    Column(Modifier.semantics(mergeDescendants = true) { heading() }) {
+                        Text(stringResource(R.string.folders_manage_title))
+                        if (!accountEmail.isNullOrBlank()) {
+                            Text(
+                                accountEmail,
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                    }
                 },
                 navigationIcon = {
                     IconButton(onClick = onBack) {

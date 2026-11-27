@@ -149,11 +149,13 @@ class SettingsViewModel
         }
     }
 
-/** The app's settings. */
+/**
+ * The app's settings. Per-account options live on each account's own page, opened from its row
+ * under Accounts (#396), so none here depends on which mailbox was open behind Settings.
+ */
 @Composable
 fun SettingsScreen(
     onBack: () -> Unit,
-    accountId: Long? = null,
     onOpenRules: (() -> Unit)? = null,
     accounts: List<app.mailcrane.core.AccountSummary> = emptyList(),
     onAddAccount: (() -> Unit)? = null,
@@ -165,6 +167,18 @@ fun SettingsScreen(
     if (showAbout) {
         BackHandler { showAbout = false }
         AboutScreen(onBack = { showAbout = false })
+        return
+    }
+    var openAccount by rememberSaveable { mutableStateOf<Long?>(null) }
+    val account = accounts.firstOrNull { it.id == openAccount }
+    if (account != null) {
+        BackHandler { openAccount = null }
+        AccountSettingsPage(
+            account = account,
+            onBack = { openAccount = null },
+            onRemove = onRemoveAccount,
+            onChanged = onAccountsChanged,
+        )
         return
     }
     val cleanLinks by viewModel.cleanLinks.collectAsStateWithLifecycle()
@@ -226,14 +240,8 @@ fun SettingsScreen(
                 onLeftChange = viewModel::setSwipeLeft,
             ),
     ) {
-        if (accountId != null) {
-            SignatureSection(accountId)
-            SaveSentSection(accountId)
-            AccountColorSection(accountId, onChanged = onAccountsChanged)
-            AccountAdvancedSection(accountId)
-        }
         if (onAddAccount != null) {
-            AccountsSection(accounts, onAddAccount, onRemoveAccount)
+            AccountsSection(accounts, onAddAccount, onRemoveAccount, onOpen = { openAccount = it })
         }
         NotificationsSection()
         PushSection()
@@ -246,6 +254,8 @@ fun SettingsScreen(
         )
         DebugToolsSection(onAccountsChanged)
         onOpenRules?.let { open ->
+            // Its own heading, so it doesn't read as one of the security settings above it (#394).
+            SectionHeading(R.string.settings_rules_header)
             androidx.compose.material3.ListItem(
                 headlineContent = { Text(stringResource(R.string.rules_settings_row)) },
                 supportingContent = { Text(stringResource(R.string.rules_settings_summary)) },
@@ -291,6 +301,8 @@ fun SettingsContent(
         },
     ) { padding ->
         Column(Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState())) {
+            // Every group has a heading, this first one too (#394).
+            SectionHeading(R.string.settings_links_header)
             // The whole row is one switch for TalkBack and touch; the Switch itself stays silent.
             ListItem(
                 supportingContent = { Text(stringResource(R.string.settings_clean_links_summary)) },
@@ -372,14 +384,26 @@ data class AppearanceSettings(
     val onContactPhotosChange: (Boolean) -> Unit = {},
 )
 
+/** A settings section's heading: the same look and TalkBack heading as every other group's. */
+@Composable
+private fun SectionHeading(text: Int) {
+    Text(
+        text = stringResource(text),
+        style = MaterialTheme.typography.titleSmall,
+        color = MaterialTheme.colorScheme.primary,
+        modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 24.dp, bottom = 8.dp).semantics { heading() },
+    )
+}
+
 @Composable
 private fun AppearanceSection(a: AppearanceSettings) {
+    SectionHeading(R.string.settings_appearance_header)
+    // The three theme choices are one labelled group (#394), like Mailbox density below.
     Column(Modifier.fillMaxWidth().selectableGroup()) {
         Text(
-            text = stringResource(R.string.settings_appearance_header),
+            text = stringResource(R.string.settings_theme_label),
             style = MaterialTheme.typography.titleSmall,
-            color = MaterialTheme.colorScheme.primary,
-            modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 24.dp, bottom = 8.dp).semantics { heading() },
+            modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 4.dp).semantics { heading() },
         )
         for ((mode, label) in THEME_CHOICES) {
             ListItem(

@@ -351,6 +351,16 @@
     <string name="accounts_cancel">Cancel</string>
     <string name="accounts_remove_title">Remove %1$s?</string>
     <string name="accounts_remove_text">Its mail, drafts and password are deleted from this device. Nothing is deleted on the mail server.</string>
+    <!-- TalkBack's action on an account row in Settings, which opens that account's own settings page (#396). -->
+    <string name="accounts_open_settings">open account settings</string>
+    <!-- The button at the bottom of an account's settings page (#396). -->
+    <string name="accounts_remove_account">Remove account</string>
+    <!-- Settings: heading above the two link switches (#394). -->
+    <string name="settings_links_header">Links</string>
+    <!-- Settings › Appearance: label above the three theme choices (#394). -->
+    <string name="settings_theme_label">Theme</string>
+    <!-- Settings: heading above the Rules row, so it doesn't read as a security setting (#394). -->
+    <string name="settings_rules_header">Rules</string>
 
     <!-- Attachments (M2-04) -->
     <string name="compose_attach">Attach files</string>
