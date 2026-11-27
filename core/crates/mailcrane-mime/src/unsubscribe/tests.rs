@@ -1,4 +1,5 @@
 use super::*;
+use crate::auth::TraceHeader;
 
 fn mailto(address: &str, subject: Option<&str>, body: Option<&str>) -> MailtoTarget {
     MailtoTarget {
@@ -109,23 +110,55 @@ fn org_domains() {
 }
 
 #[test]
-fn received_and_provider_results() {
+fn received_by_and_the_trusted_results() {
     assert_eq!(
         received_by("from out.example.net (out.example.net [192.0.2.1]) by mx2.example.org (Postfix) with ESMTPS id 1; Wed, 25 Nov 2026 08:00:00 +0000").as_deref(),
         Some("mx2.example.org")
     );
     assert_eq!(received_by("from x (by evil.example) with SMTP"), None);
     assert_eq!(received_by("garbage"), None);
-    let results = vec![
-        "evil.example; dkim=pass header.d=example.net".to_owned(),
-        "mx1.example.org; dkim=pass header.d=example.net".to_owned(),
-        "mx9.example.org; dkim=fail".to_owned(),
+    // The cases the removed `provider_results` had, through the trusted
+    // picker (#513): the topmost header from the provider's organisation,
+    // above the hop where the message entered it.
+    let entered = "from out.example.net (out.example.net [192.0.2.1]) by mx2.example.org (Postfix) with ESMTPS id 1; Wed, 25 Nov 2026 08:00:00 +0000";
+    let ar = |v: &str| TraceHeader::AuthenticationResults(v.to_owned());
+    let trace = vec![
+        ar("evil.example; dkim=pass header.d=example.net"),
+        ar("mx1.example.org; dkim=pass header.d=example.net"),
+        ar("mx9.example.org; dkim=fail"),
+        TraceHeader::Received(entered.to_owned()),
     ];
     assert_eq!(
-        provider_results(&results, Some("mx2.example.org")),
+        trusted_results(&trace),
         Some("mx1.example.org; dkim=pass header.d=example.net")
     );
-    assert_eq!(provider_results(&results, Some("mx.other.example")), None);
-    assert_eq!(provider_results(&results, None), None);
-    assert_eq!(provider_results(&[], Some("mx2.example.org")), None);
+    let other = entered.replace("mx2.example.org", "mx.other.example");
+    let mut elsewhere = trace.clone();
+    elsewhere[3] = TraceHeader::Received(other);
+    assert_eq!(trusted_results(&elsewhere), None);
+    assert_eq!(trusted_results(&trace[..3]), None);
+    assert_eq!(trusted_results(&[]), None);
+}
+
+/// #513: a sender-written Authentication-Results naming the provider's
+/// authserv-id is never trusted when it sits below the hop where the
+/// message entered the provider, as when the provider added none of its
+/// own (RFC 8601 §5). The position-blind picker that would have trusted
+/// it is gone.
+#[test]
+fn a_sender_written_header_naming_the_provider_is_not_trusted() {
+    let trace = vec![
+        TraceHeader::Received(
+            "from out.example.net (out.example.net [192.0.2.1]) by mx2.example.org (Postfix) with ESMTPS id 1; Wed, 25 Nov 2026 08:00:00 +0000"
+                .to_owned(),
+        ),
+        // Below the provider's entry hop: written by the sender.
+        TraceHeader::AuthenticationResults(
+            "mx2.example.org; dkim=pass header.d=bank.example; dmarc=pass header.from=bank.example"
+                .to_owned(),
+        ),
+        TraceHeader::Received("from a (a [192.0.2.9]) by out.example.net with SMTP".to_owned()),
+    ];
+    assert_eq!(trusted_results(&trace), None);
+    assert_eq!(trusted_results_with(&trace, None), None);
 }
