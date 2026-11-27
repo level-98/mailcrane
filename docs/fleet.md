@@ -149,6 +149,8 @@ scripts/fleet/start-fleet.ps1
 
 It creates the worktrees, wires each one to Synapse, and opens one terminal window per seat. Close a window to stop that seat. By default it starts `lead`, `dev1`, `dev2`, `review` and `qa`. `-Seats` replaces that list: `-Seats lead,dev1` starts only those two, and `-Seats dev3` starts only the third dev seat (for a fleet that's already running). `-DryRun` checks everything and prints what it would start, without creating worktrees or opening windows. Worktrees get the main checkout's `.claude/settings.local.json` without Synapse's own hooks (any other hooks are kept): the Synapse registry binds the project to the main checkout only, so those hooks would always refuse there. Seats call `dev_sync_will_edit`, `dev_sync_did_edit` and the locks themselves.
 
+If `sccache` is installed (`cargo install sccache --locked`), every seat builds through it with one shared cache in `.worktrees/sccache` (up to 10G), so a new worktree doesn't rebuild every dependency (#531). Each seat keeps its own `CARGO_TARGET_DIR`. Without sccache nothing changes; the script and `-DryRun` say which applies. It takes effect when seats start.
+
 ## Known gaps
 
 - **When Synapse is down:** work from GitHub, which is the record anyway. Put results and hand-offs in PR and issue comments, and check your PRs and issues for new comments at every wake-up.
