@@ -310,14 +310,17 @@ impl SyncEngine {
         // are the body's own short transactions, marked urgent so they take
         // the next turn for SQLite's write lock: a sync writing batch after
         // batch would otherwise win every race and the save would end in
-        // SQLITE_BUSY.
+        // SQLITE_BUSY. The mark is per thread, so it's made on the job
+        // thread that writes (#462); `pooled` then runs right there.
         let config = self.config;
-        mailcrane_store::urgent_writes(&self.db_path, || {
-            self.pooled(account, Retry::Idempotent, |store, session, listener| {
-                Box::pin(async move {
-                    FolderSyncer::new(store, session, listener, account, config)
-                        .fetch_body(MessageId(message_id))
-                        .await
+        on_job_thread(|| {
+            mailcrane_store::urgent_writes(&self.db_path, || {
+                self.pooled(account, Retry::Idempotent, |store, session, listener| {
+                    Box::pin(async move {
+                        FolderSyncer::new(store, session, listener, account, config)
+                            .fetch_body(MessageId(message_id))
+                            .await
+                    })
                 })
             })
         })
@@ -959,18 +962,14 @@ impl SyncEngine {
 
 /// Runs `work` on a thread with a stack this crate sets (#462), never on the
 /// caller's, whose size the app chooses. A thread that couldn't start, or
-/// work that panicked, is a `Network` failure, as a runtime that couldn't be
-/// built is ([`runtime`]).
+/// work that panicked (in the app; tests let the panic through), comes back
+/// as `Network`, the kind `runtime` gives too. Only the call's result says
+/// so: no `SyncError` event is sent, since this runs before the job knows
+/// its account. `worker::on_job_thread` logs which of the two it was.
 pub(crate) fn on_job_thread<T: Send>(
     work: impl FnOnce() -> Result<T, SyncFailure> + Send,
 ) -> Result<T, SyncFailure> {
-    crate::worker::on_job_thread(work).unwrap_or_else(|| {
-        tracing::error!(
-            stage = "job thread",
-            "the job couldn't run on a thread of its own"
-        );
-        Err(failed(events::SyncErrorKind::Network))
-    })
+    crate::worker::on_job_thread(work).unwrap_or(Err(failed(events::SyncErrorKind::Network)))
 }
 
 pub(crate) fn runtime() -> Result<tokio::runtime::Runtime, events::SyncErrorKind> {

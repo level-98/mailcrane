@@ -15,8 +15,9 @@ use mailcrane_testkit::FakeImap;
 const SMALL_STACK: usize = 256 * 1024;
 
 /// Runs `f` on a new thread with a [`SMALL_STACK`] stack and returns what it
-/// returns. A stack overflow there aborts the whole test binary.
-fn on_small_stack<T: Send>(f: impl FnOnce() -> T + Send) -> T {
+/// returns. A stack overflow there aborts the whole test binary (or, on
+/// Windows, can surface as a failed TLS handshake).
+pub(super) fn on_small_stack<T: Send>(f: impl FnOnce() -> T + Send) -> T {
     std::thread::scope(|scope| {
         std::thread::Builder::new()
             .name("small-stack-caller".into())
@@ -37,7 +38,7 @@ fn raw(n: u32) -> Vec<u8> {
 }
 
 #[test]
-fn snooze_and_move_run_from_a_small_stack_thread() {
+fn pooled_and_sync_calls_run_from_a_small_stack_thread() {
     // The fake server runs on a runtime of its own while the engine blocks.
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(1)
@@ -104,6 +105,36 @@ fn snooze_and_move_run_from_a_small_stack_thread() {
     drop(store);
     let (first, second) = (ids[0], ids[1]);
 
+    // Opening a message: the first call opens the pooled connection.
+    on_small_stack(|| assert_eq!(engine.fetch_body(second), Ok(())));
+    // With the connection open, a body save takes no turn behind its own
+    // urgent mark (#463 review): `urgent_writes` is entered on the thread
+    // that writes, so the store doesn't wait `URGENT_WAIT` (500 ms) for it.
+    let took = on_small_stack(|| {
+        let started = std::time::Instant::now();
+        assert_eq!(engine.fetch_body(first), Ok(()));
+        started.elapsed()
+    });
+    assert!(
+        took < std::time::Duration::from_millis(400),
+        "opening a message waited {took:?}"
+    );
+    // Searching the server: pooled, under the account's writer lock. Both
+    // matches are stored already, so it stores none.
+    on_small_stack(|| {
+        assert_eq!(engine.search_server(inbox, "Lunch".into()), Ok(0));
+    });
+    // A folder change on the server (its own connection).
+    on_small_stack(|| {
+        assert!(engine
+            .create_folder(account.0, None, "Receipts".into())
+            .is_ok());
+    });
+    assert!(runtime
+        .block_on(imap.mailbox().folder_names())
+        .iter()
+        .any(|n| n == "Receipts"));
+
     // Snoozing: the replay moves the message to Snoozed on the server
     // (the path that crashed in #462).
     on_small_stack(|| {
@@ -138,4 +169,12 @@ fn snooze_and_move_run_from_a_small_stack_thread() {
 
     // Closing the pooled connection (LOGOUT) from a small stack, too.
     on_small_stack(|| engine.close_connections(CloseReason::Background));
+    assert_eq!(
+        runtime
+            .block_on(imap.received_commands())
+            .last()
+            .map(String::as_str),
+        Some("LOGOUT"),
+        "the pooled connection logged out"
+    );
 }
