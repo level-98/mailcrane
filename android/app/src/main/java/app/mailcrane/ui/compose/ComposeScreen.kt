@@ -194,7 +194,7 @@ fun ComposeContent(
                 // Attach and Send stay in the bar; scheduling and discarding are in "More options", so
                 // a phone-width bar leaves the title room for one line (#340).
                 actions = {
-                    IconButton(onClick = actions.onAttach, enabled = !state.sending) {
+                    IconButton(onClick = actions.onAttach, enabled = !state.sending && !state.loadingContent) {
                         Icon(
                             painter = painterResource(R.drawable.ic_mc_attach),
                             contentDescription = stringResource(R.string.compose_attach),
@@ -216,7 +216,9 @@ fun ComposeContent(
                     .verticalScroll(rememberScrollState()),
         ) {
             state.error?.let { ErrorBanner(it, state.errorAddresses, actions.onDismissError) }
-            val editable = !state.sending
+            // Nothing can be edited while sending, or while a draft or reply loads: the load overwrites the
+            // whole form (#435).
+            val editable = !state.sending && !state.loadingContent
             if (state.showFromPicker) {
                 FromPicker(state.accounts, state.fromAccountId, editable, actions.onFromChange)
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
@@ -235,12 +237,10 @@ fun ComposeContent(
                 Recipient(RecipientField.BCC, R.string.compose_bcc, state, actions, editable)
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
             }
-            // A draft or reply still loading would overwrite whatever is typed now (#435).
-            val contentEditable = editable && !state.loadingContent
             TextField(
                 value = state.subject,
                 onValueChange = actions.onSubjectChange,
-                enabled = contentEditable,
+                enabled = editable,
                 singleLine = true,
                 placeholder = { Text(stringResource(R.string.compose_subject)) },
                 keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
@@ -266,7 +266,7 @@ fun ComposeContent(
                 state = state,
                 onBodyChange = actions.onBodyChange,
                 actions = actions.rich,
-                enabled = contentEditable,
+                enabled = editable,
                 colors = plainFieldColors(),
                 currentState = actions.currentState,
             )

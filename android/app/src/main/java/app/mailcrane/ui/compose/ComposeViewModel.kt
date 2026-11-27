@@ -1,11 +1,13 @@
 package app.mailcrane.ui.compose
 
+import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import app.mailcrane.contacts.DeviceContacts
 import app.mailcrane.contacts.NoDeviceContacts
 import app.mailcrane.contacts.RecipientSuggestion
 import app.mailcrane.contacts.mergeSuggestions
+import app.mailcrane.core.CoreLog
 import app.mailcrane.core.AccountSummary
 import app.mailcrane.core.ComposeAttachment
 import app.mailcrane.core.ComposeCore
@@ -27,6 +29,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import javax.inject.Inject
 
 /** One recipient chip. [text] is what the user typed and goes back to the core unchanged. */
@@ -135,8 +138,8 @@ data class ComposeUiState(
      */
     val bodyCursor: Int? = null,
     /**
-     * A saved draft or a reply's quote is still loading (#435). The subject and body are read-only until it
-     * lands or fails: typing into them now would be overwritten by the load.
+     * A saved draft or a reply's quote is still loading (#435). The whole form is read-only until it lands or
+     * fails (the load overwrites recipients, From, subject and body), Send waits, and autosave pauses.
      */
     val loadingContent: Boolean = false,
     val sending: Boolean = false,
@@ -184,7 +187,7 @@ data class ComposeUiState(
 
     val hasValidRecipient: Boolean get() = to.hasValid || cc.hasValid || bcc.hasValid
 
-    val canSend: Boolean get() = !sending && fromAccountId != null && hasValidRecipient
+    val canSend: Boolean get() = !sending && !loadingContent && fromAccountId != null && hasValidRecipient
 
     val hasContent: Boolean
         get() = !to.isEmpty || !cc.isEmpty || !bcc.isEmpty || subject.isNotBlank() || body.isNotBlank()
@@ -281,16 +284,36 @@ class ComposeViewModel
         }
 
         /** Fills the screen from a saved draft (opening a Drafts folder message first if needed). */
-        private fun openDraft(request: DraftRequest) {
-            _state.update { it.copy(openedDraft = request, signatureAdded = true, loadingContent = true) }
-            viewModelScope.launch {
-                // However the load ends (applied, failed, nothing to open), the fields take typing again.
-                try {
-                    loadDraft(request)
-                } finally {
-                    _state.update { it.copy(loadingContent = false) }
+        /** The running draft or reply load, if any, and which one it is (#435). */
+        private var loadJob: Job? = null
+        private var loadGeneration = 0L
+
+        /**
+         * Runs a draft or reply load with the form locked. A newer load replaces an older one, so only the
+         * newest unlocks the form; however it ends (applied, failed, timed out, nothing to open), it does.
+         */
+        private fun startLoad(
+            onTimeout: ComposeError,
+            load: suspend () -> Unit,
+        ) {
+            loadJob?.cancel()
+            val generation = ++loadGeneration
+            _state.update { it.copy(loadingContent = true) }
+            loadJob =
+                viewModelScope.launch {
+                    try {
+                        if (withTimeoutOrNull(LOAD_TIMEOUT_MS) { load() } == null) {
+                            _state.update { it.copy(error = onTimeout) }
+                        }
+                    } finally {
+                        if (generation == loadGeneration) _state.update { it.copy(loadingContent = false) }
+                    }
                 }
-            }
+        }
+
+        private fun openDraft(request: DraftRequest) {
+            _state.update { it.copy(openedDraft = request, signatureAdded = true) }
+            startLoad(ComposeError.DRAFT_UNAVAILABLE) { loadDraft(request) }
         }
 
         private suspend fun loadDraft(request: DraftRequest) {
@@ -340,6 +363,8 @@ class ComposeViewModel
         /** Saves the message as a draft now, if there is anything to keep. Returns whether it is saved. */
         private suspend fun saveNow(): Boolean {
             val s = _state.value
+            // Nothing new to keep while a draft or reply loads; saving now would make a second draft (#435).
+            if (s.loadingContent) return true
             if (!s.hasContent || s.sending || s.result != null) return false
             val draft = s.toDraft() ?: return false
             return try {
@@ -388,14 +413,8 @@ class ComposeViewModel
 
         /** Fills the screen with the core's reply draft: recipients as chips, subject, quoted body. */
         private fun prefill(reply: ReplyRequest) {
-            _state.update { it.copy(prefilledFor = reply, signatureAdded = true, loadingContent = true) }
-            viewModelScope.launch {
-                try {
-                    loadReply(reply)
-                } finally {
-                    _state.update { it.copy(loadingContent = false) }
-                }
-            }
+            _state.update { it.copy(prefilledFor = reply, signatureAdded = true) }
+            startLoad(ComposeError.REPLY_UNAVAILABLE) { loadReply(reply) }
         }
 
         private suspend fun loadReply(reply: ReplyRequest) {
@@ -409,7 +428,16 @@ class ComposeViewModel
                     return
                 }
             val cc = chipsOf(draft.cc)
-            val signature = core.signatureFor(draft.accountId)
+            // A signature that can't be read must not crash the reply (#435 review): it goes without one.
+            val signature =
+                try {
+                    core.signatureFor(draft.accountId)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Exception) {
+                    runCatching { Log.w(CoreLog.TAG, "compose: no signature for account ${draft.accountId}") }
+                    null
+                }
             val kind = if (reply.kind == ReplyKind.FORWARD) DraftKind.FORWARD else DraftKind.REPLY
             val body = core.applySignature(draft.bodyText, signature, kind)
             _state.update {
@@ -583,8 +611,12 @@ class ComposeViewModel
             value: String,
             baseRevision: Long = _state.value.bodyRevision,
         ) {
-            // Read-only while a draft or reply loads (#435): the load would overwrite it.
-            if (_state.value.loadingContent) return
+            // Read-only while a draft or reply loads (#435): the load would overwrite it. A new revision tells
+            // the field to drop what it shows and take the view model's body back.
+            if (_state.value.loadingContent) {
+                _state.update { it.copy(bodyRevision = it.bodyRevision + 1) }
+                return
+            }
             _state.update {
                 if (baseRevision == it.bodyRevision) {
                     return@update it.copy(body = value, bodyStyles = restyle(it.body, value, it.bodyStyles))
@@ -818,18 +850,25 @@ class ComposeViewModel
         fun keepEditing() = _state.update { it.copy(confirmingDiscard = false) }
 
         /** Clears the message once the screen has handled [ComposeUiState.result], ready for the next one. */
-        fun reset() =
+        fun reset() {
+            // A load still running belongs to the old message (#435): stop it, and its end mustn't unlock anything.
+            loadJob?.cancel()
+            loadGeneration++
             _state.update {
                 // A new revision, so the body field drops whatever it still shows (#419).
                 rememberBody(it.bodyRevision, it.body)
                 ComposeUiState(accounts = it.accounts, bodyRevision = it.bodyRevision + 1)
             }
+        }
 
         private fun hasCcBcc(s: ComposeUiState) = !s.cc.isEmpty || !s.bcc.isEmpty
 
         companion object {
             /** A draft is saved this long after the last edit. */
             const val AUTOSAVE_MS = 2_000L
+
+            /** A draft or reply load that hasn't landed by now is given up, so the form unlocks (#435). */
+            const val LOAD_TIMEOUT_MS = 30_000L
         }
 
         private fun ComposeUiState.withFailure(e: Throwable): ComposeUiState {

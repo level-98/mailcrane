@@ -85,6 +85,9 @@ class ComposeViewModelTest {
         /** When set, a draft or reply load waits for it, as a slow one would (#435). */
         var loadGate: CompletableDeferred<Unit>? = null
         var signatures = mapOf<Long, String>()
+
+        /** When set, reading a signature throws it. */
+        var signatureFailure: Exception? = null
         val drafts = mutableMapOf<Long, ComposeDraft>()
         val deleted = mutableListOf<Long>()
         var nextDraftId = 100L
@@ -151,7 +154,10 @@ class ComposeViewModelTest {
 
         override suspend fun editOutbox(outboxId: Long): Long = 0
 
-        override suspend fun signatureFor(accountId: Long): String? = signatures[accountId]
+        override suspend fun signatureFor(accountId: Long): String? {
+            signatureFailure?.let { throw it }
+            return signatures[accountId]
+        }
 
         // Simple stand-ins for the core's rules (tested in Rust).
         override fun applySignature(
@@ -640,6 +646,80 @@ class ComposeViewModelTest {
         reopened.start(1, draft = DraftRequest(draftId = 999))
         assertFalse(reopened.state.value.loadingContent)
         assertEquals(ComposeError.DRAFT_UNAVAILABLE, reopened.state.value.error)
+    }
+
+    @Test
+    fun aLoadingFormCantBeSentOrAutosaved() {
+        // #435 review: Send waits for the load, and nothing is saved while it runs (that made a second draft).
+        val core = FakeCore()
+        val gate = CompletableDeferred<Unit>()
+        core.loadGate = gate
+        val vm = ComposeViewModel(core, FakeAppSettings())
+        vm.start(1, ReplyRequest(42, ReplyKind.REPLY, "Ana wrote:"))
+        vm.requestClose()
+        assertTrue("nothing saved during the load", core.drafts.isEmpty())
+        gate.complete(Unit)
+        assertTrue(vm.state.value.canSend)
+        assertFalse(vm.state.value.copy(loadingContent = true).canSend)
+    }
+
+    @Test
+    fun onlyTheNewestLoadUnlocksTheForm() {
+        // #435 review: a reset while a load runs cancels it; its end doesn't unlock the next load early.
+        val core = FakeCore()
+        val first = CompletableDeferred<Unit>()
+        core.loadGate = first
+        val vm = ComposeViewModel(core, FakeAppSettings())
+        vm.start(1, ReplyRequest(42, ReplyKind.REPLY, "Ana wrote:"))
+        vm.reset()
+        assertFalse("a reset ends the old load", vm.state.value.loadingContent)
+        val second = CompletableDeferred<Unit>()
+        core.loadGate = second
+        vm.start(1, ReplyRequest(43, ReplyKind.REPLY, "Ana wrote:"))
+        first.complete(Unit)
+        assertTrue("the old load can't unlock the new one", vm.state.value.loadingContent)
+        assertEquals("", vm.state.value.body)
+        second.complete(Unit)
+        assertFalse(vm.state.value.loadingContent)
+        assertTrue(vm.state.value.body.contains("> Noon?"))
+    }
+
+    @Test
+    fun aSignatureThatCantBeReadDoesntStopTheReply() {
+        // #435 review: signatureFor throwing during a reply load crashed the app; the reply goes without one.
+        val core = FakeCore().apply { signatureFailure = IllegalStateException("store") }
+        val vm = ComposeViewModel(core, FakeAppSettings())
+        vm.start(1, ReplyRequest(42, ReplyKind.REPLY, "Ana wrote:"))
+        assertFalse(vm.state.value.loadingContent)
+        assertTrue(vm.state.value.body.contains("> Noon?"))
+        assertFalse("no signature block", vm.state.value.body.contains("-- \n"))
+        assertEquals("Re: Lunch", vm.state.value.subject)
+    }
+
+    @Test
+    fun aHungLoadGivesUpAndUnlocks() {
+        val scheduler = TestCoroutineScheduler()
+        Dispatchers.setMain(UnconfinedTestDispatcher(scheduler))
+        val core = FakeCore().apply { loadGate = CompletableDeferred() }
+        val vm = ComposeViewModel(core, FakeAppSettings())
+        vm.start(1, ReplyRequest(42, ReplyKind.REPLY, "Ana wrote:"))
+        scheduler.advanceTimeBy(ComposeViewModel.LOAD_TIMEOUT_MS - 1)
+        assertTrue(vm.state.value.loadingContent)
+        scheduler.advanceTimeBy(2)
+        assertFalse(vm.state.value.loadingContent)
+        assertEquals(ComposeError.REPLY_UNAVAILABLE, vm.state.value.error)
+    }
+
+    @Test
+    fun aRefusedEditTellsTheFieldToTakeTheBodyBack() {
+        // #435 review: the field showed the refused keystroke; a new revision makes it re-apply the state.
+        val core = FakeCore().apply { loadGate = CompletableDeferred() }
+        val vm = ComposeViewModel(core, FakeAppSettings())
+        vm.start(1, ReplyRequest(42, ReplyKind.REPLY, "Ana wrote:"))
+        val before = vm.state.value.bodyRevision
+        vm.onBodyChange("x")
+        assertTrue(vm.state.value.bodyRevision > before)
+        assertEquals("", vm.state.value.body)
     }
 
     @Test
