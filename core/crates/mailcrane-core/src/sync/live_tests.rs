@@ -15,6 +15,11 @@ use tokio::time::Instant;
 
 const SEC: Duration = Duration::from_secs(1);
 const MINUTE: Duration = Duration::from_secs(60);
+/// How long a test waits for something that should take milliseconds,
+/// only a hang guard: a busy machine (a Gradle build, disk or memory
+/// pressure) can stall the fake server for seconds (#409). The tests that
+/// check a latency ("within 2 seconds") keep their own short limit.
+const HANG_GUARD: Duration = Duration::from_secs(60);
 
 #[derive(Default)]
 struct Events(Mutex<Vec<CoreEvent>>);
@@ -608,9 +613,9 @@ async fn a_delivered_message_is_stored_and_announced_within_2_seconds() {
     let (store, account, inbox) = setup();
     let events = Events::default();
     with_live(&imap, &store, account, &events, fast(), || async {
-        wait_for(Duration::from_secs(10), || stored(&store, inbox).len() == 3).await;
+        wait_for(HANG_GUARD, || stored(&store, inbox).len() == 3).await;
         // Let the loop get into IDLE.
-        wait_for(Duration::from_secs(5), || {
+        wait_for(HANG_GUARD, || {
             imap.received_commands()
                 .now_or_never()
                 .is_some_and(|c| c.iter().any(|c| c == "IDLE"))
@@ -640,8 +645,8 @@ async fn an_expunged_message_leaves_the_store_within_2_seconds() {
     let (store, account, inbox) = setup();
     let events = Events::default();
     with_live(&imap, &store, account, &events, fast(), || async {
-        wait_for(Duration::from_secs(10), || stored(&store, inbox).len() == 3).await;
-        wait_for(Duration::from_secs(5), || idling(&imap)).await;
+        wait_for(HANG_GUARD, || stored(&store, inbox).len() == 3).await;
+        wait_for(HANG_GUARD, || idling(&imap)).await;
         imap.mailbox().expunge("INBOX", 2).await;
         let took = wait_for(Duration::from_secs(2), || {
             stored(&store, inbox) == [1, 3] && changed(&events, inbox)
@@ -662,9 +667,9 @@ async fn without_idle_new_mail_arrives_by_polling() {
         ..fast()
     };
     with_live(&imap, &store, account, &events, config, || async {
-        wait_for(Duration::from_secs(10), || stored(&store, inbox).len() == 1).await;
+        wait_for(HANG_GUARD, || stored(&store, inbox).len() == 1).await;
         imap.mailbox().deliver("INBOX", raw(2)).await;
-        wait_for(Duration::from_secs(2), || stored(&store, inbox).len() == 2).await;
+        wait_for(HANG_GUARD, || stored(&store, inbox).len() == 2).await;
     })
     .await;
     let commands = imap.received_commands().await;
@@ -678,16 +683,16 @@ async fn after_a_dropped_connection_it_reconnects_and_idles_again() {
     let (store, account, inbox) = setup();
     let events = Events::default();
     with_live(&imap, &store, account, &events, fast(), || async {
-        wait_for(Duration::from_secs(10), || stored(&store, inbox).len() == 2).await;
-        wait_for(Duration::from_secs(5), || idling(&imap)).await;
+        wait_for(HANG_GUARD, || stored(&store, inbox).len() == 2).await;
+        wait_for(HANG_GUARD, || idling(&imap)).await;
         imap.drop_connections();
         // Back-off (100 ms here), reconnect, sync, IDLE again.
-        wait_for(Duration::from_secs(5), || {
+        wait_for(HANG_GUARD, || {
             imap.connections_accepted() == 2 && idle_count(&imap) >= 2
         })
         .await;
         imap.mailbox().deliver("INBOX", raw(3)).await;
-        wait_for(Duration::from_secs(2), || stored(&store, inbox).len() == 3).await;
+        wait_for(HANG_GUARD, || stored(&store, inbox).len() == 3).await;
     })
     .await;
 }
@@ -700,7 +705,7 @@ async fn folders_are_listed_first_when_none_are_stored() {
     assert_eq!(find_inbox(&store, account), Ok(None));
     let events = Events::default();
     with_live(&imap, &store, account, &events, fast(), || async {
-        wait_for(Duration::from_secs(10), || {
+        wait_for(HANG_GUARD, || {
             find_inbox(&store, account)
                 .ok()
                 .flatten()
@@ -729,7 +734,7 @@ async fn bad_credentials_are_reported_once_and_the_loop_ends() {
     };
     // Nobody stops it: a refused login ends the loop by itself.
     tokio::time::timeout(
-        Duration::from_secs(5),
+        HANG_GUARD,
         run_live_updates(
             &store,
             super::super::LiveAccount {
@@ -804,7 +809,7 @@ async fn rules_run_on_live_mail_and_idle_returns_to_the_inbox() {
             .map(|f| f.id)
     };
     with_live(&imap, &store, account, &events, fast(), || async {
-        wait_for(Duration::from_secs(10), || {
+        wait_for(HANG_GUARD, || {
             folder("INBOX").is_some_and(|inbox| stored(&store, inbox).len() == 1)
         })
         .await;
@@ -820,7 +825,7 @@ async fn rules_run_on_live_mail_and_idle_returns_to_the_inbox() {
                 actions: vec![RuleAction::MarkRead, RuleAction::Move(deals)],
             })
             .expect("rule");
-        wait_for(Duration::from_secs(5), || idling(&imap)).await;
+        wait_for(HANG_GUARD, || idling(&imap)).await;
         imap.mailbox()
             .deliver(
                 "INBOX",
@@ -830,7 +835,7 @@ async fn rules_run_on_live_mail_and_idle_returns_to_the_inbox() {
             .await;
         // The rule moved it on the server and marked it read.
         let mailbox = imap.mailbox();
-        wait_for(Duration::from_secs(5), || {
+        wait_for(HANG_GUARD, || {
             let deals = mailbox.messages("Deals").now_or_never().unwrap_or_default();
             deals.len() == 1 && deals[0].flags.iter().any(|f| f == r"\Seen")
         })
@@ -839,7 +844,7 @@ async fn rules_run_on_live_mail_and_idle_returns_to_the_inbox() {
         // inbox, so the next delivery still arrives.
         let inbox = folder("INBOX").expect("inbox");
         imap.mailbox().deliver("INBOX", raw(3)).await;
-        wait_for(Duration::from_secs(3), || {
+        wait_for(HANG_GUARD, || {
             store
                 .list_messages(inbox, 100, 0)
                 .map(|m| m.iter().any(|m| m.details.subject == "Message 3"))

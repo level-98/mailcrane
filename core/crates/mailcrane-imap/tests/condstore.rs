@@ -11,6 +11,10 @@ mod condstore {
 
     const USER: &str = "alice@example.org";
     const PASSWORD: &str = "s3cret-value";
+    /// Each connect's and command's limit, only a hang guard: a busy machine
+    /// (a Gradle build, disk or memory pressure) can stall the fake server
+    /// for seconds, and a short limit would fail the test for that alone (#409).
+    const HANG_GUARD: Duration = Duration::from_secs(60);
 
     fn raws(count: usize) -> Vec<Vec<u8>> {
         (1..=count)
@@ -34,8 +38,8 @@ mod condstore {
         let mut config =
             ImapConfig::new("localhost", imap.addr().port(), ImapSecurity::ImplicitTls)
                 .with_extra_root_cert(imap.root_cert_der().to_vec());
-        config.command_timeout = Duration::from_millis(500);
-        config.connect_timeout = Duration::from_secs(5);
+        config.command_timeout = HANG_GUARD;
+        config.connect_timeout = HANG_GUARD;
         Session::connect(&config, USER, &Secret::new(PASSWORD))
             .await
             .expect("connects")
