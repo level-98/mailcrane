@@ -505,10 +505,9 @@ async fn check(
     } else {
         vec![want.loc]
     };
-    // A server with neither MOVE nor UIDPLUS keeps every moved original
-    // flagged \Deleted, and the folder sync lists such messages: a sync
-    // gap outside the snooze code, #519.
-    if server != Server::Bare && shown_in != local_want {
+    // On a server with neither MOVE nor UIDPLUS a moved original stays,
+    // flagged \Deleted; it isn't listed (#519), so this holds there too.
+    if shown_in != local_want {
         wrong.push(format!(
             "shown locally in {shown_in:?}, want {local_want:?}"
         ));

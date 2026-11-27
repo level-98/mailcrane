@@ -38,7 +38,7 @@ impl Store {
     pub fn search_messages(&self, filter: &SearchFilter) -> Result<Vec<MessageHeader>, StoreError> {
         let mut sql = String::from(
             "SELECT m.*, {RANK} FROM messages m JOIN folders f ON f.id = m.folder_id \
-             WHERE m.hidden = 0",
+             WHERE m.hidden = 0 AND m.deleted = 0",
         );
         let mut args: Vec<Value> = Vec::new();
         let mut bind = |sql: &mut String, clause: &str, value: Value| {

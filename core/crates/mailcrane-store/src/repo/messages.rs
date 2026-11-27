@@ -273,7 +273,7 @@ impl Store {
             .collect::<Vec<_>>()
             .join(", ");
         let sql = format!(
-            "SELECT {cols}, f.account_id FROM messages m JOIN folders f ON f.id = m.folder_id              WHERE f.role = 'inbox' AND m.hidden = 0              ORDER BY m.date DESC, m.id DESC LIMIT ?1 OFFSET ?2"
+            "SELECT {cols}, f.account_id FROM messages m JOIN folders f ON f.id = m.folder_id              WHERE f.role = 'inbox' AND m.hidden = 0 AND m.deleted = 0              ORDER BY m.date DESC, m.id DESC LIMIT ?1 OFFSET ?2"
         );
         let mut stmt = self.conn.prepare(&sql)?;
         let mut rows = stmt.query(params![limit, offset])?;
@@ -288,7 +288,7 @@ impl Store {
     /// Unread messages across every account's inbox.
     pub fn count_unified_unread(&self) -> Result<u64, StoreError> {
         let n: i64 = self.conn.query_row(
-            "SELECT count(*) FROM messages m JOIN folders f ON f.id = m.folder_id              WHERE f.role = 'inbox' AND m.hidden = 0 AND m.seen = 0",
+            "SELECT count(*) FROM messages m JOIN folders f ON f.id = m.folder_id              WHERE f.role = 'inbox' AND m.hidden = 0 AND m.deleted = 0 AND m.seen = 0",
             [],
             |r| r.get(0),
         )?;
@@ -296,7 +296,9 @@ impl Store {
     }
 
     /// Lists a folder's messages by `date DESC, id DESC`, leaving out ones
-    /// hidden by a queued move or delete. Pages made with the
+    /// hidden by a queued move or delete, and ones flagged `\Deleted` on
+    /// the server, as other clients do (#519): a move on a server without
+    /// MOVE or UIDPLUS leaves its original so. Pages made with the
     /// same `limit` and consecutive `offset`s have no duplicates or gaps.
     pub fn list_messages(
         &self,
@@ -305,7 +307,7 @@ impl Store {
         offset: u32,
     ) -> Result<Vec<MessageHeader>, StoreError> {
         let sql = format!(
-            "SELECT {COLS} FROM messages WHERE folder_id = ?1 AND hidden = 0 \
+            "SELECT {COLS} FROM messages WHERE folder_id = ?1 AND hidden = 0 AND deleted = 0 \
              ORDER BY date DESC, id DESC LIMIT ?2 OFFSET ?3"
         );
         let mut stmt = self.conn.prepare(&sql)?;
@@ -446,7 +448,7 @@ impl Store {
         max_size: i64,
     ) -> Result<Vec<(MessageId, u32)>, StoreError> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, uid FROM (                SELECT id, uid, size, body_state, internal_date FROM messages                WHERE folder_id = ?1 AND hidden = 0 AND internal_date >= ?2                ORDER BY internal_date DESC, id DESC LIMIT ?3              ) WHERE body_state = 'none' AND size <= ?4              ORDER BY internal_date DESC, id DESC",
+            "SELECT id, uid FROM (                SELECT id, uid, size, body_state, internal_date FROM messages                WHERE folder_id = ?1 AND hidden = 0 AND deleted = 0 AND internal_date >= ?2                ORDER BY internal_date DESC, id DESC LIMIT ?3              ) WHERE body_state = 'none' AND size <= ?4              ORDER BY internal_date DESC, id DESC",
         )?;
         let mut rows = stmt.query(params![folder.0, since, newest, max_size])?;
         let mut out = Vec::new();

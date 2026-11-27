@@ -368,7 +368,7 @@ impl Store {
         let cols = prefixed_cols();
         let sql = format!(
             "SELECT {cols}, m.list_id FROM messages m JOIN folders f ON f.id = m.folder_id \
-             WHERE f.account_id = ?1 AND f.role = 'inbox' AND m.rules_done = 0 AND m.hidden = 0 \
+             WHERE f.account_id = ?1 AND f.role = 'inbox' AND m.rules_done = 0 AND m.hidden = 0 AND m.deleted = 0 \
              ORDER BY m.id"
         );
         let mut stmt = self.conn.prepare(&sql)?;
@@ -429,7 +429,7 @@ impl Store {
     ) -> Result<Vec<(MessageHeader, Option<String>)>, StoreError> {
         let cols = prefixed_cols();
         let sql = format!(
-            "SELECT {cols}, m.list_id FROM messages m WHERE m.folder_id = ?1 AND m.hidden = 0 \
+            "SELECT {cols}, m.list_id FROM messages m WHERE m.folder_id = ?1 AND m.hidden = 0 AND m.deleted = 0 \
              ORDER BY m.id"
         );
         let mut stmt = self.conn.prepare(&sql)?;
