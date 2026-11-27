@@ -332,9 +332,10 @@ class MessageViewModel
 
         private suspend fun markShownRead(ready: MessageState.Ready) {
             if (ready.message.isSeen) return
-            markRead(ready.message)
-            // Marked: the toolbar offers "Mark as unread" again.
-            if (markedRead) {
+            // Only when this call marked it: a second tap (or the timer) while the first is still running, or a
+            // call that failed, leaves the toolbar as it was (#372 review).
+            if (markRead(ready.message)) {
+                // Marked: the toolbar offers "Mark as unread" again.
                 (_state.value as? MessageState.Ready)?.let {
                     _state.value = it.copy(message = it.message.copy(isSeen = true))
                 }
@@ -525,15 +526,24 @@ class MessageViewModel
                 null
             }
 
-        private suspend fun markRead(message: MessageDetail) {
-            if (message.isSeen || markedRead) return
+        /**
+         * Marks [message] read in the core. True only if this call marked it: false when it's read already,
+         * another call is marking it, or the core failed. A call that fails or is cancelled (a reload while it
+         * runs) allows another try.
+         */
+        private suspend fun markRead(message: MessageDetail): Boolean {
+            if (message.isSeen || markedRead) return false
             markedRead = true
+            var done = false
             try {
                 core.markRead(messageId)
+                done = true
             } catch (_: SyncFailure.Failed) {
-                // Only the unread dot stays; the message is shown either way. Allow another try.
-                markedRead = false
+                // Only the unread dot stays; the message is shown either way.
+            } finally {
+                if (!done) markedRead = false
             }
+            return done
         }
     }
 

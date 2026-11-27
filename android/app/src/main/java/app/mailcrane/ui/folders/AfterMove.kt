@@ -11,27 +11,42 @@ import kotlinx.coroutines.flow.stateIn
 import javax.inject.Inject
 
 /**
- * The message to show after message [id] was archived, deleted or moved (M4-15), or null for the list.
- *
- * [order] is the list the message was opened from, as last shown; [openedIndex] is where [id] was in it
- * when it opened (-1 if it wasn't there, e.g. opened from search). The list may already have dropped [id]
- * (side by side, it refreshes at once); then the message after it has moved up into [openedIndex].
+ * The messages next to an open message in the list it was opened from, taken when it opened (M4-15). By id,
+ * not position, so mail arriving or leaving above it later doesn't shift them (#372 review).
+ */
+data class Neighbours(
+    val previous: Long?,
+    val next: Long?,
+)
+
+/** [id]'s neighbours in [order], or null if it isn't there (opened from search, or from elsewhere). */
+fun neighboursIn(
+    order: List<Long>,
+    id: Long?,
+): Neighbours? {
+    val i = if (id == null) -1 else order.indexOf(id)
+    if (i < 0) return null
+    return Neighbours(previous = order.getOrNull(i - 1), next = order.getOrNull(i + 1))
+}
+
+/**
+ * The message to show after the open one was archived, deleted or moved (M4-15), or null for the list.
+ * [neighbours] are the open message's, from when it opened; [current] is its list as last shown. A neighbour
+ * that list no longer holds is gone too, so the list shows instead. (One pane, the list isn't shown while a
+ * message is open, so [current] may be stale; that only means the neighbour is still tried.)
  */
 fun messageAfterLeaving(
-    order: List<Long>,
-    id: Long,
-    openedIndex: Int,
+    neighbours: Neighbours?,
     action: AfterMoveAction,
+    current: List<Long>,
 ): Long? {
-    val current = order.indexOf(id)
     val target =
         when (action) {
             AfterMoveAction.LIST -> return null
-            AfterMoveAction.NEXT -> if (current >= 0) current + 1 else openedIndex
-            AfterMoveAction.PREVIOUS -> if (current >= 0) current - 1 else openedIndex - 1
+            AfterMoveAction.NEXT -> neighbours?.next
+            AfterMoveAction.PREVIOUS -> neighbours?.previous
         }
-    if (current < 0 && openedIndex < 0) return null
-    return order.getOrNull(target)?.takeIf { it != id }
+    return target?.takeIf { current.isEmpty() || it in current }
 }
 
 /** "After deleting or moving" for the mailbox screen. */

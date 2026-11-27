@@ -616,16 +616,19 @@
     <string name="outbox_scheduled_device">This phone will send it then, so it may be late if the phone is off or offline.</string>
     <string name="outbox_scheduled_undecided">Checking whether your mail server can send it for you…</string>
     <string name="outbox_held_by_server">Your mail server will send it on time, even with the phone off. It can no longer be cancelled.</string>
-    <!-- Swipe actions (M4-04) -->
     <!-- Settings → Reading (M4-15) -->
     <string name="settings_mark_read">Mark as read</string>
     <string name="mark_read_on_open">When opened</string>
-    <string name="mark_read_after_delay">After 2 seconds</string>
+    <plurals name="mark_read_after_delay">
+        <item quantity="one">After %1$d second</item>
+        <item quantity="other">After %1$d seconds</item>
+    </plurals>
     <string name="mark_read_manual">Only by hand</string>
     <string name="settings_after_move">After deleting or moving</string>
     <string name="after_move_next">Show next message</string>
     <string name="after_move_previous">Show previous message</string>
     <string name="after_move_list">Back to the list</string>
+    <!-- Swipe actions (M4-04) -->
     <string name="settings_swipe_right">Swipe right</string>
     <string name="settings_swipe_left">Swipe left</string>
     <string name="swipe_none">Nothing</string>

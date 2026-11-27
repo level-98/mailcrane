@@ -13,6 +13,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.heading
@@ -78,7 +79,7 @@ internal fun ReadingContent(
     )
     ChoiceGroup(
         title = R.string.settings_after_move,
-        choices = AfterMoveAction.entries.map { it to afterMoveLabel(it) },
+        choices = AfterMoveAction.entries.map { it to stringResource(afterMoveLabel(it)) },
         current = afterMove,
         onChange = onAfterMoveChange,
     )
@@ -87,7 +88,7 @@ internal fun ReadingContent(
 @Composable
 private fun <T> ChoiceGroup(
     @StringRes title: Int,
-    choices: List<Pair<T, Int>>,
+    choices: List<Pair<T, String>>,
     current: T,
     onChange: (T) -> Unit,
 ) {
@@ -108,17 +109,22 @@ private fun <T> ChoiceGroup(
                         onClick = { onChange(value) },
                     ),
             ) {
-                Text(stringResource(label))
+                Text(label)
             }
         }
     }
 }
 
-private fun markReadLabel(mode: MarkReadMode): Int =
+/** The delay comes from [MARK_READ_DELAY_MS], so the label follows it (#372 review). */
+@Composable
+private fun markReadLabel(mode: MarkReadMode): String =
     when (mode) {
-        MarkReadMode.ON_OPEN -> R.string.mark_read_on_open
-        MarkReadMode.AFTER_DELAY -> R.string.mark_read_after_delay
-        MarkReadMode.MANUAL -> R.string.mark_read_manual
+        MarkReadMode.ON_OPEN -> stringResource(R.string.mark_read_on_open)
+        MarkReadMode.AFTER_DELAY -> {
+            val seconds = (MARK_READ_DELAY_MS / 1000).toInt()
+            pluralStringResource(R.plurals.mark_read_after_delay, seconds, seconds)
+        }
+        MarkReadMode.MANUAL -> stringResource(R.string.mark_read_manual)
     }
 
 private fun afterMoveLabel(action: AfterMoveAction): Int =

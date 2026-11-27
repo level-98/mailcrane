@@ -8,40 +8,44 @@ import org.junit.Test
 /** M4-15: which message shows after the open one is archived, deleted or moved. */
 class AfterMoveTest {
     private val order = listOf(10L, 20L, 30L)
+    private val of20 = neighboursIn(order, 20)
 
     @Test
     fun backToTheListIsTheDefaultAndNeverOpensAnything() {
-        assertNull(messageAfterLeaving(order, 20, 1, AfterMoveAction.LIST))
+        assertNull(messageAfterLeaving(of20, AfterMoveAction.LIST, order))
     }
 
     @Test
-    fun nextAndPreviousFollowTheListWhileItStillHoldsTheMessage() {
+    fun nextAndPreviousAreTheNeighboursFromWhenItOpened() {
+        assertEquals(Neighbours(previous = 10, next = 30), of20)
         // One pane: the list isn't on screen, so its last order still has the message.
-        assertEquals(30L, messageAfterLeaving(order, 20, 1, AfterMoveAction.NEXT))
-        assertEquals(10L, messageAfterLeaving(order, 20, 1, AfterMoveAction.PREVIOUS))
+        assertEquals(30L, messageAfterLeaving(of20, AfterMoveAction.NEXT, order))
+        assertEquals(10L, messageAfterLeaving(of20, AfterMoveAction.PREVIOUS, order))
+        // Side by side: the list refreshed first and dropped it.
+        assertEquals(30L, messageAfterLeaving(of20, AfterMoveAction.NEXT, listOf(10L, 30L)))
     }
 
     @Test
-    fun aListThatAlreadyDroppedTheMessageStillGivesItsNeighbours() {
-        // Side by side: the list refreshed first, so 30 moved up into 20's place.
-        val after = listOf(10L, 30L)
-        assertEquals(30L, messageAfterLeaving(after, 20, 1, AfterMoveAction.NEXT))
-        assertEquals(10L, messageAfterLeaving(after, 20, 1, AfterMoveAction.PREVIOUS))
+    fun mailArrivingAboveDoesNotShiftThem() {
+        // #372 review: new mail at the top moved every index; the neighbours are ids.
+        val refreshed = listOf(5L, 10L, 30L)
+        assertEquals(30L, messageAfterLeaving(of20, AfterMoveAction.NEXT, refreshed))
+        assertEquals(10L, messageAfterLeaving(of20, AfterMoveAction.PREVIOUS, refreshed))
     }
 
     @Test
-    fun theEndsOfTheListGoBackToTheList() {
-        assertNull(messageAfterLeaving(order, 30, 2, AfterMoveAction.NEXT))
-        assertNull(messageAfterLeaving(order, 10, 0, AfterMoveAction.PREVIOUS))
-        assertNull(messageAfterLeaving(listOf(10L, 20L), 30, 2, AfterMoveAction.NEXT))
-        assertNull(messageAfterLeaving(listOf(20L, 30L), 10, 0, AfterMoveAction.PREVIOUS))
-        assertNull(messageAfterLeaving(emptyList(), 10, 0, AfterMoveAction.NEXT))
+    fun aNeighbourThatIsGoneToo_orTheEnds_goBackToTheList() {
+        assertNull(messageAfterLeaving(of20, AfterMoveAction.NEXT, listOf(10L)))
+        assertNull(messageAfterLeaving(neighboursIn(order, 30), AfterMoveAction.NEXT, order))
+        assertNull(messageAfterLeaving(neighboursIn(order, 10), AfterMoveAction.PREVIOUS, order))
     }
 
     @Test
     fun aMessageOpenedFromElsewhereGoesBackToTheList() {
-        // Opened from search: not in the folder's list when it opened.
-        assertNull(messageAfterLeaving(order, 99, -1, AfterMoveAction.NEXT))
-        assertNull(messageAfterLeaving(order, 99, -1, AfterMoveAction.PREVIOUS))
+        // Opened from search (no neighbours), or not in the list at all.
+        assertNull(neighboursIn(order, 99))
+        assertNull(neighboursIn(order, null))
+        assertNull(messageAfterLeaving(null, AfterMoveAction.NEXT, order))
+        assertNull(messageAfterLeaving(null, AfterMoveAction.PREVIOUS, order))
     }
 }

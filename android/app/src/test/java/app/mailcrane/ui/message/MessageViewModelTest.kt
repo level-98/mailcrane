@@ -109,6 +109,9 @@ private class FakeMessageCore(
     val calls = mutableListOf<String>()
     var fetchFailure: SyncErrorKind? = null
     var markReadFailure: SyncErrorKind? = null
+
+    /** When set, [markRead] waits for it, so a test can act while the call is still running. */
+    var markReadGate: kotlinx.coroutines.CompletableDeferred<Unit>? = null
     var parts = mapOf<String, InlinePart>()
 
     /** The sender check's verdict to report, or null for no chip (M5-08). */
@@ -150,6 +153,7 @@ private class FakeMessageCore(
 
     override suspend fun markRead(messageId: Long) {
         calls += "markRead"
+        markReadGate?.await()
         markReadFailure?.let { throw SyncFailure.Failed(it) }
         seen = true
     }
@@ -308,6 +312,27 @@ class MessageViewModelTest {
             vm.load()
             assertTrue(vm.state.value is MessageState.Ready)
             assertEquals("markRead", core.calls.last())
+        }
+
+    @Test
+    fun a_second_tap_while_marking_read_never_shows_it_read_if_marking_fails() =
+        runTest {
+            // #372 review: the second tap skipped the core and set isSeen while the first call still ran; the
+            // first then failed, and the toolbar said "Mark as unread" for an unread message.
+            val settings = FakeAppSettings().apply { markRead.value = MarkReadMode.MANUAL }
+            val core = FakeMessageCore()
+            val vm = messageViewModel(core, settings)
+            core.markReadGate = kotlinx.coroutines.CompletableDeferred()
+            core.markReadFailure = SyncErrorKind.NETWORK
+            vm.markReadByHand()
+            vm.markReadByHand()
+            core.markReadGate?.complete(Unit)
+            assertEquals(1, core.calls.count { it == "markRead" })
+            assertFalse("still unread", ready(vm).message.isSeen)
+            // And it can be tried again.
+            core.markReadFailure = null
+            vm.markReadByHand()
+            assertTrue(ready(vm).message.isSeen)
         }
 
     @Test
