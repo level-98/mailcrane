@@ -48,6 +48,19 @@ $roles = @{
     qa     = 'mailcrane-qa'
 }
 
+# Per-seat default model (#507, #474 rule 32): emulator checks and small,
+# no-emulator tasks don't need the larger model. Seats not listed here use
+# the account default. -Model overrides every seat.
+$seatModels = @{
+    dev3 = 'sonnet'
+    qa   = 'sonnet'
+}
+
+function Get-SeatModel([string] $Seat) {
+    if ($Model) { return $Model }
+    return $seatModels[$Seat]
+}
+
 function Stop-Fleet([string] $Message) {
     Write-Host "start-fleet: $Message" -ForegroundColor Red
     exit 1
@@ -124,7 +137,9 @@ if ($DryRun) {
     foreach ($seat in $Seats) {
         $dir = if ($seat -eq 'lead') { $root } else { Join-Path $root ".worktrees\$seat" }
         $state = if ($seat -eq 'lead' -or (Test-Path $dir)) { 'exists' } else { 'would be created' }
-        Write-Host "  would start mailbot.$seat ($($roles[$seat])) in $dir ($state)"
+        $seatModel = Get-SeatModel $seat
+        $modelText = if ($seatModel) { $seatModel } else { 'account default' }
+        Write-Host "  would start mailbot.$seat ($($roles[$seat]), model: $modelText) in $dir ($state)"
     }
     exit 0
 }
@@ -171,7 +186,8 @@ foreach ($seat in $Seats) {
         '-n', "mailbot.$seat",
         '--permission-mode', $PermissionMode
     )
-    if ($Model) { $claudeArgs += @('--model', $Model) }
+    $seatModel = Get-SeatModel $seat
+    if ($seatModel) { $claudeArgs += @('--model', $seatModel) }
     $argText = ($claudeArgs | ForEach-Object { "'" + ($_ -replace "'", "''") + "'" }) -join ' '
 
     # Every value goes into the window's script single-quoted, so escape '.
