@@ -6,6 +6,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -36,6 +37,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
@@ -45,7 +47,9 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
@@ -58,6 +62,7 @@ import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -242,6 +247,16 @@ fun MessageListContent(
 ) {
     // Back ends selection before it leaves the screen (M4-14).
     BackHandler(enabled = state.selecting) { selection.onClear() }
+    val fabShown = onCompose != null && !state.selecting
+    // The compose button's measured height, so the list's end can scroll clear of it at any font
+    // scale (#464). The Scaffold already keeps both above the navigation bar.
+    var fabHeightPx by remember { mutableIntStateOf(0) }
+    val listEndPadding =
+        if (fabShown && fabHeightPx > 0) {
+            with(LocalDensity.current) { fabHeightPx.toDp() } + FAB_MARGIN
+        } else {
+            0.dp
+        }
     Scaffold(
         topBar = {
             if (state.selecting) {
@@ -274,7 +289,7 @@ fun MessageListContent(
         },
         snackbarHost = { SnackbarHost(snackbar) },
         floatingActionButton = {
-            if (onCompose != null && !state.selecting) {
+            if (onCompose != null && fabShown) {
                 val label = stringResource(R.string.compose_fab)
                 ExtendedFloatingActionButton(
                     onClick = onCompose,
@@ -284,14 +299,16 @@ fun MessageListContent(
                     expanded = !listState.canScrollBackward,
                     // One label whether expanded or not: collapsed, the icon alone said nothing (M6-01).
                     modifier =
-                        fabModifier.clearAndSetSemantics {
-                            contentDescription = label
-                            role = Role.Button
-                            onClick {
-                                onCompose()
-                                true
-                            }
-                        },
+                        fabModifier
+                            .onSizeChanged { fabHeightPx = it.height }
+                            .clearAndSetSemantics {
+                                contentDescription = label
+                                role = Role.Button
+                                onClick {
+                                    onCompose()
+                                    true
+                                }
+                            },
                 )
             }
         },
@@ -328,11 +345,15 @@ fun MessageListContent(
                         swipe = if (state.selecting) SwipeHandlers() else swipe,
                         onOpenThread = onOpenThread,
                         selection = selection,
+                        endPadding = listEndPadding,
                     )
             }
         }
     }
 }
+
+/** The space Material 3's Scaffold leaves between a floating action button and the content's edge. */
+private val FAB_MARGIN = 16.dp
 
 @Composable
 private fun Messages(
@@ -343,6 +364,8 @@ private fun Messages(
     swipe: SwipeHandlers,
     onOpenThread: (Long, String) -> Unit = { _, _ -> },
     selection: SelectionHandlers = SelectionHandlers(),
+    /** Space after the last row, so it can scroll clear of the compose button (#464). */
+    endPadding: Dp = 0.dp,
 ) {
     val locale = LocalConfiguration.current.locales[0]
     val now by currentMinute()
@@ -380,7 +403,11 @@ private fun Messages(
         remember(state.messages, showThreads, today, now.zone, weekStart) {
             if (showThreads) emptyList() else withDateHeaders(state.messages, { it.date }, today, now.zone, weekStart)
         }
-    LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
+    LazyColumn(
+        state = listState,
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(bottom = endPadding),
+    ) {
         if (showThreads) {
             for (entry in threadEntries) {
                 when (entry) {
