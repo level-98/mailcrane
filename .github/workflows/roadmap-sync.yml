@@ -41,10 +41,6 @@ permissions:
   pull-requests: write
   issues: read
 
-concurrency:
-  group: roadmap-sync
-  cancel-in-progress: false
-
 jobs:
   website:
     if: github.event_name != 'issues' || startsWith(github.event.issue.title, '[')
@@ -123,6 +119,12 @@ jobs:
   sync:
     if: github.event_name != 'push' && (github.event_name != 'issues' || startsWith(github.event.issue.title, '['))
     runs-on: ubuntu-latest
+    # Only the sync job queues behind itself, so a policy push (which skips
+    # this job) can't replace a waiting issues run. The website and deploy
+    # jobs have their own group, shared with website.yml.
+    concurrency:
+      group: roadmap-sync
+      cancel-in-progress: false
     env:
       GH_TOKEN: ${{ github.token }}
       BRANCH: bot/roadmap-sync
