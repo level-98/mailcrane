@@ -53,7 +53,7 @@ Unfinished languages are fine. Missing strings show in English, and a language a
    | Translation licence | MPL-2.0 |
 
 4. Add-ons: **Squash Git commits** (per language), **Cleanup translation files**, and **Add missing languages** off. Set the commit message to start with `chore(i18n):` so the commits follow Conventional Commits.
-5. Under *Version control*, turn on pull requests to `main` from the `weblate` branch. Each one runs CI, including the placeholder check. A translation PR needs no changelog fragment, and the steward reviews it like any other.
+5. Under *Version control*, turn on pull requests to `main` from the `weblate` branch. Each one runs CI, including the placeholder check. A translation PR needs no changelog fragment, and a maintainer reviews it like any other.
 6. Set up the GitHub webhook Weblate shows, so it picks up new English strings as soon as they're merged.
 7. Add the badge to README.md under "Want to help?":
 
