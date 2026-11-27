@@ -28,6 +28,6 @@ Options we didn't pick:
 
 ## Consequences
 
-- Anyone can build an `app.mailcrane.debug` that installs over a debug install. With test data only, the risk is small. Nobody should keep real mail in the debug app.
+- **The key is public, so anyone can sign an `app.mailcrane.debug`.** Android accepts it as an update to an installed debug app, and the update keeps that app's data: its database, its stored passwords and OAuth tokens, everything. So the debug app must only ever hold test data. README and CONTRIBUTING say plainly: never add a real account to a debug build. Installing a debug APK from anywhere other than this project's CI or your own build is just as unsafe. The release app `app.mailcrane` isn't affected: Android ties updates to the package as well as the key, and release builds never use this key.
 - When the key first lands, an existing debug install can't be updated over once. The maintainer uninstalls `app.mailcrane.debug` on their phone themselves; emulator snapshots are refreshed.
 - F-Droid's scanner might flag the committed keystore. If it does, the F-Droid build recipe can delete it before building, since release builds don't use it.
