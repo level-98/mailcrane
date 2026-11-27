@@ -108,13 +108,15 @@ fn pooled_and_sync_calls_run_from_a_small_stack_thread() {
     // Opening a message, twice: the first call opens the pooled connection.
     on_small_stack(|| assert_eq!(engine.fetch_body(second), Ok(())));
     on_small_stack(|| assert_eq!(engine.fetch_body(first), Ok(())));
-    // Each body was saved by a thread that wrote urgently (#294): the mark
-    // is made where the save happens, not on the caller's thread (#468). No
-    // clock involved.
-    assert_eq!(
-        *engine.urgent_at_open.lock().expect("lock"),
-        [true, true],
-        "both opens saved their body under the urgent mark"
+    // The urgent mark covers only the body save, which the core makes on the
+    // thread that writes (`save_opened_body`): the job thread isn't marked
+    // when the job starts, after waiting for the connection and before
+    // downloading (#473). One entry per pooled attempt (#483).
+    let marks = engine.urgent_at_open.lock().expect("lock").clone();
+    assert!(marks.len() >= 2, "both opens ran a pooled job: {marks:?}");
+    assert!(
+        marks.iter().all(|m| !m),
+        "not marked while waiting or downloading: {marks:?}"
     );
     // Searching the server: pooled, under the account's writer lock. Both
     // matches are stored already, so it stores none.
@@ -203,33 +205,4 @@ fn a_job_that_could_not_run_is_reported_for_its_account() {
     let ran: Result<u8, SyncFailure> = engine.job_outcome(AccountId(7), Some(Ok(3)));
     assert_eq!(ran, Ok(3));
     assert_eq!(collect.0.lock().expect("lock").len(), events.len());
-}
-
-#[test]
-fn urgent_job_work_is_urgent_on_the_job_thread() {
-    // #468: the urgent mark is per thread, so it must be made on the job
-    // thread that writes, not on the caller's (where it once was, and every
-    // body save then waited `URGENT_WAIT` behind its own mark).
-    let dir = tempfile::tempdir().expect("dir");
-    let path = dir.path().join("urgent.db").to_string_lossy().into_owned();
-    let engine = SyncEngine::new(path.clone(), Arc::new(super::tests::Collect::default()));
-    let (caller, thread, urgent, nested_urgent) = on_small_stack(|| {
-        // The real caller: this small-stack thread, not the test's.
-        let caller = std::thread::current().id();
-        let (thread, urgent, nested) = engine
-            .urgent_job(AccountId(1), || {
-                // A job started inside runs right here and keeps the mark.
-                let nested = on_job_thread(|| Ok(mailcrane_store::urgent_here(&path)))?;
-                Ok((
-                    std::thread::current().id(),
-                    mailcrane_store::urgent_here(&path),
-                    nested,
-                ))
-            })
-            .expect("ran");
-        (caller, thread, urgent, nested)
-    });
-    assert_ne!(thread, caller, "the work ran on a job thread");
-    assert!(urgent, "the job thread writes urgently");
-    assert!(nested_urgent, "so does a job started inside it");
 }
