@@ -113,7 +113,9 @@ async fn run_sync(
     now: i64,
 ) -> mailcrane_core::snooze::SnoozeReport {
     let mut session = connect(imap).await;
-    let report = sync_snoozes(store, &mut session, &Quiet, account, now)
+    // Boxed: the snooze sync's future is large in debug builds, and these
+    // tests run on the default 2 MB test thread.
+    let report = Box::pin(sync_snoozes(store, &mut session, &Quiet, account, now))
         .await
         .expect("sync snoozes");
     session.logout().await;
@@ -687,7 +689,17 @@ async fn a_move_whose_reply_is_lost_still_unsnoozes_the_copy() {
     assert!(imap.mailbox().messages("Snoozed").await.is_empty());
     let report = run_sync(&flaky, &store, account, LATER).await;
     assert_eq!(report.woken, 1, "{report:?}");
-    assert_woken_copy(&imap).await;
+    // Woken, without its keyword. It stays read: with the MOVE's reply
+    // lost, no COPYUID names the copy, so it might be another install's
+    // read copy, and the wake doesn't mark it unread (#450, ADR 0009).
+    let back = imap.mailbox().messages("INBOX").await;
+    assert_eq!(back.len(), 1, "{back:?}");
+    assert!(
+        !back[0].flags.iter().any(|f| f.starts_with("$snoozed")),
+        "{:?}",
+        back[0].flags
+    );
+    assert!(back[0].flags.iter().any(|f| f == "\\Seen"), "kept read");
 }
 
 #[tokio::test]
@@ -1205,14 +1217,25 @@ async fn run_case(dir: Dir, with_move_cap: bool, case: Case, after: After) -> bo
             assert!(rows.is_empty(), "{name}: woken: {rows:?}");
             assert_eq!(in_inbox, 1, "{name}: back in the Inbox");
             let refused_cleanup = matches!(case, Case::Refuse(Some("INBOX"), "-FLAGS"));
+            // The MOVE's or COPY's reply was lost and the original is gone:
+            // no COPYUID names the copy, so it might be another install's
+            // read copy, and the wake leaves its read state (the lead's
+            // decision on G6, ADR 0009).
+            let copy_unnamed = match &case {
+                Case::Drop("UID MOVE") => with_move_cap,
+                Case::MissingOriginal => !with_move_cap,
+                _ => false,
+            };
             if !refused_cleanup {
                 let back = Box::pin(live_messages(&base, "INBOX")).await;
                 assert!(
-                    !back[0]
-                        .flags
-                        .iter()
-                        .any(|f| f.starts_with("$snoozed") || f == "\\Seen"),
-                    "{name}: unsnoozed and unread: {:?}",
+                    !back[0].flags.iter().any(|f| f.starts_with("$snoozed")),
+                    "{name}: unsnoozed: {:?}",
+                    back[0].flags
+                );
+                assert!(
+                    copy_unnamed || !back[0].flags.iter().any(|f| f == "\\Seen"),
+                    "{name}: unread: {:?}",
                     back[0].flags
                 );
             }
