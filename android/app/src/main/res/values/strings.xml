@@ -251,6 +251,8 @@
     <string name="compose_cc_bcc">Cc/Bcc</string>
     <string name="compose_subject">Subject</string>
     <string name="compose_body">Message</string>
+    <!-- Read aloud while a saved draft or a reply's quote loads; the message can't be typed into until then. -->
+    <string name="compose_loading_content">Loading the message…</string>
     <string name="compose_remove_recipient">Remove %1$s</string>
     <!-- TalkBack description of a chip whose address can't be used -->
     <string name="compose_recipient_invalid">%1$s, not a valid email address</string>

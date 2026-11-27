@@ -29,6 +29,7 @@ import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
@@ -49,6 +50,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.LiveRegionMode
@@ -191,7 +193,7 @@ fun ComposeContent(
                 // Attach and Send stay in the bar; scheduling and discarding are in "More options", so
                 // a phone-width bar leaves the title room for one line (#340).
                 actions = {
-                    IconButton(onClick = actions.onAttach, enabled = !state.sending) {
+                    IconButton(onClick = actions.onAttach, enabled = !state.sending && !state.loadingContent) {
                         Icon(
                             painter = painterResource(R.drawable.ic_mc_attach),
                             contentDescription = stringResource(R.string.compose_attach),
@@ -213,7 +215,9 @@ fun ComposeContent(
                     .verticalScroll(rememberScrollState()),
         ) {
             state.error?.let { ErrorBanner(it, state.errorAddresses, actions.onDismissError) }
-            val editable = !state.sending
+            // Nothing can be edited while sending, or while a draft or reply loads: the load overwrites the
+            // whole form (#435).
+            val editable = !state.sending && !state.loadingContent
             if (state.showFromPicker) {
                 FromPicker(state.accounts, state.fromAccountId, editable, actions.onFromChange)
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
@@ -241,6 +245,19 @@ fun ComposeContent(
             )
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
             ComposeAttachments(state, actions.onRemoveAttachment)
+            if (state.loadingContent) {
+                val loading = stringResource(R.string.compose_loading_content)
+                LinearProgressIndicator(
+                    modifier =
+                        Modifier
+                            .fillMaxWidth()
+                            .testTag("compose-loading")
+                            .semantics {
+                                contentDescription = loading
+                                liveRegion = LiveRegionMode.Polite
+                            },
+                )
+            }
             RichBodyField(
                 state = state,
                 onBodyChange = actions.onBodyChange,

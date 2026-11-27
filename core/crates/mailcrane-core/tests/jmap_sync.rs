@@ -67,9 +67,17 @@ async fn setup() -> Setup {
 }
 
 async fn syncer<'a>(s: &'a Setup) -> JmapSyncer<'a> {
+    syncer_with(s, &NoListener).await
+}
+
+/// A syncer whose events go to `listener`.
+async fn syncer_with<'a>(
+    s: &'a Setup,
+    listener: &'a dyn mailcrane_core::events::EventListener,
+) -> JmapSyncer<'a> {
     JmapSyncer::connect(
         &s.store,
-        &NoListener,
+        listener,
         s.account,
         &s.server.base_url(),
         Auth::Bearer("token".into()),
@@ -637,4 +645,318 @@ async fn without_a_sent_mailbox_the_outbox_keeps_no_copy() {
     let outcome = s.send_queued(id, NOW).await;
     assert!(matches!(outcome, SendOutcome::Sent { .. }), "{outcome:?}");
     assert_eq!(s.outbox(id).sent_copy, SentCopy::Skipped);
+}
+
+/// #448: an email the server leaves out of its Email/set reply (in neither
+/// `updated` nor `notUpdated`, against RFC 8620 §5.3) is unconfirmed. The
+/// replay fetches its state and applies it, whichever way the server went.
+#[tokio::test]
+async fn an_email_left_out_of_the_set_reply_is_reconciled() {
+    use mailcrane_core::actions::{apply_action, Action};
+    for applied in [false, true] {
+        let s = setup().await;
+        let mut j = syncer(&s).await;
+        let inbox = j
+            .refresh_mailboxes()
+            .await
+            .expect("mailboxes")
+            .expect("inbox");
+        j.sync_folder(inbox).await.expect("sync");
+        s.server.omit_from_set_reply("m2", applied);
+        let both: Vec<_> = s
+            .store
+            .list_messages(inbox, 10, 0)
+            .expect("list")
+            .iter()
+            .map(|m| m.id)
+            .collect();
+        apply_action(&s.store, &both, Action::Flag, 0, &NoListener).expect("flag both");
+        let report = j.replay_actions(0).await.expect("replay");
+        assert_eq!((report.done, report.remaining), (1, 0), "applied={applied}");
+        for m in s.store.list_messages(inbox, 10, 0).expect("list") {
+            let flagged_on_server = m.details.subject == "Subject m1" || applied;
+            assert_eq!(
+                m.details.flags.flagged, flagged_on_server,
+                "applied={applied}: {} matches the server",
+                m.details.subject
+            );
+        }
+    }
+}
+
+/// The same for a delete (a move to Trash): left out and not applied, the
+/// email is back in the Inbox locally; applied, it's gone from it.
+#[tokio::test]
+async fn a_delete_left_out_of_the_set_reply_is_reconciled() {
+    use mailcrane_core::actions::{apply_action, Action};
+    for applied in [false, true] {
+        let s = setup().await;
+        let mut j = syncer(&s).await;
+        let inbox = j
+            .refresh_mailboxes()
+            .await
+            .expect("mailboxes")
+            .expect("inbox");
+        j.sync_folder(inbox).await.expect("sync");
+        s.server.omit_from_set_reply("m2", applied);
+        let ids: Vec<_> = s
+            .store
+            .list_messages(inbox, 10, 0)
+            .expect("list")
+            .into_iter()
+            .filter(|m| m.details.subject == "Subject m1" || m.details.subject == "Subject m2")
+            .map(|m| m.id)
+            .collect();
+        apply_action(&s.store, &ids, Action::Delete, 0, &NoListener).expect("delete both");
+        j.replay_actions(0).await.expect("replay");
+        let on_server = s.server.email_mailboxes("m2").expect("m2");
+        let left = subjects(&s.store, inbox);
+        assert_eq!(
+            left.contains(&"Subject m2".to_string()),
+            on_server == vec!["mb-inbox".to_string()],
+            "applied={applied}: local Inbox {left:?} vs server {on_server:?}"
+        );
+        assert!(
+            !left.contains(&"Subject m1".to_string()),
+            "applied={applied}"
+        );
+    }
+}
+
+/// Records every event, for the tests that check what the user is told.
+#[derive(Default)]
+struct Events(std::sync::Mutex<Vec<mailcrane_core::events::CoreEvent>>);
+
+impl mailcrane_core::events::EventListener for Events {
+    fn on_event(&self, event: mailcrane_core::events::CoreEvent) {
+        if let Ok(mut events) = self.0.lock() {
+            events.push(event);
+        }
+    }
+}
+
+impl Events {
+    /// The message ids of every `ActionFailed` event so far.
+    fn failed_ids(&self) -> Vec<mailcrane_store::MessageId> {
+        self.0
+            .lock()
+            .expect("lock")
+            .iter()
+            .filter_map(|e| match e {
+                mailcrane_core::events::CoreEvent::ActionFailed { message_ids, .. } => {
+                    Some(message_ids.clone())
+                }
+                _ => None,
+            })
+            .flatten()
+            .collect()
+    }
+}
+
+/// #451 review: a change the server left out of its reply and didn't
+/// carry out is a refusal the user hears about: `ActionFailed` for that
+/// message, counted once in the report. Carried out, nothing is reported.
+#[tokio::test]
+async fn an_unapplied_omission_is_reported_as_failed() {
+    use mailcrane_core::actions::{apply_action, Action};
+    for applied in [false, true] {
+        let s = setup().await;
+        let events = Events::default();
+        let mut j = syncer_with(&s, &events).await;
+        let inbox = j
+            .refresh_mailboxes()
+            .await
+            .expect("mailboxes")
+            .expect("inbox");
+        j.sync_folder(inbox).await.expect("sync");
+        let all = s.store.list_messages(inbox, 10, 0).expect("list");
+        let m2 = all
+            .iter()
+            .find(|m| m.details.subject == "Subject m2")
+            .map(|m| m.id)
+            .expect("m2");
+        s.server.omit_from_set_reply("m2", applied);
+        let ids: Vec<_> = all.iter().map(|m| m.id).collect();
+        apply_action(&s.store, &ids, Action::Flag, 0, &NoListener).expect("flag");
+        let report = j.replay_actions(0).await.expect("replay");
+        if applied {
+            assert_eq!(report.failed, 0, "nothing to report");
+            assert!(events.failed_ids().is_empty(), "no ActionFailed");
+        } else {
+            assert_eq!(report.failed, 1, "the op counts as failed once");
+            assert_eq!(
+                events.failed_ids(),
+                vec![m2],
+                "the user hears about m2 only"
+            );
+        }
+    }
+}
+
+/// #451 review: the follow-up Email/get is split to the server's
+/// `maxObjectsInGet` (RFC 8620 §2). With a limit of 1 and two emails left
+/// out, both are confirmed; one oversized call would be refused, and the
+/// changes the server did make would be undone and reported as failed.
+#[tokio::test]
+async fn the_reconcile_fetch_respects_max_objects_in_get() {
+    use mailcrane_core::actions::{apply_action, Action};
+    let s = setup().await;
+    s.server.set_max_objects_in_get(1);
+    let mut j = syncer(&s).await;
+    let inbox = j
+        .refresh_mailboxes()
+        .await
+        .expect("mailboxes")
+        .expect("inbox");
+    j.sync_folder(inbox).await.expect("sync");
+    let all = s.store.list_messages(inbox, 10, 0).expect("list");
+    for m in &all {
+        let email = m.details.subject.trim_start_matches("Subject ").to_owned();
+        s.server.omit_from_set_reply(&email, true);
+    }
+    assert!(all.len() >= 2, "needs two emails to split");
+    let ids: Vec<_> = all.iter().map(|m| m.id).collect();
+    apply_action(&s.store, &ids, Action::Flag, 0, &NoListener).expect("flag");
+    let report = j.replay_actions(0).await.expect("replay");
+    assert_eq!((report.done, report.failed), (1, 0));
+    for m in s.store.list_messages(inbox, 10, 0).expect("list") {
+        assert!(
+            m.details.flags.flagged,
+            "{} stays flagged",
+            m.details.subject
+        );
+    }
+}
+
+/// #451 review: reconciling one op leaves alone an email that a later
+/// queued op changes, so the later op's local result survives until its
+/// own replay settles it (here m2 marked read, queued after a flag the
+/// server left out and didn't apply).
+#[tokio::test]
+async fn the_reconcile_keeps_a_later_queued_change() {
+    use mailcrane_core::actions::{apply_action, Action};
+    let s = setup().await;
+    let mut j = syncer(&s).await;
+    let inbox = j
+        .refresh_mailboxes()
+        .await
+        .expect("mailboxes")
+        .expect("inbox");
+    j.sync_folder(inbox).await.expect("sync");
+    let m2 = s
+        .store
+        .list_messages(inbox, 10, 0)
+        .expect("list")
+        .into_iter()
+        .find(|m| m.details.subject == "Subject m2")
+        .map(|m| m.id)
+        .expect("m2");
+    s.server.omit_from_set_reply("m2", false);
+    apply_action(&s.store, &[m2], Action::Flag, 0, &NoListener).expect("flag");
+    // Queued after, and not due yet in this replay.
+    apply_action(&s.store, &[m2], Action::MarkRead, 1_000, &NoListener).expect("read");
+    j.replay_actions(0).await.expect("replay");
+    let after = s
+        .store
+        .list_messages(inbox, 10, 0)
+        .expect("list")
+        .into_iter()
+        .find(|m| m.id == m2)
+        .expect("m2 still listed");
+    assert!(after.details.flags.seen, "the queued mark-read survives");
+    assert_eq!(
+        s.store.pending_ops(s.account).expect("ops").len(),
+        1,
+        "it's still queued"
+    );
+}
+
+/// #451, lead: an omitted email with a later queued op is never counted
+/// done by this op while unconfirmed (#448 again). Not applied, this op's
+/// flag is undone for it and the user is told, while the later op's local
+/// mark-read stays. Applied, the flag is confirmed and nothing is reported.
+#[tokio::test]
+async fn an_omission_with_a_later_op_is_confirmed_or_undone() {
+    use mailcrane_core::actions::{apply_action, Action};
+    for applied in [false, true] {
+        let s = setup().await;
+        let events = Events::default();
+        let mut j = syncer_with(&s, &events).await;
+        let inbox = j
+            .refresh_mailboxes()
+            .await
+            .expect("mailboxes")
+            .expect("inbox");
+        j.sync_folder(inbox).await.expect("sync");
+        let m2 = s
+            .store
+            .list_messages(inbox, 10, 0)
+            .expect("list")
+            .into_iter()
+            .find(|m| m.details.subject == "Subject m2")
+            .map(|m| m.id)
+            .expect("m2");
+        s.server.omit_from_set_reply("m2", applied);
+        apply_action(&s.store, &[m2], Action::Flag, 0, &NoListener).expect("flag");
+        apply_action(&s.store, &[m2], Action::MarkRead, 1_000, &NoListener).expect("read");
+        let report = j.replay_actions(0).await.expect("replay");
+        let after = s
+            .store
+            .list_messages(inbox, 10, 0)
+            .expect("list")
+            .into_iter()
+            .find(|m| m.id == m2)
+            .expect("m2 still listed");
+        assert_eq!(
+            after.details.flags.flagged, applied,
+            "applied={applied}: local flag matches the server"
+        );
+        assert!(
+            after.details.flags.seen,
+            "applied={applied}: the queued mark-read survives"
+        );
+        if applied {
+            assert_eq!(report.failed, 0, "confirmed");
+            assert!(events.failed_ids().is_empty());
+        } else {
+            assert_eq!(report.failed, 1, "undone, not done");
+            assert_eq!(events.failed_ids(), vec![m2], "the user hears about m2");
+        }
+    }
+}
+
+/// #451 review: an unconfirmed email is detached from its op, with its
+/// local change undone, before the op is completed. So completing the op
+/// (which deletes a delete's hidden rows) can't take the email with it,
+/// and a local failure between the steps leaves it shown, never lost.
+#[tokio::test]
+async fn a_detached_email_survives_completing_its_op() {
+    use mailcrane_core::actions::{apply_action, Action};
+    let s = setup().await;
+    let mut j = syncer(&s).await;
+    let inbox = j
+        .refresh_mailboxes()
+        .await
+        .expect("mailboxes")
+        .expect("inbox");
+    j.sync_folder(inbox).await.expect("sync");
+    let m2 = s
+        .store
+        .list_messages(inbox, 10, 0)
+        .expect("list")
+        .into_iter()
+        .find(|m| m.details.subject == "Subject m2")
+        .map(|m| m.id)
+        .expect("m2");
+    apply_action(&s.store, &[m2], Action::Delete, 0, &NoListener).expect("delete");
+    assert!(!subjects(&s.store, inbox).contains(&"Subject m2".to_string()));
+    let op = s.store.pending_ops(s.account).expect("ops")[0].id;
+    // The first step of the reconcile, then completing the op, as a replay
+    // interrupted before applying the server's state would leave it.
+    s.store.fail_op_messages(op, &[m2]).expect("detach");
+    s.store.complete_op(op, true).expect("complete");
+    assert!(
+        subjects(&s.store, inbox).contains(&"Subject m2".to_string()),
+        "m2 is back in the Inbox, not deleted with the op"
+    );
 }
