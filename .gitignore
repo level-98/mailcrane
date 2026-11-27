@@ -14,3 +14,4 @@ xcuserdata/
 ios/build/
 ios/*.xcodeproj
 ios/MailcraneCore/Sources/MailcraneCore/MailcraneCore.swift
+/website/.policy/

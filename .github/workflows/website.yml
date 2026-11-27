@@ -29,6 +29,14 @@ jobs:
         working-directory: website
     steps:
       - uses: actions/checkout@v7
+      # The privacy page is built from the policy on main, its only copy (#475).
+      - name: Check out the privacy policy from main
+        uses: actions/checkout@v7
+        with:
+          ref: main
+          path: website/.policy
+          sparse-checkout: docs/privacy.md
+          sparse-checkout-cone-mode: false
       - name: Install Zola
         run: |
           curl --fail --location --silent --show-error \
@@ -49,6 +57,19 @@ jobs:
         run: python3 scripts/update_roadmap.py
       - name: Test roadmap generator
         run: python3 -m unittest discover -s tests -v
+      # content/privacy.md is generated. A PR may change it only to what the
+      # script builds from main's policy, never by hand.
+      - name: Refuse hand edits to the generated privacy page
+        if: github.event_name == 'pull_request'
+        env:
+          BASE: ${{ github.base_ref }}
+        run: |
+          git fetch --no-tags --depth=1 origin "$BASE"
+          if [ -n "$(git diff --name-only FETCH_HEAD HEAD -- content/privacy.md)" ]; then
+            python3 scripts/build_privacy.py .policy/docs/privacy.md --check
+          fi
+      - name: Build the privacy page from docs/privacy.md
+        run: python3 scripts/build_privacy.py .policy/docs/privacy.md
       - name: Build site
         run: zola build
       - name: Check links offline

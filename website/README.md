@@ -26,6 +26,15 @@ lychee --offline public/
 
 The companion workflow on `main` ([PR #131](https://github.com/level-98/mailcrane/pull/131)) rebuilds and redeploys the site when a roadmap issue changes, and nightly. It checks out this `website` branch, regenerates the roadmap and builds the site. A manual run is available from the `Sync roadmap` workflow in GitHub Actions. Pushes to `website` also refresh the snapshot through the site workflow. The browser reads only generated local data and does not call GitHub (except on `/admin`, above).
 
+## The privacy page
+
+`content/privacy.md` is generated: don't edit it. The app's privacy policy has one copy, `docs/privacy.md` on `main` (#475). `scripts/build_privacy.py` puts it under "The app", after the site's own part in `scripts/privacy_template.md`, and both deploy workflows (`website.yml` here and `roadmap-sync.yml` on `main`) run it with main's file before `zola build`. A push to `main` that changes the policy redeploys the site. The checked-in copy is only for local builds and can lag behind `main` between website PRs. On a pull request, CI refuses a change to it that isn't exactly what the script builds from main's policy. The script refuses policy text Zola or a browser would treat as code (`{{`, `{%`, raw HTML), and underlined or level-6 headings. To rebuild the checked-in copy, or check it, from a checkout of `main`:
+
+```sh
+python scripts/build_privacy.py ../path/to/main/docs/privacy.md
+python scripts/build_privacy.py ../path/to/main/docs/privacy.md --check
+```
+
 ## Deployment
 
 The `website` branch is the source and deployment branch. Pull requests targeting it run the build and offline link check. Merges to `website` deploy the generated `public/` directory through GitHub Pages Actions.
