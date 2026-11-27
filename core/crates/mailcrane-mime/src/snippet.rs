@@ -399,8 +399,10 @@ fn mark_html_blocks(html: &str) -> String {
 /// guard, with no input known to need it. The character after
 /// [`MARK_KEEP`] is always kept. Any other line break counts as a block
 /// mark. Property tests check the result against `html_to_text`: equal
-/// without block tags, and equal to its output for the same HTML with
-/// each block tag made a `<br>`, but for runs of blank lines.
+/// without block tags; outside hidden content, equal to its output for the
+/// same HTML with each block tag made a `<br>`, blank lines not compared
+/// (the unit tests hold the blank-line rule); and anywhere, the same text
+/// but for whitespace.
 fn lines_from_marks(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut pending = false;
@@ -717,10 +719,14 @@ mod tests {
 
     /// Block pieces, each with its twin: the same piece with the block
     /// name made `br`. html_to_text reads a tag the same way whatever its
-    /// name, so in the twin it writes a line break for exactly the block
-    /// tags it closes, and drops the collapsed space after each, as a
-    /// block boundary should. Hidden content comes only as whole elements
-    /// with no block tag inside.
+    /// name, as long as the name is not one it gives a meaning to (`head`,
+    /// `style`, `script`, `template`, `p`, `br`); no block name is, and no
+    /// pair renames `</p>`. So in the twin it writes a line break for
+    /// exactly the block tags it closes, and drops the collapsed space
+    /// after each, as a block boundary should. That holds outside hidden
+    /// content only (inside, it writes the twin's break, and html_to_lines
+    /// none), so hidden content comes only as whole elements with no block
+    /// tag inside; [`HIDDEN_PIECES`] covers the rest.
     const BLOCK_PIECES: &[(&str, &str)] = &[
         ("<div>", "<br>"),
         ("</div>", "</br>"),
@@ -741,6 +747,9 @@ mod tests {
         ("<div", "<br"),
         ("<a title=\"<div>\">", "<a title=\"<br>\">"),
         ("<img alt='<p>'>", "<img alt='<br>'>"),
+        // A `<` in a quoted value cuts nothing (`tag_end` skips it).
+        ("<div title=\"<b>\">", "<br title=\"<b>\">"),
+        ("<li title='a<i'>", "<br title='a<i'>"),
         ("<style>p{}</style>", "<style>p{}</style>"),
         (
             "<script>if (a < b) {}</script>",
@@ -808,8 +817,10 @@ mod tests {
 
         /// #456 review: with block tags, html_to_lines is html_to_text on
         /// the twin, where html_to_text itself breaks the line at each
-        /// block tag it closes, whitespace included. Only runs of blank
-        /// lines may differ (a run of block tags is one line break).
+        /// block tag it closes, whitespace included. Blank lines are not
+        /// compared: the twin has one wherever a block tag meets another
+        /// break, where #446 wants none. The unit tests hold that rule
+        /// (`adjacent_blocks_are_one_line_each_and_blank_lines_stay`).
         #[test]
         fn blocks_are_html_to_text_with_a_break_at_each(case in html_and_twin()) {
             let (html, twin) = case;
@@ -820,7 +831,59 @@ mod tests {
                 html
             );
         }
+
+        /// #456 review: with hidden content cut off, stray or holding
+        /// block tags, which the twin can't judge, no character but
+        /// whitespace is lost, added or moved, and no mark leaks.
+        #[test]
+        fn hidden_content_changes_only_whitespace(html in html_from(HIDDEN_PIECES)) {
+            let squeeze = |s: &str| s.chars().filter(|c| !c.is_whitespace()).collect::<String>();
+            prop_assert_eq!(squeeze(&html_to_lines(&html)), squeeze(&plain(&html)), "{:?}", html);
+        }
     }
+
+    /// Pieces for [`hidden_content_changes_only_whitespace`]: text,
+    /// references and break tags, block tags, and the openers and closers
+    /// of hidden content as separate pieces, so it can be cut off, stray or
+    /// hold blocks (`<template><div>x</div></template>`).
+    const HIDDEN_PIECES: &[&str] = &[
+        "A",
+        "bc",
+        " ",
+        "&#32;",
+        "&Tab;",
+        "&#10;",
+        "&amp;",
+        "\u{1}",
+        "&#2;",
+        "<",
+        "\"",
+        "'",
+        ">",
+        "<br>",
+        "</p>",
+        "<br ",
+        "<div>",
+        "</div>",
+        "<td>",
+        "<p>",
+        "<li>",
+        "<div ",
+        "<td <span>",
+        "<div title=\"<b>\">",
+        "<!--",
+        "-->",
+        "<style>",
+        "</style>",
+        "<script>",
+        "</script>",
+        "<template>",
+        "</template>",
+        "<head>",
+        "</head>",
+        "<title>",
+        "</title>",
+    ];
 
     /// #456 review: a mark character in the input, raw or in any form of
     /// character reference html_to_text decodes, is no line break and
