@@ -73,6 +73,20 @@ async fn sync_all(imap: &FakeImap, store: &Store, account: AccountId) {
     session.logout().await;
 }
 
+/// A sync of every folder's changes since the last (new messages, flags,
+/// expunges), as the app's periodic sync does.
+async fn sync_changes_all(imap: &FakeImap, store: &Store, account: AccountId) {
+    let mut session = connect(imap).await;
+    let listed = session.list_folders().await.expect("list");
+    let ids = save_folders(store, account, &listed).expect("save");
+    for id in ids {
+        let mut syncer =
+            FolderSyncer::new(store, &mut session, &Quiet, account, SyncConfig::default());
+        syncer.sync_changes(id).await.expect("sync changes");
+    }
+    session.logout().await;
+}
+
 fn folder(store: &Store, account: AccountId, name: &str) -> FolderId {
     store
         .list_folders(account)
@@ -824,7 +838,13 @@ enum Case {
     MissingOriginal,
     /// A drop after the COPY, then the copy disappears.
     MissingCopy,
+    /// Commands containing this text are refused (in this folder, if any)
+    /// for days, so the give-up rule ends the move.
+    GiveUp(Option<&'static str>, &'static str),
 }
+
+/// Far beyond every sync of a case, so a re-snoozed message stays snoozed.
+const RESNOOZE_AT: i64 = WAKE + 60 * 86_400;
 
 /// A server on the same messages, with or without MOVE.
 async fn twin(imap: &FakeImap, with_move_cap: bool, faults: Vec<Fault>) -> FakeImap {
@@ -849,8 +869,43 @@ async fn live_with_keyword(imap: &FakeImap, folder: &str) -> usize {
         .count()
 }
 
-async fn run_case(dir: Dir, with_move_cap: bool, case: Case) {
-    let name = format!("{dir:?} move={with_move_cap} {case:?}");
+/// What the user does right after the faulty sync of a wake (#431).
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum After {
+    Nothing,
+    /// Snoozes it again where it shows in the Inbox (the snooze points at
+    /// that local row).
+    ReSnooze,
+    /// Snoozes it again where it shows in the Snoozed folder (the snooze
+    /// has no local row and finds the message by its Message-ID).
+    ReSnoozeFromList,
+    /// Snoozes it again wherever it shows, then undoes that at once.
+    ReSnoozeThenUndo,
+}
+
+/// The local rows shown in the Inbox and Snoozed.
+fn shown(store: &Store, account: AccountId) -> Vec<MessageId> {
+    let mut shown = visible(store, folder(store, account, "INBOX"));
+    shown.extend(visible(store, folder(store, account, "Snoozed")));
+    shown
+}
+
+/// The live (not `\Deleted`) messages in `folder`.
+async fn live_messages(imap: &FakeImap, folder: &str) -> Vec<mailcrane_testkit::Message> {
+    imap.mailbox()
+        .messages(folder)
+        .await
+        .into_iter()
+        .filter(|m| !m.flags.iter().any(|f| f == r"\Deleted"))
+        .collect()
+}
+
+/// One row of the fault table: a snooze or a wake meets `case`, then the
+/// user does `after` (wakes only), then the server is healthy again.
+/// Returns whether `after` could be done (nothing shows to snooze again
+/// when the copy vanished mid-wake).
+async fn run_case(dir: Dir, with_move_cap: bool, case: Case, after: After) -> bool {
+    let name = format!("{dir:?} move={with_move_cap} {after:?} {case:?}");
     let base = FakeImap::builder()
         .user(USER, PASSWORD)
         .folder("INBOX", vec![raw("Lunch", "lunch@example.net")])
@@ -881,7 +936,7 @@ async fn run_case(dir: Dir, with_move_cap: bool, case: Case) {
     };
     let faults = match &case {
         Case::Drop(text) => vec![Fault::DropAfterCommandOnce((*text).into())],
-        Case::Refuse(folder, text) => vec![Fault::RefuseCommand {
+        Case::Refuse(folder, text) | Case::GiveUp(folder, text) => vec![Fault::RefuseCommand {
             folder: folder.map(Into::into),
             text: (*text).into(),
         }],
@@ -911,10 +966,53 @@ async fn run_case(dir: Dir, with_move_cap: bool, case: Case) {
         }
         _ => {}
     }
-    // A healthy server afterwards: retries resume and finish.
+
+    // Nothing moved yet when the user acts: the wake hasn't started its
+    // move (step 0) or is rolling it back (step 4). Then the message must
+    // never be woken on the way to the new snooze.
+    let before = list_snoozed(&store, Some(account)).expect("list");
+    let nothing_moved = before
+        .first()
+        .is_some_and(|r| r.state == SnoozeState::ToWake && (r.step == 0 || r.step == 4));
+    let mut acted = true;
+    match after {
+        After::Nothing => {}
+        After::ReSnooze | After::ReSnoozeFromList | After::ReSnoozeThenUndo => {
+            sync_all(&base, &store, account).await;
+            let ids = match after {
+                After::ReSnooze => visible(&store, inbox),
+                After::ReSnoozeFromList => visible(&store, folder(&store, account, "Snoozed")),
+                _ => shown(&store, account),
+            };
+            acted = !ids.is_empty();
+            if acted {
+                snooze(&store, &ids, RESNOOZE_AT, &Quiet).expect("re-snooze");
+                if after == After::ReSnoozeThenUndo {
+                    unsnooze(&store, &ids, start + 1, &Quiet).expect("undo");
+                }
+            }
+        }
+    }
+
+    // A refusal only counts when the move sends that command: COPY and
+    // `\Deleted` without MOVE, MOVE with it.
+    let met = |text: &str| match text {
+        "UID MOVE" => with_move_cap,
+        "UID COPY" | "\\Deleted" => !with_move_cap,
+        _ => true,
+    };
+    let given_up = matches!(case, Case::GiveUp(_, text) if met(text));
+    if matches!(case, Case::GiveUp(..)) {
+        // Refused for days: at least GIVE_UP_FAILURES syncs over 24 hours.
+        for half_day in 1..=8 {
+            let _ = run_sync(&faulty, &store, account, start + half_day * 43_200).await;
+        }
+    }
+    // A healthy server afterwards: retries resume and finish (and nothing
+    // given up comes back).
     let healthy = twin(&base, with_move_cap, Vec::new()).await;
     for day in 1..=6 {
-        let _ = run_sync(&healthy, &store, account, start + day * 2 * 86_400).await;
+        let _ = run_sync(&healthy, &store, account, start + (4 + day * 2) * 86_400).await;
     }
 
     // Invariant 1: one live place. Invariant 2: no keyword in Snoozed
@@ -922,13 +1020,103 @@ async fn run_case(dir: Dir, with_move_cap: bool, case: Case) {
     let rows = list_snoozed(&store, Some(account)).expect("list");
     let in_inbox = live(&base, "INBOX").await;
     let in_snoozed = live(&base, "Snoozed").await;
-    assert_eq!(in_inbox + in_snoozed, 1, "{name}: one live place");
+    // A given-up rollback can leave its copy (invariant 1's exception).
+    let copy_may_stay = given_up && matches!(case, Case::GiveUp(_, t) if t.contains("Deleted"));
+    if copy_may_stay {
+        assert!(
+            (1..=2).contains(&(in_inbox + in_snoozed)),
+            "{name}: {in_inbox} + {in_snoozed}"
+        );
+    } else {
+        assert_eq!(
+            in_inbox + in_snoozed,
+            1,
+            "{name}: one live place ({in_inbox} + {in_snoozed})"
+        );
+    }
     if rows.is_empty() {
         assert_eq!(
             live_with_keyword(&base, "Snoozed").await,
             0,
             "{name}: keyword without a row"
         );
+    }
+    // Invariant 3: a give-up leaves the message shown here, with no row
+    // (a pending re-snooze is dropped with it).
+    let assert_given_up = |rows: &[mailcrane_store::Snooze]| {
+        assert!(rows.is_empty(), "{name}: given up: {rows:?}");
+        assert!(
+            !shown(&store, account).is_empty(),
+            "{name}: shown on this device"
+        );
+    };
+    let resnoozed = acted && matches!(after, After::ReSnooze | After::ReSnoozeFromList);
+    if resnoozed {
+        if given_up && rows.is_empty() {
+            assert_given_up(&rows);
+            return acted;
+        }
+        // Invariant 5: one row, the re-snooze applied once the wake ended.
+        assert_eq!(rows.len(), 1, "{name}: {rows:?}");
+        assert_eq!(
+            (rows[0].state, rows[0].wake_at, rows[0].pending_resnooze_at),
+            (SnoozeState::Snoozed, RESNOOZE_AT, None),
+            "{name}"
+        );
+        assert_eq!(
+            (in_inbox, in_snoozed),
+            (0, 1),
+            "{name}: one copy, in Snoozed"
+        );
+        let parked = live_messages(&base, "Snoozed").await;
+        let new_keyword = format_keyword(RESNOOZE_AT).expect("keyword");
+        let keywords: Vec<_> = parked[0]
+            .flags
+            .iter()
+            .filter(|f| f.starts_with("$snoozed"))
+            .collect();
+        assert_eq!(keywords, vec![&new_keyword], "{name}: only the new keyword");
+        if nothing_moved {
+            assert!(
+                parked[0].flags.iter().any(|f| f == "\\Seen"),
+                "{name}: snoozed again without being woken (still read): {:?}",
+                parked[0].flags
+            );
+        }
+        return acted;
+    }
+    if acted && after == After::ReSnoozeThenUndo {
+        if given_up {
+            assert_given_up(&rows);
+            return acted;
+        }
+        // Undone: as if the user hadn't snoozed again, the wake ends with
+        // the message back in the Inbox, shown, without a keyword.
+        assert!(rows.is_empty(), "{name}: woken: {rows:?}");
+        assert_eq!(in_inbox, 1, "{name}: back in the Inbox");
+        // The app syncs its folders' changes too: the copy the wake made
+        // shows, and one a rollback removed goes.
+        sync_changes_all(&base, &store, account).await;
+        assert_eq!(
+            visible(&store, inbox).len(),
+            1,
+            "{name}: shown in the Inbox after the undo"
+        );
+        // (Unless the keyword cleanup on the copy was refused, which is
+        // best effort, as without the re-snooze.)
+        if !matches!(case, Case::Refuse(Some("INBOX"), "-FLAGS")) {
+            let back = live_messages(&base, "INBOX").await;
+            assert!(
+                !back[0].flags.iter().any(|f| f.starts_with("$snoozed")),
+                "{name}: no keyword: {:?}",
+                back[0].flags
+            );
+        }
+        return acted;
+    }
+    if given_up {
+        assert_given_up(&rows);
+        return acted;
     }
     let refused = matches!(case, Case::Refuse(..));
     match dir {
@@ -949,27 +1137,25 @@ async fn run_case(dir: Dir, with_move_cap: bool, case: Case) {
             assert_eq!(in_inbox, 1, "{name}: back in the Inbox");
             let refused_cleanup = matches!(case, Case::Refuse(Some("INBOX"), "-FLAGS"));
             if !refused_cleanup {
-                let back = base.mailbox().messages("INBOX").await;
-                let copy = back
-                    .iter()
-                    .find(|m| !m.flags.iter().any(|f| f == "\\Deleted"))
-                    .expect("copy");
+                let back = live_messages(&base, "INBOX").await;
                 assert!(
-                    !copy
+                    !back[0]
                         .flags
                         .iter()
                         .any(|f| f.starts_with("$snoozed") || f == "\\Seen"),
                     "{name}: unsnoozed and unread: {:?}",
-                    copy.flags
+                    back[0].flags
                 );
             }
         }
     }
+    acted
 }
 
-#[tokio::test]
-async fn every_early_exit_keeps_the_model_invariants() {
-    let cases = [
+/// Every early exit the table knows, for a snooze or a wake, with or
+/// without MOVE.
+fn table() -> Vec<Case> {
+    vec![
         Case::Drop("UID COPY"),
         Case::Drop("UID MOVE"),
         Case::Drop("\\Deleted"),
@@ -979,17 +1165,105 @@ async fn every_early_exit_keeps_the_model_invariants() {
         Case::Refuse(None, "UID MOVE"),
         Case::Refuse(Some("INBOX"), "\\Deleted"),
         Case::Refuse(Some("Snoozed"), "\\Deleted"),
+        // Refused in both folders: the rollback is refused too (step 4).
+        Case::Refuse(None, "\\Deleted"),
         Case::Refuse(None, "UID EXPUNGE"),
         Case::Refuse(Some("INBOX"), "-FLAGS"),
         Case::Refuse(None, "+FLAGS"),
         Case::MissingOriginal,
         Case::MissingCopy,
-    ];
+        Case::GiveUp(None, "UID COPY"),
+        Case::GiveUp(None, "UID MOVE"),
+        Case::GiveUp(None, "\\Deleted"),
+    ]
+}
+
+/// Runs one row on its own thread (the default stack, as the app's
+/// threads have) and its own runtime, so a failing row doesn't stop the
+/// others. `Err` if the row's checks failed.
+fn run_row(dir: Dir, with_move_cap: bool, case: Case, after: After) -> std::thread::Result<bool> {
+    std::thread::Builder::new()
+        .spawn(move || {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("runtime")
+                .block_on(run_case(dir, with_move_cap, case, after))
+        })
+        .expect("thread")
+        .join()
+}
+
+#[test]
+fn every_early_exit_keeps_the_model_invariants() {
+    let mut failed = Vec::new();
     for dir in [Dir::Snooze, Dir::Wake] {
         for with_move_cap in [false, true] {
-            for case in &cases {
-                run_case(dir, with_move_cap, case.clone()).await;
+            for case in table() {
+                let name = format!("{dir:?} move={with_move_cap} {case:?}");
+                if run_row(dir, with_move_cap, case, After::Nothing).is_err() {
+                    failed.push(name);
+                }
             }
+        }
+    }
+    assert!(
+        failed.is_empty(),
+        "{} rows broke: {failed:#?}",
+        failed.len()
+    );
+}
+
+/// #431 crossed with the fault table (lead's ask on #455): after every
+/// early exit of a wake, the user snoozes the message again (as shown, or
+/// from the Snoozed list with no local row), or snoozes it again and
+/// undoes that. Between them the cases leave the wake at each step (1
+/// after a lost COPY or MOVE reply, 2 after a lost `\Deleted` reply, 3
+/// after a lost EXPUNGE reply, 4 when the rollback is refused too), or
+/// end it by the give-up rule. Every row keeps the invariants: snoozed
+/// again once, until the new time, in Snoozed with only the new keyword,
+/// and never woken first when nothing had moved; or, undone, woken as if
+/// nothing happened; or given up.
+#[test]
+fn a_resnooze_after_every_early_exit_of_a_wake_keeps_the_invariants() {
+    let mut crossed = Vec::new();
+    let mut failed = Vec::new();
+    for after in [
+        After::ReSnooze,
+        After::ReSnoozeFromList,
+        After::ReSnoozeThenUndo,
+    ] {
+        for with_move_cap in [false, true] {
+            for case in table() {
+                let name = format!("{after:?} move={with_move_cap} {case:?}");
+                // Each row on its own, so one failing row doesn't hide the
+                // others: the report lists every broken crossing.
+                match run_row(Dir::Wake, with_move_cap, case.clone(), after) {
+                    Ok(true) => {
+                        if after != After::ReSnoozeThenUndo {
+                            crossed.push(format!("move={with_move_cap} {case:?}"));
+                        }
+                    }
+                    Ok(false) => {}
+                    Err(_) => failed.push(name),
+                }
+            }
+        }
+    }
+    assert!(
+        failed.is_empty(),
+        "{} rows broke: {failed:#?}",
+        failed.len()
+    );
+    // Every case met a re-snooze (in the Inbox or in Snoozed, wherever the
+    // message showed), except a vanished copy, which leaves nothing shown.
+    for with_move_cap in [false, true] {
+        for case in table() {
+            let row = format!("move={with_move_cap} {case:?}");
+            assert!(
+                crossed.contains(&row) || row.ends_with("MissingCopy"),
+                "{row}: never re-snoozed"
+            );
         }
     }
 }

@@ -145,7 +145,7 @@ fn a_resnooze_during_a_half_done_wake_waits_for_the_wake() -> R {
         (SnoozeState::ToWake, 2, Some(9), Some(1_795_900_000))
     );
     // The wake finishes: the re-snooze applies, at step 0.
-    assert!(store.finish_wake(id, true)?);
+    assert!(store.finish_wake(id, WakeLocal::Keep)?);
     let s = store.get_snooze_by_id(id)?.ok_or("snooze")?;
     assert_eq!(
         (s.state, s.step, s.wake_at, s.pending_resnooze_at),
@@ -154,7 +154,7 @@ fn a_resnooze_during_a_half_done_wake_waits_for_the_wake() -> R {
     // Without a pending re-snooze, finishing a wake deletes the row.
     store.finish_snooze(id, true)?;
     assert_eq!(store.take_due_snoozes(1_796_000_000)?.len(), 1);
-    assert!(!store.finish_wake(id, true)?);
+    assert!(!store.finish_wake(id, WakeLocal::Keep)?);
     assert!(store.get_snooze_by_id(id)?.is_none());
     Ok(())
 }

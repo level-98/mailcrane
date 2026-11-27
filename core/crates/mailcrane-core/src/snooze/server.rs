@@ -14,6 +14,7 @@
 //! | `to_snooze`/`to_wake` | 4 | refused after the COPY: the copy is to be removed (rollback) |
 //! | `snoozed` | 0 | in Snoozed, with the wake keyword when allowed |
 //! | `to_wake` | 0 | due; still in Snoozed with its keyword (a wake changes nothing before its move) |
+//! | `to_wake` + `pending_resnooze_at` | 1–4 | snoozed again mid-wake (#431): the wake goes on, the new time waits (store migration 0024) |
 //!
 //! Transitions, per server step: 0 → 1 (UIDNEXT recorded, just before the
 //! COPY or MOVE is sent) → 2 (COPY) → 3 (`\Deleted`, or the MOVE's reply)
@@ -33,6 +34,29 @@
 //! - a refusal that lasts ([`GIVE_UP_FAILURES`] syncs and [`GIVE_UP_SECS`],
 //!   whichever is later): given up.
 //!
+//! A re-snooze (#431): snoozing a message again while its wake is at step
+//! 0 replaces the wake at once, as a new `to_snooze` row; the message is
+//! in Snoozed, so only its keyword changes. At steps 1–4 the wake can't be
+//! dropped (a copy may exist), so it goes on and the new time waits in
+//! `pending_resnooze_at`, the wake's back-off and failure count untouched.
+//! How the wake ends decides what happens to it (`Store::finish_wake`):
+//!
+//! - finished (the message is in the destination): the row becomes
+//!   `to_snooze` at step 0 with that time, and the next sync snoozes the
+//!   message from there, by its hidden row or, with none (snoozed again
+//!   from Snoozed), by searching the destination;
+//! - rolled back or refused (nothing moved): the re-snooze applies at
+//!   once to the message still in Snoozed, which is never woken first; the
+//!   rolled-back copy's local row is dropped;
+//! - given up: the re-snooze is dropped too, and the message shown once
+//!   (invariant 3), since a copy the rollback couldn't remove may remain.
+//!
+//! Unsnoozing (an Undo) clears the pending time and shows the copy the
+//! re-snooze hid again; the wake goes on. A `to_snooze` row at step 0
+//! whose keyword is already on the server (`on_server`: snoozed again
+//! after its wake was due, or from Snoozed) is woken when unsnoozed, never
+//! just dropped, since the message is in Snoozed with its keyword.
+//!
 //! Invariants, after every completed step:
 //!
 //! 1. Once a move is finished or undone, the server has the message in
@@ -48,6 +72,8 @@
 //! 3. A given-up snooze or wake leaves the message visible on this device,
 //!    with no row and no keyword, wherever the server has it.
 //! 4. Retries back off, and stop at the give-up rule.
+//! 5. A message has at most one snooze row, and a pending re-snooze is
+//!    applied once, after its wake ends, never alongside it.
 
 use super::{format_keyword, snoozed_folder, KEYWORD_PREFIX, SNOOZED_FOLDER_NAME};
 use crate::actions::backoff_secs;
@@ -55,7 +81,7 @@ use crate::events::{CoreEvent, EventListener};
 use crate::sync::SyncError;
 use mailcrane_imap::{save_folders, ChangeError, ImapError, Session, SystemFlag};
 use mailcrane_store::{
-    AccountId, Folder, FolderId, FolderRole, Snooze, SnoozeState, Store, StoreError,
+    AccountId, Folder, FolderId, FolderRole, Snooze, SnoozeState, Store, StoreError, WakeLocal,
 };
 
 /// How far a move without MOVE got, saved on the snooze row after each
@@ -115,13 +141,15 @@ pub async fn sync_snoozes(
         if s.state == SnoozeState::Snoozed {
             continue;
         }
-        // `None`: a refused move was rolled back on the server.
+        // `None`: a refused move was rolled back on the server. Each move
+        // runs boxed, so this loop's future stays small however much a move
+        // holds across its awaits.
         let result = if s.step == STEP_ROLLBACK {
-            roll_back(store, session, s).await.map(|()| None)
+            Box::pin(roll_back(store, session, s)).await.map(|()| None)
         } else if s.state == SnoozeState::ToSnooze {
-            snooze_one(store, session, s).await.map(Some)
+            Box::pin(snooze_one(store, session, s)).await.map(Some)
         } else {
-            wake_one(store, session, s).await.map(Some)
+            Box::pin(wake_one(store, session, s)).await.map(Some)
         };
         let result = match result {
             // Refused after the COPY started: remove the copy, then undo.
@@ -254,7 +282,9 @@ async fn carry_forward(
                     store.delete_message_row(id).map_err(store_err)?;
                 }
             }
-            store.finish_wake(s.id, true).map_err(store_err)?;
+            store
+                .finish_wake(s.id, WakeLocal::Keep)
+                .map_err(store_err)?;
         }
         // Whether the wake keyword reached the server isn't known here, so
         // the wake time is kept on this device.
@@ -277,6 +307,16 @@ fn keep_wake(
     now: i64,
     listener: &dyn EventListener,
 ) -> Result<(), StoreError> {
+    // Snoozed again meanwhile (#431): nothing moved, so the re-snooze
+    // applies now, to the message in Snoozed, rather than the wake moving
+    // it to the Inbox unread first. The copy it pointed at was rolled back.
+    if s.pending_resnooze_at.is_some() {
+        store.finish_wake(s.id, WakeLocal::Drop)?;
+        if let Some(folder) = s.original_folder_id {
+            listener.on_event(CoreEvent::MessagesChanged { folder_id: folder });
+        }
+        return Ok(());
+    }
     store.reset_snooze_step(s.id, now)?;
     let attempts = s.attempts.saturating_add(1);
     store.defer_snooze(s.id, now.saturating_add(backoff_secs(attempts)))?;
@@ -435,8 +475,14 @@ fn undo(store: &Store, s: &Snooze, listener: &dyn EventListener) -> Result<(), S
                 });
             }
         }
-        // A re-snooze pending (#431) applies, with the message where it is.
-        store.finish_wake(s.id, false).map(|_| ())
+        // Given up (invariant 3): shown once, with no row. A re-snooze
+        // pending (#431) is dropped with it: a copy the rollback couldn't
+        // remove may still be in the destination, so snoozing the original
+        // would leave the message both shown and snoozed.
+        if let Some(folder) = s.original_folder_id {
+            listener.on_event(CoreEvent::MessagesChanged { folder_id: folder });
+        }
+        store.delete_snooze(s.id, true)
     } else {
         if let Some(folder) = s.original_folder_id {
             listener.on_event(CoreEvent::MessagesChanged { folder_id: folder });
@@ -715,14 +761,35 @@ async fn snooze_one(
         }
         None => snoozed.clone(),
     };
-    let info = session.select(&source.details.remote_name).await?;
-    let uids = match &local {
+    let mut source = source;
+    let mut info = session.select(&source.details.remote_name).await?;
+    let mut uids = match &local {
         Some(h) => vec![h.details.uid],
         None => newest(
             s,
             session.uid_search_message_id(&s.message_id_header).await?,
         ),
     };
+    // A snooze with no local row, before its move: only a live message
+    // counts (a woken original flagged `\Deleted` but not expunged isn't
+    // the message), and if Snoozed has none, the message is where a wake
+    // moves it: its original folder, else the Inbox (#431, a re-snooze
+    // from Snoozed made while the wake was half done). Boxed, to keep this
+    // function's future small.
+    if local.is_none() && s.local_message_id.is_none() && s.step == STEP_NONE {
+        uids = Box::pin(live_uids(session, uids)).await?;
+        if uids.is_empty() {
+            if let Some((folder, found_info, found)) =
+                Box::pin(find_where_woken(store, session, s, &snoozed)).await?
+            {
+                source = folder;
+                info = found_info;
+                uids = found;
+            } else {
+                session.select(&source.details.remote_name).await?;
+            }
+        }
+    }
     let new = format_keyword(s.wake_at);
     if uids.is_empty() {
         // The original is gone. After the COPY started, look for this
@@ -781,6 +848,47 @@ async fn snooze_one(
     Ok(vec![source.id, snoozed.id])
 }
 
+/// The live message with this snooze's Message-ID in the folder a wake
+/// moves it to (its original folder, else the Inbox), selected, if there
+/// is one there.
+async fn find_where_woken(
+    store: &Store,
+    session: &mut Session,
+    s: &Snooze,
+    snoozed: &Folder,
+) -> Result<Option<(Folder, mailcrane_imap::SelectInfo, Vec<u32>)>, ChangeError> {
+    let Some(folder) = wake_destination(store, s)
+        .ok()
+        .filter(|f| f.id != snoozed.id)
+    else {
+        return Ok(None);
+    };
+    let info = session.select(&folder.details.remote_name).await?;
+    let found = newest(
+        s,
+        session.uid_search_message_id(&s.message_id_header).await?,
+    );
+    let found = live_uids(session, found).await?;
+    Ok((!found.is_empty()).then_some((folder, info, found)))
+}
+
+/// `uids` in the selected folder without those flagged `\Deleted`.
+async fn live_uids(session: &mut Session, uids: Vec<u32>) -> Result<Vec<u32>, ChangeError> {
+    let mut live = Vec::with_capacity(uids.len());
+    for uid in uids {
+        let fetched = session.uid_fetch_flags(uid, uid, None).await?;
+        let deleted = fetched
+            .updates
+            .iter()
+            .filter(|u| u.uid == uid)
+            .any(|u| u.flags.iter().any(|f| f.eq_ignore_ascii_case(r"\Deleted")));
+        if !deleted {
+            live.push(uid);
+        }
+    }
+    Ok(live)
+}
+
 async fn wake_one(
     store: &Store,
     session: &mut Session,
@@ -788,7 +896,9 @@ async fn wake_one(
 ) -> Result<Vec<FolderId>, ChangeError> {
     let Some(snoozed) = snoozed_folder(store, s.account_id).map_err(store_err)? else {
         // No Snoozed folder: nothing to move back.
-        store.finish_wake(s.id, true).map_err(store_err)?;
+        store
+            .finish_wake(s.id, WakeLocal::Keep)
+            .map_err(store_err)?;
         return Ok(Vec::new());
     };
     let local = store
@@ -822,7 +932,9 @@ async fn wake_one(
             store.delete_message_row(id).map_err(store_err)?;
         }
         // A re-snooze asked for meanwhile now applies (#431).
-        store.finish_wake(s.id, true).map_err(store_err)?;
+        store
+            .finish_wake(s.id, WakeLocal::Keep)
+            .map_err(store_err)?;
         return Ok(changed);
     }
     let dest = wake_destination(store, s)?;
@@ -856,6 +968,8 @@ async fn wake_one(
         store.delete_message_row(id).map_err(store_err)?;
     }
     // A re-snooze asked for while the wake was half done now applies (#431).
-    store.finish_wake(s.id, true).map_err(store_err)?;
+    store
+        .finish_wake(s.id, WakeLocal::Keep)
+        .map_err(store_err)?;
     Ok(vec![snoozed.id, dest.id])
 }

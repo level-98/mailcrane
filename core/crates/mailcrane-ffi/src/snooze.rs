@@ -49,10 +49,12 @@ pub struct SnoozeInfo {
 
 impl From<&Snooze> for SnoozeInfo {
     fn from(s: &Snooze) -> Self {
+        // Snoozed again while its wake was half done (#431): the user sees
+        // the new time, and not "waking", though the wake finishes first.
         Self {
-            wake_at: s.wake_at,
+            wake_at: s.pending_resnooze_at.unwrap_or(s.wake_at),
             device_only: s.device_only(),
-            waking: s.state == SnoozeState::ToWake,
+            waking: s.state == SnoozeState::ToWake && s.pending_resnooze_at.is_none(),
         }
     }
 }
@@ -247,6 +249,34 @@ mod tests {
         assert_eq!(engine.unsnooze_messages(vec![id]).map(|a| a.len()), Ok(1));
         assert_eq!(engine.snooze_info(id), Ok(None));
         assert_eq!(engine.unsnooze_messages(vec![id]), Ok(Vec::new()));
+    }
+
+    /// #431: snoozed again while its wake is half done, the message shows
+    /// the new time and isn't "waking", though the wake finishes first.
+    #[test]
+    fn a_pending_resnooze_shows_its_new_time() {
+        let mut s = mailcrane_store::Snooze {
+            id: mailcrane_store::SnoozeId(1),
+            account_id: mailcrane_store::AccountId(1),
+            message_id_header: "lunch@example.net".into(),
+            original_folder_id: None,
+            local_message_id: None,
+            wake_at: 1_000,
+            state: SnoozeState::ToWake,
+            on_server: true,
+            mark_unread: true,
+            attempts: 0,
+            next_attempt_at: 0,
+            step: 2,
+            target_uidnext: Some(7),
+            rollback_since: None,
+            pending_resnooze_at: Some(9_000),
+        };
+        let info = SnoozeInfo::from(&s);
+        assert_eq!((info.wake_at, info.waking), (9_000, false));
+        s.pending_resnooze_at = None;
+        let info = SnoozeInfo::from(&s);
+        assert_eq!((info.wake_at, info.waking), (1_000, true));
     }
 
     #[test]
