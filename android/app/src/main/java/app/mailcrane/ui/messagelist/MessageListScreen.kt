@@ -74,6 +74,7 @@ import app.mailcrane.core.ThreadSummary
 import app.mailcrane.core.UNDO_WINDOW_MS
 import app.mailcrane.settings.SwipeAction
 import app.mailcrane.ui.components.EmptyFolderState
+import app.mailcrane.ui.folders.takesMoves
 import app.mailcrane.ui.message.MoveDialog
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -136,7 +137,7 @@ fun MessageListScreen(
     var moving by rememberSaveable { mutableStateOf<Long?>(null) }
     moving?.let { messageId ->
         MoveDialog(
-            folders = folders.filter { it.id != folderId },
+            folders = folders.filter { it.id != folderId && it.takesMoves },
             onPick = {
                 moving = null
                 viewModel.move(messageId, it)

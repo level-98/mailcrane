@@ -41,6 +41,7 @@ fn folder(store: &Store, account: AccountId, name: &str, role: Option<FolderRole
             highestmodseq: None,
             is_subscribed: true,
             selectable: true,
+            virtual_role: None,
         })
         .expect("folder")
 }

@@ -28,6 +28,7 @@ pub(crate) const MIGRATIONS: &[&str] = &[
     include_str!("../migrations/0021_jmap_push.sql"),
     include_str!("../migrations/0022_oauth_provider.sql"),
     include_str!("../migrations/0023_snooze_step.sql"),
+    include_str!("../migrations/0024_virtual_folder_role.sql"),
 ];
 
 fn user_version(conn: &Connection) -> Result<i64, StoreError> {
@@ -112,6 +113,64 @@ mod tests {
         assert!(conn
             .execute("UPDATE accounts SET local_only = 2", [])
             .is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn the_virtual_role_column_leaves_existing_rows_untouched() -> R {
+        // #390: a database just before the migration that adds
+        // `folders.virtual_role`, with folders and messages. They read back
+        // unchanged, with no virtual role, and an unknown stored value (say,
+        // from a newer app) reads as none instead of failing.
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("m.db");
+        let added = MIGRATIONS
+            .iter()
+            .position(|m| m.contains("ADD COLUMN virtual_role"))
+            .ok_or("no migration adds virtual_role")?;
+        let before = MIGRATIONS.get(..added).ok_or("migrations")?;
+        {
+            let mut conn = Connection::open(&path)?;
+            run(&mut conn, before)?;
+            conn.execute_batch(
+                "INSERT INTO accounts (display_name, email, imap_host, imap_port, imap_security, \
+                 smtp_host, smtp_port, smtp_security, username) VALUES \
+                 ('A','a@example.org','imap.example.org',993,'tls','smtp.example.org',465,'tls','a'); \
+                 INSERT INTO folders (account_id, remote_name, display_name, role, uidvalidity) \
+                 VALUES (1, 'INBOX', 'Inbox', 'inbox', 42), \
+                        (1, '[Gmail]/Starred', 'Starred', NULL, 43); \
+                 INSERT INTO messages (folder_id, uid, subject, date, internal_date, size) \
+                 VALUES (1, 7, 'Hello', 1790000000, 1790000000, 10), \
+                        (2, 8, 'Again', 1790000001, 1790000001, 11);",
+            )?;
+        }
+
+        let store = crate::Store::open(&path)?;
+        assert_eq!(store.schema_version()?, i64::try_from(MIGRATIONS.len())?);
+        let id = store.list_accounts()?.first().ok_or("account")?.id;
+        let folders = store.list_folders(id)?;
+        assert_eq!(folders.len(), 2);
+        for f in &folders {
+            assert_eq!(f.details.virtual_role, None);
+            assert_eq!(store.list_messages(f.id, 10, 0)?.len(), 1);
+        }
+        let inbox = folders
+            .iter()
+            .find(|f| f.details.remote_name == "INBOX")
+            .ok_or("inbox")?;
+        assert_eq!(inbox.details.role, Some(crate::FolderRole::Inbox));
+        assert_eq!(inbox.details.uidvalidity, Some(42));
+        drop(store);
+
+        let conn = Connection::open(&path)?;
+        conn.execute(
+            "UPDATE folders SET virtual_role = 'from-the-future' WHERE id = 2",
+            [],
+        )?;
+        drop(conn);
+        let store = crate::Store::open(&path)?;
+        let starred = store.get_folder(crate::FolderId(2))?.ok_or("folder")?;
+        assert_eq!(starred.details.virtual_role, None);
         Ok(())
     }
 
