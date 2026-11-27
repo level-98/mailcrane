@@ -541,7 +541,9 @@ fn a_jmap_account_syncs_through_the_same_calls() {
         .refresh_folders(account.0)
         .expect("folders")
         .expect("an inbox");
-    assert_eq!(engine.sync_folder(inbox), Ok(1));
+    // #462 review: JMAP work runs on the engine's own thread too.
+    let synced = super::stack_tests::on_small_stack(|| engine.sync_folder(inbox));
+    assert_eq!(synced, Ok(1));
     let store = Store::open(&path).expect("store");
     let message = store
         .list_messages(FolderId(inbox), 10, 0)
@@ -550,7 +552,8 @@ fn a_jmap_account_syncs_through_the_same_calls() {
         .expect("the message");
     assert_eq!(message.details.subject, "Hello over JMAP");
     drop(store);
-    assert_eq!(engine.fetch_body(message.id.0), Ok(()));
+    let fetched = super::stack_tests::on_small_stack(|| engine.fetch_body(message.id.0));
+    assert_eq!(fetched, Ok(()));
     let store = Store::open(&path).expect("store");
     let body = store.get_body(message.id).expect("read").expect("stored");
     assert!(String::from_utf8_lossy(&body).contains("JMAP body"));
