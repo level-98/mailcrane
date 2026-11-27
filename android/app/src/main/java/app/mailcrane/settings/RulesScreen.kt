@@ -67,6 +67,7 @@ import app.mailcrane.core.ServerRulesNotice
 import app.mailcrane.core.SyncFailure
 import app.mailcrane.ui.folders.folderName
 import app.mailcrane.ui.folders.takesMoves
+import app.mailcrane.ui.theme.outlinedButtonBorder
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedFactory
 import dagger.assisted.AssistedInject
@@ -736,7 +737,10 @@ internal fun RuleEditor(
                     }
                 }
             }
-            OutlinedButton(onClick = { onChange(draft.copy(conditions = draft.conditions + ConditionDraft())) }) {
+            OutlinedButton(
+                onClick = { onChange(draft.copy(conditions = draft.conditions + ConditionDraft())) },
+                border = outlinedButtonBorder(),
+            ) {
                 Text(stringResource(R.string.rules_add_condition))
             }
             Text(stringResource(R.string.rules_then), style = MaterialTheme.typography.titleSmall)
@@ -776,7 +780,10 @@ internal fun RuleEditor(
                     }
                 }
             }
-            OutlinedButton(onClick = { onChange(draft.copy(actions = draft.actions + ActionDraft())) }) {
+            OutlinedButton(
+                onClick = { onChange(draft.copy(actions = draft.actions + ActionDraft())) },
+                border = outlinedButtonBorder(),
+            ) {
                 Text(stringResource(R.string.rules_add_action))
             }
             SwitchLine(
