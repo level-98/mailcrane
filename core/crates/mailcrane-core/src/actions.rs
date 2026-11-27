@@ -9,7 +9,7 @@
 
 mod replay;
 
-pub(crate) use replay::action_kind;
+pub(crate) use replay::{action_kind, report_folder_reset};
 pub use replay::{backoff_secs, replay, ReplayReport};
 
 use crate::events::{CoreEvent, EventListener};

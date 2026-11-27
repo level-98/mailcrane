@@ -235,6 +235,7 @@ fun SettingsScreen(
         if (onAddAccount != null) {
             AccountsSection(accounts, onAddAccount, onRemoveAccount)
         }
+        ReadingSection()
         NotificationsSection()
         PushSection()
         AppLockSection()

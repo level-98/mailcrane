@@ -27,12 +27,13 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Surface
 import androidx.compose.material3.SwipeToDismissBox
+import androidx.compose.material3.SwipeToDismissBoxDefaults
+import androidx.compose.material3.SwipeToDismissBoxState
 import androidx.compose.material3.SwipeToDismissBoxValue
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
-import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
@@ -154,7 +155,7 @@ fun MessageListScreen(
             },
         )
     LaunchedEffect(viewModel) {
-        viewModel.actionsUndone.collect { snackbar.showSnackbar(resources.getString(R.string.action_undone)) }
+        viewModel.actionsUndone.collect { message -> snackbar.showSnackbar(resources.getString(message)) }
     }
     // Multi-select (M4-14).
     LaunchedEffect(viewModel) {
@@ -613,7 +614,11 @@ private fun SwipeableRow(
     swipe: SwipeHandlers,
     content: @Composable () -> Unit,
 ) {
-    val state = rememberSwipeToDismissBoxState()
+    // Not saved: material3's dismiss effect runs onDismiss whenever the state isn't Settled, so a row
+    // restored mid-swipe (after rotation or process death) would run its action a second time (#466).
+    // A row coming back always starts at rest.
+    val threshold = SwipeToDismissBoxDefaults.positionalThreshold
+    val state = remember { SwipeToDismissBoxState(SwipeToDismissBoxValue.Settled, threshold) }
     val scope = rememberCoroutineScope()
     val resources = LocalResources.current
     val actions =
@@ -647,10 +652,9 @@ private fun SwipeableRow(
         modifier = Modifier.semantics { customActions = actions },
         enableDismissFromStartToEnd = swipe.right != SwipeAction.NONE,
         enableDismissFromEndToStart = swipe.left != SwipeAction.NONE,
-        // Only a row at rest takes a swipe. The callback is stable, so the dismiss effect runs again only
-        // when the settled value changes: a swipe that caught the row springing back (or waiting to be
-        // dropped) would settle it at the same value again, with no action and no reset, and leave it swiped
-        // away for good (#368).
+        // Only a row at rest takes a swipe. material3 1.5.0 already disables dragging until the state is
+        // Settled; this only says so here, in case a later version stops doing it: a swipe caught mid-reset
+        // would settle at the same value, run nothing, and leave the row swiped away for good (#368, #369 review).
         gesturesEnabled = state.settledValue == SwipeToDismissBoxValue.Settled,
         onDismiss = onDismiss,
         backgroundContent = {

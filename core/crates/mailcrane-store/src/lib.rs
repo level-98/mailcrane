@@ -13,10 +13,11 @@ pub use repo::NewMail;
 pub use repo::PushSubscriptionRow;
 pub use repo::{is_valid_authserv_id, MAX_AUTHSERV_ID_LEN};
 pub use repo::{
-    CancelReport, Correspondent, Draft, DraftFields, DraftId, NewOp, NewOutboxMessage, NewRule,
-    OpId, OpKind, OpMessage, OutboxId, OutboxMessage, OutboxState, PendingOp, Rule, RuleAction,
-    RuleCondition, RuleId, SaveSentCopy, ScheduleMode, SearchFilter, SentCopy, ServerCopy,
-    SignatureSetting, ThreadSummary, UnthreadedMessage, ACCOUNT_COLOR_COUNT, MAX_SIGNATURE_BYTES,
+    CancelReport, Correspondent, Draft, DraftFields, DraftId, DroppedOp, NewOp, NewOutboxMessage,
+    NewRule, OpId, OpKind, OpMessage, OutboxId, OutboxMessage, OutboxState, PendingOp, Rule,
+    RuleAction, RuleCondition, RuleId, SaveSentCopy, ScheduleMode, SearchFilter, SentCopy,
+    ServerCopy, SignatureSetting, ThreadSummary, UnthreadedMessage, ACCOUNT_COLOR_COUNT,
+    MAX_SIGNATURE_BYTES,
 };
 pub use repo::{JmapRow, Protocol};
 pub use repo::{KeywordedMessage, NewSnooze, Snooze, SnoozeId, SnoozeSeen, SnoozeState, Snoozing};

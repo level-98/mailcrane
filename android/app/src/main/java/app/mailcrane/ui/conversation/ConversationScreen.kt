@@ -18,6 +18,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalConfiguration
@@ -88,6 +89,8 @@ fun ConversationScreen(
     title: String,
     onBack: () -> Unit,
     onOpenMessage: (Long) -> Unit,
+    /** The message ids shown, in order, for "After deleting or moving" (M4-15). */
+    onShownMessages: (List<Long>) -> Unit = {},
     viewModel: ConversationViewModel =
         hiltViewModel<ConversationViewModel, ConversationViewModel.Factory>(
             key = "thread-$threadId",
@@ -98,6 +101,8 @@ fun ConversationScreen(
     val list = messages
     // A conversation that became empty (all moved away) closes.
     LaunchedEffect(list) { if (list != null && list.isEmpty()) onBack() }
+    val shown by rememberUpdatedState(onShownMessages)
+    LaunchedEffect(list) { list?.let { messages -> shown(messages.map { it.id }) } }
     ConversationContent(title, list, onBack, onOpenMessage)
 }
 

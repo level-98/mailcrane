@@ -270,6 +270,42 @@ fn revert_local(tx: &Transaction<'_>, kind: OpKind, id: MessageId) -> Result<(),
     }
 }
 
+/// A queued action dropped because its folder's `UIDVALIDITY` changed
+/// (#517): its UIDs now name other messages, so it can't be applied.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DroppedOp {
+    /// What the action was.
+    pub kind: OpKind,
+    /// The local rows it was applied to (gone with the folder's reset).
+    pub message_ids: Vec<MessageId>,
+}
+
+/// Removes every queued action on messages of `folder`, inside `tx`, and
+/// returns them (#517). Actions moving mail *into* the folder are kept:
+/// they're keyed by their own folder's UIDs.
+pub(crate) fn take_folder_ops(
+    tx: &Transaction<'_>,
+    folder: FolderId,
+) -> Result<Vec<DroppedOp>, StoreError> {
+    let ops: Vec<(i64, String)> = {
+        let mut stmt =
+            tx.prepare("SELECT id, kind FROM pending_ops WHERE folder_id = ?1 ORDER BY id")?;
+        let rows = stmt.query_map(params![folder.0], |r| Ok((r.get(0)?, r.get(1)?)))?;
+        rows.collect::<Result<_, _>>()?
+    };
+    let mut dropped = Vec::with_capacity(ops.len());
+    for (id, kind) in ops {
+        let kind = OpKind::parse(&kind)?;
+        let message_ids = load_messages(tx, OpId(id))?
+            .into_iter()
+            .map(|m| m.message_id)
+            .collect();
+        delete_op(tx, OpId(id))?;
+        dropped.push(DroppedOp { kind, message_ids });
+    }
+    Ok(dropped)
+}
+
 fn load_messages(tx: &rusqlite::Connection, op: OpId) -> Result<Vec<OpMessage>, StoreError> {
     let mut stmt = tx
         .prepare("SELECT message_id, uid FROM pending_op_messages WHERE op_id = ?1 ORDER BY uid")?;

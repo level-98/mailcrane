@@ -285,13 +285,17 @@ impl<'a> FolderSyncer<'a> {
                     "UIDVALIDITY changed, clearing the folder"
                 );
             }
-            self.store.reset_folder(
-                folder,
-                i64::from(info.uidvalidity),
-                i64::from(info.uidnext),
-            )?;
-            self.listener
-                .on_event(CoreEvent::FolderChanged { folder_id: folder });
+            let dropped = self
+                .store
+                .reset_folder_reporting(
+                    folder,
+                    i64::from(info.uidvalidity),
+                    i64::from(info.uidnext),
+                )?
+                .unwrap_or_default();
+            // With no stored UIDVALIDITY (first sync) no action can be queued
+            // for the folder: actions need its messages, which need a sync.
+            crate::actions::report_folder_reset(self.listener, self.account, folder, dropped);
         }
         Ok(changed)
     }

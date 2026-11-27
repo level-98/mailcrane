@@ -25,7 +25,7 @@ pub use notify::NewMail;
 pub use outbox::{
     NewOutboxMessage, OutboxId, OutboxMessage, OutboxState, SaveSentCopy, ScheduleMode, SentCopy,
 };
-pub use pending_ops::{CancelReport, NewOp, OpId, OpKind, OpMessage, PendingOp};
+pub use pending_ops::{CancelReport, DroppedOp, NewOp, OpId, OpKind, OpMessage, PendingOp};
 pub use push::PushSubscriptionRow;
 pub use rules::{NewRule, Rule, RuleAction, RuleCondition, RuleId};
 pub use search::SearchFilter;
