@@ -310,14 +310,17 @@ impl SyncEngine {
         // are the body's own short transactions, marked urgent so they take
         // the next turn for SQLite's write lock: a sync writing batch after
         // batch would otherwise win every race and the save would end in
-        // SQLITE_BUSY.
+        // SQLITE_BUSY. The mark is per thread, so it's made on the job
+        // thread that writes (#462); `pooled` then runs right there.
         let config = self.config;
-        mailcrane_store::urgent_writes(&self.db_path, || {
-            self.pooled(account, Retry::Idempotent, |store, session, listener| {
-                Box::pin(async move {
-                    FolderSyncer::new(store, session, listener, account, config)
-                        .fetch_body(MessageId(message_id))
-                        .await
+        on_job_thread(|| {
+            mailcrane_store::urgent_writes(&self.db_path, || {
+                self.pooled(account, Retry::Idempotent, |store, session, listener| {
+                    Box::pin(async move {
+                        FolderSyncer::new(store, session, listener, account, config)
+                            .fetch_body(MessageId(message_id))
+                            .await
+                    })
                 })
             })
         })
@@ -341,6 +344,14 @@ impl SyncEngine {
     /// each folder's sync state. Returns the inbox's folder id, or `None` if
     /// the server has no inbox. On failure the saved folders are unchanged.
     pub fn refresh_folders(&self, account_id: i64) -> Result<Option<i64>, SyncFailure> {
+        // Never on the caller's stack (#462).
+        on_job_thread(|| self.refresh_folders_here(account_id))
+    }
+}
+
+impl SyncEngine {
+    /// [`Self::refresh_folders`], on the current thread.
+    fn refresh_folders_here(&self, account_id: i64) -> Result<Option<i64>, SyncFailure> {
         let account = AccountId(account_id);
         if self.is_local(account)? {
             let store = self.open_store()?;
@@ -381,7 +392,10 @@ impl SyncEngine {
         })?;
         Ok(inbox_of(&store, account)?.map(|f| f.0))
     }
+}
 
+#[uniffi::export]
+impl SyncEngine {
     /// The ids of every account in the database, for starting and stopping
     /// live updates.
     pub fn account_ids(&self) -> Result<Vec<i64>, SyncFailure> {
@@ -443,39 +457,37 @@ impl SyncEngine {
         let (sync_config, live_config) = (self.config, self.live_config);
         let extra_root_cert = self.extra_root_cert();
         let write_lock = self.account_lock(account).write_lock();
-        let thread = std::thread::Builder::new()
-            .name(format!("mailcrane-live-{account_id}"))
-            .spawn(move || {
-                let report = |kind| {
-                    listener.on_event(events::CoreEvent::SyncError {
-                        account_id: account,
-                        kind,
-                    })
-                };
-                let runtime = match runtime() {
-                    Ok(runtime) => runtime,
-                    Err(kind) => return report(kind),
-                };
-                let store = match Store::open(&db_path) {
-                    Ok(store) => store,
-                    Err(_) => return report(events::SyncErrorKind::Storage),
-                };
-                let login = || imap_login(&store, account, extra_root_cert.as_deref());
-                runtime.block_on(run_live_updates(
-                    &store,
-                    LiveAccount {
-                        id: account,
-                        write_lock,
-                    },
-                    &listener,
-                    login,
-                    sync_config,
-                    live_config,
-                    signal,
-                ));
-                let _ = done_tx.send(());
-            })
-            .map_err(|_| failed(events::SyncErrorKind::Network))?;
+        let thread = crate::worker::job_thread(format!("mailcrane-live-{account_id}"), move || {
+            let report = |kind| {
+                listener.on_event(events::CoreEvent::SyncError {
+                    account_id: account,
+                    kind,
+                })
+            };
+            let runtime = match runtime() {
+                Ok(runtime) => runtime,
+                Err(kind) => return report(kind),
+            };
+            let store = match Store::open(&db_path) {
+                Ok(store) => store,
+                Err(_) => return report(events::SyncErrorKind::Storage),
+            };
+            let login = || imap_login(&store, account, extra_root_cert.as_deref());
+            runtime.block_on(run_live_updates(
+                &store,
+                LiveAccount {
+                    id: account,
+                    write_lock,
+                },
+                &listener,
+                login,
+                sync_config,
+                live_config,
+                signal,
+            ));
+            let _ = done_tx.send(());
+        })
+        .map_err(|_| failed(events::SyncErrorKind::Network))?;
         // A finished thread for this account (it could not open the
         // database, say) is replaced.
         live.insert(
@@ -699,10 +711,10 @@ impl SyncEngine {
     }
 
     /// Connects for the folder's account and runs `job` with a syncer.
-    pub(crate) fn run<T>(
+    pub(crate) fn run<T: Send>(
         &self,
         folder: FolderId,
-        job: impl for<'a> FnOnce(&'a mut FolderSyncer<'_>) -> SyncFuture<'a, T>,
+        job: impl for<'a> FnOnce(&'a mut FolderSyncer<'_>) -> SyncFuture<'a, T> + Send,
     ) -> Result<T, SyncFailure> {
         self.run_replaying(folder, false, job)
     }
@@ -710,7 +722,18 @@ impl SyncEngine {
     /// [`Self::run`], replaying the account's queued actions first when
     /// `replay` is set. A replay that fails only defers the actions; the
     /// sync goes ahead.
-    fn run_replaying<T>(
+    fn run_replaying<T: Send>(
+        &self,
+        folder: FolderId,
+        replay: bool,
+        job: impl for<'a> FnOnce(&'a mut FolderSyncer<'_>) -> SyncFuture<'a, T> + Send,
+    ) -> Result<T, SyncFailure> {
+        // Never on the caller's stack (#462).
+        on_job_thread(|| self.run_replaying_here(folder, replay, job))
+    }
+
+    /// [`Self::run_replaying`], on the current thread.
+    fn run_replaying_here<T>(
         &self,
         folder: FolderId,
         replay: bool,
@@ -827,10 +850,11 @@ impl SyncEngine {
     /// recovery), so it never writes beside a sync. Never retried on a new
     /// connection: the jobs change things on the server and defer or undo
     /// what failed themselves.
-    pub(crate) fn with_session<T>(
+    pub(crate) fn with_session<T: Send>(
         &self,
         account: AccountId,
-        job: impl for<'a> FnOnce(&'a Store, &'a mut Session, &'a dyn EventListener) -> SyncFuture<'a, T>,
+        job: impl for<'a> FnOnce(&'a Store, &'a mut Session, &'a dyn EventListener) -> SyncFuture<'a, T>
+            + Send,
     ) -> Result<T, SyncFailure> {
         // Lock order: WriteLock, then the pooled connection (`pooled`).
         let lock = self.account_lock(account);
@@ -848,28 +872,28 @@ impl SyncEngine {
     /// Runs `job` on the account's reused connection (issue #294) with the
     /// store and a listener. `SyncError` events from inside the job are held
     /// back, since a failed attempt may be retried; the final failure is
-    /// reported once. Takes no writer lock itself.
-    pub(crate) fn pooled<T>(
+    /// reported once. Takes no writer lock itself. Runs on a thread with a
+    /// stack this crate sets (#462), never on the caller's.
+    pub(crate) fn pooled<T: Send>(
         &self,
         account: AccountId,
         retry: Retry,
-        mut job: impl for<'a> FnMut(
-            &'a Store,
-            &'a mut Session,
-            &'a dyn EventListener,
-        ) -> SyncFuture<'a, T>,
+        mut job: impl for<'a> FnMut(&'a Store, &'a mut Session, &'a dyn EventListener) -> SyncFuture<'a, T>
+            + Send,
     ) -> Result<T, SyncFailure> {
-        let ctx = (
-            self.open_store()?,
-            HoldErrors(ListenerAdapter(self.listener.clone())),
-        );
-        let extra_root_cert = self.extra_root_cert();
-        let login = || imap_login(&ctx.0, account, extra_root_cert.as_deref());
-        self.pool
-            .run(account, login, retry, &ctx, |session, (store, listener)| {
-                job(store, session, listener)
-            })
-            .map_err(|e| self.report(account, e.kind()))
+        on_job_thread(|| {
+            let ctx = (
+                self.open_store()?,
+                HoldErrors(ListenerAdapter(self.listener.clone())),
+            );
+            let extra_root_cert = self.extra_root_cert();
+            let login = || imap_login(&ctx.0, account, extra_root_cert.as_deref());
+            self.pool
+                .run(account, login, retry, &ctx, |session, (store, listener)| {
+                    job(store, session, listener)
+                })
+                .map_err(|e| self.report(account, e.kind()))
+        })
     }
 
     /// Sends a `SyncError` event and returns the matching failure.
@@ -934,6 +958,18 @@ impl SyncEngine {
                 e.kind()
             })
     }
+}
+
+/// Runs `work` on a thread with a stack this crate sets (#462), never on the
+/// caller's, whose size the app chooses. A thread that couldn't start, or
+/// work that panicked (in the app; tests let the panic through), comes back
+/// as `Network`, the kind `runtime` gives too. Only the call's result says
+/// so: no `SyncError` event is sent, since this runs before the job knows
+/// its account. `worker::on_job_thread` logs which of the two it was.
+pub(crate) fn on_job_thread<T: Send>(
+    work: impl FnOnce() -> Result<T, SyncFailure> + Send,
+) -> Result<T, SyncFailure> {
+    crate::worker::on_job_thread(work).unwrap_or(Err(failed(events::SyncErrorKind::Network)))
 }
 
 pub(crate) fn runtime() -> Result<tokio::runtime::Runtime, events::SyncErrorKind> {
@@ -1083,5 +1119,7 @@ mod pool_tests;
 mod prefetch_tests;
 #[cfg(test)]
 mod push_tests;
+#[cfg(test)]
+mod stack_tests;
 #[cfg(test)]
 mod tests;

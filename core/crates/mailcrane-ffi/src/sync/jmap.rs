@@ -8,22 +8,29 @@ use mailcrane_store::Protocol;
 
 impl SyncEngine {
     /// Runs `job` for a JMAP account and threads what it stored; `None` if
-    /// the account speaks IMAP (the caller then does the IMAP work).
-    pub(crate) fn run_jmap<T>(
+    /// the account speaks IMAP (the caller then does the IMAP work). The
+    /// protocol is read here, a short database read; the JMAP work runs on a
+    /// thread with a stack this crate sets (#462), never on the caller's.
+    pub(crate) fn run_jmap<T: Send>(
         &self,
         account: AccountId,
-        job: impl for<'a> FnOnce(&'a mut JmapSyncer<'_>) -> SyncFuture<'a, T>,
+        job: impl for<'a> FnOnce(&'a mut JmapSyncer<'_>) -> SyncFuture<'a, T> + Send,
     ) -> Option<Result<T, SyncFailure>> {
-        let store = match self.open_store() {
-            Ok(store) => store,
-            Err(e) => return Some(Err(e)),
+        let session_url = {
+            let store = match self.open_store() {
+                Ok(store) => store,
+                Err(e) => return Some(Err(e)),
+            };
+            match store.account_protocol(account) {
+                Ok(Some(Protocol::Jmap { session_url })) => session_url,
+                Ok(_) => return None,
+                Err(_) => return Some(Err(failed(events::SyncErrorKind::Storage))),
+            }
         };
-        let session_url = match store.account_protocol(account) {
-            Ok(Some(Protocol::Jmap { session_url })) => session_url,
-            Ok(_) => return None,
-            Err(_) => return Some(Err(failed(events::SyncErrorKind::Storage))),
-        };
-        Some(self.jmap_inner(&store, account, &session_url, job))
+        Some(on_job_thread(|| {
+            let store = self.open_store()?;
+            self.jmap_inner(&store, account, &session_url, job)
+        }))
     }
 
     fn jmap_inner<T>(

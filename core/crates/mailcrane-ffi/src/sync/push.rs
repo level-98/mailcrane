@@ -48,6 +48,35 @@ impl SyncEngine {
         p256dh: Option<String>,
         auth: Option<String>,
     ) -> Result<u32, SyncFailure> {
+        // Never on the caller's stack (#462).
+        on_job_thread(|| self.register_jmap_push_here(endpoint, p256dh, auth))
+    }
+
+    /// Answers a JMAP server's verification push (RFC 8620 §7.2.2).
+    /// Returns whether `body` was a verification for one of this app's
+    /// subscriptions and was answered. Blocking.
+    pub fn answer_jmap_push(&self, body: Vec<u8>) -> bool {
+        crate::worker::on_job_thread(|| self.answer_jmap_push_here(body)).unwrap_or(false)
+    }
+
+    /// Destroys every JMAP push subscription and forgets them: push
+    /// wake-ups were turned off. Ones the server can't be told about are
+    /// forgotten anyway and expire there. Blocking.
+    pub fn unregister_jmap_push(&self) {
+        let _ = crate::worker::on_job_thread(|| self.unregister_jmap_push_here());
+    }
+}
+
+/// The push exports' work, on the current thread: the exports above run it
+/// on a thread with a stack this crate sets (#462).
+impl SyncEngine {
+    /// [`Self::register_jmap_push`], on the current thread.
+    fn register_jmap_push_here(
+        &self,
+        endpoint: String,
+        p256dh: Option<String>,
+        auth: Option<String>,
+    ) -> Result<u32, SyncFailure> {
         let keys = match (p256dh, auth) {
             (Some(p256dh), Some(auth)) => Some(PushKeys { p256dh, auth }),
             (None, None) => None,
@@ -83,10 +112,8 @@ impl SyncEngine {
         Ok(subscribed)
     }
 
-    /// Answers a JMAP server's verification push (RFC 8620 §7.2.2).
-    /// Returns whether `body` was a verification for one of this app's
-    /// subscriptions and was answered. Blocking.
-    pub fn answer_jmap_push(&self, body: Vec<u8>) -> bool {
+    /// [`Self::answer_jmap_push`], on the current thread.
+    fn answer_jmap_push_here(&self, body: Vec<u8>) -> bool {
         let Ok(PushObject::Verification {
             subscription_id,
             code,
@@ -131,10 +158,8 @@ impl SyncEngine {
         }
     }
 
-    /// Destroys every JMAP push subscription and forgets them: push
-    /// wake-ups were turned off. Ones the server can't be told about are
-    /// forgotten anyway and expire there. Blocking.
-    pub fn unregister_jmap_push(&self) {
+    /// [`Self::unregister_jmap_push`], on the current thread.
+    fn unregister_jmap_push_here(&self) {
         let Ok(store) = self.open_store() else {
             return;
         };

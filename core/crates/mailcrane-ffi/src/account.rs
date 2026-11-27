@@ -792,7 +792,12 @@ pub enum RemoveAccountFailure {
 #[uniffi::export]
 pub fn remove_account(db_path: String, account_id: i64) -> Result<(), RemoveAccountFailure> {
     let secrets = crate::secrets::secret_store().map_err(|_| RemoveAccountFailure::Storage)?;
-    remove_account_with(&db_path, secrets.as_ref(), account_id)
+    // Telling a JMAP server to stop pushing is network work: never on the
+    // caller's stack (#462). If the thread doesn't start, nothing was
+    // removed. (A panic part-way, which the code never does on purpose,
+    // could leave it half done; it also comes back as `Storage`.)
+    crate::worker::on_job_thread(|| remove_account_with(&db_path, secrets.as_ref(), account_id))
+        .unwrap_or(Err(RemoveAccountFailure::Storage))
 }
 
 /// [`remove_account`] with the secret store given, so tests needn't install
