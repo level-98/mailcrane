@@ -193,7 +193,23 @@ class MessageViewModel
 
         private var remoteAllowed = false
         private var markedRead = false
+        private var shown = false
         private var loading: Job? = null
+
+        /**
+         * The screen shows this message (again). The view model outlives the screen (it is kept per message
+         * in the Activity), so a message marked unread since, for example by a swipe in the list, would still
+         * show as read and never be marked read again (#372 QA). The first call is the open [load] in `init`
+         * already covers; each later one reads the message again, as on a first open.
+         */
+        fun onShown() {
+            if (!shown) {
+                shown = true
+                return
+            }
+            markedRead = false
+            load()
+        }
 
         /** Asks for the snooze to be read again; conflated, so an older read never wins over a newer one. */
         private val snoozeRefresh = Channel<Unit>(Channel.CONFLATED)

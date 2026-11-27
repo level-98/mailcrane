@@ -132,6 +132,8 @@ fun MessageScreen(
     val resources = LocalResources.current
     val back by rememberUpdatedState(onBack)
     val left by rememberUpdatedState(onLeft)
+    // Shown again with a kept view model: read the message again, so its read state is current (#372 QA).
+    LaunchedEffect(viewModel) { viewModel.onShown() }
     // "Mark as read: After 2 seconds" (M4-15): counts only while the message is on screen and the app is
     // in front, so leaving sooner keeps it unread.
     val markReadMode by viewModel.markReadMode.collectAsStateWithLifecycle()

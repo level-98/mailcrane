@@ -659,6 +659,31 @@ class MessageViewModelTest {
         }
 
     @Test
+    fun aMessageShownAgainIsReadAgainAndMarkedReadAgain() =
+        runTest {
+            // #372 QA: read once, swiped back to unread in the list, opened again. The kept view model still
+            // said "read", so the toolbar offered "Mark as unread" at once and the delay never marked it.
+            val core = FakeMessageCore()
+            val settings = FakeAppSettings().apply { markRead.value = MarkReadMode.AFTER_DELAY }
+            val vm = messageViewModel(core, settings)
+            vm.onShown()
+            launch { vm.markReadAfterDelay() }
+            advanceTimeBy(2_001)
+            runCurrent()
+            assertTrue(ready(vm).message.isSeen)
+
+            core.seen = false
+            vm.onShown()
+            runCurrent()
+            assertFalse("read again from the core", ready(vm).message.isSeen)
+            launch { vm.markReadAfterDelay() }
+            advanceTimeBy(2_001)
+            runCurrent()
+            assertEquals(2, core.calls.count { it == "markRead" })
+            assertTrue(ready(vm).message.isSeen)
+        }
+
+    @Test
     fun onlyByHandNeverMarksOnOpenButTheButtonDoes() =
         runTest {
             val core = FakeMessageCore()
