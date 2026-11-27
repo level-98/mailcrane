@@ -37,6 +37,7 @@ import app.mailcrane.core.MailboxCore
 import app.mailcrane.core.MessageSummary
 import app.mailcrane.core.SyncFailure
 import app.mailcrane.ui.messagelist.MessageRow
+import app.mailcrane.ui.messagelist.RowDateStyle
 import app.mailcrane.ui.messagelist.currentMinute
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedFactory
@@ -143,6 +144,8 @@ fun ConversationContent(
                     now = now,
                     locale = locale,
                     modifier = Modifier.clickable { onOpenMessage(message.id) },
+                    // Inside a conversation each message shows its time too (#399).
+                    dateStyle = RowDateStyle.CONVERSATION,
                 )
                 HorizontalDivider(
                     modifier = Modifier.padding(start = 24.dp),

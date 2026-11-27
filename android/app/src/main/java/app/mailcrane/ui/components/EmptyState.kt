@@ -23,6 +23,8 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.heading
@@ -39,7 +41,9 @@ import app.mailcrane.ui.theme.MailcraneTheme
  *
  * Fills the space it's given and centres its content. When the content is taller than the space
  * (large text, landscape) it scrolls instead of clipping, which also lets a surrounding
- * pull-to-refresh work. The illustration is decorative, so screen readers read only the text.
+ * pull-to-refresh work. When the space can't hold the illustration and the text together (the
+ * keyboard up, large text), the illustration goes, because the text matters more (#397). The
+ * illustration is decorative, so screen readers read only the text.
  */
 @Composable
 fun EmptyState(
@@ -50,6 +54,14 @@ fun EmptyState(
     action: (@Composable () -> Unit)? = null,
 ) {
     BoxWithConstraints(modifier = modifier.fillMaxSize()) {
+        // The title's line, a two-line body and the gap, from the styles they use, so it grows with
+        // the font scale as the text does (non-linearly at large sizes): large text gives up the picture first.
+        val typography = MaterialTheme.typography
+        val textSpace =
+            with(LocalDensity.current) {
+                typography.titleLarge.lineHeight.toDp() + typography.bodyMedium.lineHeight.toDp() * 2
+            } + 8.dp
+        val showIllustration = maxHeight >= ILLUSTRATION_SPACE + textSpace
         Column(
             modifier =
                 Modifier
@@ -60,16 +72,19 @@ fun EmptyState(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center,
         ) {
-            Image(
-                painter = painterResource(illustration),
-                contentDescription = null,
-                modifier =
-                    Modifier
-                        .widthIn(max = ILLUSTRATION_MAX_WIDTH)
-                        .fillMaxWidth()
-                        .aspectRatio(ILLUSTRATION_ASPECT_RATIO),
-            )
-            Spacer(Modifier.height(24.dp))
+            if (showIllustration) {
+                Image(
+                    painter = painterResource(illustration),
+                    contentDescription = null,
+                    modifier =
+                        Modifier
+                            .widthIn(max = ILLUSTRATION_MAX_WIDTH)
+                            .fillMaxWidth()
+                            .aspectRatio(ILLUSTRATION_ASPECT_RATIO)
+                            .testTag(ILLUSTRATION_TAG),
+                )
+                Spacer(Modifier.height(24.dp))
+            }
             Text(
                 text = title,
                 style = MaterialTheme.typography.titleLarge,
@@ -135,6 +150,12 @@ fun WelcomeState(
 // The illustrations are drawn on a 240 × 200 canvas (design/build.py).
 private val ILLUSTRATION_MAX_WIDTH = 240.dp
 private const val ILLUSTRATION_ASPECT_RATIO = 240f / 200f
+
+/** Height the illustration needs: its own (200 dp at most), the gap under it and the vertical padding. */
+private val ILLUSTRATION_SPACE = 200.dp + 24.dp + 48.dp
+
+/** The test tag on the illustration (#397). */
+internal const val ILLUSTRATION_TAG = "empty-state-illustration"
 
 @Composable
 private fun PreviewSurface(content: @Composable () -> Unit) {

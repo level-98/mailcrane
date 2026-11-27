@@ -252,4 +252,14 @@ class SearchViewModelTest {
         assertEquals(0, core.serverAsked)
         assertFalse(vm.state.value.searchingServer)
     }
+
+    /** #481 review: each opening of search is fresh once; the screen coming back for it isn't. */
+    @Test
+    fun eachOpeningIsFreshOnce() {
+        val vm = SearchViewModel(FakeSearch(), FakeAppSettings(), 1, 7)
+        assertTrue(vm.claimOpening(1)) // opened
+        assertFalse(vm.claimOpening(1)) // back from a result: same opening
+        assertTrue(vm.claimOpening(2)) // closed and opened again
+        assertFalse(vm.claimOpening(2))
+    }
 }

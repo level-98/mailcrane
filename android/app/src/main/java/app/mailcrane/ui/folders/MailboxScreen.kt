@@ -15,6 +15,7 @@ import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -103,6 +104,8 @@ fun MailboxScreen(
             var showOutbox by rememberSaveable { mutableStateOf(false) }
             var showManageFolders by rememberSaveable { mutableStateOf(false) }
             var showSearch by rememberSaveable { mutableStateOf(false) }
+            // Each tap on search is a new opening; coming back from a result isn't (#481 review).
+            var searchOpenings by rememberSaveable { mutableIntStateOf(0) }
             // An open conversation (M4-02): its thread id and title.
             var openThread by rememberSaveable { mutableStateOf<Pair<Long, String>?>(null) }
             if (showManageFolders) {
@@ -213,6 +216,7 @@ fun MailboxScreen(
                         },
                         onBack = { showSearch = false },
                         accounts = accounts,
+                        opening = searchOpenings,
                     )
                     return
                 }
@@ -312,6 +316,7 @@ fun MailboxScreen(
                             },
                             onBack = { showSearch = false },
                             accounts = accounts,
+                            opening = searchOpenings,
                         )
                     layout != MailLayout.ONE_PANE && thread != null ->
                         ConversationScreen(
@@ -354,7 +359,10 @@ fun MailboxScreen(
                                         )
                                     },
                                 folders = state.folders,
-                                onOpenSearch = { showSearch = true },
+                                onOpenSearch = {
+                                    searchOpenings++
+                                    showSearch = true
+                                },
                                 onOpenThread = { id, title -> openThread = id to title },
                                 onCompose = onCompose,
                                 composeFabModifier = composeFabModifier,

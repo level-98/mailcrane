@@ -100,6 +100,8 @@ fun RowScope.MessageToolbarActions(
             actions.onCreateRule?.let { create ->
                 DropdownMenuItem(
                     text = { Text(stringResource(R.string.rules_create_from_message)) },
+                    // An icon like "Move to…", so the labels line up (#393); the label says what it does.
+                    leadingIcon = { Icon(painterResource(R.drawable.ic_mc_filter), contentDescription = null) },
                     onClick = {
                         menuOpen = false
                         create()
