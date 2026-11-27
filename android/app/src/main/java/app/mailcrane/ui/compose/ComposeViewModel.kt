@@ -120,6 +120,12 @@ data class ComposeUiState(
     val bcc: RecipientFieldState = RecipientFieldState(),
     val showCcBcc: Boolean = false,
     val subject: String = "",
+    /**
+     * Counts changes to [subject] from outside the subject field (prefill, draft, reply, reset), never the
+     * field's own typing (#429): the field takes [subject] over its own text only when this moves. An edit typed
+     * against an older revision also moves it, so the field takes the current subject back.
+     */
+    val subjectRevision: Long = 0,
     val body: String = "",
     /**
      * Where the cursor goes when [body] is loaded into an empty field: the end for a saved draft
@@ -255,6 +261,7 @@ class ComposeViewModel
                         prefilledWith = prefill,
                         to = chipsOf(listOf(prefill.to)),
                         subject = prefill.subject,
+                        subjectRevision = it.subjectRevision + 1,
                         // No signature in a message to a machine.
                         signatureAdded = true,
                     )
@@ -340,6 +347,7 @@ class ComposeViewModel
                     bcc = bcc,
                     showCcBcc = it.showCcBcc || !cc.isEmpty || !bcc.isEmpty,
                     subject = draft.subject,
+                    subjectRevision = it.subjectRevision + 1,
                     inReplyTo = draft.inReplyTo,
                     references = draft.references,
                     forwardAttachmentsOf = draft.forwardAttachmentsOf,
@@ -453,6 +461,7 @@ class ComposeViewModel
                     cc = cc,
                     showCcBcc = it.showCcBcc || !cc.isEmpty,
                     subject = draft.subject,
+                    subjectRevision = it.subjectRevision + 1,
                     signature = signature,
                     inReplyTo = draft.inReplyTo,
                     references = draft.references,
@@ -600,10 +609,23 @@ class ComposeViewModel
 
         fun showCcBcc() = _state.update { it.copy(showCcBcc = true) }
 
-        fun onSubjectChange(value: String) {
-            // Read-only while a draft or reply loads (#435): the load would overwrite it.
-            if (_state.value.loadingContent) return
-            _state.update { it.copy(subject = value) }
+        /**
+         * Text typed into the subject field. [baseRevision] is the [ComposeUiState.subjectRevision] the
+         * field's text was based on (#429). An edit typed against an older revision doesn't replace the loaded
+         * subject; the field takes the new one over. While a draft or reply loads the subject is read-only (#435),
+         * and a refused edit also moves the revision, so the field drops it.
+         */
+        fun onSubjectChange(
+            value: String,
+            baseRevision: Long = _state.value.subjectRevision,
+        ) {
+            _state.update {
+                if (!it.loadingContent && baseRevision == it.subjectRevision) {
+                    it.copy(subject = value)
+                } else {
+                    it.copy(subjectRevision = it.subjectRevision + 1)
+                }
+            }
             scheduleSave()
         }
 
@@ -862,9 +884,13 @@ class ComposeViewModel
             loadJob?.cancel()
             loadGeneration++
             _state.update {
-                // A new revision, so the body field drops whatever it still shows (#419).
+                // New revisions, so the body and subject fields drop whatever they still show (#419, #429).
                 rememberBody(it.bodyRevision, it.body)
-                ComposeUiState(accounts = it.accounts, bodyRevision = it.bodyRevision + 1)
+                ComposeUiState(
+                    accounts = it.accounts,
+                    bodyRevision = it.bodyRevision + 1,
+                    subjectRevision = it.subjectRevision + 1,
+                )
             }
         }
 
