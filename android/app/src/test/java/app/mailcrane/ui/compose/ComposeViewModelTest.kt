@@ -184,6 +184,7 @@ class ComposeViewModelTest {
             old: String?,
             new: String?,
             quoteHeader: String?,
+            kind: DraftKind?,
         ): String {
             lastQuoteHeader = quoteHeader
             val oldBlock = old?.let { "\n\n-- \n$it" }

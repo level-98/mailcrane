@@ -464,7 +464,16 @@ class ComposeViewModel
                         return@update it.withOutsideBody(signed).copy(signature = signature)
                     }
                     // Only above a reply's quote or a forward: a forwarded mail of the user's can hold the same block.
-                    val swapped = core.swapSignature(it.body, it.signature, signature, it.prefilledFor?.quoteHeader)
+                    // A reopened draft's kind isn't known, so the core takes the topmost copy there.
+                    val kind =
+                        when {
+                            it.prefilledFor != null ->
+                                if (it.prefilledFor.kind == ReplyKind.FORWARD) DraftKind.FORWARD else DraftKind.REPLY
+                            it.openedDraft != null -> null
+                            else -> DraftKind.NEW
+                        }
+                    val swapped =
+                        core.swapSignature(it.body, it.signature, signature, it.prefilledFor?.quoteHeader, kind)
                     // An edited signature stays, and keeps being the one to match.
                     val kept = swapped == it.body && it.signature != null && it.signature != signature
                     val changed = if (swapped != it.body) it.withOutsideBody(swapped) else it
