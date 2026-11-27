@@ -47,7 +47,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalResources
@@ -249,15 +249,16 @@ fun MessageListContent(
     // Back ends selection before it leaves the screen (M4-14).
     BackHandler(enabled = state.selecting) { selection.onClear() }
     val fabShown = onCompose != null && !state.selecting
-    // The compose button's measured height, so the list's end can scroll clear of it at any font
-    // scale (#464). The Scaffold already keeps both above the navigation bar.
-    var fabHeightPx by remember { mutableIntStateOf(0) }
-    val listEndPadding =
-        if (fabShown && fabHeightPx > 0) {
-            with(LocalDensity.current) { fabHeightPx.toDp() } + FAB_MARGIN
-        } else {
-            0.dp
-        }
+    // The compose button's height, so the list's end can scroll clear of it at any font scale (#464);
+    // the Scaffold already keeps both above the navigation bar. Saved, so a list restored at its end
+    // (Back, another folder, rotation) has the space on its first frame; until the first measure,
+    // the button's minimum height, which it keeps up to the largest font scale Android offers.
+    var fabHeightPx by rememberSaveable { mutableIntStateOf(0) }
+    // Seen inside a lookahead scope (the shared transition into Compose): only its pass counts.
+    var lookahead by remember { mutableStateOf(false) }
+    val fabHeight = with(LocalDensity.current) { if (fabHeightPx > 0) fabHeightPx.toDp() else FAB_MIN_HEIGHT }
+    // Kept while selecting, so the rows don't jump under the finger when a long-press starts it.
+    val listEndPadding = if (onCompose != null) fabHeight + FAB_MARGIN else 0.dp
     Scaffold(
         topBar = {
             if (state.selecting) {
@@ -300,8 +301,15 @@ fun MessageListContent(
                     expanded = !listState.canScrollBackward,
                     // One label whether expanded or not: collapsed, the icon alone said nothing (M6-01).
                     modifier =
-                        fabModifier
-                            .onSizeChanged { fabHeightPx = it.height }
+                        Modifier
+                            // Outside the shared bounds, and in a transition only from the lookahead
+                            // pass, which has the final size: the animated frames don't count (#471 review).
+                            .layout { measurable, constraints ->
+                                val placeable = measurable.measure(constraints)
+                                if (isLookingAhead) lookahead = true
+                                if (isLookingAhead || !lookahead) fabHeightPx = placeable.height
+                                layout(placeable.width, placeable.height) { placeable.place(0, 0) }
+                            }.then(fabModifier)
                             .clearAndSetSemantics {
                                 contentDescription = label
                                 role = Role.Button
@@ -355,6 +363,9 @@ fun MessageListContent(
 
 /** The space Material 3's Scaffold leaves between a floating action button and the content's edge. */
 private val FAB_MARGIN = 16.dp
+
+/** Material 3's minimum floating action button height, used until the button has been measured. */
+private val FAB_MIN_HEIGHT = 56.dp
 
 @Composable
 private fun Messages(

@@ -2,10 +2,12 @@ package app.mailcrane.ui.messagelist
 
 import android.app.Application
 import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.test.getBoundsInRoot
+import androidx.compose.ui.test.StateRestorationTester
 import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.junit4.createComposeRule
@@ -113,18 +115,53 @@ class FabClearanceUiTest {
         assertTrue("last row ends at $bottom dp, compose button starts at $top dp", bottom <= top)
     }
 
+    /**
+     * #471 review: a list restored at its end (Back from a message, another folder, rotation) keeps the
+     * last row clear on its first frame, so its saved scroll position isn't clamped to a shorter end.
+     */
     @Test
-    fun whileSelectingThereIsNoButtonAndNoGapAtTheEnd() {
+    fun aListRestoredAtItsEndKeepsTheLastRowClear() {
+        val restoration = StateRestorationTester(compose)
+        lateinit var listState: LazyListState
+        restoration.setContent {
+            listState = rememberLazyListState()
+            MailcraneTheme {
+                MessageListContent(
+                    state = state,
+                    title = "Inbox",
+                    snackbar = SnackbarHostState(),
+                    onRefresh = {},
+                    onLoadMore = {},
+                    listState = listState,
+                    onCompose = {},
+                )
+            }
+        }
+        compose.waitForIdle()
+        compose.runOnIdle {
+            runBlocking { listState.scrollToItem(listState.layoutInfo.totalItemsCount - 1, 100_000) }
+        }
+        compose.waitForIdle()
+        restoration.emulateSavedInstanceStateRestore()
+        compose.waitForIdle()
+        val bottom = lastRowBottom()
+        val top = fabTop()
+        assertTrue("restored: last row ends at $bottom dp, compose button starts at $top dp", bottom <= top)
+    }
+
+    /** #471 review: starting selection at the end keeps the end space, so the rows don't jump. */
+    @Test
+    fun whileSelectingTheEndSpaceStays() {
         showScrolledToEnd(fontScale = 1f, selecting = true)
         val label = ApplicationProvider.getApplicationContext<Application>().getString(R.string.compose_fab)
         compose.onNode(hasContentDescription(label) and hasClickAction()).assertDoesNotExist()
-        // The last row reaches the bottom of the screen, less its divider.
         val rootBottom =
             compose
                 .onRoot()
                 .getBoundsInRoot()
                 .bottom
                 .value
-        assertTrue("last row ends at ${lastRowBottom()} dp of $rootBottom dp", rootBottom - lastRowBottom() < 4f)
+        val gap = rootBottom - lastRowBottom()
+        assertTrue("last row ends $gap dp above the bottom; the button's space is kept", gap >= 56f)
     }
 }
