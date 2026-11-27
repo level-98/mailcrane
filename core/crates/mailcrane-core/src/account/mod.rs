@@ -4,3 +4,4 @@ pub mod autoconfig;
 pub mod credentials;
 pub mod jmap;
 pub mod setup;
+pub mod stored;
