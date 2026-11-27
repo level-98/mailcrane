@@ -3,6 +3,11 @@ use mailcrane_core::secrets::{Secret, SecretKey};
 use mailcrane_store::{NewAccount, Security};
 use mailcrane_testkit::{FakeSmtp, Fault, MemorySecretStore};
 
+/// Only a hang guard: a busy machine (a Gradle build, disk or memory
+/// pressure) can stall the fake servers for seconds, and a short limit
+/// would fail the test for that alone (#409, as in #362).
+const HANG_GUARD: std::time::Duration = std::time::Duration::from_secs(60);
+
 struct Setup {
     _dir: tempfile::TempDir,
     db_path: String,
@@ -52,7 +57,7 @@ async fn setup(faults: &[Fault]) -> Setup {
 
 fn options(s: &Setup) -> core::SendOptions {
     core::SendOptions {
-        timeout: std::time::Duration::from_secs(5),
+        timeout: HANG_GUARD,
         extra_root_certs: vec![s.smtp.root_cert_der().to_vec()],
     }
 }
