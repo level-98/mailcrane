@@ -180,6 +180,32 @@ fn pooled_and_sync_calls_run_from_a_small_stack_thread() {
 }
 
 #[test]
+fn a_job_that_could_not_run_is_reported_for_its_account() {
+    // #468: a thread that didn't start (or a job that panicked, in the app)
+    // sends a `SyncError` event for the account, as a runtime that couldn't
+    // be built does, and the call fails with `Network`.
+    let dir = tempfile::tempdir().expect("dir");
+    let path = dir.path().join("report.db").to_string_lossy().into_owned();
+    let collect = Arc::new(super::tests::Collect::default());
+    let engine = SyncEngine::new(path, collect.clone());
+    let got: Result<u8, SyncFailure> = engine.job_outcome(AccountId(7), None);
+    assert_eq!(got, Err(failed(events::SyncErrorKind::Network)));
+    let events = collect.0.lock().expect("lock").clone();
+    assert_eq!(events.len(), 1, "reported once");
+    assert!(matches!(
+        events.first(),
+        Some(CoreEvent::SyncError {
+            account_id: 7,
+            kind: SyncErrorKind::Network
+        })
+    ));
+    // A job that ran keeps its own result and sends nothing more.
+    let ran: Result<u8, SyncFailure> = engine.job_outcome(AccountId(7), Some(Ok(3)));
+    assert_eq!(ran, Ok(3));
+    assert_eq!(collect.0.lock().expect("lock").len(), events.len());
+}
+
+#[test]
 fn urgent_job_work_is_urgent_on_the_job_thread() {
     // #468: the urgent mark is per thread, so it must be made on the job
     // thread that writes, not on the caller's (where it once was, and every
@@ -191,7 +217,7 @@ fn urgent_job_work_is_urgent_on_the_job_thread() {
         // The real caller: this small-stack thread, not the test's.
         let caller = std::thread::current().id();
         let (thread, urgent, nested) = engine
-            .urgent_job(|| {
+            .urgent_job(AccountId(1), || {
                 // A job started inside runs right here and keeps the mark.
                 let nested = on_job_thread(|| Ok(mailcrane_store::urgent_here(&path)))?;
                 Ok((
