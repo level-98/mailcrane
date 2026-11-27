@@ -171,7 +171,12 @@ internal class AccountPageStores : ViewModel() {
     }
 }
 
-/** One page's store, with the activity's factory and extras, so Hilt (and assisted) view models still work. */
+/**
+ * One page's store, with the activity's factory and extras, so Hilt (and assisted) view models still work.
+ * Known limit (#492 review): the extras still name the activity as the owner of saved state, so a
+ * `SavedStateHandle` would be shared across openings under the same key. Nothing on these pages uses
+ * one; if one is ever needed, move to lifecycle's `rememberViewModelStoreOwner()` first (#518).
+ */
 private class PageViewModelStoreOwner(
     override val viewModelStore: ViewModelStore,
     private val parent: ViewModelStoreOwner,

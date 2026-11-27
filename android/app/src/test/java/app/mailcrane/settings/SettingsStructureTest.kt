@@ -24,6 +24,7 @@ import app.mailcrane.core.AccountSettingsCore
 import app.mailcrane.core.AccountSignature
 import app.mailcrane.core.AccountSummary
 import app.mailcrane.core.SaveSentSetting
+import app.mailcrane.core.SenderTrustChanges
 import app.mailcrane.ui.folders.ManageFoldersContent
 import app.mailcrane.ui.folders.ManageFoldersState
 import app.mailcrane.ui.theme.MailcraneTheme
@@ -194,6 +195,51 @@ class SettingsStructureTest {
         var text: String,
     ) : AccountSettingsCore by RecordingSettings() {
         override suspend fun getSignature(accountId: Long) = AccountSignature(text, true)
+    }
+
+    /** A core whose saved authentication server name the test can change, as a new account's would be. */
+    private class StoredAuthserv(
+        var value: String?,
+    ) : AccountSettingsCore by RecordingSettings() {
+        override suspend fun getProviderAuthservId(accountId: Long) = value
+    }
+
+    /**
+     * #500, #492 review (AGENTS.md §3, every place with the same cause): the authentication server
+     * name, which decides what "sender verified" trusts, comes from the new account, not the removed one.
+     */
+    @Test
+    fun aReAddedAccountWithTheSameIdTrustsNoneOfTheOldAuthServer() {
+        val core = StoredAuthserv("mx.old.example.org")
+        var showPage by mutableStateOf(true)
+        var account by mutableStateOf(accountB)
+        compose.setContent {
+            MailcraneTheme {
+                if (showPage) {
+                    AccountSettingsPage(
+                        account = account,
+                        onBack = { showPage = false },
+                        onRemove = {},
+                        sections = { id ->
+                            // The same key the real section uses with hiltViewModel.
+                            val vm =
+                                viewModel(key = "provider-authserv-$id") {
+                                    ProviderAuthservViewModel(core, SenderTrustChanges(), id)
+                                }
+                            AccountAdvancedSection(id, viewModel = vm)
+                        },
+                    )
+                }
+            }
+        }
+        compose.onNodeWithText("mx.old.example.org").assertIsDisplayed()
+        compose.runOnIdle { showPage = false }
+        compose.runOnIdle {
+            core.value = null
+            account = AccountSummary(accountB.id, "new.user@example.com", "New")
+            showPage = true
+        }
+        compose.onNodeWithText("mx.old.example.org").assertDoesNotExist()
     }
 
     /**
