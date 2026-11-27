@@ -32,7 +32,6 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import app.mailcrane.R
 import app.mailcrane.ui.theme.MailcraneTheme
 
@@ -55,8 +54,13 @@ fun EmptyState(
     action: (@Composable () -> Unit)? = null,
 ) {
     BoxWithConstraints(modifier = modifier.fillMaxSize()) {
-        // The text's share grows with the font scale, so large text gives up the picture first.
-        val textSpace = with(LocalDensity.current) { TEXT_SPACE.toDp() }
+        // The title's line, a two-line body and the gap, from the styles they use, so it grows with
+        // the font scale as the text does (non-linearly at large sizes): large text gives up the picture first.
+        val typography = MaterialTheme.typography
+        val textSpace =
+            with(LocalDensity.current) {
+                typography.titleLarge.lineHeight.toDp() + typography.bodyMedium.lineHeight.toDp() * 2
+            } + 8.dp
         val showIllustration = maxHeight >= ILLUSTRATION_SPACE + textSpace
         Column(
             modifier =
@@ -149,9 +153,6 @@ private const val ILLUSTRATION_ASPECT_RATIO = 240f / 200f
 
 /** Height the illustration needs: its own (200 dp at most), the gap under it and the vertical padding. */
 private val ILLUSTRATION_SPACE = 200.dp + 24.dp + 48.dp
-
-/** Height kept for the title, the gap and a two-line body; in sp, so it grows with the text. */
-private val TEXT_SPACE = 120.sp
 
 /** The test tag on the illustration (#397). */
 internal const val ILLUSTRATION_TAG = "empty-state-illustration"

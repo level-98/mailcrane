@@ -52,6 +52,7 @@ import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
 import java.time.format.FormatStyle
 import java.util.Locale
+import android.icu.text.DateFormat as IcuDateFormat
 
 /**
  * One message in the list. Unread rows are bold with a dot; flag and attachment have icons, so no
@@ -362,7 +363,7 @@ internal fun formatConversationDate(
                 day.isBefore(today) && day.isAfter(today.minusDays(7)) -> "EEE$clock"
                 else -> "yMd$clock"
             }
-        val format = android.icu.text.DateFormat.getInstanceForSkeleton(skeleton, locale)
+        val format = IcuDateFormat.getInstanceForSkeleton(skeleton, locale)
         format.timeZone = TimeZone.getTimeZone(now.zone.id)
         format.format(java.util.Date(time.toInstant().toEpochMilli()))
     } catch (_: DateTimeException) {

@@ -94,10 +94,17 @@ class EmptyStateTest {
         compose.onNodeWithText("Try different words or check your spelling.").assertIsDisplayed()
     }
 
-    /** #397: large text needs more room for the text, so the picture goes sooner. */
+    /** #397: in a height that holds both at normal text size... */
+    @Test
+    fun aMidHeightHoldsTheIllustrationAtNormalText() {
+        showNoResults(height = 360.dp)
+        compose.onNodeWithTag(ILLUSTRATION_TAG).assertExists()
+    }
+
+    /** ...large text needs more room for the text, so the picture goes first. */
     @Test
     fun largeTextGivesUpTheIllustrationFirst() {
-        showNoResults(height = 460.dp, fontScale = 2f)
+        showNoResults(height = 360.dp, fontScale = 2f)
         compose.onNodeWithTag(ILLUSTRATION_TAG).assertDoesNotExist()
         compose.onNodeWithText("No results").assertIsDisplayed()
     }
