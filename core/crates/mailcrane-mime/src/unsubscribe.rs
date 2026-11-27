@@ -148,8 +148,7 @@ fn percent_decode(s: &str) -> Option<String> {
 
 // The trust helpers live in `auth` now, shared with the sender check (M5-07).
 pub use crate::auth::{
-    dkim_aligned, dkim_pass_domains, org_domain, provider_results, received_by, trusted_results,
-    trusted_results_with,
+    dkim_aligned, dkim_pass_domains, org_domain, received_by, trusted_results, trusted_results_with,
 };
 
 #[cfg(test)]
