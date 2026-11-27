@@ -18,24 +18,39 @@ class SenderAvatarTest {
     }
 
     @Test
-    fun aDisplayNameThatIsADomainGivesOneInitial() {
-        // #389: these gave AU, BC and EU, from splitting on the dots.
-        assertEquals("A", avatarInitials("Amazon.co.uk", "no-reply@example.co.uk"))
-        assertEquals("B", avatarInitials("Booking.com", "no-reply@example.com"))
-        assertEquals("E", avatarInitials("eBay.co.uk", "ebay@example.co.uk"))
-        assertEquals("E", avatarInitials("Example.org", "info@example.org"))
-        // The rule: no whitespace, and a dot before a last label of two or more letters. It can't tell a surname
-        // from a top-level domain, so a dotted display name such as "jane.doe" gives one initial too.
-        assertEquals("J", avatarInitials("jane.doe", "jane@example.org"))
+    fun aDisplayNameThatIsTheSendersDomainGivesOneInitial() {
+        // #389: these gave EC and EO, from splitting on the dots.
+        assertEquals("E", avatarInitials("Example.com", "news@example.com"))
+        assertEquals("E", avatarInitials("example.org", "no-reply@example.org"))
+        // A parent of the address's domain counts too, compared case-insensitively.
+        assertEquals("E", avatarInitials("EXAMPLE.NET", "news@mail.example.net"))
+        // Brackets, punctuation and a leading "www." around it are ignored.
+        assertEquals("E", avatarInitials("(Example.com)", "news@example.com"))
+        assertEquals("E", avatarInitials("Example.com.", "news@example.com"))
+        assertEquals("E", avatarInitials("[example.org]", "news@example.org"))
+        assertEquals("E", avatarInitials("www.example.com", "news@example.com"))
+    }
+
+    @Test
+    fun anyOtherDottedNameKeepsBothInitials() {
+        // The name has to match the address: dotted personal names keep both initials.
+        assertEquals("JD", avatarInitials("Jane.Doe", "jane@example.org"))
+        assertEquals("JS", avatarInitials("John.Smith", "js@example.com"))
+        assertEquals("AL", avatarInitials("Ana.Lopez", "ana@example.net"))
+        // A domain that isn't the sender's, or only part of a label of it, splits as before.
+        assertEquals("EO", avatarInitials("Example.org", "news@example.net"))
+        assertEquals("PC", avatarInitials("ple.com", "news@example.com"))
         // Names with spaces keep their first and last initials, dots or not.
         assertEquals("JD", avatarInitials("Jane Doe", "jane@example.org"))
         assertEquals("JD", avatarInitials("Jane Q. Doe", "jane@example.org"))
-        // A short or non-letter last label isn't a domain: still split.
-        assertEquals("AB", avatarInitials("A.B", "ab@example.org"))
-        // "v.2" is split too, and a last word that starts with no letter adds no initial (as before).
         assertEquals("V", avatarInitials("v.2", "v@example.org"))
-        // Single words are unchanged.
         assertEquals("A", avatarInitials("Ana", "ana@example.org"))
+    }
+
+    @Test
+    fun aNoBreakSpaceSeparatesWordsToo() {
+        // After RFC 2047 decoding a name can hold U+00A0 between its words.
+        assertEquals("AL", avatarInitials("Ana\u00A0López", "ana@example.org"))
     }
 
     @Test
