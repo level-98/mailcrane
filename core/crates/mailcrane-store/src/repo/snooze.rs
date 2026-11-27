@@ -346,6 +346,19 @@ impl Store {
         Ok(())
     }
 
+    /// Back to step 0 with nothing recorded, after a refused wake (or its
+    /// rollback) is to be tried again (#436). `rollback_since` keeps the
+    /// start of the run of refusals, `now` if it's the first, so the
+    /// give-up rule can end it.
+    pub fn reset_snooze_step(&self, id: SnoozeId, now: i64) -> Result<(), StoreError> {
+        self.conn.execute(
+            "UPDATE snoozes SET step = 0, target_uidnext = NULL, \
+             rollback_since = COALESCE(rollback_since, ?2) WHERE id = ?1",
+            params![id.0, now],
+        )?;
+        Ok(())
+    }
+
     /// The snooze with this id, as stored now.
     pub fn get_snooze_by_id(&self, id: SnoozeId) -> Result<Option<Snooze>, StoreError> {
         let sql = format!("SELECT {COLS} FROM snoozes WHERE id = ?1");
