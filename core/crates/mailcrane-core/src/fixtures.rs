@@ -107,7 +107,7 @@ pub fn import_fixtures(
         };
         let header = header_for(inbox, uid, &file.path, &raw, date);
         let id = store.upsert_message_header(&header)?;
-        save_body(store, id, &raw)?;
+        save_body(store, id, None, &raw)?;
         imported = imported.saturating_add(1);
     }
     // Marks the Inbox as synced up to the last message, as a real sync would.

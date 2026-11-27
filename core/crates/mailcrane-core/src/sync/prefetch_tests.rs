@@ -154,6 +154,16 @@ async fn synced(imap: &FakeImap) -> (Store, FolderId) {
     (store, folder)
 }
 
+/// The folder's stored `UIDVALIDITY`, which a batch's selected folder has.
+fn uidvalidity(store: &Store, folder: FolderId) -> u32 {
+    store
+        .get_folder(folder)
+        .expect("get")
+        .and_then(|f| f.details.uidvalidity)
+        .and_then(|v| u32::try_from(v).ok())
+        .expect("synced")
+}
+
 fn cached(store: &Store, folder: FolderId) -> usize {
     store
         .list_messages(folder, 1000, 0)
@@ -187,9 +197,15 @@ async fn batches_save_whole_bodies_without_marking_anything_seen() {
         }
         // Newest first.
         assert!(batch.windows(2).all(|w| w[0].uid > w[1].uid));
-        let outcome = imap_batch(&store, &mut session, batch)
-            .await
-            .expect("batch");
+        let outcome = imap_batch(
+            &store,
+            &mut session,
+            folder,
+            uidvalidity(&store, folder),
+            batch,
+        )
+        .await
+        .expect("batch");
         assert_eq!(outcome.saved, batch.len());
         skip.extend(outcome.tried);
         batches += 1;
@@ -282,6 +298,8 @@ async fn a_whole_mebibyte_is_fetched_quickly_and_one_byte_more_is_dropped() {
     let outcome = imap_batch(
         &store,
         &mut session,
+        folder,
+        uidvalidity(&store, folder),
         &[
             Candidate { id: big_id, uid: 1 },
             Candidate {
@@ -373,7 +391,15 @@ async fn an_interrupted_batch_saves_nothing_and_the_next_run_carries_on() {
     session.select("INBOX").await.expect("select");
     let todo = candidates(&store, folder, now(), &limits, &HashSet::new()).expect("candidates");
     let batch = &todo[..limits.batch];
-    assert!(imap_batch(&store, &mut session, batch).await.is_err());
+    assert!(imap_batch(
+        &store,
+        &mut session,
+        folder,
+        uidvalidity(&store, folder),
+        batch
+    )
+    .await
+    .is_err());
     assert_eq!(cached(&store, folder), 0, "no partial body is kept");
 
     // The next run (on a working connection) downloads everything.
@@ -386,9 +412,15 @@ async fn an_interrupted_batch_saves_nothing_and_the_next_run_carries_on() {
             break;
         }
         let batch = &todo[..todo.len().min(limits.batch)];
-        let outcome = imap_batch(&store, &mut session, batch)
-            .await
-            .expect("batch");
+        let outcome = imap_batch(
+            &store,
+            &mut session,
+            folder,
+            uidvalidity(&store, folder),
+            batch,
+        )
+        .await
+        .expect("batch");
         skip.extend(outcome.tried);
     }
     session.logout().await;
