@@ -31,7 +31,8 @@ pub struct SearchFilter {
 }
 
 impl Store {
-    /// The messages matching `filter`, newest first, leaving out hidden ones.
+    /// The messages matching `filter`, newest first, leaving out hidden ones
+    /// and ones flagged `\Deleted` (#519).
     /// A message stored in several of the searched folders comes once (see
     /// `one_copy_each` in `repo/messages.rs`), and `limit` counts messages,
     /// not copies.

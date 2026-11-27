@@ -260,7 +260,8 @@ impl Store {
     /// The Unified Inbox (M4-01): messages of every account's inbox-role
     /// folder, by `date DESC, id DESC` (ties across accounts break on the
     /// row id, so pages with the same `limit` and consecutive `offset`s have
-    /// no duplicates or gaps). Hidden messages are left out. Each comes with
+    /// no duplicates or gaps). Hidden messages and ones flagged `\Deleted`
+    /// (#519) are left out. Each comes with
     /// its account.
     pub fn list_unified_inbox(
         &self,
@@ -285,7 +286,8 @@ impl Store {
         Ok(out)
     }
 
-    /// Unread messages across every account's inbox.
+    /// Unread messages across every account's inbox (not hidden or flagged
+    /// `\Deleted`, #519).
     pub fn count_unified_unread(&self) -> Result<u64, StoreError> {
         let n: i64 = self.conn.query_row(
             "SELECT count(*) FROM messages m JOIN folders f ON f.id = m.folder_id              WHERE f.role = 'inbox' AND m.hidden = 0 AND m.deleted = 0 AND m.seen = 0",

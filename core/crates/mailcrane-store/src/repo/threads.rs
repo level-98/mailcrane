@@ -220,7 +220,8 @@ impl Store {
     }
 
     /// The conversations with messages in `folder`, newest first. Hidden
-    /// messages (queued moves or deletes) are left out.
+    /// messages (queued moves or deletes) and ones flagged `\Deleted` (#519)
+    /// are left out.
     pub fn list_threads(
         &self,
         folder: FolderId,
@@ -305,7 +306,8 @@ impl Store {
     }
 
     /// Every message of a thread across its account's folders, oldest
-    /// first, leaving out hidden ones and those in Trash or Spam. A message
+    /// first, leaving out hidden ones, ones flagged `\Deleted` (#519) and
+    /// those in Trash or Spam. A message
     /// stored in several folders comes once (see `one_copy_each` in
     /// `repo/messages.rs`).
     pub fn thread_messages(&self, thread: ThreadId) -> Result<Vec<MessageHeader>, StoreError> {
