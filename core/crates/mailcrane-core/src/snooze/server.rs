@@ -187,12 +187,16 @@ pub(crate) async fn sync_snooze_rows(
                     // The copy is in the target and the original flagged
                     // \Deleted: carry the move forward, don't undo it.
                     tracing::warn!(snooze = s.id.0, state = ?s.state, "refused after the original was flagged: finishing the move");
-                    carry_forward(store, session, &cur).await.map(Some)
+                    Box::pin(carry_forward(store, session, &cur))
+                        .await
+                        .map(Some)
                 } else if matches!(cur.step, STEP_COPY_STARTED | STEP_COPIED | STEP_ROLLBACK) {
                     tracing::warn!(snooze = s.id.0, state = ?s.state, step = cur.step, "refused after the copy: rolling back");
                     if store.start_snooze_rollback_if(&cur.seen(), now)? {
                         cur.step = STEP_ROLLBACK;
-                        roll_back(store, session, &cur).await.map(|()| None)
+                        Box::pin(roll_back(store, session, &cur))
+                            .await
+                            .map(|()| None)
                     } else {
                         // Changed by the user meanwhile: the next sync
                         // reads it again and decides.
@@ -225,7 +229,7 @@ pub(crate) async fn sync_snooze_rows(
             }
             Ok(None) if s.state == SnoozeState::ToWake => {
                 tracing::warn!(snooze = s.id.0, "wake rolled back on the server");
-                let outcome = refused_wake(store, session, &cur, now, listener).await;
+                let outcome = Box::pin(refused_wake(store, session, &cur, now, listener)).await;
                 tally(store, &cur, now, outcome, &mut report)?;
             }
             Ok(None) => {
@@ -280,7 +284,7 @@ pub(crate) async fn sync_snooze_rows(
                 // Nothing was changed on the server before the move (#436),
                 // so the message is still snoozed there, keyword and all.
                 tracing::warn!(snooze = s.id.0, "wake refused by the server");
-                let outcome = refused_wake(store, session, &cur, now, listener).await;
+                let outcome = Box::pin(refused_wake(store, session, &cur, now, listener)).await;
                 tally(store, &cur, now, outcome, &mut report)?;
             }
             Err(_) => {
@@ -318,7 +322,7 @@ async fn carry_forward(
             best_effort(s, strip_original_keywords(session, s, folder).await)?;
         }
         if let Ok(dest) = wake_destination(store, s) {
-            best_effort(s, unsnooze_copy(session, s, &dest).await)?;
+            best_effort(s, Box::pin(unsnooze_copy(session, s, &dest)).await)?;
         }
     }
     let done = match s.state {
@@ -455,7 +459,7 @@ async fn give_up(
             SnoozeState::ToWake => {
                 let first = strip_original_keywords(session, s, &folder).await;
                 if let Ok(dest) = wake_destination(store, s) {
-                    best_effort(s, unsnooze_copy(session, s, &dest).await)?;
+                    best_effort(s, Box::pin(unsnooze_copy(session, s, &dest)).await)?;
                 }
                 first
             }
@@ -970,14 +974,14 @@ async fn snooze_one(
         }
     }
     if source.id != snoozed.id {
-        let moved = move_uids(
+        let moved = Box::pin(move_uids(
             store,
             session,
             s,
             &uids,
             &source.details.remote_name,
             &snoozed.details.remote_name,
-        )
+        ))
         .await?;
         if !moved {
             return Ok(Vec::new());
@@ -1050,7 +1054,7 @@ async fn wake_one(
                 best_effort(s, session.uid_expunge(&flagged).await)?;
             }
             if let Ok(dest) = wake_destination(store, s) {
-                best_effort(s, unsnooze_copy(session, s, &dest).await)?;
+                best_effort(s, Box::pin(unsnooze_copy(session, s, &dest)).await)?;
                 changed.push(dest.id);
             }
         }
@@ -1069,14 +1073,14 @@ async fn wake_one(
     // `move_uids` records the destination's UIDNEXT and step 1 before it
     // sends the MOVE or COPY, and step 3, with the copy's UID when the
     // server names it, once the move is committed.
-    let moved = move_uids(
+    let moved = Box::pin(move_uids(
         store,
         session,
         s,
         &uids,
         &snoozed.details.remote_name,
         &dest.details.remote_name,
-    )
+    ))
     .await?;
     if !moved {
         return Ok(Vec::new());
@@ -1085,7 +1089,7 @@ async fn wake_one(
     // A flagged original that wasn't expunged must not keep its keyword
     // (invariant 2).
     best_effort(s, strip_original_keywords(session, s, &snoozed).await)?;
-    unsnooze_copy(session, s, &dest).await?;
+    Box::pin(unsnooze_copy(session, s, &dest)).await?;
     if !store
         .delete_snooze_if(&s.seen(), false, local)
         .map_err(store_err)?
