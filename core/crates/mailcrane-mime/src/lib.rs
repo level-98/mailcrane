@@ -97,7 +97,7 @@ fn mime_type_of(part: &mail_parser::MessagePart<'_>) -> String {
 /// brackets if there are any, lower-case; `None` if it isn't plausible.
 fn list_id_of(value: &str) -> Option<String> {
     let id = match (value.rfind('<'), value.rfind('>')) {
-        (Some(a), Some(b)) if a < b => &value[a + 1..b],
+        (Some(a), Some(b)) if a < b => value.get(a + 1..b).unwrap_or(value),
         _ => value,
     };
     let id = id.trim().to_ascii_lowercase();
