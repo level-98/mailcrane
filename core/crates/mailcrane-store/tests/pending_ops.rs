@@ -348,3 +348,106 @@ fn a_folder_reset_drops_only_that_folders_queued_actions() -> R {
         .is_none());
     Ok(())
 }
+
+#[test]
+fn a_late_revert_or_undo_leaves_a_row_that_took_the_id_alone() -> R {
+    // #503: row ids are reused. A flag queued for UID 3; the sync deletes
+    // it and stores UID 9, which gets the same row id and is flagged.
+    let f = fixture(Store::open_in_memory()?)?;
+    let third = f.messages[2];
+    let op = f
+        .store
+        .queue_op(f.account, OpKind::Flag, f.inbox, None, &[third], 100)?
+        .ok_or("queued")?;
+    f.store.delete_message_row(third.message_id)?;
+    let mut newer = header(f.inbox, 9);
+    newer.flags.flagged = true;
+    let reused = f.store.upsert_message_header(&newer)?;
+    assert_eq!(reused, third.message_id, "the id was reused");
+    let flagged = |store: &Store| -> Result<bool, StoreError> {
+        Ok(store
+            .get_message_header(reused)?
+            .is_some_and(|h| h.details.flags.flagged))
+    };
+
+    // Undo finds no action for the message the row holds now.
+    assert_eq!(f.store.cancel_queued(reused)?, None);
+    assert!(flagged(&f.store)?);
+    // Nor does the server refusing the flag unflag UID 9, or name it.
+    assert!(f.store.fail_op(op)?.is_empty());
+    assert!(flagged(&f.store)?);
+    Ok(())
+}
+
+/// Queues `kind` for UID 3, then deletes its row as a sync does and stores
+/// UID 9, which takes the same row id. Returns the action, UID 9's row and
+/// UID 9 as the message to queue for (#503).
+fn reused_after(
+    f: &Fixture,
+    kind: OpKind,
+    flagged: bool,
+) -> Result<(OpId, OpMessage), Box<dyn std::error::Error>> {
+    let third = f.messages[2];
+    let dest = (kind == OpKind::Move).then_some(f.archive);
+    let op = f
+        .store
+        .queue_op(f.account, kind, f.inbox, dest, &[third], 100)?
+        .ok_or("queued")?;
+    f.store.delete_message_row(third.message_id)?;
+    let mut newer = header(f.inbox, 9);
+    newer.flags.flagged = flagged;
+    let reused = f.store.upsert_message_header(&newer)?;
+    assert_eq!(reused, third.message_id, "the id was reused");
+    Ok((
+        op,
+        OpMessage {
+            message_id: reused,
+            uid: 9,
+        },
+    ))
+}
+
+#[test]
+fn an_opposite_action_on_a_reused_row_does_not_cancel_the_old_one() -> R {
+    // #503 review: an Unflag for UID 9 isn't the opposite of the Flag
+    // queued for UID 3, whatever row id they share.
+    let f = fixture(Store::open_in_memory()?)?;
+    let (_, nine) = reused_after(&f, OpKind::Flag, true)?;
+    let queued = f
+        .store
+        .queue_op(f.account, OpKind::Unflag, f.inbox, None, &[nine], 101)?;
+    assert!(queued.is_some(), "the unflag is queued");
+    let kinds: Vec<OpKind> = f
+        .store
+        .pending_ops(f.account)?
+        .iter()
+        .map(|o| o.kind)
+        .collect();
+    assert_eq!(kinds, [OpKind::Flag, OpKind::Unflag]);
+    Ok(())
+}
+
+#[test]
+fn a_completed_move_never_deletes_a_row_that_took_the_id() -> R {
+    // #503 review: UID 9 took the row id and is hidden by its own pending
+    // action; completing the move of UID 3 must leave it.
+    let f = fixture(Store::open_in_memory()?)?;
+    let (op, nine) = reused_after(&f, OpKind::Move, false)?;
+    f.store.set_message_hidden(nine.message_id, true)?;
+    f.store.complete_op(op, true)?;
+    assert!(f.store.get_message_header(nine.message_id)?.is_some());
+    Ok(())
+}
+
+#[test]
+fn a_partly_refused_action_leaves_a_row_that_took_the_id_alone() -> R {
+    // #503 review: fail_op_messages reverts only the message it queued.
+    let f = fixture(Store::open_in_memory()?)?;
+    let (op, nine) = reused_after(&f, OpKind::Flag, true)?;
+    assert!(f.store.fail_op_messages(op, &[nine.message_id])?.is_empty());
+    assert!(f
+        .store
+        .get_message_header(nine.message_id)?
+        .is_some_and(|h| h.details.flags.flagged));
+    Ok(())
+}

@@ -295,6 +295,39 @@ pub struct MessageHeader {
     pub body_state: BodyState,
 }
 
+/// The message a row must still hold for a delayed write keyed by its id to
+/// apply (#503). Row ids are reused once a row is deleted (`INTEGER PRIMARY
+/// KEY`), so a write that started for one message could otherwise land on
+/// another that took the id meanwhile.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RowIdentity<'a> {
+    /// An IMAP message: its folder, the folder's `UIDVALIDITY` and its UID
+    /// (RFC 9051 §2.3.1.1).
+    Imap {
+        folder: FolderId,
+        uidvalidity: i64,
+        uid: u32,
+    },
+    /// A JMAP email: its account and its Email id (RFC 8621 §4.1.1).
+    Jmap {
+        account: AccountId,
+        email_id: &'a str,
+    },
+}
+
+/// A downloaded message ready to store: the raw bytes and what was parsed
+/// from them.
+#[derive(Debug, Clone, Copy)]
+pub struct FetchedBody<'a> {
+    pub raw: &'a [u8],
+    /// Unix seconds.
+    pub fetched_at: i64,
+    pub snippet: &'a str,
+    pub attachments: &'a [NewAttachment],
+    /// Text indexed for search.
+    pub body_text: &'a str,
+}
+
 /// Attachment metadata to insert.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NewAttachment {

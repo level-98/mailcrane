@@ -9,7 +9,9 @@ use super::convert::header_row;
 use crate::events::{AccountId, CoreEvent, EventListener, FolderId, SyncErrorKind};
 use mailcrane_imap::{ImapError, SelectInfo, Session};
 use mailcrane_mime::Disposition;
-use mailcrane_store::{BodyState, MessageId, NewAttachment, Store, StoreError};
+use mailcrane_store::{
+    BodyState, FetchedBody, MessageId, NewAttachment, RowIdentity, Store, StoreError,
+};
 use std::collections::HashSet;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -457,7 +459,12 @@ impl<'a> FolderSyncer<'a> {
             .uid_fetch_body(header.details.uid)
             .await?
             .ok_or(SyncError::MessageGone)?;
-        save_opened_body(self.store, message, None, &raw)?;
+        let identity = RowIdentity::Imap {
+            folder,
+            uidvalidity: i64::from(info.uidvalidity),
+            uid: header.details.uid,
+        };
+        save_opened_body(self.store, message, identity, &raw)?;
         self.listener
             .on_event(CoreEvent::MessagesChanged { folder_id: folder });
         Ok(())
@@ -472,34 +479,26 @@ thread_local! {
         const { std::cell::RefCell::new(Vec::new()) };
 }
 
-/// The JMAP email an opened body belongs to (#488): the save applies only
-/// while the row is still that email of that account, since row ids are
-/// reused. (IMAP opens don't carry one yet: #503.)
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct JmapEmail<'a> {
-    pub(crate) account: AccountId,
-    pub(crate) email_id: &'a str,
-}
-
 /// [`save_body`] for a message the user opened (#294, #472, #473). The body
 /// is parsed first; only its writes run under the store's urgent mark, made
 /// on this thread, so other writers give it the next turn for SQLite's write
 /// lock, but not while the opener waits for a connection, downloads or
 /// parses (#473, #488 review). It writes only the body and its parts, never
 /// the flags, folder or state columns a sync owns, so it can run beside a
-/// sync. A message the sync removed meanwhile, or (with `jmap`) a row that
-/// is another email now, is dropped quietly: nothing is written (#472, #488).
+/// sync. A message the sync removed meanwhile, or a row that holds another
+/// message than `identity` now (row ids are reused), is dropped quietly:
+/// nothing is written (#472, #488, #503).
 pub(crate) fn save_opened_body(
     store: &Store,
     message: MessageId,
-    jmap: Option<JmapEmail<'_>>,
+    identity: RowIdentity<'_>,
     raw: &[u8],
 ) -> Result<(), SyncError> {
     let parsed = parse_body(message, raw);
     let saved = store.urgent(|| {
         #[cfg(test)]
         OPENED_SAVES.with(|s| s.borrow_mut().push(store.urgent_here()));
-        store_body_parts(store, message, jmap, raw, &parsed)
+        store_body_parts(store, message, Some(identity), raw, &parsed)
     });
     match saved {
         Err(SyncError::UnknownMessage) => {
@@ -552,13 +551,14 @@ pub(crate) fn parse_body(message: MessageId, raw: &[u8]) -> ParsedBody {
     }
 }
 
-/// Writes a parsed body: the raw bytes, snippet and parts in one
-/// transaction, then the search text. `UnknownMessage` if the row is gone
-/// (or, with `jmap`, another email now).
+/// Writes a parsed body: the raw bytes, snippet, parts and search text.
+/// `UnknownMessage` if the row is gone or (with `identity`) holds another
+/// message now (#503). Only local fixtures, which no sync can touch, pass
+/// no identity.
 fn store_body_parts(
     store: &Store,
     message: MessageId,
-    jmap: Option<JmapEmail<'_>>,
+    identity: Option<RowIdentity<'_>>,
     raw: &[u8],
     parsed: &ParsedBody,
 ) -> Result<(), SyncError> {
@@ -567,36 +567,49 @@ fn store_body_parts(
         .ok()
         .and_then(|d| i64::try_from(d.as_secs()).ok())
         .unwrap_or(0);
-    let stored = match jmap {
-        None => store.store_parsed_body(
+    let stored = match identity {
+        None => {
+            store.store_parsed_body(
+                message,
+                raw,
+                fetched_at,
+                &parsed.snippet,
+                &parsed.attachments,
+            )? && store.index_body_text(message, &parsed.body_text)?
+        }
+        // One transaction, so the search text can't land on another
+        // message either.
+        Some(identity) => store.store_parsed_body_for(
             message,
-            raw,
-            fetched_at,
-            &parsed.snippet,
-            &parsed.attachments,
-        )?,
-        Some(email) => store.store_parsed_body_for_jmap_email(
-            message,
-            (email.account, email.email_id),
-            raw,
-            fetched_at,
-            &parsed.snippet,
-            &parsed.attachments,
+            identity,
+            &FetchedBody {
+                raw,
+                fetched_at,
+                snippet: &parsed.snippet,
+                attachments: &parsed.attachments,
+                body_text: &parsed.body_text,
+            },
         )?,
     };
     if !stored {
         return Err(SyncError::UnknownMessage);
     }
-    store.index_body_text(message, &parsed.body_text)?;
     Ok(())
 }
 
 /// Stores a downloaded message: the raw bytes, its snippet and attachment
 /// list, and its text for search. A message that can't be parsed is still
-/// kept, so it can be opened as source. Shared by IMAP and JMAP.
-pub(crate) fn save_body(store: &Store, message: MessageId, raw: &[u8]) -> Result<(), SyncError> {
+/// kept, so it can be opened as source. Shared by IMAP and JMAP. With
+/// `identity`, only while the row still holds that message (#503);
+/// `UnknownMessage` otherwise. Downloads always pass one.
+pub(crate) fn save_body(
+    store: &Store,
+    message: MessageId,
+    identity: Option<RowIdentity<'_>>,
+    raw: &[u8],
+) -> Result<(), SyncError> {
     let parsed = parse_body(message, raw);
-    store_body_parts(store, message, None, raw, &parsed)
+    store_body_parts(store, message, identity, raw, &parsed)
 }
 
 #[cfg(test)]

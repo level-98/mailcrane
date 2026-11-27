@@ -1,7 +1,7 @@
 use super::narrow;
 use crate::{
-    AccountId, BodyState, Flags, FolderId, MessageHeader, MessageId, NewAttachment,
-    NewMessageHeader, RemoteFlags, Store, StoreError, ThreadId,
+    BodyState, FetchedBody, Flags, FolderId, MessageHeader, MessageId, NewAttachment,
+    NewMessageHeader, RemoteFlags, RowIdentity, Store, StoreError, ThreadId,
 };
 use rusqlite::{params, OptionalExtension, Row};
 
@@ -359,80 +359,68 @@ impl Store {
         snippet: &str,
         attachments: &[NewAttachment],
     ) -> Result<bool, StoreError> {
-        self.store_parsed_body_where(id, None, raw, fetched_at, snippet, attachments)
+        let tx = self.write_tx()?;
+        let n = tx.execute(
+            "UPDATE messages SET body_state = 'fetched', snippet = ?2, has_attachments = ?3 \
+             WHERE id = ?1",
+            params![id.0, snippet, !attachments.is_empty()],
+        )?;
+        if n == 0 {
+            return Ok(false);
+        }
+        write_body_parts(&tx, id, raw, fetched_at, attachments)?;
+        tx.commit()?;
+        Ok(true)
     }
 
-    /// [`Store::store_parsed_body`], but only while row `id` is still the
-    /// JMAP email `email`, as `(account, email_id)`. Row ids are reused once a row is
-    /// deleted (`INTEGER PRIMARY KEY`), so without this a body fetched for
-    /// one email could be saved into another that took its id meanwhile
-    /// (#488). `false` (nothing written) if the row is gone or is another
-    /// email now.
-    pub fn store_parsed_body_for_jmap_email(
+    /// [`Store::store_parsed_body`], plus the search text, but only while row
+    /// `id` still holds the message `identity` names (#488, #503). Row ids
+    /// are reused once a row is deleted (`INTEGER PRIMARY KEY`), so without
+    /// this a body fetched for one message could be saved into another that
+    /// took its id meanwhile. `false` (nothing written) if the row is gone or
+    /// holds another message now.
+    pub fn store_parsed_body_for(
         &self,
         id: MessageId,
-        email: (AccountId, &str),
-        raw: &[u8],
-        fetched_at: i64,
-        snippet: &str,
-        attachments: &[NewAttachment],
-    ) -> Result<bool, StoreError> {
-        self.store_parsed_body_where(id, Some(email), raw, fetched_at, snippet, attachments)
-    }
-
-    fn store_parsed_body_where(
-        &self,
-        id: MessageId,
-        jmap_email: Option<(AccountId, &str)>,
-        raw: &[u8],
-        fetched_at: i64,
-        snippet: &str,
-        attachments: &[NewAttachment],
+        identity: RowIdentity<'_>,
+        body: &FetchedBody<'_>,
     ) -> Result<bool, StoreError> {
         let tx = self.write_tx()?;
-        let n = match jmap_email {
-            None => tx.execute(
+        let has_attachments = !body.attachments.is_empty();
+        let n = match identity {
+            RowIdentity::Imap {
+                folder,
+                uidvalidity,
+                uid,
+            } => tx.execute(
                 "UPDATE messages SET body_state = 'fetched', snippet = ?2, has_attachments = ?3 \
-                 WHERE id = ?1",
-                params![id.0, snippet, !attachments.is_empty()],
+                 WHERE id = ?1 AND folder_id = ?4 AND uid = ?5 AND EXISTS (SELECT 1 FROM folders f \
+                 WHERE f.id = ?4 AND f.uidvalidity = ?6)",
+                params![
+                    id.0,
+                    body.snippet,
+                    has_attachments,
+                    folder.0,
+                    uid,
+                    uidvalidity
+                ],
             )?,
-            // Only while the row is still that email of that account.
-            Some((account, email_id)) => tx.execute(
+            RowIdentity::Jmap { account, email_id } => tx.execute(
                 "UPDATE messages SET body_state = 'fetched', snippet = ?2, has_attachments = ?3 \
                  WHERE id = ?1 AND EXISTS (SELECT 1 FROM jmap_emails j \
-                   JOIN folders f ON f.id = messages.folder_id \
-                   WHERE j.message_id = ?1 AND j.email_id = ?4 AND f.account_id = ?5)",
-                params![id.0, snippet, !attachments.is_empty(), email_id, account.0],
+                 JOIN folders f ON f.id = messages.folder_id \
+                 WHERE j.message_id = ?1 AND j.email_id = ?4 AND f.account_id = ?5)",
+                params![id.0, body.snippet, has_attachments, email_id, account.0],
             )?,
         };
         if n == 0 {
             return Ok(false);
         }
+        write_body_parts(&tx, id, body.raw, body.fetched_at, body.attachments)?;
         tx.execute(
-            "INSERT INTO message_bodies (message_id, raw, fetched_at) VALUES (?1,?2,?3) \
-             ON CONFLICT (message_id) DO UPDATE SET raw = excluded.raw, \
-             fetched_at = excluded.fetched_at",
-            params![id.0, raw, fetched_at],
+            "UPDATE messages_fts SET body_text = ?2 WHERE rowid = ?1",
+            params![id.0, body.body_text],
         )?;
-        tx.execute(
-            "DELETE FROM attachments WHERE message_id = ?1",
-            params![id.0],
-        )?;
-        for a in attachments {
-            tx.execute(
-                "INSERT INTO attachments (message_id, part_id, filename, mime_type, size, \
-                 content_id, is_inline) VALUES (?1,?2,?3,?4,?5,?6,?7)",
-                params![
-                    id.0,
-                    a.part_id,
-                    a.filename,
-                    a.mime_type,
-                    a.size,
-                    a.content_id,
-                    a.is_inline
-                ],
-            )?;
-        }
         tx.commit()?;
         Ok(true)
     }
@@ -471,4 +459,41 @@ impl Store {
             )
             .optional()?)
     }
+}
+
+/// The raw message and its attachment list, inside `tx`, for a row whose
+/// state was just set.
+fn write_body_parts(
+    tx: &rusqlite::Transaction<'_>,
+    id: MessageId,
+    raw: &[u8],
+    fetched_at: i64,
+    attachments: &[NewAttachment],
+) -> Result<(), StoreError> {
+    tx.execute(
+        "INSERT INTO message_bodies (message_id, raw, fetched_at) VALUES (?1,?2,?3) \
+         ON CONFLICT (message_id) DO UPDATE SET raw = excluded.raw, \
+         fetched_at = excluded.fetched_at",
+        params![id.0, raw, fetched_at],
+    )?;
+    tx.execute(
+        "DELETE FROM attachments WHERE message_id = ?1",
+        params![id.0],
+    )?;
+    for a in attachments {
+        tx.execute(
+            "INSERT INTO attachments (message_id, part_id, filename, mime_type, size, \
+             content_id, is_inline) VALUES (?1,?2,?3,?4,?5,?6,?7)",
+            params![
+                id.0,
+                a.part_id,
+                a.filename,
+                a.mime_type,
+                a.size,
+                a.content_id,
+                a.is_inline
+            ],
+        )?;
+    }
+    Ok(())
 }

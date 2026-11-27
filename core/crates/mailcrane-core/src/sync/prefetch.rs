@@ -18,7 +18,7 @@
 use super::initial::{save_body, SyncError};
 use crate::events::FolderId;
 use mailcrane_imap::{Session, PREFETCH_MAX_OCTETS};
-use mailcrane_store::{MessageId, Store};
+use mailcrane_store::{MessageId, RowIdentity, Store};
 use std::collections::HashSet;
 
 /// The "Download messages in the background" setting.
@@ -139,12 +139,16 @@ pub struct BatchOutcome {
     pub tried: Vec<MessageId>,
 }
 
-/// Downloads one batch over an IMAP session that has the batch's folder
-/// selected, and saves each complete body. A message the server doesn't
-/// return, or returns incomplete or over the size limit, is left as it was.
+/// Downloads one batch over an IMAP session that has the batch's `folder`
+/// selected with `uidvalidity`, and saves each complete body, only into a
+/// row that still holds that UID of that folder (#503). A message the
+/// server doesn't return, or returns incomplete or over the size limit, is
+/// left as it was.
 pub async fn imap_batch(
     store: &Store,
     session: &mut Session,
+    folder: FolderId,
+    uidvalidity: u32,
     batch: &[Candidate],
 ) -> Result<BatchOutcome, SyncError> {
     let uids: Vec<u32> = batch.iter().map(|c| c.uid).collect();
@@ -157,9 +161,15 @@ pub async fn imap_batch(
         let Some(candidate) = batch.iter().find(|c| c.uid == uid) else {
             continue;
         };
-        match save_body(store, candidate.id, &raw) {
+        let identity = RowIdentity::Imap {
+            folder,
+            uidvalidity: i64::from(uidvalidity),
+            uid,
+        };
+        match save_body(store, candidate.id, Some(identity), &raw) {
             Ok(()) => outcome.saved = outcome.saved.saturating_add(1),
-            // Deleted locally meanwhile (an expunge, a folder reset): skip it.
+            // Deleted locally meanwhile (an expunge, a folder reset), maybe
+            // with its id reused: skip it.
             Err(SyncError::UnknownMessage) => {}
             Err(e) => return Err(e),
         }

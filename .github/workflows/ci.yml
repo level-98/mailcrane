@@ -3,7 +3,8 @@
 # logic to this file.
 #
 # Runs on every pull request, merge queue group and push to main:
-#   changes  which of the jobs below this change needs (#530)
+#   changes  which of the jobs below this change needs (#530), and the
+#            changelog fragments' names and types (scripts/release_notes.py)
 #   linux    every check, and builds the debug APK (uploaded)
 #   windows  fmt, clippy and tests of the core, to keep it portable
 #   ci-ok    passes only if every job above passed or was rightly skipped
@@ -57,6 +58,12 @@ jobs:
         with:
           # A pull request's merge commit and its first parent, the base.
           fetch-depth: 2
+
+      # Here, so docs-only changes run it too: release builds refuse a
+      # fragment with an unknown type, and a docs PR once broke the nightly
+      # that way. The script only prints the notes; nothing is written.
+      - name: Changelog fragments are valid
+        run: python3 scripts/release_notes.py check > /dev/null
 
       - name: Pick the jobs this change needs
         id: pick
