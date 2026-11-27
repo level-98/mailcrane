@@ -1144,22 +1144,27 @@ fn opening_on_one_account_while_another_account_syncs_works() {
         .pop()
         .expect("the message");
 
-    // Account B "syncs": a writer storing batch after batch of headers.
+    // Account B "syncs": batch after batch of headers, each batch one write
+    // transaction through the store, as a real sync writes them. Each one
+    // gives way to an urgent writer before it starts (`yield_to_urgent`),
+    // which is what lets the open's save in. (A bare statement loop that never
+    // gives way would starve any other writer: SQLite's busy handler isn't
+    // fair, and on Windows it lost every race, #488's first CI run.)
     let stop = std::sync::atomic::AtomicBool::new(false);
     let fetched = std::thread::scope(|scope| {
         scope.spawn(|| {
             let store = Store::open(&path).expect("b's store");
             let mut uid = 1u32;
             while !stop.load(std::sync::atomic::Ordering::SeqCst) {
-                for _ in 0..50 {
-                    let _ = store.upsert_message_header(&mailcrane_store::NewMessageHeader {
+                let batch: Vec<mailcrane_store::NewMessageHeader> = (0..50)
+                    .map(|i| mailcrane_store::NewMessageHeader {
                         folder_id: b_inbox,
-                        uid,
+                        uid: uid.wrapping_add(i),
                         message_id_header: None,
                         in_reply_to: None,
                         references_json: "[]".into(),
                         thread_id: None,
-                        subject: format!("B {uid}"),
+                        subject: format!("B {}", uid.wrapping_add(i)),
                         from_name: None,
                         from_addr: Some("someone@example.net".into()),
                         to_json: "[]".into(),
@@ -1171,9 +1176,10 @@ fn opening_on_one_account_while_another_account_syncs_works() {
                         keywords_json: "[]".into(),
                         has_attachments: false,
                         snippet: String::new(),
-                    });
-                    uid = uid.wrapping_add(1);
-                }
+                    })
+                    .collect();
+                let _ = store.upsert_message_headers(&batch);
+                uid = uid.wrapping_add(50);
             }
         });
         let fetched = engine.fetch_body(message.id.0);
