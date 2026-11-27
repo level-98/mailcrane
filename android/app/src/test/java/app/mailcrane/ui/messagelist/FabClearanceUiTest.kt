@@ -119,7 +119,12 @@ class FabClearanceUiTest {
         val label = ApplicationProvider.getApplicationContext<Application>().getString(R.string.compose_fab)
         compose.onNode(hasContentDescription(label) and hasClickAction()).assertDoesNotExist()
         // The last row reaches the bottom of the screen, less its divider.
-        val rootBottom = compose.onRoot().getBoundsInRoot().bottom.value
+        val rootBottom =
+            compose
+                .onRoot()
+                .getBoundsInRoot()
+                .bottom
+                .value
         assertTrue("last row ends at ${lastRowBottom()} dp of $rootBottom dp", rootBottom - lastRowBottom() < 4f)
     }
 }
