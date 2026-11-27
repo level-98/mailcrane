@@ -37,6 +37,7 @@ import app.mailcrane.ui.MailHome
 import app.mailcrane.ui.account.AccountsViewModel
 import app.mailcrane.ui.account.ManualSetupScreen
 import app.mailcrane.ui.components.WelcomeState
+import app.mailcrane.ui.theme.FollowSystemBars
 import app.mailcrane.ui.theme.LocalDarkMessageBodies
 import app.mailcrane.ui.theme.LocalDarkTheme
 import app.mailcrane.ui.theme.LocalMailboxDensity
@@ -117,7 +118,7 @@ class MainActivity : FragmentActivity() {
                 }
             // Status and navigation bar icons readable on the theme actually shown, including the in-app
             // Light/Dark choice (#412).
-            LaunchedEffect(dark) { applySystemBarStyle(dark) }
+            FollowSystemBars(dark)
             MailcraneTheme(darkTheme = dark, dynamicColor = appearance.dynamicColor) {
                 CompositionLocalProvider(
                     LocalDarkTheme provides dark,
