@@ -40,6 +40,8 @@ Questions: ask the maintainers in [GitHub Discussions](https://github.com/level-
 
 Changes to this policy are listed below and in the repository history at <https://github.com/level-98/mailcrane/commits/main/docs/privacy.md>.
 
+The project's own rule for which connections the app may make, beyond your mail servers, is [decision 0006](https://github.com/level-98/mailcrane/blob/main/docs/decisions/0006-network-calls-beyond-the-mail-server.md). A new kind of connection needs a new decision and a change to this policy first.
+
 | Date | Change |
 |---|---|
 | *[effective date]* | First version |

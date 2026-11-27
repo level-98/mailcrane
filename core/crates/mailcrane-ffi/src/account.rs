@@ -819,7 +819,7 @@ pub(crate) fn remove_account_with(
     // While its password is still there: stop the server pushing to this
     // phone for an account it no longer has (M4-27). Best effort; a
     // subscription the server isn't told about expires there.
-    destroy_push_subscription(&store, id, None);
+    destroy_push_subscription(&store, id, None, PUSH_TEARDOWN_LIMIT);
     mailcrane_core::secrets::delete_account_secrets(secrets, account_id)
         .map_err(|_| RemoveAccountFailure::Storage)?;
     // An OAuth account's access token (M3-02) goes from memory too: this
@@ -832,13 +832,21 @@ pub(crate) fn remove_account_with(
     }
 }
 
+/// How long removing an account waits for its server to drop the push
+/// subscription. Best effort: a subscription the server isn't told about
+/// expires there.
+const PUSH_TEARDOWN_LIMIT: std::time::Duration = std::time::Duration::from_secs(5);
+
 /// Destroys the account's JMAP push subscription on its server, if it has
-/// one, within a few seconds; failures are only logged. `extra_root` is a
-/// test server's certificate.
+/// one, with `timeout` for each request; failures are only logged.
+/// `extra_root` is a test server's certificate, and tests pass a longer
+/// `timeout` than [`PUSH_TEARDOWN_LIMIT`] so a busy machine can't fail them
+/// (#487).
 pub(crate) fn destroy_push_subscription(
     store: &mailcrane_store::Store,
     id: mailcrane_store::AccountId,
     extra_root: Option<Vec<u8>>,
+    timeout: std::time::Duration,
 ) {
     let Ok(Some(_)) = store.push_subscription(id) else {
         return;
@@ -851,7 +859,7 @@ pub(crate) fn destroy_push_subscription(
         return;
     };
     let config = mailcrane_jmap::ClientConfig {
-        timeout: std::time::Duration::from_secs(5),
+        timeout,
         extra_roots: extra_root.into_iter().collect(),
     };
     let Ok(runtime) = crate::sync::runtime() else {

@@ -16,7 +16,7 @@
 
 ---
 
-> **Status: pre-alpha.** Not ready for everyday use yet. The foundations (**M0**), reading mail (**M1**) and sending mail (**M2**) are built, along with most of the everyday features (**M4**). Much of the Android UI has not yet been tested on a real device. OAuth sign-in for Gmail and Microsoft (**M3**), UnifiedPush and OpenPGP are still to come. This is a good time to join and help shape it.
+> **Status: pre-alpha.** Not ready for everyday use yet. The foundations (**M0**), reading mail (**M1**) and sending mail (**M2**) are built, along with JMAP accounts and most of the everyday features (**M4**), including push wake-ups through UnifiedPush. Sign in with Google is built and waiting for Google to verify the app; Sign in with Microsoft and OpenPGP are still to come. Much of the Android UI has not yet been tested on a real device. Nightly test builds are on the [Download page](https://mailcrane.app/download/). This is a good time to join and help shape it.
 
 ## What Mailcrane will be
 
@@ -36,14 +36,23 @@
 | Rust core: storage and accounts | 🟢 SQLite store with migrations; credentials in Android Keystore; manual and automatic account setup (autoconfig, SRV, bundled ISPDB) |
 | Rust core: reading mail (IMAP, MIME) | 🟢 TLS, initial and incremental sync (CONDSTORE/QRESYNC), IDLE, MIME parsing, HTML sanitiser, message actions synced back to the server |
 | Rust core: sending mail (SMTP) | 🟢 SMTP over implicit TLS or STARTTLS; reply and forward, attachments, drafts, offline outbox, save to Sent |
-| JMAP | 🟡 Protocol client built (M3-04); not yet connected to sync and the app |
-| OAuth sign-in (Gmail, Microsoft) | ⚪ Not started (M3) |
-| Android app (Kotlin + Jetpack Compose) | 🟡 Message list and view, folders, compose, multiple accounts, threads, search, swipe actions, snooze, scheduled and undo send, rules, widget, tablet layouts, app lock, new-mail notifications (periodic or always-on). Much of it not yet tested on a real device. UnifiedPush and the rest of M4-05 to come |
+| JMAP | 🟢 Connected: sync, actions, sending and folders for JMAP accounts (#266, #272), and push through the account's own server (#387). Not yet tested with a real provider |
+| OAuth sign-in (Gmail, Microsoft) | 🟡 Sign in with Google built (#376), waiting for Google's app verification (#44). Microsoft not started (#45) |
+| Android app (Kotlin + Jetpack Compose) | 🟡 Message list and view, folders, compose, multiple accounts, threads, search, swipe actions, snooze, scheduled and undo send, rules, widget, tablet layouts, app lock, new-mail notifications (periodic or always-on). push wake-ups through UnifiedPush (#359). Much of it not yet tested on a real device |
 | Privacy features | 🟡 Remote content and tracking pixels blocked, tracking parameters stripped from links, one-tap unsubscribe. OpenPGP and S/MIME to come (M5) |
 | Website and user docs | 🟢 [mailcrane.app](https://mailcrane.app) (M6-07) |
 | Brand and design | 🟢 v1 done (see below) |
 
 The plan is in [ROADMAP.md](ROADMAP.md). The live to-do list is the [issues](../../issues).
+
+## Try it
+
+Mailcrane is pre-alpha: expect rough edges, and don't rely on it for mail you can't lose.
+
+- **Nightly test build:** the [Download page](https://mailcrane.app/download/) links the newest one, built from `main` every night ([docs/releasing.md](docs/releasing.md#nightly-test-builds)). It's signed with a development key, so it updates earlier test builds but not a store or release version.
+- **Debug build:** every CI run uploads `android-debug-apk` (see [CONTRIBUTING.md](CONTRIBUTING.md#ci)). It's `app.mailcrane.debug`, so it installs alongside the release app (#406). Its Settings has **Load test mail**, which adds made-up messages that never touch a server.
+- **What's built:** IMAP and SMTP accounts with automatic setup, JMAP accounts, reading, sending, search, rules and notifications. **Not yet:** Sign in with Google for everyone (waiting for Google), Sign in with Microsoft, and OpenPGP.
+- **Reporting a bug:** never include real addresses, message content or passwords. For screenshots, use Load test mail in a debug build.
 
 ## How it works
 
@@ -133,7 +142,7 @@ Fixed a bug already? Just open the report and the PR together. More in **[CONTRI
 
 We'd especially like Rust developers (sync and storage), Android developers, people who can test with lots of email providers, designers, translators and accessibility testers.
 
-Translators: Mailcrane is translated on Weblate. See [docs/translations.md](docs/translations.md).
+Translators: Mailcrane will be translated on Weblate, but the Weblate project isn't open yet. See [docs/translations.md](docs/translations.md).
 
 ## Privacy
 
