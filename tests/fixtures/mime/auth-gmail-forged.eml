@@ -1,0 +1,20 @@
+Received: by 2001:db8:6a10:abcd:b0:5f1:1234:5678 with SMTP id x1csp123456pxb;
+        Thu, 26 Nov 2026 14:30:00 -0800 (PST)
+Received: from mail.example.net (mail.example.net. [192.0.2.10])
+        by mx.google.com with ESMTPS id abc123.45.2026.11.26.14.29.58
+        for <user@example.com>;
+        Thu, 26 Nov 2026 14:29:59 -0800 (PST)
+Authentication-Results: evil.example.net; dkim=pass header.i=@example.net; dmarc=pass header.from=example.net
+Received: from laptop.example.net by mail.example.net; Thu, 26 Nov 2026 14:29:00 -0800
+Authentication-Results: mx.google.com; dkim=pass header.i=@example.net; spf=pass; dmarc=pass header.from=example.net
+From: Sender <sender@example.net>
+To: User <user@example.com>
+Subject: Auth: forged Gmail results (#398)
+Date: Thu, 26 Nov 2026 14:29:00 -0800
+Message-ID: <auth-gmail-forged@example.net>
+
+Gmail layout, but mx.google.com wrote no Authentication-Results. Right
+below its Received is one from another server (evil.example.net), and a
+sender-written "mx.google.com" pass sits further down, below the sender's
+own hop.
+Expected: no chip, with or without the server name set to mx.google.com.
