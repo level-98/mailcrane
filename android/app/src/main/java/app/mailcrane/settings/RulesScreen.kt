@@ -167,6 +167,21 @@ data class RuleDraft(
         )
     }
 
+    /**
+     * This draft with every move into a folder that can't take messages (a virtual folder such as Gmail's
+     * Starred, #390) cleared, so the editor asks for a real folder (#465). A target missing from [folders]
+     * is kept: it may be another account's.
+     */
+    fun withoutVirtualTargets(folders: List<FolderSummary>): RuleDraft =
+        copy(
+            actions =
+                actions.map { a ->
+                    val target = folders.firstOrNull { it.id == a.folderId }
+                    val virtual = a.kind == ActionKind.MOVE && target != null && !target.takesMoves
+                    if (virtual) a.copy(folderId = null) else a
+                },
+        )
+
     companion object {
         /** "Create rule from this message": from this sender, move to … (the user picks). */
         fun fromSender(address: String): RuleDraft =
@@ -303,15 +318,20 @@ class RulesViewModel
             }
         }
 
-        /** Runs [block], then re-reads the rules. [refused] is what to say when the core says `Invalid`. */
+        /**
+         * Runs [block], then re-reads the rules. [refused] is what to say when the core says `Invalid`, and
+         * [onRefused] runs then too.
+         */
         private fun act(
             refused: Int = R.string.rules_failed,
+            onRefused: () -> Unit = {},
             block: suspend () -> Unit,
         ) {
             viewModelScope.launch {
                 try {
                     block()
                 } catch (_: RulesFailure.Invalid) {
+                    onRefused()
                     _results.send(refused to -1)
                 } catch (_: RulesFailure) {
                     _results.send(R.string.rules_failed to -1)
@@ -320,10 +340,17 @@ class RulesViewModel
             }
         }
 
-        /** Saves [draft]; returns false (nothing saved) when something is missing. */
-        fun save(draft: RuleDraft): Boolean {
+        /**
+         * Saves [draft]; returns false (nothing saved) when something is missing. Once the draft is complete only
+         * a move into a folder that can't take messages makes the core refuse it (#465): [onRefused] then runs, so
+         * the editor can open again with the user's edits.
+         */
+        fun save(
+            draft: RuleDraft,
+            onRefused: () -> Unit = {},
+        ): Boolean {
             val input = draft.toInput(accountId) ?: return false
-            act { core.saveRule(draft.id, input) }
+            act(refused = R.string.rules_target_refused, onRefused = onRefused) { core.saveRule(draft.id, input) }
             return true
         }
 
@@ -412,13 +439,17 @@ fun RulesScreen(
             snackbar.showSnackbar(text)
         }
     }
+    // Folders that arrive after the rule was opened (#465 review): a move into one that can't take messages
+    // is cleared then too, so the editor never shows "Pick folder" while the draft still holds it.
+    LaunchedEffect(state.folders) { editing = editing?.withoutVirtualTargets(state.folders) }
     val draft = editing
     if (draft != null) {
         RuleEditor(
             draft = draft,
             folders = state.folders,
             onChange = { editing = it },
-            onSave = { if (viewModel.save(it)) editing = null },
+            onSave = { d -> if (viewModel.save(d) { editing = d }) editing = null },
+            snackbar = snackbar,
             onCancel = { editing = null },
             onDelete =
                 draft.id?.let { id ->
@@ -436,7 +467,7 @@ fun RulesScreen(
         snackbar = snackbar,
         onBack = onBack,
         onAdd = { editing = RuleDraft() },
-        onOpen = { editing = RuleDraft.of(it) },
+        onOpen = { editing = RuleDraft.of(it).withoutVirtualTargets(state.folders) },
         onEnabled = viewModel::setEnabled,
         onMove = viewModel::move,
         onUseServerRules = viewModel::useServerRules,
@@ -521,6 +552,15 @@ internal fun RulesList(
                                     modifier = Modifier.testTag("rule-missing-folder-${rule.id}"),
                                 )
                             }
+                            // Saved before #390 with a move into a folder that can't take messages (#465): its
+                            // other actions still run; the user picks a real folder.
+                            virtualTarget(rule, state.folders)?.let { folder ->
+                                Text(
+                                    text = stringResource(R.string.rules_virtual_target, folderName(folder)),
+                                    color = MaterialTheme.colorScheme.error,
+                                    modifier = Modifier.testTag("rule-virtual-target-${rule.id}"),
+                                )
+                            }
                             when (state.locations[rule.id]) {
                                 RuleRunsOn.SERVER -> Text(stringResource(R.string.rules_on_server))
                                 RuleRunsOn.DEVICE -> Text(stringResource(R.string.rules_on_device))
@@ -577,6 +617,17 @@ private fun ServerRulesNoticeRow(
     }
 }
 
+/** The first folder [rule] moves mail into that can't take messages, such as Gmail's Starred (#465). */
+internal fun virtualTarget(
+    rule: RuleInfo,
+    folders: List<FolderSummary>,
+): FolderSummary? =
+    rule.rule.actions.firstNotNullOfOrNull { action ->
+        (action as? RuleActionInfo.Move)?.let { move ->
+            folders.firstOrNull { it.id == move.folderId && !it.takesMoves }
+        }
+    }
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun RuleEditor(
@@ -587,9 +638,12 @@ internal fun RuleEditor(
     onCancel: () -> Unit,
     onDelete: (() -> Unit)? = null,
     onRunNow: (() -> Unit)? = null,
+    // The screen's messages, so a save the core refuses, which opens the editor again, is explained here (#482).
+    snackbar: SnackbarHostState? = null,
 ) {
     var tried by rememberSaveable { mutableStateOf(false) }
     Scaffold(
+        snackbarHost = { snackbar?.let { SnackbarHost(it) } },
         topBar = {
             TopAppBar(
                 title = { Text(stringResource(if (draft.id == null) R.string.rules_new else R.string.rules_edit)) },
@@ -692,7 +746,8 @@ internal fun RuleEditor(
                         onChange(draft.copy(actions = draft.actions.replace(i, a.copy(kind = it))))
                     }
                     if (a.kind == ActionKind.MOVE) {
-                        val current = folders.firstOrNull { it.id == a.folderId }?.let { folderName(it) }
+                        val current =
+                            folders.firstOrNull { it.id == a.folderId && it.takesMoves }?.let { folderName(it) }
                         KindMenu(
                             current ?: stringResource(R.string.rules_pick_folder),
                             folders.filter { it.takesMoves }.map {
