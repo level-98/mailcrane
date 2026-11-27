@@ -106,10 +106,16 @@ fn pooled_and_sync_calls_run_from_a_small_stack_thread() {
     let (first, second) = (ids[0], ids[1]);
 
     // Opening a message, twice: the first call opens the pooled connection.
-    // (That its writes are urgent on the thread that writes is checked
-    // directly in `urgent_job_work_is_urgent_on_the_job_thread`, #468.)
     on_small_stack(|| assert_eq!(engine.fetch_body(second), Ok(())));
     on_small_stack(|| assert_eq!(engine.fetch_body(first), Ok(())));
+    // Each body was saved by a thread that wrote urgently (#294): the mark
+    // is made where the save happens, not on the caller's thread (#468). No
+    // clock involved.
+    assert_eq!(
+        *engine.urgent_at_open.lock().expect("lock"),
+        [true, true],
+        "both opens saved their body under the urgent mark"
+    );
     // Searching the server: pooled, under the account's writer lock. Both
     // matches are stored already, so it stores none.
     on_small_stack(|| {
@@ -181,25 +187,29 @@ fn urgent_job_work_is_urgent_on_the_job_thread() {
     let dir = tempfile::tempdir().expect("dir");
     let path = dir.path().join("urgent.db").to_string_lossy().into_owned();
     let engine = SyncEngine::new(path.clone(), Arc::new(super::tests::Collect::default()));
-    let caller = std::thread::current().id();
-    let (urgent, nested_urgent, thread) = on_small_stack(|| {
-        engine
+    let (caller, thread, urgent, nested_urgent, caller_marked) = on_small_stack(|| {
+        let caller = std::thread::current().id();
+        let caller_marked = std::sync::atomic::AtomicBool::new(false);
+        let (thread, urgent, nested) = engine
             .urgent_job(|| {
+                // Seen from the caller's thread while the job runs.
+                caller_marked.store(
+                    mailcrane_store::urgent_here(&path),
+                    std::sync::atomic::Ordering::SeqCst,
+                );
                 // A job started inside runs right here and keeps the mark.
                 let nested = on_job_thread(|| Ok(mailcrane_store::urgent_here(&path)))?;
                 Ok((
+                    std::thread::current().id(),
                     mailcrane_store::urgent_here(&path),
                     nested,
-                    std::thread::current().id(),
                 ))
             })
-            .expect("ran")
+            .expect("ran");
+        (caller, thread, urgent, nested, caller_marked.into_inner())
     });
+    assert_ne!(thread, caller, "the work ran on a job thread");
     assert!(urgent, "the job thread writes urgently");
     assert!(nested_urgent, "so does a job started inside it");
-    assert_ne!(thread, caller);
-    assert!(
-        !mailcrane_store::urgent_here(&path),
-        "the caller isn't marked"
-    );
+    assert!(!caller_marked, "the job thread isn't the caller");
 }
