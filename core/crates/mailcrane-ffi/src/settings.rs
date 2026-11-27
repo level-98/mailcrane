@@ -173,8 +173,20 @@ pub fn apply_signature(body: String, signature: Option<String>, kind: DraftKind)
 /// Swaps an unedited `old` signature in `body` for `new`, for a change of
 /// From account. An edited signature is left alone.
 #[uniffi::export]
-pub fn swap_signature(body: String, old: Option<String>, new: Option<String>) -> String {
-    signature::swap_signature(&body, old.as_deref(), new.as_deref())
+pub fn swap_signature(
+    body: String,
+    old: Option<String>,
+    new: Option<String>,
+    quote_header: Option<String>,
+    kind: Option<DraftKind>,
+) -> String {
+    signature::swap_signature(
+        &body,
+        old.as_deref(),
+        new.as_deref(),
+        quote_header.as_deref(),
+        kind.map(Into::into),
+    )
 }
 
 #[cfg(test)]
@@ -289,7 +301,7 @@ mod tests {
         let body = apply_signature("Hi".into(), Some("Ann".into()), DraftKind::New);
         assert_eq!(body, "Hi\n\n-- \nAnn");
         assert_eq!(
-            swap_signature(body, Some("Ann".into()), Some("Bob".into())),
+            swap_signature(body, Some("Ann".into()), Some("Bob".into()), None, None),
             "Hi\n\n-- \nBob"
         );
     }
