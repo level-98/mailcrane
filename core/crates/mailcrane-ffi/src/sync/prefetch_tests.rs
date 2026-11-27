@@ -73,6 +73,7 @@ pub(super) fn imap_engine_with(
             highestmodseq: None,
             is_subscribed: true,
             selectable: true,
+            virtual_role: None,
         })
         .expect("folder");
     drop(store);

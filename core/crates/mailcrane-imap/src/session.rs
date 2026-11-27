@@ -4,8 +4,8 @@ use crate::command::{self, Arg, Tags};
 use crate::connection::{connect_tcp, within, Connection, Io};
 use crate::error::ImapError;
 use crate::parser::{Code, Condition, Limits, RespText, Response, StatusKind, Untagged};
-use crate::{b64, mutf7, roles, tls, ImapAuth, Secret};
-use mailcrane_store::{AccountId, FolderId, FolderRole, NewFolder, Store};
+use crate::{b64, mutf7, roles, tls, ImapAuth, Secret, ServerQuirk};
+use mailcrane_store::{AccountId, FolderId, FolderRole, NewFolder, Store, VirtualRole};
 use std::collections::HashMap;
 use std::time::Duration;
 
@@ -76,6 +76,9 @@ pub struct ImapFolder {
     pub attributes: Vec<String>,
     /// The folder's role, from SPECIAL-USE or its name.
     pub role: Option<FolderRole>,
+    /// A virtual folder's kind, such as Gmail's Starred (#390). Only on a
+    /// folder with no role.
+    pub virtual_role: Option<VirtualRole>,
 }
 
 /// An authenticated IMAP session over TLS.
@@ -422,6 +425,7 @@ impl Session {
                 delimiter: item.delimiter,
                 attributes: item.attributes,
                 role: None,
+                virtual_role: None,
             });
         }
         if skipped > 0 {
@@ -442,8 +446,13 @@ impl Session {
             })
             .collect();
         let assigned = roles::assign(&candidates);
+        let gmail = self.quirks().contains(&ServerQuirk::GmailLabels);
         for (folder, role) in folders.iter_mut().zip(assigned) {
             folder.role = role;
+            folder.virtual_role = role
+                .is_none()
+                .then(|| roles::virtual_role(&folder.attributes, gmail))
+                .flatten();
         }
         tracing::debug!(host = %self.host, count = folders.len(), "IMAP folders listed");
         Ok(folders)
@@ -555,6 +564,8 @@ pub fn save_folder_list(
                     .attributes
                     .iter()
                     .any(|a| a.eq_ignore_ascii_case("\\Noselect")),
+                // Starred and Gmail's Important (#390), from `list_folders`.
+                virtual_role: f.virtual_role,
             }
         })
         .collect();

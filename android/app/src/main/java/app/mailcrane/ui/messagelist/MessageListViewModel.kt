@@ -20,6 +20,7 @@ import app.mailcrane.settings.AppSettings
 import app.mailcrane.settings.DEFAULT_SWIPE_LEFT
 import app.mailcrane.settings.DEFAULT_SWIPE_RIGHT
 import app.mailcrane.settings.SwipeAction
+import app.mailcrane.ui.folders.takesMoves
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedFactory
 import dagger.assisted.AssistedInject
@@ -249,7 +250,7 @@ class MessageListViewModel
          */
         fun startMove(folders: List<FolderSummary>) {
             if (!unified) {
-                _moveTargets.value = folders.filter { it.id != folderId }
+                _moveTargets.value = folders.filter { it.id != folderId && it.takesMoves }
                 return
             }
             val accounts = _state.value.selectedAccounts
@@ -260,7 +261,8 @@ class MessageListViewModel
                     return@launch
                 }
                 try {
-                    _moveTargets.value = core.listFolders(account).filter { it.role != FolderRole.INBOX }
+                    _moveTargets.value =
+                        core.listFolders(account).filter { it.role != FolderRole.INBOX && it.takesMoves }
                 } catch (_: SyncFailure) {
                     _notices.send(R.string.action_not_applied)
                 }
