@@ -1745,12 +1745,46 @@ async fn handle_uid_command(
             }
             let max = max_uid(mailbox, folder).await;
             let pick = |uid| in_uid_set(set, uid, max);
+            // COPYUID (RFC 4315 §3), with UIDPLUS: the copies get the
+            // target's next UIDs, in order. For MOVE it comes in an untagged
+            // OK before the tagged one (RFC 6851 §4.3).
+            let picked: Vec<u32> = mailbox
+                .messages(folder)
+                .await
+                .iter()
+                .map(|m| m.uid)
+                .filter(|uid| pick(*uid))
+                .collect();
+            let first = mailbox.uidnext(to).await;
+            let copyuid = (!quirks.contains(&Quirk::NoUidplus) && !picked.is_empty()).then(|| {
+                let last = first
+                    .saturating_add(u32::try_from(picked.len()).unwrap_or(1))
+                    .saturating_sub(1);
+                let targets = if first == last {
+                    first.to_string()
+                } else {
+                    format!("{first}:{last}")
+                };
+                let sources = picked
+                    .iter()
+                    .map(u32::to_string)
+                    .collect::<Vec<_>>()
+                    .join(",");
+                format!("[COPYUID {} {sources} {targets}] ", mailbox.uidvalidity())
+            });
             if subcommand == "MOVE" {
                 mailbox.move_messages(folder, pick, to).await;
+                match copyuid {
+                    Some(code) => format!("* OK {code}moved\r\n{tag} OK UID MOVE completed\r\n"),
+                    None => format!("{tag} OK UID MOVE completed\r\n"),
+                }
             } else {
                 mailbox.copy(folder, pick, to).await;
+                format!(
+                    "{tag} OK {}UID COPY completed\r\n",
+                    copyuid.unwrap_or_default()
+                )
             }
-            format!("{tag} OK UID {subcommand} completed\r\n")
         }
         "EXPUNGE" => {
             if quirks.contains(&Quirk::NoUidplus) {

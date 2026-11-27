@@ -29,6 +29,7 @@ pub(crate) const MIGRATIONS: &[&str] = &[
     include_str!("../migrations/0022_oauth_provider.sql"),
     include_str!("../migrations/0023_snooze_step.sql"),
     include_str!("../migrations/0024_virtual_folder_role.sql"),
+    include_str!("../migrations/0025_snooze_copy_uid.sql"),
 ];
 
 fn user_version(conn: &Connection) -> Result<i64, StoreError> {

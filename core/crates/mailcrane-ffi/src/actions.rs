@@ -94,6 +94,11 @@ pub enum ActionFailure {
     /// More messages than one action takes.
     #[error("too many messages")]
     TooMany,
+    /// The message is being woken (its move back has started on the
+    /// server): a move or delete can be made once it lands, a few seconds
+    /// later. Nothing was changed. Like [`crate::snooze::SnoozeFailure::Waking`].
+    #[error("the message is being woken")]
+    Waking,
     /// The local database failed.
     #[error("storage failure")]
     Storage,
@@ -110,6 +115,7 @@ impl From<ActionError> for ActionFailure {
             ActionError::MixedFolders => Self::MixedFolders,
             ActionError::MixedAccounts => Self::MixedAccounts,
             ActionError::TooMany => Self::TooMany,
+            ActionError::Waking => Self::Waking,
             ActionError::Store(_) => Self::Storage,
         }
     }

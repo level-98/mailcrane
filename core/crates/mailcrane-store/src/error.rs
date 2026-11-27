@@ -26,6 +26,12 @@ pub enum StoreError {
     /// The underlying SQLite call failed.
     #[error("sqlite error: {0}")]
     Sqlite(#[from] rusqlite::Error),
+    /// A move or delete of a message whose wake is past step 0: the move
+    /// back has started on the server, so another move would cross it
+    /// (lead's decision on G6, as #431 for re-snoozing). Nothing was
+    /// changed; the user acts again once it lands, a few seconds later.
+    #[error("the message is being woken")]
+    Waking,
 }
 
 impl StoreError {
@@ -36,6 +42,7 @@ impl StoreError {
             StoreError::Corrupt { .. } => "Corrupt",
             StoreError::Invalid { .. } => "Invalid",
             StoreError::Sqlite(_) => "Sqlite",
+            StoreError::Waking => "Waking",
         }
     }
 

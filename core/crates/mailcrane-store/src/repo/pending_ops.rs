@@ -125,9 +125,33 @@ fn queue_in_tx(
     messages: &[OpMessage],
     now: i64,
 ) -> Result<Option<OpId>, StoreError> {
+    // Read in this transaction, before anything changes, so no wake can
+    // start in between (lead's decision on G6).
+    for m in messages {
+        let waking: bool = tx.query_row(
+            "SELECT EXISTS (SELECT 1 FROM snoozes s JOIN messages msg \
+                 ON msg.message_id_header = s.message_id_header \
+                 WHERE msg.id = ?1 AND s.account_id = ?2 AND s.state = 'to_wake' AND s.step > 0)",
+            params![m.message_id.0, account.0],
+            |r| r.get(0),
+        )?;
+        if waking && matches!(kind, OpKind::Move | OpKind::Expunge) {
+            return Err(StoreError::Waking);
+        }
+    }
     let mut kept: Vec<OpMessage> = Vec::new();
     for m in messages {
         apply_local(tx, kind, m.message_id)?;
+        if kind == OpKind::MarkRead {
+            // Read after a wake was due: the read wins over the wake's
+            // "mark unread" (#459).
+            tx.execute(
+                "UPDATE snoozes SET mark_unread = 0 WHERE account_id = ?2 \
+                 AND state = 'to_wake' AND message_id_header = \
+                 (SELECT message_id_header FROM messages WHERE id = ?1)",
+                params![m.message_id.0, account.0],
+            )?;
+        }
         if let Some(opposite) = kind.opposite() {
             // The newest queued action on this message, if untried.
             let latest: Option<(i64, String)> = tx

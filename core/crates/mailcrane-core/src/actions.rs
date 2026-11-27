@@ -69,9 +69,24 @@ pub enum ActionError {
     /// More than [`MAX_BULK`] messages in one action.
     #[error("too many messages")]
     TooMany,
+    /// A move or delete of a message whose wake is past step 0 (lead's
+    /// decision on G6, as #431 for re-snoozing): the move back has started
+    /// on the server. Nothing was changed; it can be done once the message
+    /// lands, a few seconds later.
+    #[error("the message is being woken")]
+    Waking,
     /// The local database failed.
     #[error("store error: {0}")]
-    Store(#[from] StoreError),
+    Store(StoreError),
+}
+
+impl From<StoreError> for ActionError {
+    fn from(error: StoreError) -> Self {
+        match error {
+            StoreError::Waking => ActionError::Waking,
+            other => ActionError::Store(other),
+        }
+    }
 }
 
 /// What [`apply_action`] did.
