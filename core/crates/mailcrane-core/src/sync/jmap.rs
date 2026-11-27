@@ -288,10 +288,12 @@ impl<'a> JmapSyncer<'a> {
                 }
             };
             let expunged = matches!(op.kind, OpKind::Move | OpKind::Expunge);
-            // Ok(refused messages) when the server changed at least some of them.
-            let result: Result<Vec<MessageId>, Option<JmapError>> = match action {
+            // Ok((refused messages, unanswered emails)) when the server changed
+            // at least some of them.
+            type Answer = (Vec<MessageId>, Vec<String>);
+            let result: Result<Answer, Option<JmapError>> = match &action {
                 // The rows are gone locally (a sync removed them): nothing to do.
-                _ if ids.is_empty() => Ok(Vec::new()),
+                _ if ids.is_empty() => Ok((Vec::new(), Vec::new())),
                 None => Err(None),
                 Some(action) => {
                     match mailcrane_jmap::apply(
@@ -299,7 +301,7 @@ impl<'a> JmapSyncer<'a> {
                         &self.auth,
                         &self.config,
                         &ids,
-                        &action,
+                        action,
                     )
                     .await
                     {
@@ -318,25 +320,156 @@ impl<'a> JmapSyncer<'a> {
                                 })
                                 .map(|(_, m)| *m)
                                 .collect();
+                            // RFC 8620 §5.3: every id must be answered, as done
+                            // or not. One left out of both is unconfirmed: its
+                            // server state is fetched below and applied, never
+                            // guessed (#448).
+                            let unanswered: Vec<String> = ids
+                                .iter()
+                                .filter(|id| {
+                                    !outcome.done.contains(id)
+                                        && !outcome.failed.iter().any(|(f, _)| f == *id)
+                                })
+                                .cloned()
+                                .collect();
                             if !refused.is_empty() && refused.len() == rows.len() {
                                 Err(None)
                             } else {
-                                Ok(refused)
+                                Ok((refused, unanswered))
                             }
                         }
                         Err(e) => Err(Some(e)),
                     }
                 }
             };
+            // The server state of unanswered emails, fetched before the op is
+            // completed: a dropped connection here defers the op (its set or
+            // destroy can be repeated safely); a refusal undoes the change for
+            // those emails, since it can't be confirmed.
+            //
+            // An email with a later queued op is still fetched and checked,
+            // so this op is never counted done for it unconfirmed (that
+            // would be #448 again). Only the server's state isn't applied
+            // to it, so the later op's local result survives until its own
+            // replay settles it (lead's decision on #451).
+            let later_op = |email: &String| {
+                rows.iter().filter(|(e, _)| e == email).any(|(_, m)| {
+                    ops.get(index.saturating_add(1)..)
+                        .unwrap_or_default()
+                        .iter()
+                        .any(|o| o.messages.iter().any(|om| om.message_id == *m))
+                })
+            };
+            let result = match result {
+                Ok((mut refused, unanswered)) if !unanswered.is_empty() => {
+                    tracing::warn!(
+                        unanswered = unanswered.len(),
+                        "JMAP server left emails out of its Email/set reply; reconciling"
+                    );
+                    match self.get_in_batches(&unanswered).await {
+                        Ok(emails) => Ok((refused, Some((unanswered, emails)))),
+                        Err(e) if transient(&e) => Err(Some(e)),
+                        Err(_) => {
+                            refused.extend(
+                                rows.iter()
+                                    .filter(|(email, _)| unanswered.contains(email))
+                                    .map(|(_, m)| *m),
+                            );
+                            // Nothing confirmed at all: the whole op failed.
+                            if refused.len() == rows.len() {
+                                Err(None)
+                            } else {
+                                Ok((refused, None))
+                            }
+                        }
+                    }
+                }
+                Ok((refused, _)) => Ok((refused, None)),
+                Err(e) => Err(e),
+            };
             match result {
-                Ok(refused) => {
+                Ok((mut refused, reconcile)) => {
+                    // One op counts as failed at most once in the report.
+                    let mut counted_failed = false;
+                    // Unconfirmed emails first go back to how they were here
+                    // (detached from the op, so completing it can't delete
+                    // them), then take the server's state, as Email/changes
+                    // would give it. Only then is the op completed. A local
+                    // database failure at any point leaves the email shown,
+                    // never lost (lead's decision on #451).
+                    if let Some((unanswered, emails)) = &reconcile {
+                        let later: Vec<&String> =
+                            unanswered.iter().filter(|e| later_op(e)).collect();
+                        let is_applied = |email: &String| {
+                            action
+                                .as_ref()
+                                .is_some_and(|a| applied(a, emails.iter().find(|e| &e.id == email)))
+                        };
+                        // An email with a later op stays in this op only when
+                        // the server's state confirms the change; otherwise
+                        // this op's change is undone for it too.
+                        let unconfirmed: Vec<MessageId> = rows
+                            .iter()
+                            .filter(|(email, _)| {
+                                unanswered.contains(email)
+                                    && (!later.contains(&email) || !is_applied(email))
+                            })
+                            .map(|(_, m)| *m)
+                            .collect();
+                        self.store.fail_op_messages(op.id, &unconfirmed)?;
+                        let mut changed: BTreeSet<FolderId> = BTreeSet::new();
+                        for id in unanswered.iter().filter(|id| !later.contains(id)) {
+                            if !emails.iter().any(|e| &e.id == id) {
+                                for row in self.store.jmap_rows(self.account, id)? {
+                                    changed.insert(row.folder_id);
+                                    self.store.delete_message_rows(&[row.message_id])?;
+                                }
+                            }
+                        }
+                        for e in emails.iter().filter(|e| !later.contains(&&e.id)) {
+                            self.place(e, &mut changed)?;
+                        }
+                        changed.insert(op.folder_id);
+                        for folder in changed {
+                            self.listener
+                                .on_event(CoreEvent::MessagesChanged { folder_id: folder });
+                        }
+                        // The ones the server didn't change are a refusal the
+                        // user should hear about, like any other.
+                        {
+                            let not_applied: Vec<MessageId> = rows
+                                .iter()
+                                .filter(|(email, _)| {
+                                    unanswered.contains(email) && !is_applied(email)
+                                })
+                                .map(|(_, m)| *m)
+                                .collect();
+                            if !not_applied.is_empty() {
+                                tracing::warn!(
+                                    not_applied = not_applied.len(),
+                                    "JMAP server didn't apply a change it left out of its reply"
+                                );
+                                report.failed = report.failed.saturating_add(1);
+                                counted_failed = true;
+                                self.listener.on_event(CoreEvent::ActionFailed {
+                                    account_id: self.account,
+                                    action: crate::actions::action_kind(op.kind),
+                                    message_ids: not_applied,
+                                    reason: crate::events::SyncErrorKind::Protocol,
+                                });
+                            }
+                        }
+                        refused.retain(|m| !unconfirmed.contains(m));
+                    }
                     if !refused.is_empty() {
                         let undone = self.store.fail_op_messages(op.id, &refused)?;
                         tracing::warn!(
                             refused = undone.len(),
                             "JMAP server refused part of a message action; undone for those"
                         );
-                        report.failed = report.failed.saturating_add(1);
+                        if !counted_failed {
+                            report.failed = report.failed.saturating_add(1);
+                        }
                         self.listener.on_event(CoreEvent::MessagesChanged {
                             folder_id: op.folder_id,
                         });
@@ -493,7 +626,7 @@ impl<'a> JmapSyncer<'a> {
     /// first fetch of an account also records where `Email/changes` starts.
     async fn store_into(&mut self, folder: FolderId, ids: &[String]) -> Result<usize, SyncError> {
         let mut stored = 0usize;
-        for batch in ids.chunks(GET_BATCH) {
+        for batch in ids.chunks(self.get_batch()) {
             let (state, emails) =
                 mailcrane_jmap::get_emails(&self.session, &self.auth, &self.config, batch).await?;
             if self.store.jmap_state(self.account, EMAIL)?.is_none() && !state.is_empty() {
@@ -545,7 +678,7 @@ impl<'a> JmapSyncer<'a> {
             ids.extend(changes.updated.iter().cloned());
             ids.sort();
             ids.dedup();
-            for batch in ids.chunks(GET_BATCH) {
+            for batch in ids.chunks(self.get_batch()) {
                 let (_, emails) =
                     mailcrane_jmap::get_emails(&self.session, &self.auth, &self.config, batch)
                         .await?;
@@ -574,6 +707,27 @@ impl<'a> JmapSyncer<'a> {
             since = changes.new_state;
         }
         Ok(touched)
+    }
+
+    /// How many ids one `Email/get` asks for: [`GET_BATCH`], or fewer when
+    /// the server's `maxObjectsInGet` (RFC 8620 §2) is lower.
+    fn get_batch(&self) -> usize {
+        self.session
+            .max_objects_in_get
+            .map_or(GET_BATCH, |n| n.min(GET_BATCH))
+            .max(1)
+    }
+
+    /// `Email/get` of `ids`, in batches of at most the server's
+    /// `maxObjectsInGet` (RFC 8620 §2), and never more than [`GET_BATCH`].
+    async fn get_in_batches(&self, ids: &[String]) -> Result<Vec<JmapEmail>, JmapError> {
+        let mut out = Vec::new();
+        for batch in ids.chunks(self.get_batch()) {
+            let (_, emails) =
+                mailcrane_jmap::get_emails(&self.session, &self.auth, &self.config, batch).await?;
+            out.extend(emails);
+        }
+        Ok(out)
     }
 
     /// Stores the email in each synced folder it's now in, and removes it
@@ -654,6 +808,20 @@ impl<'a> JmapSyncer<'a> {
 }
 
 /// Whether a failed call is worth trying again later.
+/// Whether the server's state of an email shows `action` carried out.
+fn applied(action: &mailcrane_jmap::EmailAction, email: Option<&JmapEmail>) -> bool {
+    use mailcrane_jmap::EmailAction;
+    match action {
+        EmailAction::Destroy => email.is_none(),
+        EmailAction::Keyword { keyword, on } => {
+            email.is_some_and(|e| e.keywords.iter().any(|k| k == keyword) == *on)
+        }
+        EmailAction::Move { to, .. } => {
+            email.is_some_and(|e| e.mailbox_ids.iter().any(|m| m == to))
+        }
+    }
+}
+
 fn transient(e: &JmapError) -> bool {
     matches!(e, JmapError::Network | JmapError::Timeout)
         || matches!(e, JmapError::Http(code) if *code >= 500)
