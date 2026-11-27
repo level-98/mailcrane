@@ -711,6 +711,20 @@ class ComposeViewModelTest {
     }
 
     @Test
+    fun aSignatureThatCantBeReadNeverCrashesCompose() {
+        // The same failure on a new message and on a From switch: no crash, the body and signature stay.
+        val core = FakeCore().apply { signatures = mapOf(1L to "Ann") }
+        val vm = started(core)
+        assertEquals("\n\n-- \nAnn", vm.state.value.body)
+        core.signatureFailure = IllegalStateException("store")
+        vm.onFromChange(2)
+        assertEquals("\n\n-- \nAnn", vm.state.value.body)
+        assertEquals("Ann", vm.state.value.signature)
+        val fresh = started(FakeCore().apply { signatureFailure = IllegalStateException("store") })
+        assertEquals("", fresh.state.value.body)
+    }
+
+    @Test
     fun aHungLoadGivesUpAndUnlocks() {
         val scheduler = TestCoroutineScheduler()
         Dispatchers.setMain(UnconfinedTestDispatcher(scheduler))

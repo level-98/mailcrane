@@ -399,11 +399,25 @@ class ComposeViewModel
             )
         }
 
+        /**
+         * The account's signature. A signature that can't be read must not crash compose (#435 review): the
+         * failure is logged by account id only, and the caller goes on without changing the signature.
+         */
+        private suspend fun readSignature(accountId: Long): Result<String?> =
+            try {
+                Result.success(core.signatureFor(accountId))
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                runCatching { Log.w(CoreLog.TAG, "compose: no signature for account $accountId") }
+                Result.failure(e)
+            }
+
         /** Adds the From account's signature to a new message, once. */
         private fun addSignature(accountId: Long) {
             _state.update { it.copy(signatureAdded = true) }
             viewModelScope.launch {
-                val signature = core.signatureFor(accountId) ?: return@launch
+                val signature = readSignature(accountId).getOrNull() ?: return@launch
                 _state.update {
                     val signed = core.applySignature(it.body, signature, DraftKind.NEW)
                     it.withOutsideBody(signed).copy(signature = signature)
@@ -428,16 +442,8 @@ class ComposeViewModel
                     return
                 }
             val cc = chipsOf(draft.cc)
-            // A signature that can't be read must not crash the reply (#435 review): it goes without one.
-            val signature =
-                try {
-                    core.signatureFor(draft.accountId)
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (_: Exception) {
-                    runCatching { Log.w(CoreLog.TAG, "compose: no signature for account ${draft.accountId}") }
-                    null
-                }
+            // One that can't be read: the reply goes without it.
+            val signature = readSignature(draft.accountId).getOrNull()
             val kind = if (reply.kind == ReplyKind.FORWARD) DraftKind.FORWARD else DraftKind.REPLY
             val body = core.applySignature(draft.bodyText, signature, kind)
             _state.update {
@@ -467,7 +473,8 @@ class ComposeViewModel
             _state.update { it.copy(fromAccountId = accountId, error = null) }
             if (before == accountId) return
             viewModelScope.launch {
-                val signature = core.signatureFor(accountId)
+                // One that can't be read: the old signature stays rather than being removed.
+                val signature = readSignature(accountId).getOrElse { return@launch }
                 _state.update {
                     val swapped = core.swapSignature(it.body, it.signature, signature)
                     // An edited signature stays, and keeps being the one to match.
