@@ -63,7 +63,7 @@ Only these still go to the maintainer, as a `dev_ask` card:
 8. **At most six agent PRs open at once.** At six, the lead stops dispatching new issues and puts its effort into getting the open ones finished.
 9. **Pace with `ScheduleWakeup`**: 1200–1800 s when idle; a direct message or `dev_wake` wakes a seat sooner. Never poll in a tight loop.
 10. **Stuck for more than an hour** on the same failure: post in `alerts`, update the board task to `blocked`, and move on or go idle.
-11. **One heavy job on the machine at a time.** Memory is the real limit. A heavy job is a full cargo workspace build or test (`cargo test --workspace`, a full `cargo xtask ci`), any cargo build into a cold target directory, a Gradle build, the emulator, or a long under-load test loop. Take the Synapse lock `locks/heavy-job` (`dev_sync_lock`) before starting one and release it as soon as it ends. While anyone holds it, run no other cargo or Gradle builds or tests at all; `cargo fmt` and `./gradlew ktlintCheck` are fine at any time. Before releasing it, run `./gradlew --stop` or `adb emu kill`, because Gradle and Kotlin daemons and the emulator keep their memory after the job. After a stop for low memory, nothing heavy restarts without the lead's OK. No background watcher loops (CI watchers included): the lead watches CI (see [Pipeline rules](#pipeline-rules)). Without the lock, run the targeted checks you can (`cargo test -p <crate>`, clippy on the crates you touched, `cargo fmt --all --check`), push, and keep the PR a **draft** until `ci-ok` is green on its head: CI runs `cargo xtask ci --strict`, the command [AGENTS.md §7](../AGENTS.md#7-checks) asks for, and §7 already says to state what you couldn't run. The PR body says what ran locally and what was left to CI.
+11. **One heavy job on the machine at a time.** Memory is the real limit. A heavy job is a full cargo workspace build or test (`cargo test --workspace`, a full `cargo xtask ci`), any cargo build into a cold target directory, a Gradle build, the emulator, or a long under-load test loop. Take the Synapse lock `locks/heavy-job` (`dev_sync_lock`) before starting one, in a call of its own, and start the job only after the result says you hold it, never in the same batch of tool calls. Release it as soon as the job ends. While anyone holds it, run no other cargo or Gradle builds or tests at all; `cargo fmt` and `./gradlew ktlintCheck` are fine at any time. Before releasing it, run `./gradlew --stop` or `adb emu kill`, because Gradle and Kotlin daemons and the emulator keep their memory after the job. `./gradlew --stop` stops every daemon under the shared Gradle home, other seats' runs included, so run it only while you hold the lock, as the last step before releasing. **Queue order:** QA checks that block a merge go first, then dev runs that unblock a waiting PR, then everything else. A seat that wants the lock says so in `tasks`, and the holder hands it on in that order. After a stop for low memory, nothing heavy restarts without the lead's OK. No background watcher loops (CI watchers included): the lead watches CI (see [Pipeline rules](#pipeline-rules)). Without the lock, run the targeted checks you can (`cargo test -p <crate>`, clippy on the crates you touched, `cargo fmt --all --check`), push, and keep the PR a **draft** until `ci-ok` is green on its head: CI runs `cargo xtask ci --strict`, the command [AGENTS.md §7](../AGENTS.md#7-checks) asks for, and §7 already says to state what you couldn't run. The PR body says what ran locally and what was left to CI.
 12. **Emulator work goes to dev1, dev2 and QA.** dev3 takes only issues that need no emulator or device: core and Rust, testkit, CI and workflows, docs and the website, and Android changes fully covered by JVM unit tests. QA's emulator is off by default. QA starts it only (a) to verify an open PR that touches `android/`, (b) for a post-merge device check, or (c) for an exploratory pass when no PR needs it; always while holding `locks/heavy-job` with nothing else heavy running, and always shut down (`adb emu kill`) as soon as it's done.
 
 ## Merging
@@ -109,18 +109,21 @@ These came from things that cost time on the first full day (the working list is
 - One full pass per PR: every finding in round 1, with the review tool run before posting, not after.
 - At most two rounds. Round 2 checks the fixes and anything new in the diff. After that only real bugs (crash, data loss, security, wrong behaviour) block; nits and new edge cases go into one follow-up issue that the dev files and links.
 - When edge cases keep coming, ask in round 1 for an oracle: a property or differential test.
-- Confirm "unedited merge of main" in the same pass as any other check.
+- Match the depth to the risk: docs-only, test-only and website-content PRs get one light pass (accuracy, rule compliance, links). Deep edge-case review is for code that touches mail data, sync or security.
 
 **Dev seats**
-- Never idle while waiting: when a PR waits on CI, review or QA, start the next dispatched item. At most two items in flight, one waiting and one being worked on; work for the waiting PR comes first.
+- Never idle while waiting: when a PR waits on CI, review or QA, start the next dispatched item. At most three items in flight, as long as all but one are only waiting on CI, review or QA; work for a waiting PR comes first.
 - Reply to every finding in one push, then mark ready. Propose a deferral yourself when a fix would restart QA for a nit.
 - Merge `main` into your branch only once review has no blockers left, just before it can merge (branch protection wants it up to date), not every time `main` moves: each merge restarts CI. Exception: a conflict, or a fix you need from `main`.
 - Run the format checks before every push: `cargo fmt --all --check`, and ktlint on changed Kotlin files.
+- When you merge `main` in, say whether there were conflicts.
+- Keep your Synapse status current: call `dev_sync_checkin` with what you're on whenever you switch items. The lead's idle check reads it.
 - Keep PRs small; anything else you notice becomes an issue.
 
 **QA**
 - Check a PR once review has no important findings left, so each PR is checked once.
 - Do several PRs per emulator session, and skip re-checks when nothing under `android/` changed except merges from `main`.
+- Run the emulator with 2 GB of RAM and 2 cores (`-memory 2048 -cores 2`), so other seats can still run light checks.
 - Boot the emulator from a ready snapshot (`qa-ready`: dev CA, debug app and the dev-mail account, synthetic mail only) with `-no-snapshot-save`. Refresh it when the app's schema changes or the dev CA rotates. Emulators only: the dev CA never goes on the phone.
 
 **Lead**
@@ -128,6 +131,7 @@ These came from things that cost time on the first full day (the working list is
 - Keep one item queued per dev seat, and group similar issues (rule 5).
 - Watch CI for everyone: check `ci-ok` on every open fleet PR at every wake-up, and wake the owner when it finishes, pass or fail.
 - Merge on the first wake-up after the last condition in [Merging](#merging) holds.
+- Check "unedited merge of main" yourself: a new head counts as reviewed when its parents are the reviewed commit and main's tip, and its tree equals `git merge-tree --write-tree <reviewed> <main>`. Only a conflict resolved by hand goes back to review.
 
 ## Running it
 
