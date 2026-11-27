@@ -19,6 +19,25 @@ data class Neighbours(
     val next: Long?,
 )
 
+/**
+ * The list an open message was opened from, taken when it opened (#514): the folder (or the Unified Inbox),
+ * the conversation if it was opened from one, and the order shown then.
+ */
+data class Origin(
+    val folderId: Long,
+    val threadId: Long?,
+    val order: List<Long>,
+)
+
+/** The open message's [Origin], or null when it has none: nothing open, or opened from search. */
+fun originOf(
+    messageId: Long?,
+    openedFromSearch: Boolean,
+    folderId: Long?,
+    threadId: Long?,
+    order: List<Long>,
+): Origin? = if (messageId == null || openedFromSearch || folderId == null) null else Origin(folderId, threadId, order)
+
 /** [id]'s neighbours in [order], or null if it isn't there (opened from search, or from elsewhere). */
 fun neighboursIn(
     order: List<Long>,
@@ -31,9 +50,8 @@ fun neighboursIn(
 
 /**
  * The message to show after the open one was archived, deleted or moved (M4-15), or null for the list.
- * [neighbours] are the open message's, from when it opened; [current] is its list as last shown. A neighbour
- * that list no longer holds is gone too, so the list shows instead. (One pane, the list isn't shown while a
- * message is open, so [current] may be stale; that only means the neighbour is still tried.)
+ * [neighbours] are the open message's, from when it opened; [current] is the same list as it is now, read
+ * from the store (#514). A neighbour that list no longer holds is gone too, so the list shows instead.
  */
 fun messageAfterLeaving(
     neighbours: Neighbours?,
@@ -46,7 +64,7 @@ fun messageAfterLeaving(
             AfterMoveAction.NEXT -> neighbours?.next
             AfterMoveAction.PREVIOUS -> neighbours?.previous
         }
-    return target?.takeIf { current.isEmpty() || it in current }
+    return target?.takeIf { it in current }
 }
 
 /** "After deleting or moving" for the mailbox screen. */

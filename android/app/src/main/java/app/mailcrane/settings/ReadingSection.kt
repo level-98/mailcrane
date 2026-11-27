@@ -115,14 +115,13 @@ private fun <T> ChoiceGroup(
     }
 }
 
-/** The delay comes from [MARK_READ_DELAY_MS], so the label follows it (#372 review). */
+/** The delay comes from [MARK_READ_DELAY_SECONDS], so the label follows it (#372 review, #514). */
 @Composable
 private fun markReadLabel(mode: MarkReadMode): String =
     when (mode) {
         MarkReadMode.ON_OPEN -> stringResource(R.string.mark_read_on_open)
         MarkReadMode.AFTER_DELAY -> {
-            val seconds = (MARK_READ_DELAY_MS / 1000).toInt()
-            pluralStringResource(R.plurals.mark_read_after_delay, seconds, seconds)
+            pluralStringResource(R.plurals.mark_read_after_delay, MARK_READ_DELAY_SECONDS, MARK_READ_DELAY_SECONDS)
         }
         MarkReadMode.MANUAL -> stringResource(R.string.mark_read_manual)
     }

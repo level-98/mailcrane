@@ -166,9 +166,15 @@ fun MailboxScreen(
             val leaveOrder = if (openThread != null) threadOrder else listOrder
             // Whether the open message came from search, which isn't a list to step through (#372 review).
             var openedFromSearch by remember { mutableStateOf(false) }
-            // Its neighbours in the list it was opened from, taken when it opened: by id, and from that list
-            // even if another one is shown later (#372 review).
-            val neighbours = remember(messageId) { if (openedFromSearch) null else neighboursIn(leaveOrder, messageId) }
+            // The list it was opened from and its neighbours there, taken when it opened: by id, and from that
+            // list even if another one is shown later (#372 review). Opening the same message from elsewhere
+            // (search, after the list) takes them again (#514).
+            val origin =
+                remember(messageId, openedFromSearch) {
+                    originOf(messageId, openedFromSearch, state.selectedFolderId, openThread?.first, leaveOrder)
+                }
+            val neighbours = origin?.let { neighboursIn(it.order, messageId) }
+            val leaving = rememberCoroutineScope()
             val afterMove: AfterMoveViewModel = hiltViewModel()
             val afterMoveAction by afterMove.action.collectAsStateWithLifecycle()
             val openMessageAt: (Int) -> Unit = { delta ->
@@ -186,12 +192,16 @@ fun MailboxScreen(
                         onBack = { openMessage = null },
                         folders = state.folders,
                         onLeft = {
-                            val next = messageAfterLeaving(neighbours, afterMoveAction, leaveOrder)
                             // One pane, the lists aren't shown while a message is open, so their orders aren't
                             // refreshed: drop the message from them, or J/K could open it again (#372 review).
                             listOrder = listOrder - messageId
                             threadOrder = threadOrder - messageId
-                            openMessage = next
+                            leaving.launch {
+                                // The neighbour only if the list it came from still holds it now (#514).
+                                val now = origin?.let { viewModel.idsNow(it) }.orEmpty()
+                                val next = messageAfterLeaving(neighbours, afterMoveAction, now)
+                                if (openMessage == messageId) openMessage = next
+                            }
                         },
                         onReply = onReply,
                         onComposeTo = onComposeTo,

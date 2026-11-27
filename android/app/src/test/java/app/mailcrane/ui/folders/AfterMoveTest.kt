@@ -48,4 +48,22 @@ class AfterMoveTest {
         assertNull(messageAfterLeaving(null, AfterMoveAction.NEXT, order))
         assertNull(messageAfterLeaving(null, AfterMoveAction.PREVIOUS, order))
     }
+
+    @Test
+    fun aNeighbourGoneFromTheListIsNotOpenedEvenWithNothingShown() {
+        // #514: the current list comes from the store now; empty means it holds nothing, not "unknown".
+        assertNull(messageAfterLeaving(of20, AfterMoveAction.NEXT, emptyList()))
+    }
+
+    @Test
+    fun theOriginIsTheListItWasOpenedFrom() {
+        // #514: from search there is none, so no neighbours; from a conversation it is that thread.
+        assertNull(originOf(20, openedFromSearch = true, folderId = 1, threadId = null, order = order))
+        assertNull(originOf(null, openedFromSearch = false, folderId = 1, threadId = null, order = order))
+        assertEquals(Origin(1, null, order), originOf(20, false, 1, null, order))
+        val thread = listOf(5L, 20L, 6L)
+        val fromThread = originOf(20, false, 1, 9, thread)
+        assertEquals(Origin(1, 9, thread), fromThread)
+        assertEquals(Neighbours(previous = 5, next = 6), neighboursIn(fromThread!!.order, 20))
+    }
 }
