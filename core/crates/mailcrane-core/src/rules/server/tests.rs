@@ -167,6 +167,57 @@ fn a_move_to_an_unusable_folder_stays_local() {
 }
 
 #[test]
+fn a_move_into_a_virtual_folder_is_dropped_as_on_the_device() {
+    // #390 review: the device skips a stored rule's move into a virtual
+    // folder such as Starred (the move doesn't take the "first move wins"
+    // slot), so the server script does the same, and such a rule doesn't
+    // keep every later rule off the server.
+    let f = fixture();
+    let mut starred = folder(f.account, "Starred", None);
+    starred.virtual_role = Some(mailcrane_store::VirtualRole::Starred);
+    let starred = f.store.upsert_folder(&starred).expect("folder");
+    let legacy = f
+        .store
+        .insert_rule(&rule(
+            vec![RuleCondition::Subject("sale".into())],
+            vec![
+                RuleAction::MarkRead,
+                RuleAction::Move(starred),
+                RuleAction::Move(f.bills),
+            ],
+        ))
+        .expect("rule");
+    // Nothing left to do anywhere: a server rule that the script leaves out.
+    let only_virtual = f
+        .store
+        .insert_rule(&rule(
+            vec![RuleCondition::Subject("x".into())],
+            vec![RuleAction::Move(starred)],
+        ))
+        .expect("rule");
+    let later = f
+        .store
+        .insert_rule(&rule(
+            vec![RuleCondition::Subject("Invoice".into())],
+            vec![RuleAction::Move(f.bills)],
+        ))
+        .expect("rule");
+    let p = plan(&f.store, f.account, &ALL).expect("plan");
+    assert_eq!(
+        p.server.iter().map(|(id, _, _)| *id).collect::<Vec<_>>(),
+        [legacy, only_virtual, later]
+    );
+    assert!(p.device.is_empty());
+    assert_eq!(p.server[0].1.flags, [Flag::Seen]);
+    assert_eq!(p.server[0].1.moving, Some(Moving::FileInto("Bills".into())));
+    let script = p.script(&ALL).expect("script");
+    assert!(
+        !script.contains("Starred"),
+        "no fileinto for a virtual folder"
+    );
+}
+
+#[test]
 fn folder_names_are_decoded_and_escaped() {
     let f = fixture();
     let ete = mailcrane_imap::mutf7::encode("Été/\"Quoted\" \\ box");

@@ -446,6 +446,10 @@ mod tests {
             ]
         );
         assert!(rows.iter().all(|r| r.depth == 0));
+        // #390 review: the apps leave these out of every move and rule
+        // picker by this alone.
+        let takes: Vec<_> = rows.iter().map(|r| r.can_take_moves).collect();
+        assert_eq!(takes, [true, false, false, true, true]);
     }
 
     #[test]

@@ -192,7 +192,8 @@ fn run_rules(
                     // Gmail's Starred: skipped, never run, and it doesn't take the
                     // "first move wins" slot from a later rule.
                     if is_virtual(store, *to)? {
-                        tracing::warn!(
+                        // Once per matching message: debug, not to fill the log.
+                        tracing::debug!(
                             rule = rule.id.0,
                             "skipped a rule's move into a virtual folder"
                         );
