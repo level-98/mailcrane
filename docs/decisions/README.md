@@ -17,6 +17,7 @@ Write one when you add a dependency, change a public API or the database schema,
 | [0006](0006-network-calls-beyond-the-mail-server.md) | Network calls beyond the mail server: setup lookups, one-click unsubscribe, UnifiedPush, JMAP push | accepted |
 | [0007](0007-jmap-storage-schema.md) | JMAP storage schema: mapping tables, one message row per mailbox | accepted |
 | [0008](0008-android-tls-platform-verifier.md) | TLS certificate checks on Android with `rustls-platform-verifier` | accepted |
+| [0011](0011-shared-debug-signing-key.md) | A shared, committed signing key for debug builds only | accepted |
 
 ## Template
 

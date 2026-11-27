@@ -7,6 +7,8 @@
 tests/fixtures/** -text
 # The bundled ISPDB snapshot is kept byte-identical to upstream (ADR 0003).
 core/crates/mailcrane-core/data/ispdb/** -text
+# The shared debug signing key (ADR 0011).
+android/debug.keystore binary
 
 # Windows batch files need CRLF.
 *.bat text eol=crlf
