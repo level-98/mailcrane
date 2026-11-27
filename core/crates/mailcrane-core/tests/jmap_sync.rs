@@ -638,3 +638,79 @@ async fn without_a_sent_mailbox_the_outbox_keeps_no_copy() {
     assert!(matches!(outcome, SendOutcome::Sent { .. }), "{outcome:?}");
     assert_eq!(s.outbox(id).sent_copy, SentCopy::Skipped);
 }
+
+/// #448: an email the server leaves out of its Email/set reply (in neither
+/// `updated` nor `notUpdated`, against RFC 8620 §5.3) is unconfirmed. The
+/// replay fetches its state and applies it, whichever way the server went.
+#[tokio::test]
+async fn an_email_left_out_of_the_set_reply_is_reconciled() {
+    use mailcrane_core::actions::{apply_action, Action};
+    for applied in [false, true] {
+        let s = setup().await;
+        let mut j = syncer(&s).await;
+        let inbox = j
+            .refresh_mailboxes()
+            .await
+            .expect("mailboxes")
+            .expect("inbox");
+        j.sync_folder(inbox).await.expect("sync");
+        s.server.omit_from_set_reply("m2", applied);
+        let both: Vec<_> = s
+            .store
+            .list_messages(inbox, 10, 0)
+            .expect("list")
+            .iter()
+            .map(|m| m.id)
+            .collect();
+        apply_action(&s.store, &both, Action::Flag, 0, &NoListener).expect("flag both");
+        let report = j.replay_actions(0).await.expect("replay");
+        assert_eq!((report.done, report.remaining), (1, 0), "applied={applied}");
+        for m in s.store.list_messages(inbox, 10, 0).expect("list") {
+            let flagged_on_server = m.details.subject == "Subject m1" || applied;
+            assert_eq!(
+                m.details.flags.flagged, flagged_on_server,
+                "applied={applied}: {} matches the server",
+                m.details.subject
+            );
+        }
+    }
+}
+
+/// The same for a delete (a move to Trash): left out and not applied, the
+/// email is back in the Inbox locally; applied, it's gone from it.
+#[tokio::test]
+async fn a_delete_left_out_of_the_set_reply_is_reconciled() {
+    use mailcrane_core::actions::{apply_action, Action};
+    for applied in [false, true] {
+        let s = setup().await;
+        let mut j = syncer(&s).await;
+        let inbox = j
+            .refresh_mailboxes()
+            .await
+            .expect("mailboxes")
+            .expect("inbox");
+        j.sync_folder(inbox).await.expect("sync");
+        s.server.omit_from_set_reply("m2", applied);
+        let ids: Vec<_> = s
+            .store
+            .list_messages(inbox, 10, 0)
+            .expect("list")
+            .into_iter()
+            .filter(|m| m.details.subject == "Subject m1" || m.details.subject == "Subject m2")
+            .map(|m| m.id)
+            .collect();
+        apply_action(&s.store, &ids, Action::Delete, 0, &NoListener).expect("delete both");
+        j.replay_actions(0).await.expect("replay");
+        let on_server = s.server.email_mailboxes("m2").expect("m2");
+        let left = subjects(&s.store, inbox);
+        assert_eq!(
+            left.contains(&"Subject m2".to_string()),
+            on_server == vec!["mb-inbox".to_string()],
+            "applied={applied}: local Inbox {left:?} vs server {on_server:?}"
+        );
+        assert!(
+            !left.contains(&"Subject m1".to_string()),
+            "applied={applied}"
+        );
+    }
+}

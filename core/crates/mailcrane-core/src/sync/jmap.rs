@@ -288,10 +288,12 @@ impl<'a> JmapSyncer<'a> {
                 }
             };
             let expunged = matches!(op.kind, OpKind::Move | OpKind::Expunge);
-            // Ok(refused messages) when the server changed at least some of them.
-            let result: Result<Vec<MessageId>, Option<JmapError>> = match action {
+            // Ok((refused messages, unanswered emails)) when the server changed
+            // at least some of them.
+            type Answer = (Vec<MessageId>, Vec<String>);
+            let result: Result<Answer, Option<JmapError>> = match action {
                 // The rows are gone locally (a sync removed them): nothing to do.
-                _ if ids.is_empty() => Ok(Vec::new()),
+                _ if ids.is_empty() => Ok((Vec::new(), Vec::new())),
                 None => Err(None),
                 Some(action) => {
                     match mailcrane_jmap::apply(
@@ -318,18 +320,63 @@ impl<'a> JmapSyncer<'a> {
                                 })
                                 .map(|(_, m)| *m)
                                 .collect();
+                            // RFC 8620 §5.3: every id must be answered, as done
+                            // or not. One left out of both is unconfirmed: its
+                            // server state is fetched below and applied, never
+                            // guessed (#448).
+                            let unanswered: Vec<String> = ids
+                                .iter()
+                                .filter(|id| {
+                                    !outcome.done.contains(id)
+                                        && !outcome.failed.iter().any(|(f, _)| f == *id)
+                                })
+                                .cloned()
+                                .collect();
                             if !refused.is_empty() && refused.len() == rows.len() {
                                 Err(None)
                             } else {
-                                Ok(refused)
+                                Ok((refused, unanswered))
                             }
                         }
                         Err(e) => Err(Some(e)),
                     }
                 }
             };
+            // The server state of unanswered emails, fetched before the op is
+            // completed: a dropped connection here defers the op (its set or
+            // destroy can be repeated safely); a refusal undoes the change for
+            // those emails, since it can't be confirmed.
+            let result = match result {
+                Ok((mut refused, unanswered)) if !unanswered.is_empty() => {
+                    tracing::warn!(
+                        unanswered = unanswered.len(),
+                        "JMAP server left emails out of its Email/set reply; reconciling"
+                    );
+                    match mailcrane_jmap::get_emails(
+                        &self.session,
+                        &self.auth,
+                        &self.config,
+                        &unanswered,
+                    )
+                    .await
+                    {
+                        Ok((_, emails)) => Ok((refused, Some((unanswered, emails)))),
+                        Err(e) if transient(&e) => Err(Some(e)),
+                        Err(_) => {
+                            refused.extend(
+                                rows.iter()
+                                    .filter(|(email, _)| unanswered.contains(email))
+                                    .map(|(_, m)| *m),
+                            );
+                            Ok((refused, None))
+                        }
+                    }
+                }
+                Ok((refused, _)) => Ok((refused, None)),
+                Err(e) => Err(e),
+            };
             match result {
-                Ok(refused) => {
+                Ok((refused, reconcile)) => {
                     if !refused.is_empty() {
                         let undone = self.store.fail_op_messages(op.id, &refused)?;
                         tracing::warn!(
@@ -348,6 +395,29 @@ impl<'a> JmapSyncer<'a> {
                         });
                     }
                     self.store.complete_op(op.id, expunged)?;
+                    // Unconfirmed emails take the server's state, as
+                    // Email/changes would give it: placed in the folders the
+                    // server has them in, with its keywords, or removed if
+                    // the server no longer has them.
+                    if let Some((unanswered, emails)) = reconcile {
+                        let mut changed: BTreeSet<FolderId> = BTreeSet::new();
+                        for id in &unanswered {
+                            if !emails.iter().any(|e| &e.id == id) {
+                                for row in self.store.jmap_rows(self.account, id)? {
+                                    changed.insert(row.folder_id);
+                                    self.store.delete_message_rows(&[row.message_id])?;
+                                }
+                            }
+                        }
+                        for e in &emails {
+                            self.place(e, &mut changed)?;
+                        }
+                        changed.insert(op.folder_id);
+                        for folder in changed {
+                            self.listener
+                                .on_event(CoreEvent::MessagesChanged { folder_id: folder });
+                        }
+                    }
                     report.done = report.done.saturating_add(1);
                 }
                 Err(Some(e)) if transient(&e) => {

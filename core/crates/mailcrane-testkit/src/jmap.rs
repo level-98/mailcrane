@@ -123,6 +123,10 @@ struct State {
     log: Vec<(u64, Change, String)>,
     /// Emails whose updates and destroys are refused with `forbidden`.
     refused: BTreeSet<String>,
+    /// Emails left out of `Email/set` replies (in neither the done nor the
+    /// not-done map, against RFC 8620 §5.3), with whether the change is
+    /// still carried out (#448).
+    omitted: Vec<(String, bool)>,
     /// Submissions still to refuse (`Fault::RefuseSubmissions`).
     refuse_submissions: usize,
     push_subscriptions: Vec<FakePushSubscription>,
@@ -480,6 +484,13 @@ impl FakeJmap {
         lock(&self.state).refused.insert(id.to_owned());
     }
 
+    /// From now on, email `id` is left out of `Email/set` replies, as a
+    /// buggy server might do (#448). With `applied`, the change is still
+    /// carried out; without, it isn't.
+    pub fn omit_from_set_reply(&self, id: &str, applied: bool) {
+        lock(&self.state).omitted.push((id.to_owned(), applied));
+    }
+
     /// The submissions accepted so far.
     pub fn submissions(&self) -> Vec<FakeSubmission> {
         lock(&self.state).submissions.clone()
@@ -656,10 +667,20 @@ fn email_set(state: &mut State, args: &Value, id: &str) -> Value {
                 not_updated.insert(eid.clone(), json!({"type": "forbidden"}));
                 continue;
             }
+            let omitted = state
+                .omitted
+                .iter()
+                .find(|(o, _)| o == eid)
+                .map(|(_, applied)| *applied);
+            if omitted == Some(false) {
+                continue;
+            }
             match (state.email(eid), patch.as_object()) {
                 (Some(e), Some(p)) => {
                     apply_patch(e, p);
-                    updated.insert(eid.clone(), Value::Null);
+                    if omitted.is_none() {
+                        updated.insert(eid.clone(), Value::Null);
+                    }
                     state.bump(Change::Updated, eid);
                 }
                 (None, _) => {
@@ -679,10 +700,20 @@ fn email_set(state: &mut State, args: &Value, id: &str) -> Value {
                 not_destroyed.insert(eid.to_owned(), json!({"type": "forbidden"}));
                 continue;
             }
+            let omitted = state
+                .omitted
+                .iter()
+                .find(|(o, _)| o == eid)
+                .map(|(_, applied)| *applied);
+            if omitted == Some(false) {
+                continue;
+            }
             let before = state.emails.len();
             state.emails.retain(|e| e.id != eid);
             if state.emails.len() < before {
-                destroyed.push(eid.to_owned());
+                if omitted.is_none() {
+                    destroyed.push(eid.to_owned());
+                }
                 state.bump(Change::Destroyed, eid);
             } else {
                 not_destroyed.insert(eid.to_owned(), json!({"type": "notFound"}));
