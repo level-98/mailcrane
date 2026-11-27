@@ -24,6 +24,7 @@ import app.mailcrane.settings.FakeAppSettings
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestCoroutineScheduler
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.resetMain
@@ -85,6 +86,12 @@ class ComposeViewModelTest {
         /** When set, a draft or reply load waits for it, as a slow one would (#435). */
         var loadGate: CompletableDeferred<Unit>? = null
         var signatures = mapOf<Long, String>()
+
+        /** The quote header the last signature swap was given (#449). */
+        var lastQuoteHeader: String? = null
+
+        /** A signature lookup for an account in here waits for its gate, as a slow one would (#449). */
+        val signatureGates = mutableMapOf<Long, CompletableDeferred<Unit>>()
 
         /** When set, reading a signature throws it. */
         var signatureFailure: Exception? = null
@@ -155,6 +162,7 @@ class ComposeViewModelTest {
         override suspend fun editOutbox(outboxId: Long): Long = 0
 
         override suspend fun signatureFor(accountId: Long): String? {
+            signatureGates[accountId]?.await()
             signatureFailure?.let { throw it }
             return signatures[accountId]
         }
@@ -175,7 +183,10 @@ class ComposeViewModelTest {
             body: String,
             old: String?,
             new: String?,
+            quoteHeader: String?,
+            kind: DraftKind?,
         ): String {
+            lastQuoteHeader = quoteHeader
             val oldBlock = old?.let { "\n\n-- \n$it" }
             val newBlock = new?.let { "\n\n-- \n$it" }.orEmpty()
             return when {
@@ -946,6 +957,117 @@ class ComposeViewModelTest {
             vm.onFromChange(1)
             assertEquals("Notes\n\n-- \nAnn", vm.state.value.body)
         }
+        assertEquals(1, separators(vm.state.value.body))
+    }
+
+    /** A view model whose coroutines run only when the test says, so lookups can finish in any order (#449). */
+    private fun steppedScheduler(): TestCoroutineScheduler {
+        val scheduler = TestCoroutineScheduler()
+        Dispatchers.setMain(StandardTestDispatcher(scheduler))
+        return scheduler
+    }
+
+    @Test
+    fun aFromSwitchBeforeTheFirstSignatureArrivesGivesOneSignatureForTheNewFrom() {
+        // #449 race 1: the first signature (account 1) is still loading when From becomes account 2, and the
+        // switch's lookup lands first. The late first one must not add a second block.
+        val scheduler = steppedScheduler()
+        val first = CompletableDeferred<Unit>()
+        val core =
+            FakeCore().apply {
+                signatures = mapOf(1L to "Ann", 2L to "Bea")
+                signatureGates[1L] = first
+            }
+        val vm = ComposeViewModel(core, FakeAppSettings())
+        vm.start(1)
+        scheduler.runCurrent()
+        vm.onFromChange(2)
+        scheduler.runCurrent()
+        assertEquals("\n\n-- \nBea", vm.state.value.body)
+        first.complete(Unit)
+        scheduler.runCurrent()
+        assertEquals("\n\n-- \nBea", vm.state.value.body)
+        assertEquals("Bea", vm.state.value.signature)
+        assertEquals(1, separators(vm.state.value.body))
+    }
+
+    @Test
+    fun typingThenSwitchingBeforeTheFirstSignatureArrivesKeepsTheTextAndOneSignature() {
+        // #449 race 1, with text typed first: it gets the new From's signature, not the old one's late result.
+        val scheduler = steppedScheduler()
+        val first = CompletableDeferred<Unit>()
+        val core =
+            FakeCore().apply {
+                signatures = mapOf(1L to "Ann", 2L to "Bea")
+                signatureGates[1L] = first
+            }
+        val vm = ComposeViewModel(core, FakeAppSettings())
+        vm.start(1)
+        scheduler.runCurrent()
+        vm.onBodyChange("Hi")
+        vm.onFromChange(2)
+        scheduler.runCurrent()
+        first.complete(Unit)
+        scheduler.runCurrent()
+        assertEquals("Hi\n\n-- \nBea", vm.state.value.body)
+        assertEquals("Bea", vm.state.value.signature)
+        assertEquals(2L, vm.state.value.fromAccountId)
+    }
+
+    @Test
+    fun fallingBackFromARemovedAccountGivesTheFallbackAccountsSignature() {
+        // #449 review: account 1 is gone by the time the account list loads, so From falls back to account 2.
+        // That is a change of From too: account 2's signature goes in, and account 1's late one is dropped.
+        val scheduler = steppedScheduler()
+        val first = CompletableDeferred<Unit>()
+        val core =
+            FakeCore().apply {
+                accounts = listOf(AccountSummary(2, "bea@example.org", "Bea"))
+                signatures = mapOf(1L to "Ann", 2L to "Bea")
+                signatureGates[1L] = first
+            }
+        val vm = ComposeViewModel(core, FakeAppSettings())
+        vm.start(1)
+        scheduler.runCurrent()
+        assertEquals(2L, vm.state.value.fromAccountId)
+        first.complete(Unit)
+        scheduler.runCurrent()
+        assertEquals("\n\n-- \nBea", vm.state.value.body)
+        assertEquals("Bea", vm.state.value.signature)
+    }
+
+    @Test
+    fun aRepliesFromSwitchOnlyLooksAboveItsQuote() {
+        // #449 review: the core is told where the user's own text ends (the quote header), so a forwarded or
+        // quoted copy of their signature is never the one swapped.
+        val core = FakeCore().apply { signatures = mapOf(1L to "Ann", 2L to "Bea") }
+        val vm = ComposeViewModel(core, FakeAppSettings())
+        vm.start(1, ReplyRequest(42, ReplyKind.FORWARD, "Forwarded message:"))
+        vm.onFromChange(1)
+        assertEquals("Forwarded message:", core.lastQuoteHeader)
+    }
+
+    @Test
+    fun fastSwitchesApplyOnlyTheNewestLookup() {
+        // #449 race 2: From 1 → 2 → 1 quickly; account 1's lookup lands first, then account 2's slow one. The
+        // stale one is dropped, so the message keeps account 1's signature, with the typing intact.
+        val scheduler = steppedScheduler()
+        val core = FakeCore().apply { signatures = mapOf(1L to "Ann", 2L to "Bea") }
+        val vm = ComposeViewModel(core, FakeAppSettings())
+        vm.start(1)
+        scheduler.runCurrent()
+        vm.onBodyChange("Hi" + vm.state.value.body)
+        assertEquals("Hi\n\n-- \nAnn", vm.state.value.body)
+        val slow = CompletableDeferred<Unit>()
+        core.signatureGates[2L] = slow
+        vm.onFromChange(2)
+        vm.onFromChange(1)
+        scheduler.runCurrent()
+        slow.complete(Unit)
+        scheduler.runCurrent()
+        assertEquals("Hi\n\n-- \nAnn", vm.state.value.body)
+        assertEquals("Ann", vm.state.value.signature)
+        assertEquals(1L, vm.state.value.fromAccountId)
         assertEquals(1, separators(vm.state.value.body))
     }
 
