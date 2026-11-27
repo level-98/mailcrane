@@ -22,3 +22,4 @@ The `buildRust` Gradle task (run by `preBuild`) builds `mailcrane-ffi` for arm64
 `app/build/generated/uniffi`. Release builds use the Rust release profile. Each build type packages only its
 own folder, and one Gradle run builds one profile: build debug and release variants in separate runs
 (`./gradlew assembleRelease`, then `./gradlew assembleDebug`). Nothing generated is committed.
+
