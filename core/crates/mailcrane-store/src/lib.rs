@@ -20,7 +20,7 @@ pub use repo::{
     MAX_SIGNATURE_BYTES,
 };
 pub use repo::{JmapRow, Protocol};
-pub use repo::{KeywordedMessage, NewSnooze, Snooze, SnoozeId, SnoozeState, Snoozing};
+pub use repo::{KeywordedMessage, NewSnooze, Snooze, SnoozeId, SnoozeSeen, SnoozeState, Snoozing};
 pub use repo::{ServerRules, ServerRulesState};
 
 use rusqlite::Connection;
