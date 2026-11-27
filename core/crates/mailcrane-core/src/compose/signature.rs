@@ -164,4 +164,70 @@ mod tests {
         assert_eq!(swap_signature("", None, Some("Bob")), "\n\n-- \nBob");
         assert_eq!(swap_signature("Typed", None, Some("Bob")), "Typed");
     }
+
+    #[test]
+    fn repeated_switches_find_the_block_by_content_and_never_duplicate_it() {
+        // #430: the block is matched as a whole `-- ` block with the old signature's text, wherever it is.
+        let mut body = apply_signature("Notes", Some("Ann"), DraftKind::New);
+        for _ in 0..5 {
+            body = swap_signature(&body, Some("Ann"), Some("Bea"));
+            assert_eq!(
+                body,
+                "Notes
+
+-- 
+Bea"
+            );
+            body = swap_signature(&body, Some("Bea"), Some("Ann"));
+            assert_eq!(
+                body,
+                "Notes
+
+-- 
+Ann"
+            );
+        }
+        assert_eq!(body.lines().filter(|l| *l == SEPARATOR).count(), 1);
+    }
+
+    #[test]
+    fn text_around_the_signature_stays_where_it_is() {
+        // Typed above it, and lines typed below it (a P.S.), are both kept; only the block changes.
+        let body = "Hi there
+
+-- 
+Ann
+P.S. see you Friday";
+        assert_eq!(
+            swap_signature(body, Some("Ann"), Some("Bea")),
+            "Hi there
+
+-- 
+Bea
+P.S. see you Friday"
+        );
+        // A reply: the block between the cursor line and the quote.
+        let reply = apply_signature(
+            "
+
+Ana wrote:
+> Hi
+",
+            Some("Ann"),
+            DraftKind::Reply,
+        );
+        let typed = format!("Thanks!{reply}");
+        assert_eq!(
+            swap_signature(&typed, Some("Ann"), Some("Bea")),
+            "Thanks!
+
+-- 
+Bea
+
+
+Ana wrote:
+> Hi
+"
+        );
+    }
 }
