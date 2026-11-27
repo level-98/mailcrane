@@ -63,4 +63,43 @@ class SearchFieldCursorTest {
         field.performTextInput("Ana")
         compose.runOnIdle { assertEquals("lunch has:attachment from:Ana", query) }
     }
+
+    private fun showWithQuery(
+        initial: String,
+        selectQuery: Boolean,
+    ): () -> String {
+        var query by mutableStateOf(initial)
+        compose.setContent {
+            MailcraneTheme {
+                SearchContent(
+                    state = SearchState(query = query),
+                    recent = emptyList(),
+                    onQueryChange = { query = it },
+                    onSubmit = {},
+                    onRecent = {},
+                    onClearRecent = {},
+                    onOpenMessage = {},
+                    onBack = {},
+                    selectQuery = selectQuery,
+                )
+            }
+        }
+        return { query }
+    }
+
+    /** #397: search opened again with the last query still there: typing replaces it, not adds to it. */
+    @Test
+    fun aFreshOpeningWithAnOldQueryTypingReplacesIt() {
+        val query = showWithQuery("test", selectQuery = true)
+        compose.onNode(hasSetTextAction()).performTextInput("Re Test")
+        compose.runOnIdle { assertEquals("Re Test", query()) }
+    }
+
+    /** #481 review: back from a result in the same search, typing narrows the query, as before. */
+    @Test
+    fun backFromAResultTypingAddsToTheQuery() {
+        val query = showWithQuery("lunch", selectQuery = false)
+        compose.onNode(hasSetTextAction()).performTextInput(" from:ana")
+        compose.runOnIdle { assertEquals("lunch from:ana", query()) }
+    }
 }
