@@ -109,25 +109,16 @@ The agent runs on a maintainer's Claude token, so:
 | `m0` … `m8` | Milestone (see ROADMAP.md) |
 | `area:core` · `area:android` · `area:design` · `area:docs` · `area:ci` | Which part of the project |
 
-## Trying the app
-
-To try Mailcrane or check a change, you don't need to build it:
-
-- **Nightly test build:** linked from the [Download page](https://mailcrane.app/download/). It's a release build signed with a development key, so it updates earlier test builds but not a store or release version.
-- **Debug build:** the `android-debug-apk` artifact from any CI run (see [CI](#ci)). It installs as `app.mailcrane.debug`, alongside the release app (#406), and its Settings has **Load test mail**, which adds made-up messages without connecting anywhere.
-
-The README's [Try it](README.md#try-it) section says what's built and what isn't yet. In bug reports and screenshots, never show a real address or real mail: use Load test mail.
-
 ## Other ways to help
 
 - **Try it with your own provider** and fill in a [provider test report](../../issues/new?template=provider_report.yml), even when everything works. Results are collected in [docs/providers.md](docs/providers.md). Never share your account details.
 - **Design**: mockups and UX feedback, following Material 3.
 - **Write docs.**
-- **Translate** the app on Weblate, once the project opens. See [Translations](#translations).
+- **Translate** the app on Weblate. See [Translations](#translations).
 
 ## Translations
 
-Translations will be done on Weblate, not in pull requests. Weblate opens a pull request with its changes, and CI checks it like any other. **The Weblate project isn't open yet:** a maintainer still has to create it. [docs/translations.md](docs/translations.md) will link it, and already has the guide for translators (placeholders, plurals, licence) and for developers adding strings. Please don't edit `values-*/strings.xml` by hand.
+Translations are done on Weblate, not in pull requests. Weblate opens a pull request with its changes, and CI checks it like any other. The Weblate project is being set up; [docs/translations.md](docs/translations.md) will link it and has the guide for translators (placeholders, plurals, licence) and for developers adding strings. Please don't edit `values-*/strings.xml` by hand.
 
 ## Code of conduct
 

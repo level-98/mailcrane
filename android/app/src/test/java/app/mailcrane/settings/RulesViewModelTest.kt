@@ -54,16 +54,10 @@ private class FakeRules : RulesCore {
 
     override suspend fun listRules() = rules
 
-    /** Thrown by [saveRule], as the core refuses a move into a folder that can't take messages (#465). */
-    var saveFailure: RulesFailure? = null
-
     override suspend fun saveRule(
         id: Long?,
         rule: RuleInput,
-    ): Long {
-        saveFailure?.let { throw it }
-        return 0L
-    }
+    ) = 0L
 
     override suspend fun deleteRule(id: Long) = Unit
 
@@ -190,25 +184,6 @@ class RulesViewModelTest {
             val vm = RulesViewModel(core, FakeMailbox(), 7)
             vm.setEnabled(1, true)
             assertEquals(R.string.rules_enable_no_actions, vm.results.first().first)
-        }
-
-    @Test
-    fun aRefusedSaveSaysWhyAndReopensTheEditor() =
-        runTest {
-            // #465 review: a move target the editor couldn't see as virtual (another account's Starred) is
-            // refused by the core. The user's edits come back, with a message that says what to fix.
-            val core = FakeRules().apply { saveFailure = RulesFailure.Invalid() }
-            val vm = RulesViewModel(core, FakeMailbox(), 7)
-            var reopened = false
-            val draft =
-                RuleDraft(
-                    name = "Old",
-                    conditions = listOf(ConditionDraft(ConditionKind.SUBJECT, "sale")),
-                    actions = listOf(ActionDraft(ActionKind.MOVE, 99)),
-                )
-            assertEquals(true, vm.save(draft) { reopened = true })
-            assertEquals(R.string.rules_target_refused, vm.results.first().first)
-            assertEquals(true, reopened)
         }
 
     @Test

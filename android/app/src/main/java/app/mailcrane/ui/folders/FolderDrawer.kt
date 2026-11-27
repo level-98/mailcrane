@@ -252,13 +252,6 @@ internal fun folderIcon(role: FolderRole?): Int =
 val FolderSummary.takesMoves: Boolean
     get() = canTakeMoves
 
-/**
- * Whether a folder can be created under this one: not under a virtual folder such as Gmail's Starred, which the
- * core refuses as a parent (#461).
- */
-val FolderSummary.canHoldSubfolders: Boolean
-    get() = canTakeMoves
-
 @Composable
 private fun unreadBadge(count: UInt): String =
     if (count > MAX_BADGE_COUNT) {

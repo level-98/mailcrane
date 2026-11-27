@@ -27,7 +27,7 @@ Result: ✅ works · ⚠️ works with issues · ❌ broken · — not tested ye
 
 | Provider | Protocol and sign-in | Platform and OS | Mailcrane version | Tested by | Date | Result | Notes and issues |
 |---|---|---|---|---|---|---|---|
-| Gmail | | | | | | — | Sign in with Google is built (#376) and waiting for Google's verification (#44); an app password works too |
+| Gmail | | | | | | — | Needs an app password until Sign in with Google lands (#44) |
 | Outlook.com | | | | | | — | May refuse passwords; Sign in with Microsoft is #45 |
 | Microsoft 365 | | | | | | — | Depends on the organisation's settings; #45 |
 | iCloud Mail | | | | | | — | Needs an app-specific password |
@@ -59,7 +59,7 @@ Tests never use a real mailbox (AGENTS.md §7). They run against the fake IMAP, 
 | Send later on the server (`FUTURERELEASE`, RFC 4865) | some SMTP servers | testkit `Quirk::FutureRelease` |
 | JMAP mail, sending, folders and a refused submission (RFC 8620, 8621) | Fastmail, Stalwart | testkit JMAP server (`Fault::RefuseSubmissions`) |
 | Server-side rules over ManageSieve (RFC 5804) | Dovecot Pigeonhole, Stalwart and others | testkit Sieve server (ADR 0004) |
-| OAuth sign-in and token refresh (RFC 6749, PKCE RFC 7636) | Google (built in #376, waiting for verification, #44); Microsoft not built yet (#45) | testkit OAuth server, `mailcrane-core` `tests/oauth.rs` |
+| OAuth sign-in and token refresh (RFC 6749, PKCE RFC 7636) | Google, Microsoft (once registered, #44/#45) | testkit OAuth server |
 | Dropped connections, slow or malformed replies, refused login, temporary and permanent errors | any server | testkit `Fault` |
 | No STARTTLS is an error, never plain text | misconfigured servers | testkit `Fault::NoStartTls` |
 | Server settings from the provider's autoconfig file, DNS SRV and MX records, and the bundled Mozilla ISPDB (ADR 0003) | most providers above | `mailcrane-core` autoconfig tests |

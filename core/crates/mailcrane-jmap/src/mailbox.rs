@@ -17,13 +17,6 @@ pub enum MailboxRole {
     Junk,
     Trash,
     All,
-    /// Messages with the `$flagged` keyword (RFC 8621 §4.1.1), a role from
-    /// the IANA mailbox roles that RFC 8621 §2 uses: a virtual mailbox,
-    /// nothing is moved into it (#461).
-    Flagged,
-    /// Important messages (RFC 8457 §3). It may be a real folder that mail is
-    /// filed into, so it stays an ordinary mailbox (#461 review).
-    Important,
 }
 
 impl MailboxRole {
@@ -36,8 +29,6 @@ impl MailboxRole {
             "junk" => Self::Junk,
             "trash" => Self::Trash,
             "all" => Self::All,
-            "flagged" => Self::Flagged,
-            "important" => Self::Important,
             _ => return None,
         })
     }

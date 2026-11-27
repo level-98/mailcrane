@@ -8,8 +8,6 @@ import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
-import app.mailcrane.core.FolderRole
-import app.mailcrane.core.FolderSummary
 import app.mailcrane.core.RuleActionInfo
 import app.mailcrane.core.RuleConditionInfo
 import app.mailcrane.core.RuleInfo
@@ -72,46 +70,5 @@ class RulesListTest {
         // With no actions left it can't be switched on; the other rule can be switched.
         compose.onNodeWithTag("rule-switch-1", useUnmergedTree = true).assertIsNotEnabled()
         compose.onNodeWithTag("rule-switch-2", useUnmergedTree = true).assertIsEnabled()
-    }
-
-    private val inbox =
-        FolderSummary(id = 10, displayName = "INBOX", role = FolderRole.INBOX, depth = 0u, unreadCount = 0u)
-    private val starred =
-        FolderSummary(
-            id = 11,
-            displayName = "Starred",
-            role = FolderRole.STARRED,
-            depth = 0u,
-            unreadCount = 0u,
-            canTakeMoves = false,
-        )
-    private val receipts = FolderSummary(id = 12, displayName = "Receipts", role = null, depth = 0u, unreadCount = 0u)
-
-    @Test
-    fun aRuleMovingIntoAFolderThatCantTakeMessagesSaysSo() {
-        // #465: saved before #390. It isn't turned off (its mark-read still runs), but it says why it moves nothing.
-        val old = rule(1, null, actions = listOf(RuleActionInfo.MarkRead, RuleActionInfo.Move(starred.id)))
-        val fine = rule(2, null, actions = listOf(RuleActionInfo.Move(receipts.id)))
-        compose.setContent {
-            MailcraneTheme {
-                RulesList(
-                    state =
-                        RulesState(
-                            rules = listOf(old, fine),
-                            folders = listOf(inbox, starred, receipts),
-                            loading = false,
-                        ),
-                    snackbar = SnackbarHostState(),
-                    onBack = {},
-                    onAdd = {},
-                    onOpen = {},
-                    onEnabled = { _, _ -> },
-                    onMove = { _, _ -> },
-                )
-            }
-        }
-        compose.onNodeWithTag("rule-virtual-target-1", useUnmergedTree = true).assertIsDisplayed()
-        compose.onNodeWithTag("rule-virtual-target-2", useUnmergedTree = true).assertDoesNotExist()
-        compose.onNodeWithTag("rule-switch-1", useUnmergedTree = true).assertIsEnabled()
     }
 }

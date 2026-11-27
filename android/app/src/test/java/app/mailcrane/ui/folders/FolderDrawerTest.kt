@@ -103,10 +103,6 @@ class FolderDrawerTest {
         val important = starred.copy(id = 8, role = FolderRole.IMPORTANT)
         assertEquals(false, starred.takesMoves)
         assertEquals(false, important.takesMoves)
-        // #461: nor can a folder be created under them; ordinary folders can hold one.
-        assertEquals(false, starred.canHoldSubfolders)
-        assertEquals(false, important.canHoldSubfolders)
-        assertEquals(true, starred.copy(id = 9, role = null, canTakeMoves = true).canHoldSubfolders)
         assertEquals(true, folders.all { it.takesMoves })
     }
 

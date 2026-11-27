@@ -12,11 +12,6 @@
 # scheduled events update the site without browser calls to GitHub or site
 # content being added to `main`.
 #
-# The privacy page is built from `docs/privacy.md` on `main`, the one copy of
-# the policy (#475): the website job checks out that file next to the website
-# branch and runs website/scripts/build_privacy.py before the build. A push to
-# `main` that changes the policy redeploys the site straight away.
-#
 # Setup: Settings → Actions → General → Workflow permissions →
 # tick "Allow GitHub Actions to create and approve pull requests".
 #
@@ -31,15 +26,16 @@ on:
     types: [opened, closed, reopened, edited]
   schedule:
     - cron: "41 5 * * *"
-  push:
-    branches: [main]
-    paths: [docs/privacy.md]
   workflow_dispatch:
 
 permissions:
   contents: write
   pull-requests: write
   issues: read
+
+concurrency:
+  group: roadmap-sync
+  cancel-in-progress: false
 
 jobs:
   website:
@@ -58,13 +54,6 @@ jobs:
       - uses: actions/checkout@v7
         with:
           ref: website
-      - name: Check out the privacy policy from main
-        uses: actions/checkout@v7
-        with:
-          ref: main
-          path: website/.policy
-          sparse-checkout: docs/privacy.md
-          sparse-checkout-cone-mode: false
       - name: Install Zola
         run: |
           curl --fail --location --silent --show-error \
@@ -85,8 +74,6 @@ jobs:
         run: python3 scripts/update_roadmap.py
       - name: Test roadmap generator
         run: python3 -m unittest discover -s tests -v
-      - name: Build the privacy page from docs/privacy.md
-        run: python3 scripts/build_privacy.py .policy/docs/privacy.md
       - name: Build site
         run: zola build
       - name: Check links offline
@@ -117,14 +104,8 @@ jobs:
         uses: actions/deploy-pages@v5
 
   sync:
-    if: github.event_name != 'push' && (github.event_name != 'issues' || startsWith(github.event.issue.title, '['))
+    if: github.event_name != 'issues' || startsWith(github.event.issue.title, '[')
     runs-on: ubuntu-latest
-    # Only the sync job queues behind itself, so a policy push (which skips
-    # this job) can't replace a waiting issues run. The website and deploy
-    # jobs have their own group, shared with website.yml.
-    concurrency:
-      group: roadmap-sync
-      cancel-in-progress: false
     env:
       GH_TOKEN: ${{ github.token }}
       BRANCH: bot/roadmap-sync

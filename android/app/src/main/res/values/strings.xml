@@ -202,7 +202,6 @@
     <string name="folders_error_exists">A folder with that name is already there.</string>
     <string name="folders_error_into_itself">A folder can’t go inside itself or one of its subfolders.</string>
     <string name="folders_error_no_subfolders">This server doesn’t support subfolders.</string>
-    <string name="folders_error_not_a_parent">This folder can’t hold other folders.</string>
     <string name="folders_error_not_found">The folder no longer exists.</string>
     <string name="folders_error_refused">The server refused the change.</string>
     <string name="folders_error_unsupported">Folders can’t be managed for this account yet.</string>
@@ -424,8 +423,6 @@
     <string name="rules_on_server">On the server</string>
     <string name="rules_on_device">On this device</string>
     <string name="rules_missing_folder">Turned off: the folder “%1$s” it moved mail to was removed. Edit the rule to choose another.</string>
-    <string name="rules_target_refused">A folder this rule moves mail to can’t take messages. Pick another one.</string>
-    <string name="rules_virtual_target">Moves nothing: “%1$s” can’t take messages. Edit the rule to choose another folder.</string>
     <string name="rules_enable_no_actions">This rule has nothing to do. Edit it and add an action first.</string>
     <string name="rules_other_script">Your server already runs another filter, “%1$s”, so these rules run on this device.</string>
     <string name="rules_switch">Use on server</string>

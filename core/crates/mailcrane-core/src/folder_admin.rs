@@ -65,10 +65,6 @@ pub enum FolderAdminError {
     /// The server has no subfolders.
     #[error("the server has no subfolders")]
     NoSubfolders,
-    /// The chosen parent can't hold folders: a virtual folder such as
-    /// Gmail's Starred (#461), which holds mail by flag.
-    #[error("that folder can't hold folders")]
-    NotAParent,
     /// The folder (or the chosen parent) isn't in this account.
     #[error("no such folder")]
     NotFound,
@@ -237,17 +233,6 @@ fn find(folders: &[Folder], id: FolderId) -> Result<&Folder, FolderAdminError> {
         .ok_or(FolderAdminError::NotFound)
 }
 
-/// The folder `id` as a parent for a new or moved folder. A virtual folder,
-/// such as Gmail's Starred (#390), holds mail by flag and has no
-/// subfolders, so it's refused (#461) and drops out of the move picker.
-fn find_parent(folders: &[Folder], id: FolderId) -> Result<&Folder, FolderAdminError> {
-    let parent = find(folders, id)?;
-    if parent.details.virtual_role.is_some() {
-        return Err(FolderAdminError::NotAParent);
-    }
-    Ok(parent)
-}
-
 fn taken(folders: &[Folder], remote: &str, except: Option<FolderId>) -> bool {
     folders.iter().any(|f| {
         Some(f.id) != except
@@ -294,7 +279,7 @@ pub fn plan_create_in(
     local_default: Option<char>,
     namespace: Option<&str>,
 ) -> Result<CreatePlan, FolderAdminError> {
-    let parent = parent.map(|p| find_parent(folders, p)).transpose()?;
+    let parent = parent.map(|p| find(folders, p)).transpose()?;
     let delimiter = parent
         .and_then(delimiter_of)
         .or_else(|| account_delimiter(folders, local_default));
@@ -399,7 +384,7 @@ pub fn plan_move_in(
     let new_remote = match parent {
         None => format!("{}{leaf}", namespace.unwrap_or_default()),
         Some(p) => {
-            let p = find_parent(folders, p)?;
+            let p = find(folders, p)?;
             let pr = &p.details.remote_name;
             if p.id == f.id || is_under(pr, remote, d) {
                 return Err(FolderAdminError::IntoItself);

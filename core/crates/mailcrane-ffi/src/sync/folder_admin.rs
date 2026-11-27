@@ -55,9 +55,6 @@ pub enum FolderFailure {
     /// The server has no subfolders.
     #[error("no subfolders on this server")]
     NoSubfolders,
-    /// The chosen parent can't hold folders, such as Gmail's Starred (#461).
-    #[error("not a parent")]
-    NotAParent,
     /// No such folder or account.
     #[error("not found")]
     NotFound,
@@ -98,7 +95,6 @@ impl From<FolderAdminError> for FolderFailure {
             FolderAdminError::AlreadyExists => Self::AlreadyExists,
             FolderAdminError::IntoItself => Self::IntoItself,
             FolderAdminError::NoSubfolders => Self::NoSubfolders,
-            FolderAdminError::NotAParent => Self::NotAParent,
             FolderAdminError::NotFound => Self::NotFound,
             FolderAdminError::Refused { .. } => Self::Refused,
             FolderAdminError::Imap(e) => {
