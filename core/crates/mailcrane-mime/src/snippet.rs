@@ -518,7 +518,7 @@ fn lines_from_marks(text: &str) -> String {
     let mut after_break = false;
     let mut after_para = false;
     let mut keep_next = false;
-    // The last line break written was a `<br>`'s, with no text since: a
+    // The last line break written was a `<br>`'s, with nothing since: a
     // `</p>` now only ends that line, so its own break is dropped (#460).
     let mut broke = false;
     let line_started = |out: &String| !out.is_empty() && !out.ends_with('\n');
@@ -550,7 +550,10 @@ fn lines_from_marks(text: &str) -> String {
                     out.push('\n');
                 }
                 pending = false;
-                broke = broke && c.is_whitespace();
+                // Anything written ends it, a kept space included: collapsed
+                // source whitespace after a `<br>` never gets here
+                // (html_to_text drops it at a line start).
+                broke = false;
                 out.push(c);
             }
         }
@@ -953,8 +956,10 @@ mod tests {
         /// #460: a `<br>` right before a paragraph's end, after text,
         /// changes nothing: the paragraph's end already ends the line, so
         /// it adds no blank line, wherever the pair lands among other
-        /// pieces (inside a tag, a comment or a quoted value it is dropped
-        /// either way).
+        /// pieces. The `>` before the text ends any tag `before` left
+        /// open, so the text is text (or, in a comment or a quoted value,
+        /// hidden in both). Without text first it would be a blank
+        /// paragraph, which keeps its blank line.
         #[test]
         fn a_br_that_ends_a_paragraph_adds_nothing(
             before in html_and_twin(),
@@ -962,29 +967,33 @@ mod tests {
             br in proptest::sample::select(&["<br>", "<BR/>", "&#10;", "<br><b></b>", "<br> "][..]),
         ) {
             let (before, after) = (before.0, after.0);
-            let with = format!("{before}A{br}</p>{after}");
-            let without = format!("{before}A</p>{after}");
+            let with = format!("{before}>A{br}</p>{after}");
+            let without = format!("{before}>A</p>{after}");
             prop_assert_eq!(html_to_lines(&with), html_to_lines(&without), "{:?}", with);
         }
 
         /// #460: text in `<pre>` keeps every line break and space: its
-        /// lines are the source lines (inline tags removed), but for the
-        /// line break HTML drops right after the `<pre>` start tag, one
-        /// line break just before `</pre>` (the block's end ends that line
-        /// anyway), and the blank-line and trailing-space tidying every
-        /// result gets.
+        /// lines are the source lines (inline tags removed), as a browser
+        /// shows them: the line break right after the `<pre>` start tag is
+        /// dropped, a final line break ends the last line without starting
+        /// another, and an empty `<pre>` has no line. Then the blank-line
+        /// and trailing-space tidying every result gets.
         #[test]
         fn pre_keeps_its_lines(
             text in proptest::collection::vec(
-                proptest::sample::select(&PRE_PIECES[..]), 0..24
+                proptest::sample::select(PRE_PIECES), 0..24
             ).prop_map(|p| p.concat()),
         ) {
             let html = format!("<div>x</div><pre>{text}</pre><div>y</div>");
             let source = text.replace("\r\n", "\n").replace('\r', "\n");
             let source = source.strip_prefix('\n').unwrap_or(&source);
             let source = source.replace("<b>", "").replace("</b>", "");
-            let source = source.strip_suffix('\n').unwrap_or(&source);
-            let expected = tidy_lines(&format!("x\n{source}\ny"));
+            let expected = if source.is_empty() {
+                "x\ny".to_owned()
+            } else {
+                let lines = source.strip_suffix('\n').unwrap_or(&source);
+                tidy_lines(&format!("x\n{lines}\ny"))
+            };
             prop_assert_eq!(html_to_lines(&html), expected, "{:?}", html);
         }
 
@@ -1030,6 +1039,10 @@ mod tests {
         assert_eq!(html_to_lines("<p>A</p><p><br></p><p>B</p>"), "A\n\nB");
         assert_eq!(html_to_lines("<p>A<br><br></p><p>B</p>"), "A\n\nB");
         assert_eq!(html_to_lines("A<br></p></p>B"), html_to_lines("A</p></p>B"));
+        // A space the sender wrote after the `<br>` is content: the `</p>`
+        // ends that line as html_to_text has it.
+        assert_eq!(html_to_lines("A<br>&#32;</p>B"), "A\n\nB");
+        assert_eq!(html_to_lines("<br --!>\u{c}</p>&amp;"), "&");
     }
 
     /// #460: `<pre>` keeps its line breaks and spaces; the line break

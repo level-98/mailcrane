@@ -1,0 +1,13 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 3a037d9fdba9f3a2af0b78f428692ed14845563e3e364e6a90b04184e706bd93 # shrinks to text = " A"
+cc 92d025d0bf511803a1d9e03bca51731fbbb894c6c9f9d1edf1a81825fc56fa4b # shrinks to before = ("&#10;&#32;<", "&#10;&#32;<"), after = ("&#57344;", "&#57344;"), br = "<br><b></b>"
+cc ec6f4c88a5a9672c1bb1a1eb13b9707fdf424e22f168c27c7f57c0d93bddfee1 # shrinks to case = ("&#10;&#32;</p>&amp;", "&#10;&#32;</p>&amp;")
+cc d45242772d85fb0a44f640d6f59b9c28a2876d676497482bee36e19ac99b7e8e # shrinks to html = "<br --!>\u{c}</p>&amp;"
+cc ea5043403f532c2e1539f422c0599e8a435c68e26c9560ce303feb80c66b4a96 # shrinks to text = ""
+cc 81b4bd33e52f519e8827d6c725adc84fe35c86ff75e04169c8f8ad45890e4120 # shrinks to before = ("&#57344;&#10;<p ", "&#57344;&#10;<br "), after = ("&#57344;", "&#57344;"), br = "<br>"
+cc 9457e2ee5b925d0f5c49fbe6cdd70b79201fe33f7c2748d2cf7f402ce876263b # shrinks to text = "\n\n"
