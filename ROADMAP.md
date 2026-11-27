@@ -90,7 +90,7 @@ Goal: add an IMAP account and read your inbox, online and offline.
 - [x] **M4-02** Conversation threading (JWZ algorithm plus Gmail thread IDs) 🤖
 - [x] **M4-03** Offline full-text search (SQLite FTS5), plus server-side IMAP SEARCH 🤖
 - [x] **M4-04** Configurable swipe actions 🟢🤖
-- [ ] **M4-05** Push notifications on Android: foreground IDLE service and UnifiedPush 🧑 (code done in #359 and #387; a device check with a real distributor is still to do)
+- [ ] **M4-05** Push notifications on Android: foreground IDLE service and UnifiedPush 🧑
   - Notification settings per account and per folder. Folders that rules move mail into notify by default.
   - Quiet hours per account, which can also pause syncing (e.g. work account at weekends).
   - The user picks the notification actions (mark as read, archive, delete, reply).

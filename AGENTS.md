@@ -79,7 +79,7 @@ It runs `fmt`, `clippy -D warnings`, the tests, `cargo deny`, the no-panic lint,
 
 ## 8. Pull requests
 
-- One issue per PR, from current `main`. Branch `<issue>-<short-name>`. Body includes `Closes #<issue>`. The maintainer's agent fleet has its own exception for small groups of similar issues in [docs/fleet.md](docs/fleet.md#rules-for-every-seat) (rule 5).
+- One issue per PR, from current `main`. Branch `<issue>-<short-name>`. Body includes `Closes #<issue>`.
 - Commits follow Conventional Commits: `feat(imap): support IDLE`.
 - Add a file to `docs/changelog.d/`. Don't edit shared tables.
 - Fill in the PR template, including **AI-assisted: yes** with the tool and model, and what you actually tested.

@@ -11,11 +11,7 @@ Mailcrane is meant to be on F-Droid, built from source by F-Droid with no propri
 - **No git metadata in the APK.** `vcsInfo` is off for release builds. The only trace of git is the short commit hash shown in Settings → About (`BuildConfig.GIT_COMMIT`), which is the same for every checkout of a commit, so it doesn't break reproducibility. A build without git says "unknown" there, so build from a git checkout when comparing.
 - **Only the ABIs the core is built for.** `abiFilters` limits the APK to arm64-v8a and x86_64, the targets `cargo-ndk` builds. Before, JNA added armeabi-v7a, armeabi and mips folders, so the app would have installed on 32-bit phones and crashed there.
 - **Unsigned release builds work.** `./gradlew assembleRelease` needs no signing secrets: the release build type has no signing config, so it produces an unsigned APK for F-Droid to sign, or to compare with ours. Our signed builds are signed outside Gradle, by the release workflow ([docs/releasing.md](releasing.md)), so this stays true.
-- **No anti-features.** No tracking and no ads. The app talks to the user's own mail servers, plus the few calls [ADR 0006](decisions/0006-network-calls-beyond-the-mail-server.md) allows (setup lookups, one-click unsubscribe, the user's UnifiedPush distributor, JMAP push to the user's own server). Sign in with Google (#376) is built and waiting for Google's verification (#44). It uses Google's sign-in servers for the user's own Gmail account. See the open question below.
-
-### Open question: the Google OAuth client ID
-
-Sign in with Google is on in release builds (`GOOGLE_SIGN_IN` in `android/app/build.gradle.kts`), and the app ships Mailcrane's Google OAuth client ID (`mailcrane-core/src/oauth/providers/google.rs`). The question for the F-Droid submission is whether that counts as an anti-feature, most likely `NonFreeNet` (the app relies on a non-free network service). On one side, the service is the user's own mail provider, which the app needs anyway to read Gmail, and an app password still works without it. On the other, the sign-in step depends on Google's servers and on Google accepting this client ID. **Not decided here:** the maintainer settles it with F-Droid when submitting (M6-04), and the recipe below gets the answer.
+- **No anti-features.** No tracking, no ads, no non-free network services: the app talks only to the user's own mail servers. The OAuth sign-in planned in M3 will use the providers' own servers, which F-Droid's NonFreeNet rule doesn't cover for a user's own account.
 
 ## Reproducible builds
 

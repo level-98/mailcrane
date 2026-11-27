@@ -14,9 +14,6 @@ Write one when you add a dependency, change a public API or the database schema,
 | [0003](0003-bundled-ispdb.md) | Bundle a snapshot of Mozilla's ISPDB for automatic setup | accepted |
 | [0004](0004-server-side-rules-managesieve.md) | Server-side rules through ManageSieve | accepted |
 | [0005](0005-no-ios-before-1-0.md) | No iOS app before Mailcrane 1.0 | accepted |
-| [0006](0006-network-calls-beyond-the-mail-server.md) | Network calls beyond the mail server: setup lookups, one-click unsubscribe, UnifiedPush, JMAP push | accepted |
-| [0007](0007-jmap-storage-schema.md) | JMAP storage schema: mapping tables, one message row per mailbox | accepted |
-| [0008](0008-android-tls-platform-verifier.md) | TLS certificate checks on Android with `rustls-platform-verifier` | accepted |
 
 ## Template
 
