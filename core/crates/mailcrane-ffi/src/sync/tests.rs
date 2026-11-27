@@ -184,6 +184,12 @@ fn sync_load_older_and_fetch_body_through_the_ffi() {
     let _ = std::fs::remove_file(&path);
 }
 
+/// How long a test waits for something that should take milliseconds,
+/// only a hang guard: a busy machine (a Gradle build, disk or memory
+/// pressure) can stall the fake server for seconds (#409). The checks of a
+/// latency ("within 2 seconds") keep their own short limit.
+const HANG_GUARD: std::time::Duration = std::time::Duration::from_secs(60);
+
 /// Waits up to `limit` for `done`.
 fn wait_for(limit: std::time::Duration, mut done: impl FnMut() -> bool) -> std::time::Duration {
     let started = std::time::Instant::now();
@@ -271,9 +277,7 @@ fn live_updates_start_once_deliver_and_stop_through_the_ffi() {
     // Idempotent: two starts, one connection.
     assert_eq!(engine.start_live_updates(account.0), Ok(()));
     assert_eq!(engine.start_live_updates(account.0), Ok(()));
-    wait_for(std::time::Duration::from_secs(10), || {
-        uids() == 2 && idles() >= 1
-    });
+    wait_for(HANG_GUARD, || uids() == 2 && idles() >= 1);
     assert_eq!(imap.connections_accepted(), 1);
 
     collect.0.lock().expect("lock").clear();
@@ -301,7 +305,7 @@ fn live_updates_start_once_deliver_and_stop_through_the_ffi() {
     std::thread::sleep(std::time::Duration::from_millis(500));
     assert_eq!(uids(), 3, "live updates wrote while the account was locked");
     drop(guard);
-    wait_for(std::time::Duration::from_secs(5), || uids() == 4);
+    wait_for(HANG_GUARD, || uids() == 4);
 
     // Stop ends IDLE and logs out within 2 seconds.
     let started = std::time::Instant::now();
@@ -319,9 +323,7 @@ fn live_updates_start_once_deliver_and_stop_through_the_ffi() {
     // Start after stop opens a new connection, which idles too.
     let idles_before = idles();
     assert_eq!(engine.start_live_updates(account.0), Ok(()));
-    wait_for(std::time::Duration::from_secs(10), || {
-        idles() > idles_before
-    });
+    wait_for(HANG_GUARD, || idles() > idles_before);
     assert_eq!(imap.connections_accepted(), 2);
     engine.stop_live_updates(account.0);
 
@@ -552,8 +554,30 @@ fn a_jmap_account_syncs_through_the_same_calls() {
         .expect("the message");
     assert_eq!(message.details.subject, "Hello over JMAP");
     drop(store);
-    let fetched = super::stack_tests::on_small_stack(|| engine.fetch_body(message.id.0));
-    assert_eq!(fetched, Ok(()));
+    // #472: opening doesn't wait for the account's sync. Another thread
+    // holds the account's writer lock, as a slow sync does, while the
+    // message is opened; the open finishes first.
+    let gate = engine.account_lock(account);
+    let (held_tx, held_rx) = std::sync::mpsc::channel();
+    let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+    let fetched = std::thread::scope(|scope| {
+        scope.spawn(move || {
+            let _guard = gate.lock();
+            let _ = held_tx.send(());
+            let _ = release_rx.recv();
+        });
+        held_rx.recv().expect("the writer lock is held");
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        let (engine, id) = (&engine, message.id.0);
+        scope.spawn(move || {
+            let _ = done_tx.send(super::stack_tests::on_small_stack(|| engine.fetch_body(id)));
+        });
+        let fetched = done_rx.recv_timeout(std::time::Duration::from_secs(20));
+        // Let the "sync" finish either way, so a waiting open can end.
+        let _ = release_tx.send(());
+        fetched
+    });
+    assert_eq!(fetched, Ok(Ok(())), "opened while the sync held the lock");
     let store = Store::open(&path).expect("store");
     let body = store.get_body(message.id).expect("read").expect("stored");
     assert!(String::from_utf8_lossy(&body).contains("JMAP body"));
@@ -1031,4 +1055,151 @@ fn a_jmap_account_manages_folders_through_mailbox_set() {
     engine.delete_folder(year).expect("delete");
     assert!(server_parent("2026").is_none());
     assert!(id_of("Work/2026").is_none());
+}
+
+#[test]
+fn opening_on_one_account_while_another_account_syncs_works() {
+    // #472 / #483: the writer lock is per account, so an open on account A
+    // races account B's sync writing to the same database file. Its save is
+    // marked urgent and the store waits for SQLite's write lock, so the open
+    // succeeds rather than failing with SQLITE_BUSY.
+    use mailcrane_testkit::{FakeEmail, FakeJmap};
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(1)
+        .enable_all()
+        .build()
+        .expect("runtime");
+    let server = runtime.block_on(async {
+        FakeJmap::builder()
+            .user("ana@example.org", "pw")
+            .email(FakeEmail {
+                id: "m1".into(),
+                mailbox_id: "mb-inbox".into(),
+                received_at: "2026-11-25T08:00:00Z".into(),
+                subject: "Busy day".into(),
+                from: "bob@example.net".into(),
+                seen: false,
+                raw: "From: bob@example.net\r\nSubject: Busy day\r\n\r\nStill opens\r\n".into(),
+            })
+            .start()
+            .await
+            .expect("fake jmap")
+    });
+    let dir = tempfile::tempdir().expect("dir");
+    let path = dir.path().join("two-accounts.db");
+    let store = Store::open(&path).expect("store");
+    let new_account = |email: &str| NewAccount {
+        display_name: email.into(),
+        email: email.into(),
+        imap_host: String::new(),
+        imap_port: 0,
+        imap_security: Security::Tls,
+        smtp_host: String::new(),
+        smtp_port: 0,
+        smtp_security: Security::Tls,
+        username: email.into(),
+    };
+    let a = store
+        .insert_jmap_account(&new_account("ana@example.org"), &server.base_url())
+        .expect("account a");
+    let b = store
+        .insert_account(&new_account("bea@example.net"))
+        .expect("account b");
+    let b_inbox = store
+        .upsert_folder(&NewFolder {
+            account_id: b,
+            remote_name: "INBOX".into(),
+            display_name: "INBOX".into(),
+            delimiter: Some("/".into()),
+            role: None,
+            uidvalidity: Some(1),
+            uidnext: None,
+            highestmodseq: None,
+            is_subscribed: true,
+            selectable: true,
+            virtual_role: None,
+        })
+        .expect("b inbox");
+    drop(store);
+    let platform = Arc::new(Platform::default());
+    platform
+        .put(
+            SecretKey::account_password(a.0).as_str().to_owned(),
+            b"pw".to_vec(),
+        )
+        .expect("password");
+    install_secret_store(platform);
+    let engine = SyncEngine::new(
+        path.to_string_lossy().into_owned(),
+        Arc::new(Collect::default()),
+    );
+    *engine.extra_root_cert.lock().expect("lock") = Some(server.root_cert_der().to_vec());
+    let inbox = engine
+        .refresh_folders(a.0)
+        .expect("folders")
+        .expect("an inbox");
+    assert_eq!(engine.sync_folder(inbox), Ok(1));
+    let message = Store::open(&path)
+        .expect("store")
+        .list_messages(FolderId(inbox), 10, 0)
+        .expect("list")
+        .pop()
+        .expect("the message");
+
+    // Account B "syncs": batch after batch of headers, each batch one write
+    // transaction through the store, as a real sync writes them. Each one
+    // gives way to an urgent writer before it starts (`yield_to_urgent`),
+    // which is what lets the open's save in. (A bare statement loop that never
+    // gives way would starve any other writer: SQLite's busy handler isn't
+    // fair, and on Windows it lost every race, #488's first CI run.)
+    let stop = std::sync::atomic::AtomicBool::new(false);
+    let fetched = std::thread::scope(|scope| {
+        scope.spawn(|| {
+            let store = Store::open(&path).expect("b's store");
+            let mut uid = 1u32;
+            while !stop.load(std::sync::atomic::Ordering::SeqCst) {
+                let batch: Vec<mailcrane_store::NewMessageHeader> = (0..50)
+                    .map(|i| mailcrane_store::NewMessageHeader {
+                        folder_id: b_inbox,
+                        uid: uid.wrapping_add(i),
+                        message_id_header: None,
+                        in_reply_to: None,
+                        references_json: "[]".into(),
+                        thread_id: None,
+                        subject: format!("B {}", uid.wrapping_add(i)),
+                        from_name: None,
+                        from_addr: Some("someone@example.net".into()),
+                        to_json: "[]".into(),
+                        cc_json: "[]".into(),
+                        date: 1_790_000_000,
+                        internal_date: 1_790_000_000,
+                        size: 10,
+                        flags: Default::default(),
+                        keywords_json: "[]".into(),
+                        has_attachments: false,
+                        snippet: String::new(),
+                    })
+                    .collect();
+                let _ = store.upsert_message_headers(&batch);
+                uid = uid.wrapping_add(50);
+            }
+        });
+        // Stops B however the open ends, a panic included, so the scope
+        // can't wait for B forever.
+        struct Stop<'a>(&'a std::sync::atomic::AtomicBool);
+        impl Drop for Stop<'_> {
+            fn drop(&mut self) {
+                self.0.store(true, std::sync::atomic::Ordering::SeqCst);
+            }
+        }
+        let _stop = Stop(&stop);
+        engine.fetch_body(message.id.0)
+    });
+    assert_eq!(fetched, Ok(()), "opened beside another account's sync");
+    let body = Store::open(&path)
+        .expect("store")
+        .get_body(message.id)
+        .expect("read")
+        .expect("stored");
+    assert!(String::from_utf8_lossy(&body).contains("Still opens"));
 }

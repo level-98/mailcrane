@@ -2,19 +2,10 @@ package app.mailcrane.ui.messagelist
 
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.combinedClickable
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.unit.dp
 import app.mailcrane.R
 import app.mailcrane.core.MessageSummary
 import app.mailcrane.core.ThreadSummary
@@ -51,10 +42,10 @@ internal fun ThreadRow(
     onAvatarClick: (() -> Unit)? = null,
     onClick: () -> Unit,
 ) {
-    val count = thread.messageCount.toInt()
-    val countLabel = pluralStringResource(R.plurals.thread_a11y_count, count, count)
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
+    MessageRow(
+        message = threadAsSummary(thread, newest),
+        now = now,
+        locale = locale,
         modifier =
             Modifier
                 .combinedClickable(
@@ -62,23 +53,12 @@ internal fun ThreadRow(
                     onLongClick = onLongClick,
                     onLongClickLabel = if (onLongClick != null) stringResource(R.string.message_select) else null,
                 ).testTag("thread-row"),
-    ) {
-        MessageRow(
-            message = threadAsSummary(thread, newest),
-            now = now,
-            locale = locale,
-            modifier = Modifier.weight(1f),
-            selecting = selecting,
-            selected = selected,
-            onAvatarClick = onAvatarClick,
-            // The picture shows the newest sender, not every participant.
-            avatarName = newest?.fromName ?: thread.participants.firstOrNull().orEmpty(),
-        )
-        Text(
-            text = count.toString(),
-            style = MaterialTheme.typography.labelLarge,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(end = 16.dp).semantics { contentDescription = countLabel },
-        )
-    }
+        selecting = selecting,
+        selected = selected,
+        onAvatarClick = onAvatarClick,
+        // The picture shows the newest sender, not every participant.
+        avatarName = newest?.fromName ?: thread.participants.firstOrNull().orEmpty(),
+        // Under the date, inside the row, so it takes no width from the first line (#392).
+        count = thread.messageCount.toInt(),
+    )
 }
