@@ -653,7 +653,8 @@ private fun SwipeableRow(
         enableDismissFromStartToEnd = swipe.right != SwipeAction.NONE,
         enableDismissFromEndToStart = swipe.left != SwipeAction.NONE,
         // Only a row at rest takes a swipe. material3 1.5.0 already disables dragging until the state is
-        // Settled; this only says so here, in case a later version stops doing it (#369 review).
+        // Settled; this only says so here, in case a later version stops doing it: a swipe caught mid-reset
+        // would settle at the same value, run nothing, and leave the row swiped away for good (#368, #369 review).
         gesturesEnabled = state.settledValue == SwipeToDismissBoxValue.Settled,
         onDismiss = onDismiss,
         backgroundContent = {

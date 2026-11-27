@@ -259,8 +259,9 @@ class SwipeUiTest {
     }
 
     /**
-     * #467 (closed as not a bug): a row's pending reset ends with the row. Removed while it waits and shown
-     * again, the row comes back at rest, and nothing runs twice.
+     * #466, by removal (and #467's report): a row removed while it waits and shown again (the list drops it,
+     * then an undo or a refresh brings it back) comes back at rest, and nothing runs twice. Review traced
+     * that on main the row's saved swipe state would be restored here and archive it again (#516 review).
      */
     @Test
     fun aRowRemovedWhileItWaitsComesBackAtRest() {
