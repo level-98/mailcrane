@@ -14,6 +14,7 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.unit.dp
+import app.mailcrane.R
 import app.mailcrane.core.AccountSummary
 import app.mailcrane.core.FolderRole
 import app.mailcrane.core.FolderSummary
@@ -54,6 +55,55 @@ class FolderDrawerTest {
         compose.onNodeWithContentDescription("INBOX", substring = true).assertDoesNotExist()
         compose.onNodeWithContentDescription("Sent Items").assertDoesNotExist()
         compose.onNodeWithContentDescription("Work", substring = true).assertExists()
+    }
+
+    @Test
+    fun gmailsStarredAndImportantShowTheirNamesAndIcons() {
+        // #390: they showed "[Gmail]/Starred" and "[Gmail]/Important" with the generic folder icon.
+        val gmail =
+            listOf(
+                FolderSummary(id = 1, displayName = "INBOX", role = FolderRole.INBOX, depth = 0u, unreadCount = 0u),
+                FolderSummary(
+                    id = 7,
+                    displayName = "[Gmail]/Starred",
+                    role = FolderRole.STARRED,
+                    depth = 0u,
+                    unreadCount = 0u,
+                ),
+                FolderSummary(
+                    id = 8,
+                    displayName = "[Gmail]/Important",
+                    role = FolderRole.IMPORTANT,
+                    depth = 0u,
+                    unreadCount = 2u,
+                ),
+            )
+        compose.setContent { MailcraneTheme { FolderDrawer(folders = gmail, selectedFolderId = 1, onSelect = {}) } }
+        compose.onNodeWithContentDescription("Starred", substring = true).assertExists()
+        compose.onNodeWithContentDescription("Important", substring = true).assertExists()
+        compose.onNodeWithContentDescription("[Gmail]", substring = true).assertDoesNotExist()
+        assertEquals(R.drawable.ic_mc_star, folderIcon(FolderRole.STARRED))
+        assertEquals(R.drawable.ic_mc_important, folderIcon(FolderRole.IMPORTANT))
+        assertEquals(R.string.folder_starred, roleName(FolderRole.STARRED))
+        assertEquals(R.string.folder_important, roleName(FolderRole.IMPORTANT))
+    }
+
+    @Test
+    fun virtualFoldersAreNeverMoveTargets() {
+        // #390: a message is in Starred or Important because of a flag or Gmail's judgement, not a move.
+        val starred =
+            FolderSummary(
+                id = 7,
+                displayName = "x",
+                role = FolderRole.STARRED,
+                depth = 0u,
+                unreadCount = 0u,
+                canTakeMoves = false,
+            )
+        val important = starred.copy(id = 8, role = FolderRole.IMPORTANT)
+        assertEquals(false, starred.takesMoves)
+        assertEquals(false, important.takesMoves)
+        assertEquals(true, folders.all { it.takesMoves })
     }
 
     @Test

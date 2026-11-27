@@ -3,6 +3,7 @@ package app.mailcrane.ui.message
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import app.mailcrane.core.ActionFailure
+import app.mailcrane.core.CoreEvent
 import app.mailcrane.core.InlinePart
 import app.mailcrane.core.LinkCheck
 import app.mailcrane.core.LinkChecker
@@ -36,10 +37,12 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.getAndUpdate
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 /** One-off things the message screen does after an action. */
@@ -113,6 +116,9 @@ enum class ActionRefusal {
 
     /** The message has no Message-ID, so it can't be snoozed. */
     CANNOT_SNOOZE,
+
+    /** The message is coming back from snooze right now: snooze it again once it has (#431). */
+    WAKING,
 
     /** The message or folder is gone, or the database failed. */
     FAILED,
@@ -189,12 +195,41 @@ class MessageViewModel
         private var markedRead = false
         private var loading: Job? = null
 
+        /** Asks for the snooze to be read again; conflated, so an older read never wins over a newer one. */
+        private val snoozeRefresh = Channel<Unit>(Channel.CONFLATED)
+
         init {
             load()
             viewModelScope.launch {
                 // A provider server name was saved or cleared: read the sender check again at once.
                 senderTrust.version.drop(1).collect { refresh() }
             }
+            viewModelScope.launch {
+                // A wake moving the message lands with a change: "Waking…" and the disabled Snooze
+                // follow the snooze row, with no timer (#431). Only while the message shows a snooze.
+                core.events
+                    .filter { it is CoreEvent.MessagesChanged }
+                    .filter { (_state.value as? MessageState.Ready)?.snooze != null }
+                    .collect { snoozeRefresh.trySend(Unit) }
+            }
+            viewModelScope.launch {
+                for (ask in snoozeRefresh) refreshSnooze()
+            }
+        }
+
+        /** Reads the message's snooze again and applies it to the state as it is now. */
+        private suspend fun refreshSnooze() {
+            val info =
+                try {
+                    core.snoozeInfo(messageId)
+                } catch (_: SnoozeFailure.NotFound) {
+                    // The wake landed and took this row with it: the message is back in its folder.
+                    _effects.send(MessageEffect.Close)
+                    return
+                } catch (_: SnoozeFailure) {
+                    return
+                }
+            _state.update { (it as? MessageState.Ready)?.copy(snooze = info) ?: it }
         }
 
         /** Reads the shown message again without the loading state, for example after [SenderTrustChanges]. */
@@ -206,7 +241,11 @@ class MessageViewModel
                     try {
                         val message = core.getMessage(messageId, ready.remoteAllowed)
                         _state.value =
-                            ready.copy(message = message, unsubscribe = core.unsubscribeOptions(messageId))
+                            ready.copy(
+                                message = message,
+                                unsubscribe = core.unsubscribeOptions(messageId),
+                                snooze = snoozeOf(),
+                            )
                     } catch (e: SyncFailure.Failed) {
                         _state.value = MessageState.Failed(e.kind)
                     }
@@ -367,7 +406,13 @@ class MessageViewModel
                     _effects.send(MessageEffect.Close)
                 } catch (e: SnoozeFailure) {
                     val reason =
-                        if (e is SnoozeFailure.NoMessageId) ActionRefusal.CANNOT_SNOOZE else ActionRefusal.FAILED
+                        when (e) {
+                            is SnoozeFailure.NoMessageId -> ActionRefusal.CANNOT_SNOOZE
+                            is SnoozeFailure.Waking -> ActionRefusal.WAKING
+                            else -> ActionRefusal.FAILED
+                        }
+                    // Waking: the message now shows as waking, with snoozing disabled until it lands.
+                    if (e is SnoozeFailure.Waking) snoozeRefresh.trySend(Unit)
                     _effects.send(MessageEffect.ActionRefused(reason))
                 }
             }

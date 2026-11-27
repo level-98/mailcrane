@@ -5,7 +5,8 @@
 #![cfg(test)]
 
 use mailcrane_imap::{
-    save_folders, ImapConfig, ImapError, ImapSecurity, SearchKey, Secret, Session, SEARCH_WINDOW,
+    save_folders, ImapAuth, ImapConfig, ImapError, ImapSecurity, SearchKey, Secret, Session,
+    SEARCH_WINDOW,
 };
 use mailcrane_store::{FolderRole, NewAccount, NewFolder, Security, Store};
 use mailcrane_testkit::{FakeImap, Fault, Quirk};
@@ -317,6 +318,7 @@ async fn saving_again_keeps_sync_state() {
             highestmodseq: Some(99),
             is_subscribed: false,
             selectable: true,
+            virtual_role: None,
         })
         .expect("seed");
     save_folders(&store, account, &folders).expect("saved");
@@ -529,4 +531,35 @@ async fn select_reusing_skips_a_repeat_select_and_noop_works() {
     session.noop().await.expect("noop");
     assert!(imap.received_commands().await.iter().any(|c| c == "NOOP"));
     session.logout().await;
+}
+
+#[tokio::test]
+async fn xoauth2_logs_in_with_the_token_and_refuses_a_wrong_one() {
+    // M3-02: Gmail's XOAUTH2. A refused token gets Google's `+` with an
+    // error, answered with an empty line, then `NO`.
+    let imap = FakeImap::builder()
+        .user(USER, PASSWORD)
+        .xoauth2_token("ya29.good-token")
+        .start()
+        .await
+        .expect("fake imap");
+    let config = config(&imap, ImapSecurity::ImplicitTls);
+    let good = ImapAuth::XOAuth2(Secret::new("ya29.good-token"));
+    let session = Session::connect_auth(&config, USER, &good)
+        .await
+        .expect("logged in");
+    session.logout().await;
+
+    let bad = ImapAuth::XOAuth2(Secret::new("ya29.expired"));
+    let err = Session::connect_auth(&config, USER, &bad).await.err();
+    assert!(matches!(err, Some(ImapError::AuthFailed)), "{err:?}");
+}
+
+#[tokio::test]
+async fn xoauth2_needs_the_server_to_offer_it() {
+    let imap = fake(&[], &[]).await;
+    let config = config(&imap, ImapSecurity::ImplicitTls);
+    let token = ImapAuth::XOAuth2(Secret::new("ya29.token"));
+    let err = Session::connect_auth(&config, USER, &token).await.err();
+    assert!(matches!(err, Some(ImapError::AuthFailed)), "{err:?}");
 }

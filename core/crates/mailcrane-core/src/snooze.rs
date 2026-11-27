@@ -39,6 +39,11 @@ pub enum SnoozeError {
     /// again after moving it.
     #[error("the message has no Message-ID")]
     NoMessageId,
+    /// A message is being woken: its move back has started on the server,
+    /// so it can't be snoozed again until it lands, a few seconds later
+    /// (#431). Nothing was changed.
+    #[error("the message is being woken")]
+    Waking,
     /// The local database failed.
     #[error("store error: {0}")]
     Store(#[from] StoreError),
@@ -105,10 +110,13 @@ pub fn snooze(
             folder.id,
         ));
     }
+    let all: Vec<NewSnooze> = plans.iter().map(|(plan, _)| plan.clone()).collect();
+    if store.snooze_messages(&all)? == mailcrane_store::Snoozing::Waking {
+        return Err(SnoozeError::Waking);
+    }
     let mut changed: Vec<FolderId> = Vec::new();
     let mut accounts: Vec<AccountId> = Vec::new();
     for (plan, folder) in &plans {
-        store.snooze_message(plan)?;
         if !changed.contains(folder) {
             changed.push(*folder);
         }

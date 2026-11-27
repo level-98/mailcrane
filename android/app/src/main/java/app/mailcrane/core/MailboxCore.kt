@@ -209,7 +209,8 @@ class UniffiMailboxCore(
     FolderAdminCore,
     MessageCore,
     LiveUpdatesEngine,
-    NotificationsCore {
+    NotificationsCore,
+    JmapPushCore {
     private val hub = EventHub()
 
     // Created on first use, so the native library loads only when mail is needed. The system
@@ -279,6 +280,25 @@ class UniffiMailboxCore(
     }
 
     override suspend fun takeNewMail(): List<NewMailNotification> = withContext(io) { engine.takeNewMail() }
+
+    override suspend fun registerPush(
+        endpoint: String,
+        p256dh: String?,
+        auth: String?,
+    ): Int =
+        withContext(io) {
+            try {
+                engine.registerJmapPush(endpoint, p256dh, auth).toInt()
+            } catch (_: SyncFailure) {
+                0
+            }
+        }
+
+    override suspend fun answerPush(body: ByteArray): Boolean = withContext(io) { engine.answerJmapPush(body) }
+
+    override suspend fun unregisterPush() {
+        withContext(io) { engine.unregisterJmapPush() }
+    }
 
     override suspend fun backgroundSync(deadlineSeconds: Int): List<NewMailNotification> =
         withContext(io) { engine.backgroundSync(deadlineSeconds.coerceAtLeast(1).toUInt()) }

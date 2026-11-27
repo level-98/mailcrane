@@ -100,7 +100,8 @@ pub fn sanitize_html(html: &UnsanitisedHtml, opts: &SanitizeOptions) -> Sanitize
     // `ammonia` slows down sharply on very deep nesting, so a hostile message
     // could freeze the app. Show such a message as plain text instead.
     if too_deep(html.as_unsanitised_str()) {
-        let text = mail_parser::html_to_text(html.as_unsanitised_str());
+        // One line per block, as in `text_plain` (#391, #446).
+        let text = crate::snippet::html_to_lines(html.as_unsanitised_str());
         return SanitizedHtml {
             html: format!("<pre>{}</pre>", escape(&text)),
             remote_resources_blocked: 0,
@@ -720,6 +721,28 @@ mod tests {
         assert!(!out.html.contains("<div"));
         // And the fallback is stable.
         assert_eq!(run(&out.html, false).html, out.html);
+    }
+
+    /// #391: the too-deep fallback separates adjacent blocks too.
+    #[test]
+    fn the_deep_nesting_fallback_separates_blocks() {
+        let depth = 50_000;
+        let html = format!(
+            "{}<h1>Heading</h1><p>Body</p>{}",
+            "<div>".repeat(depth),
+            "</div>".repeat(depth)
+        );
+        let out = run(&html, false);
+        assert!(out.html.starts_with("<pre>"));
+        assert!(
+            !out.html.contains("HeadingBody"),
+            "{}",
+            out.html.get(..200).unwrap_or_default()
+        );
+        assert!(
+            out.html.contains("Heading\nBody"),
+            "one line per block (#446)"
+        );
     }
 
     #[test]

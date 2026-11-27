@@ -66,7 +66,7 @@ pub enum SmtpAuth {
         username: String,
         password: Secret,
     },
-    /// Declared for M3-01; not implemented yet, so it fails with `AuthFailed`.
+    /// An OAuth access token with Google's XOAUTH2 (M3-02).
     XOAuth2 {
         username: String,
         token: Secret,
@@ -328,8 +328,11 @@ fn b64(text: &str) -> String {
 
 /// RFC 4616 PLAIN, falling back to the de-facto LOGIN mechanism.
 async fn authenticate(conn: &mut Conn, caps: &Reply, auth: &SmtpAuth) -> Result<(), SmtpError> {
-    let SmtpAuth::Password { username, password } = auth else {
-        return Err(SmtpError::AuthFailed);
+    let (username, password) = match auth {
+        SmtpAuth::Password { username, password } => (username, password),
+        SmtpAuth::XOAuth2 { username, token } => {
+            return authenticate_xoauth2(conn, caps, username, token).await
+        }
     };
     let password = password.expose();
     let bad = |s: &str| s.is_empty() || s.contains(['\0', '\r', '\n']);
@@ -369,6 +372,42 @@ async fn authenticate(conn: &mut Conn, caps: &Reply, auth: &SmtpAuth) -> Result<
     let reply = conn.command(&b64(password)).await?;
     match reply.code {
         235 => Ok(()),
+        400..=499 => Err(classify(reply.code, &reply.text())),
+        _ => Err(SmtpError::AuthFailed),
+    }
+}
+
+/// Google's XOAUTH2 (developers.google.com/gmail/imap/xoauth2-protocol):
+/// `AUTH XOAUTH2` with the token. A refused token comes back as `334` with
+/// an error description, which is answered with an empty line; the server
+/// then sends `535`. The token is never logged.
+async fn authenticate_xoauth2(
+    conn: &mut Conn,
+    caps: &Reply,
+    username: &str,
+    token: &Secret,
+) -> Result<(), SmtpError> {
+    let token = token.expose();
+    let bad = |s: &str| s.is_empty() || s.contains(['\0', '\r', '\n', '\x01']);
+    if bad(username) || bad(token) {
+        return Err(SmtpError::InvalidInput);
+    }
+    if !caps.auth_mechanisms().iter().any(|m| m == "XOAUTH2") {
+        return Err(SmtpError::AuthFailed);
+    }
+    let reply = conn
+        .command(&format!(
+            "AUTH XOAUTH2 {}",
+            b64(&format!("user={username}\x01auth=Bearer {token}\x01\x01"))
+        ))
+        .await?;
+    match reply.code {
+        235 => Ok(()),
+        334 => {
+            // The error description; an empty line ends the exchange.
+            let _ = conn.command("").await?;
+            Err(SmtpError::AuthFailed)
+        }
         400..=499 => Err(classify(reply.code, &reply.text())),
         _ => Err(SmtpError::AuthFailed),
     }

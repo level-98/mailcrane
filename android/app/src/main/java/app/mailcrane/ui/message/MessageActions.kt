@@ -53,6 +53,7 @@ fun RowScope.MessageToolbarActions(
     flagged: Boolean,
     moveTargets: List<FolderSummary>,
     actions: MessageActions,
+    snoozeEnabled: Boolean = true,
 ) {
     var menuOpen by rememberSaveable { mutableStateOf(false) }
     var picking by rememberSaveable { mutableStateOf(false) }
@@ -71,7 +72,7 @@ fun RowScope.MessageToolbarActions(
         )
     }
     actions.onSnooze?.let { snooze ->
-        IconButton(onClick = snooze) {
+        IconButton(onClick = snooze, enabled = snoozeEnabled) {
             Icon(painterResource(R.drawable.ic_mc_snooze), contentDescription = stringResource(R.string.message_snooze))
         }
     }

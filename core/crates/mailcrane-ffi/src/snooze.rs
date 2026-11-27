@@ -20,6 +20,10 @@ pub enum SnoozeFailure {
     /// moving it.
     #[error("the message has no Message-ID")]
     NoMessageId,
+    /// A message is coming back from snooze right now: try again in a
+    /// moment, once it has landed (#431). Nothing was changed.
+    #[error("the message is being woken")]
+    Waking,
     /// The local database failed.
     #[error("storage failure")]
     Storage,
@@ -30,6 +34,7 @@ impl From<SnoozeError> for SnoozeFailure {
         match error {
             SnoozeError::UnknownMessage => Self::NotFound,
             SnoozeError::NoMessageId => Self::NoMessageId,
+            SnoozeError::Waking => Self::Waking,
             SnoozeError::Store(_) => Self::Storage,
         }
     }
@@ -43,7 +48,9 @@ pub struct SnoozeInfo {
     /// The wake time is known to this device only: the server can't store
     /// it, so other installs won't wake it.
     pub device_only: bool,
-    /// It is being moved back (woken or unsnoozed).
+    /// It is being moved back on the server right now (a wake past its
+    /// first step): it can't be snoozed again until it lands (#431). Not
+    /// set for a wake that hasn't started or is waiting to retry.
     pub waking: bool,
 }
 
@@ -52,7 +59,7 @@ impl From<&Snooze> for SnoozeInfo {
         Self {
             wake_at: s.wake_at,
             device_only: s.device_only(),
-            waking: s.state == SnoozeState::ToWake,
+            waking: s.state == SnoozeState::ToWake && s.step > 0,
         }
     }
 }
@@ -195,6 +202,7 @@ mod tests {
                 highestmodseq: None,
                 is_subscribed: true,
                 selectable: true,
+                virtual_role: None,
             })
             .expect("folder");
         let id = store

@@ -31,6 +31,47 @@ mod suite {
             .expect("TLS handshake")
     }
 
+    /// `cargo xtask dev-mail` (#403): a client that trusts only the dev CA
+    /// accepts both servers under the emulator's name for the host, and the
+    /// CA is what `root_cert_der()` reports.
+    #[tokio::test]
+    async fn dev_certificates_are_trusted_through_their_ca_for_the_emulator_host() {
+        use crate::{DevCertificates, TestTls};
+        let dev = DevCertificates::generate(&["10.0.2.2", "localhost"]).expect("certs");
+        let imap = FakeImap::builder()
+            .folder("INBOX", Vec::new())
+            .tls(TestTls::from_chain(&dev).expect("tls"))
+            .start()
+            .await
+            .expect("imap");
+        let smtp = FakeSmtp::builder()
+            .tls(TestTls::from_chain(&dev).expect("tls"))
+            .start()
+            .await
+            .expect("smtp");
+        assert_eq!(imap.root_cert_der(), dev.ca_der.as_slice());
+        for addr in [imap.addr(), smtp.addr()] {
+            let stream = TcpStream::connect(addr).await.expect("connect");
+            let name = ServerName::try_from("10.0.2.2".to_string()).expect("server name");
+            let mut tls = tokio_rustls::TlsConnector::from(client_config(&dev.ca_der))
+                .connect(name, stream)
+                .await
+                .expect("TLS handshake through the dev CA");
+            let mut greeting = [0u8; 4];
+            tls.read_exact(&mut greeting).await.expect("greeting");
+            assert!(greeting.starts_with(b"* OK") || greeting.starts_with(b"220"));
+        }
+        // A name the certificate doesn't cover is refused.
+        let stream = TcpStream::connect(imap.addr()).await.expect("connect");
+        let name = ServerName::try_from("example.org".to_string()).expect("server name");
+        assert!(tokio_rustls::TlsConnector::from(client_config(&dev.ca_der))
+            .connect(name, stream)
+            .await
+            .is_err());
+        imap.shutdown().await;
+        smtp.shutdown().await;
+    }
+
     async fn imap_read_line(stream: &mut tokio_rustls::client::TlsStream<TcpStream>) -> String {
         let mut line = Vec::new();
         loop {
@@ -262,6 +303,44 @@ mod suite {
                 "[::1]:{port} was free for another listener"
             );
         }
+    }
+
+    /// `cargo xtask dev-mail` uses fixed ports. If another process already
+    /// listens on `[::1]` at one of them, starting fails instead of leaving
+    /// `localhost` clients to reach that process (#404 review).
+    #[tokio::test]
+    async fn a_fixed_port_taken_on_the_ipv6_loopback_is_an_error() {
+        if !has_ipv6_loopback().await {
+            return;
+        }
+        // A port free on 127.0.0.1, held by someone else on [::1], so the
+        // only thing that can go wrong is the [::1] bind.
+        let mut squatted = None;
+        for _ in 0..16 {
+            let v4 = tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
+                .await
+                .expect("v4");
+            let port = v4.local_addr().expect("addr").port();
+            if let Ok(squatter) =
+                tokio::net::TcpListener::bind((std::net::Ipv6Addr::LOCALHOST, port)).await
+            {
+                squatted = Some((port, squatter));
+                break;
+            }
+        }
+        let Some((port, _squatter)) = squatted else {
+            panic!("no port free on both loopback addresses");
+        };
+        let Ok(spare) = tokio::net::TcpListener::bind((std::net::Ipv6Addr::LOCALHOST, 0)).await
+        else {
+            return;
+        };
+        let spare_port = spare.local_addr().expect("addr").port();
+        drop(spare);
+        let Err(error) = FakeSmtp::builder().ports(port, spare_port).start().await else {
+            panic!("start should be refused while [::1]:{port} is taken");
+        };
+        assert!(error.contains("[::1]"), "{error}");
     }
 
     #[tokio::test]
@@ -665,6 +744,88 @@ mod suite {
         server.shutdown().await;
     }
 
+    /// Sends `command` and returns every line up to and including the
+    /// tagged reply for `tag`.
+    async fn imap_exchange(
+        stream: &mut tokio_rustls::client::TlsStream<TcpStream>,
+        tag: &str,
+        command: &[u8],
+    ) -> String {
+        stream.write_all(command).await.expect("IMAP command");
+        let mut out = String::new();
+        loop {
+            let line = imap_read_line(stream).await;
+            out.push_str(&line);
+            if line.starts_with(&format!("{tag} ")) {
+                return out;
+            }
+        }
+    }
+
+    /// #416: ENVELOPE describes each stored message from its own headers,
+    /// for fixtures and for mail APPENDed later (the copy in Sent).
+    #[tokio::test]
+    async fn imap_envelope_comes_from_each_messages_headers() {
+        let fixture = b"Date: Tue, 03 Mar 2026 09:15:00 +0100\r\n\
+            From: Ana <ana@example.org>\r\n\
+            To: Bo <bo@example.net>\r\n\
+            Cc: carl@example.com\r\n\
+            Subject: Lunch\r\n\
+            Message-ID: <m1@example.org>\r\n\r\nBody\r\n"
+            .to_vec();
+        let server = FakeImap::builder()
+            .folder("INBOX", vec![fixture])
+            .folder("Sent", Vec::new())
+            .start()
+            .await
+            .expect("server starts");
+        let mut stream = open_tls(server.addr(), server.root_cert_der()).await;
+        let _ = imap_read_line(&mut stream).await;
+
+        let _ = imap_exchange(&mut stream, "a1", b"a1 EXAMINE INBOX\r\n").await;
+        let inbox = imap_exchange(&mut stream, "a2", b"a2 UID FETCH 1:* (ENVELOPE)\r\n").await;
+        assert!(
+            inbox.contains(
+                "ENVELOPE (\"Tue, 03 Mar 2026 09:15:00 +0100\" \"Lunch\" \
+                 ((\"Ana\" NIL \"ana\" \"example.org\")) ((\"Ana\" NIL \"ana\" \"example.org\")) \
+                 ((\"Ana\" NIL \"ana\" \"example.org\")) ((\"Bo\" NIL \"bo\" \"example.net\")) \
+                 ((NIL NIL \"carl\" \"example.com\")) NIL NIL \"<m1@example.org>\")"
+            ),
+            "{inbox}"
+        );
+        assert!(!inbox.contains("Alice"), "{inbox}");
+
+        let sent = b"Date: Thu, 26 Nov 2026 19:00:00 +0000\r\n\
+            From: Test <test@example.org>\r\n\
+            To: ana@example.org\r\n\
+            Subject: Re: Lunch\r\n\
+            In-Reply-To: <m1@example.org>\r\n\r\nYes\r\n";
+        let append = format!("a3 APPEND Sent (\\Seen) {{{}}}\r\n", sent.len());
+        stream.write_all(append.as_bytes()).await.expect("APPEND");
+        assert!(imap_read_line(&mut stream).await.starts_with('+'));
+        let mut literal = sent.to_vec();
+        literal.extend_from_slice(b"\r\n");
+        let appended = imap_exchange(&mut stream, "a3", &literal).await;
+        assert!(appended.contains("a3 OK"), "{appended}");
+
+        let _ = imap_exchange(&mut stream, "a4", b"a4 EXAMINE Sent\r\n").await;
+        let copy = imap_exchange(&mut stream, "a5", b"a5 UID FETCH 1:* (ENVELOPE)\r\n").await;
+        assert!(
+            copy.contains(
+                "ENVELOPE (\"Thu, 26 Nov 2026 19:00:00 +0000\" \"Re: Lunch\" \
+                 ((\"Test\" NIL \"test\" \"example.org\"))"
+            ),
+            "{copy}"
+        );
+        assert!(
+            copy.contains("\"<m1@example.org>\" \"<Sent.1@example.org>\")"),
+            "{copy}"
+        );
+
+        stream.write_all(b"a6 LOGOUT\r\n").await.expect("LOGOUT");
+        server.shutdown().await;
+    }
+
     #[tokio::test]
     async fn imap_command_matrix_and_quirks_are_tested() {
         let server = FakeImap::builder()
@@ -747,6 +908,11 @@ mod suite {
             Fault::TempFailure,
             Fault::PermFailure,
             Fault::NoStartTls,
+            Fault::DropAfterCommandOnce("UID COPY".into()),
+            Fault::RefuseCommand {
+                folder: None,
+                text: "\\Deleted".into(),
+            },
         ];
         for fault in fault_cases {
             let server = FakeImap::builder()
@@ -757,5 +923,95 @@ mod suite {
             assert!(!server.root_cert_der().is_empty());
             server.shutdown().await;
         }
+    }
+
+    /// Reads lines up to and including the tagged reply for `tag`; `None`
+    /// if the connection closes first.
+    async fn imap_until_tagged(
+        stream: &mut tokio_rustls::client::TlsStream<TcpStream>,
+        tag: &str,
+    ) -> Option<String> {
+        let mut out = String::new();
+        loop {
+            let mut line = Vec::new();
+            loop {
+                let mut byte = [0u8; 1];
+                stream.read_exact(&mut byte).await.ok()?;
+                line.push(byte[0]);
+                if line.ends_with(b"\r\n") {
+                    break;
+                }
+            }
+            let line = String::from_utf8_lossy(&line).into_owned();
+            out.push_str(&line);
+            if line.starts_with(&format!("{tag} ")) {
+                return Some(out);
+            }
+        }
+    }
+
+    /// #423: `DropAfterCommandOnce` carries the command out, then closes
+    /// without the reply, once per server; `RefuseCommand` answers NO only
+    /// in its folder and changes nothing.
+    #[tokio::test]
+    async fn targeted_drop_and_refusal_faults() {
+        let server = FakeImap::builder()
+            .folder("INBOX", vec![b"From: a@example.org\r\n\r\nA".to_vec()])
+            .folder("Snoozed", Vec::new())
+            .fault(Fault::DropAfterCommandOnce("UID COPY".into()))
+            .fault(Fault::RefuseCommand {
+                folder: Some("INBOX".into()),
+                text: "\\Deleted".into(),
+            })
+            .start()
+            .await
+            .expect("server starts");
+        for attempt in 1..=2 {
+            let mut stream = open_tls(server.addr(), server.root_cert_der()).await;
+            let _ = imap_read_line(&mut stream).await;
+            stream
+                .write_all(b"a1 SELECT INBOX\r\n")
+                .await
+                .expect("SELECT");
+            assert!(imap_until_tagged(&mut stream, "a1").await.is_some());
+            stream
+                .write_all(b"a2 UID COPY 1 Snoozed\r\n")
+                .await
+                .expect("COPY");
+            let reply = imap_until_tagged(&mut stream, "a2").await;
+            if attempt == 1 {
+                assert!(reply.is_none(), "first COPY: no reply");
+            } else {
+                assert!(
+                    reply.is_some_and(|r| r.contains("a2 OK")),
+                    "second COPY answered"
+                );
+                stream
+                    .write_all(b"a3 UID STORE 1 +FLAGS.SILENT (\\Deleted)\r\n")
+                    .await
+                    .expect("STORE");
+                let refused = imap_until_tagged(&mut stream, "a3").await.expect("reply");
+                assert!(refused.contains("a3 NO"), "{refused}");
+                stream
+                    .write_all(b"a4 SELECT Snoozed\r\n")
+                    .await
+                    .expect("SELECT");
+                assert!(imap_until_tagged(&mut stream, "a4").await.is_some());
+                stream
+                    .write_all(b"a5 UID STORE 1 +FLAGS.SILENT (\\Deleted)\r\n")
+                    .await
+                    .expect("STORE");
+                let other = imap_until_tagged(&mut stream, "a5").await.expect("reply");
+                assert!(other.contains("a5 OK"), "other folder not refused: {other}");
+            }
+        }
+        // Both COPYs were carried out, the dropped one included.
+        assert_eq!(server.mailbox().messages("Snoozed").await.len(), 2);
+        let inbox = server.mailbox().messages("INBOX").await;
+        assert!(
+            !inbox[0].flags.contains(&"\\Deleted".to_owned()),
+            "refused STORE changed nothing"
+        );
+        server.shutdown().await;
     }
 }

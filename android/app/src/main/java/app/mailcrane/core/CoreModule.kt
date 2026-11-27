@@ -44,6 +44,9 @@ object CoreModule {
     fun provideLiveUpdatesEngine(core: UniffiMailboxCore): LiveUpdatesEngine = core
 
     @Provides
+    fun provideJmapPushCore(core: UniffiMailboxCore): JmapPushCore = core
+
+    @Provides
     fun provideNotificationsCore(core: UniffiMailboxCore): NotificationsCore = core
 
     @Provides

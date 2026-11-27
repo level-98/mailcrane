@@ -19,7 +19,7 @@ pub use repo::{
     SignatureSetting, ThreadSummary, UnthreadedMessage, ACCOUNT_COLOR_COUNT, MAX_SIGNATURE_BYTES,
 };
 pub use repo::{JmapRow, Protocol};
-pub use repo::{KeywordedMessage, NewSnooze, Snooze, SnoozeId, SnoozeState};
+pub use repo::{KeywordedMessage, NewSnooze, Snooze, SnoozeId, SnoozeState, Snoozing};
 pub use repo::{ServerRules, ServerRulesState};
 
 use rusqlite::Connection;
@@ -32,6 +32,9 @@ pub struct Store {
     /// The path this store was opened with, which names it for
     /// [`urgent_writes`]; `None` in memory.
     urgent_key: Option<String>,
+    /// Names this database for caches kept outside it (#434): its path, or
+    /// a name of its own for each in-memory store.
+    scope: String,
 }
 
 impl Store {
@@ -40,14 +43,24 @@ impl Store {
     /// reported as [`StoreError::NewerSchema`].
     pub fn open(path: impl AsRef<Path>) -> Result<Self, StoreError> {
         let urgent_key = Some(path.as_ref().to_string_lossy().into_owned());
-        let mut conn = Connection::open(path)?;
+        let mut conn = Connection::open(path.as_ref())?;
         conn.busy_timeout(std::time::Duration::from_millis(5000))?;
         // Check before any pragma that could write to the file.
         migrate::check_version(&conn, migrate::MIGRATIONS)?;
         conn.pragma_update(None, "journal_mode", "WAL")?;
         conn.pragma_update(None, "foreign_keys", "ON")?;
         migrate::run(&mut conn, migrate::MIGRATIONS)?;
-        Ok(Store { conn, urgent_key })
+        // After opening, so the file exists and its canonical path is known.
+        let scope = if is_memory_path(path.as_ref()) {
+            memory_scope()
+        } else {
+            Self::scope_of(&path)
+        };
+        Ok(Store {
+            conn,
+            urgent_key,
+            scope,
+        })
     }
 
     /// Opens a fresh in-memory database at the newest schema.
@@ -59,7 +72,27 @@ impl Store {
         Ok(Store {
             conn,
             urgent_key: None,
+            scope: memory_scope(),
         })
+    }
+
+    /// The name of the database at `path` for caches kept outside it, the
+    /// same as [`Store::cache_scope`] of a store opened there (#434). The
+    /// canonical path, so every spelling of one file (relative, `\` or `/`,
+    /// another case on Windows, a symlink) gives one name: a token cached
+    /// under one spelling is forgotten under another. A file that doesn't
+    /// exist yet keeps the path as given; it has nothing cached.
+    pub fn scope_of(path: impl AsRef<Path>) -> String {
+        let path = path.as_ref();
+        let canonical = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+        format!("file:{}", canonical.to_string_lossy())
+    }
+
+    /// Names this database for caches kept outside it, such as the
+    /// in-memory OAuth tokens (#434). Account IDs start at 1 in every
+    /// database, so such a cache keys by this as well as the account.
+    pub fn cache_scope(&self) -> &str {
+        &self.scope
     }
 
     /// How long a statement waits for another connection's write lock
@@ -106,6 +139,18 @@ thread_local! {
 /// call can delay others' writes a little but never hold them up.
 const URGENT_WAIT: std::time::Duration = std::time::Duration::from_millis(500);
 
+/// Whether `path` opens a private in-memory database rather than a file.
+fn is_memory_path(path: &Path) -> bool {
+    path.as_os_str().is_empty() || path.as_os_str() == ":memory:"
+}
+
+/// A cache scope of its own for each in-memory database (#434).
+fn memory_scope() -> String {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    format!("memory:{n}")
+}
+
 /// Runs `f` with this thread's writes to the database at `db_path` marked
 /// urgent (issue #294). While it runs, write transactions of other threads
 /// on that same database (opened with the same path) wait, for at most
@@ -150,6 +195,16 @@ pub fn urgent_writes<T>(db_path: &str, f: impl FnOnce() -> T) -> T {
     }
     let _urgent = Urgent(db_path.to_owned());
     f()
+}
+
+/// Whether this thread is inside [`urgent_writes`] for the database at
+/// `db_path`, so its write transactions there never wait for other urgent
+/// writers. The mark is per thread: work moved to another thread doesn't
+/// carry it (#468). `db_path` must be spelled exactly as it was given to
+/// [`urgent_writes`] (and [`Store::open`]): the same file under another
+/// spelling isn't recognised.
+pub fn urgent_here(db_path: &str) -> bool {
+    URGENT_HERE.with(|here| here.borrow().iter().any(|k| k == db_path))
 }
 
 /// Whether another thread is writing urgently to the database `key`.

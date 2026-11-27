@@ -9,6 +9,8 @@ use std::time::Duration;
 
 const REDIRECT: &str = "app.mailcrane:/oauth2redirect";
 const T: Duration = Duration::from_secs(10);
+/// The database the tokens belong to (a `Store::cache_scope`).
+const DB: &str = "file:test.db";
 
 fn provider(server: &FakeTokenEndpoint) -> OAuthProvider {
     OAuthProvider {
@@ -67,7 +69,7 @@ async fn refresh_tokens_live_only_in_secure_storage_and_are_used_to_refresh() {
     let cache = TokenCache::new();
     let roots = [server.root_cert_der().to_vec()];
     let tokens = sign_in(&server).await;
-    let first = cache.save(&secrets, 7, &tokens, 1_000).expect("save");
+    let first = cache.save(&secrets, DB, 7, &tokens, 1_000).expect("save");
     assert_eq!(
         secrets.keys(),
         vec![SecretKey::oauth_refresh_token(7).as_str().to_owned()]
@@ -75,7 +77,7 @@ async fn refresh_tokens_live_only_in_secure_storage_and_are_used_to_refresh() {
 
     // Still fresh: no request.
     let same = cache
-        .access_token(&secrets, 7, &provider(&server), 1_000 + 60, &roots, T)
+        .access_token(&secrets, DB, 7, &provider(&server), 1_000 + 60, &roots, T)
         .await
         .expect("cached");
     assert_eq!(same, first);
@@ -89,6 +91,7 @@ async fn refresh_tokens_live_only_in_secure_storage_and_are_used_to_refresh() {
     let fresh = cache
         .access_token(
             &secrets,
+            DB,
             7,
             &provider(&server),
             1_000 + 3600 - 200,
@@ -118,10 +121,10 @@ async fn invalid_grant_on_refresh_asks_to_sign_in_again() {
     let cache = TokenCache::new();
     let roots = [server.root_cert_der().to_vec()];
     let tokens = sign_in(&server).await;
-    cache.save(&secrets, 3, &tokens, 0).expect("save");
+    cache.save(&secrets, DB, 3, &tokens, 0).expect("save");
     server.revoke_all();
     let result = cache
-        .access_token(&secrets, 3, &provider(&server), 10_000, &roots, T)
+        .access_token(&secrets, DB, 3, &provider(&server), 10_000, &roots, T)
         .await;
     assert_eq!(result, Err(OAuthError::ReauthRequired));
     // The dead refresh token is gone, so the app asks once, not on every sync.
@@ -130,9 +133,32 @@ async fn invalid_grant_on_refresh_asks_to_sign_in_again() {
     let grants = server.grants().len();
     assert_eq!(
         cache
-            .access_token(&secrets, 3, &provider(&server), 10_000, &roots, T)
+            .access_token(&secrets, DB, 3, &provider(&server), 10_000, &roots, T)
             .await,
         Err(OAuthError::ReauthRequired)
     );
     assert_eq!(server.grants().len(), grants);
+}
+
+#[tokio::test]
+async fn the_same_account_id_in_two_databases_never_shares_a_token() {
+    // #434: account IDs start at 1 in every database; tests running side by side (or two profiles) each have
+    // an account 1, and one removing or replacing its cached access token must not touch the other's. (The
+    // refresh tokens in the secret store are still keyed by account ID alone: #437.)
+    let server = FakeTokenEndpoint::start().await.expect("server");
+    let secrets = MemorySecretStore::new();
+    let cache = TokenCache::new();
+    let first = cache
+        .save(&secrets, "file:a.db", 1, &sign_in(&server).await, 0)
+        .expect("save a");
+    let other = cache
+        .save(&secrets, "file:b.db", 1, &sign_in(&server).await, 0)
+        .expect("save b");
+    assert_ne!(first, other);
+    assert_eq!(cache.cached("file:a.db", 1, 60), Some(first.clone()));
+    assert_eq!(cache.cached("file:b.db", 1, 60), Some(other));
+    // Removing account 1 from b leaves a's alone.
+    cache.forget("file:b.db", 1);
+    assert_eq!(cache.cached("file:b.db", 1, 60), None);
+    assert_eq!(cache.cached("file:a.db", 1, 60), Some(first));
 }

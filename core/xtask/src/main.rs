@@ -5,7 +5,9 @@
 #![forbid(unsafe_code)]
 
 mod apk;
+mod devmail;
 mod ispdb;
+mod licences;
 mod release;
 mod strings;
 
@@ -68,13 +70,14 @@ Usage: cargo xtask <command> [--strict] [--only <step>]... [--skip <step>]...
 
 Commands:
   ci        every step below except bindings, then a summary table
-  design    generated theme check, its unit tests, and scripts/test_release_notes.py
+  design    generated theme check, its unit tests, and the release scripts' tests
   fmt       cargo fmt --all --check
   lint      release guard (#289), translated strings keep their placeholders (#69),
             cargo clippy --workspace --all-targets -- -D warnings,
             and clippy on mailcrane-ffi with --features debug-fixtures
   test      cargo test --workspace, then the fixture loader tests (#289)
-  deny      cargo deny check
+  deny      cargo deny check, then a check that android/app/licences/rust-licences.txt
+            is current (needs cargo-about 0.9.3)
   android   ktlintCheck, lintDebug, testDebugUnitTest, assembleDebug and checkFreeDependencies
             through Gradle; then assembleRelease and assembleDebug, and a check that
             each APK packages its own core (the debug one has the fixture loader)
@@ -82,9 +85,15 @@ Commands:
   fuzz <target> [--seconds N]
             run a fuzz target (default 60 s); needs nightly and cargo-fuzz.
             Not part of ci. Targets: mime_parse, imap_response, html_sanitize, address_list, sieve_response
+  licences  regenerate android/app/licences/rust-licences.txt, the Rust crates' licences
+            for the in-app list (#366), with cargo-about. Not part of ci.
   release-check <tag>
             check that a release tag (vMAJOR.MINOR.PATCH[-pre]) matches versionName and
             versionCode in android/app/build.gradle.kts (docs/releasing.md). Not part of ci.
+  dev-mail [--new-mail-every <seconds>]
+            run a fake IMAP and SMTP server for the Android emulator, seeded with tests/fixtures;
+            copy its CA certificate to running emulators and forward its ports with adb reverse,
+            so the app reaches it at 127.0.0.1 (docs/dev-mail.md). Not part of ci.
   ispdb <checkout>
             import the ISPDB snapshot from a thunderbird/autoconfig checkout into
             mailcrane-core/data/ispdb/ and regenerate its index (ADR 0003). Not part of ci.
@@ -137,9 +146,16 @@ fn real_main() -> Result<ExitCode, Error> {
     if command == "fuzz" {
         return fuzz(&context()?, args);
     }
+    if command == "licences" {
+        licences::write(&context()?)?;
+        return Ok(ExitCode::SUCCESS);
+    }
     if command == "release-check" {
         release::run(&context()?, args)?;
         return Ok(ExitCode::SUCCESS);
+    }
+    if command == "dev-mail" {
+        return devmail::run_server(&context()?, args);
     }
     if command == "ispdb" {
         ispdb::import(&context()?, args)?;
@@ -316,12 +332,20 @@ fn design(ctx: &Ctx) -> Result<Outcome, Error> {
         ));
     }
     // The release tooling's tests run here too: this is CI's Python step.
-    let scripts: Vec<&str> =
-        [prefix, &["-m", "unittest", "scripts/test_release_notes.py"]].concat();
+    let scripts: Vec<&str> = [
+        prefix,
+        &[
+            "-m",
+            "unittest",
+            "scripts/test_release_notes.py",
+            "scripts/test_prune_test_builds.py",
+        ],
+    ]
+    .concat();
     let ok = run(&ctx.root, python, &scripts)?;
     Ok(outcome(
         ok,
-        "python -m unittest scripts/test_release_notes.py",
+        "python -m unittest scripts/test_release_notes.py scripts/test_prune_test_builds.py",
     ))
 }
 
@@ -518,8 +542,11 @@ fn deny(ctx: &Ctx) -> Result<Outcome, Error> {
     if !has_tool("cargo-deny", "--version") {
         return Ok(Outcome::Skipped("cargo-deny is not installed".into()));
     }
-    let ok = run(&ctx.core, &cargo(), &["deny", "check"])?;
-    Ok(outcome(ok, "cargo deny check"))
+    if !run(&ctx.core, &cargo(), &["deny", "check"])? {
+        return Ok(Outcome::Failed("`cargo deny check` failed".into()));
+    }
+    // The open-source licences list (#366) uses the same allowed licences.
+    licences::check(ctx)
 }
 
 fn android(ctx: &Ctx) -> Result<Outcome, Error> {

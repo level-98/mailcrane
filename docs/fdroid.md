@@ -6,8 +6,9 @@ Mailcrane is meant to be on F-Droid, built from source by F-Droid with no propri
 
 - **Only free dependencies.** `./gradlew checkFreeDependencies` (run by `cargo xtask ci` and by `./gradlew check`) fails if the release classpath contains Google Play Services, Firebase, ML Kit, Play Core or billing, or a known closed analytics, ads or crash SDK. It fails too if the app's sources contain a prebuilt `.jar`, `.aar`, `.so`, `.dex` or `.apk`. Native code comes only from the Rust core, built from source by `cargo-ndk`, and Java libraries only from Maven Central and Google's Maven repository (AndroidX, Hilt).
 - **Free native libraries from Maven.** JNA and rustls-platform-verifier ship native code in their Maven artifacts. Both are open source (JNA: Apache-2.0/LGPL-2.1; rustls-platform-verifier: Apache-2.0/MIT), which F-Droid accepts.
+- **Licence notices without proprietary tools.** The in-app "Open-source licences" list (#366) is `assets/licences.json`, built by the `generateLicences` Gradle task. For the Rust crates it uses the committed `android/app/licences/rust-licences.txt`, which `cargo xtask licences` makes with cargo-about and `cargo xtask ci` keeps current. For the Android libraries it reads each release dependency's Maven POM. No Google `oss-licenses` plugin is involved, F-Droid's build needs no extra tool, and the output depends only on the sources and the pinned dependencies. The build fails if a release library's licence is missing, unknown, or not in `core/deny.toml`'s `allow` list.
 - **No Google signing block.** `dependenciesInfo` is off, so AGP doesn't add its encrypted dependency-metadata block, which F-Droid's scanner flags.
-- **No git data in the APK.** `vcsInfo` is off for release builds.
+- **No git metadata in the APK.** `vcsInfo` is off for release builds. The only trace of git is the short commit hash shown in Settings → About (`BuildConfig.GIT_COMMIT`), which is the same for every checkout of a commit, so it doesn't break reproducibility. A build without git says "unknown" there, so build from a git checkout when comparing.
 - **Only the ABIs the core is built for.** `abiFilters` limits the APK to arm64-v8a and x86_64, the targets `cargo-ndk` builds. Before, JNA added armeabi-v7a, armeabi and mips folders, so the app would have installed on 32-bit phones and crashed there.
 - **Unsigned release builds work.** `./gradlew assembleRelease` needs no signing secrets: the release build type has no signing config, so it produces an unsigned APK for F-Droid to sign, or to compare with ours. Our signed builds are signed outside Gradle, by the release workflow ([docs/releasing.md](releasing.md)), so this stays true.
 - **No anti-features.** No tracking, no ads, no non-free network services: the app talks only to the user's own mail servers. The OAuth sign-in planned in M3 will use the providers' own servers, which F-Droid's NonFreeNet rule doesn't cover for a user's own account.
@@ -17,7 +18,7 @@ Mailcrane is meant to be on F-Droid, built from source by F-Droid with no propri
 F-Droid can publish our own signed APK if its build from the same tag produces the same bytes. Done so far:
 
 - Release builds remap the paths Rust would embed (the checkout and the cargo registry) to fixed prefixes (`--remap-path-prefix`, in `cargoNdkBuild`).
-- No git commit or build time in the APK.
+- No build time in the APK, and no git data except the commit hash for Settings → About (identical for any checkout of the commit).
 - Gradle and every library are pinned (`gradle/wrapper`, `gradle/libs.versions.toml`); Rust crates are pinned by `core/Cargo.lock`.
 - The tools that make the native code are pinned too:
 

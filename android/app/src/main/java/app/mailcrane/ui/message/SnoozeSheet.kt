@@ -242,7 +242,12 @@ internal fun SnoozedBanner(
             )
             Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
                 Text(
-                    text = stringResource(R.string.snooze_until, formatWake(time, locale)),
+                    text =
+                        if (info.waking) {
+                            stringResource(R.string.snooze_waking)
+                        } else {
+                            stringResource(R.string.snooze_until, formatWake(time, locale))
+                        },
                     style = MaterialTheme.typography.bodyMedium,
                 )
                 if (info.deviceOnly) {

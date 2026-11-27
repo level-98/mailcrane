@@ -3,6 +3,7 @@ package app.mailcrane.ui.message
 import app.mailcrane.core.ActionFailure
 import app.mailcrane.core.AuthResult
 import app.mailcrane.core.AuthVerdict
+import app.mailcrane.core.CoreEvent
 import app.mailcrane.core.InlinePart
 import app.mailcrane.core.LinkCheck
 import app.mailcrane.core.LinkChecker
@@ -28,6 +29,7 @@ import app.mailcrane.settings.MarkReadMode
 import app.mailcrane.ui.compose.ComposePrefill
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
@@ -102,6 +104,8 @@ private class FakeMessageCore(
     var remoteBlocked: UInt = 2u,
     var plain: Boolean = false,
 ) : MessageCore {
+    override val events = MutableSharedFlow<CoreEvent>(extraBufferCapacity = 8)
+
     val calls = mutableListOf<String>()
     var fetchFailure: SyncErrorKind? = null
     var markReadFailure: SyncErrorKind? = null
@@ -184,7 +188,12 @@ private class FakeMessageCore(
         calls += "unsnooze"
     }
 
-    override suspend fun snoozeInfo(messageId: Long): SnoozeInfo? = snoozeInfo
+    var snoozeInfoFailure: SnoozeFailure? = null
+
+    override suspend fun snoozeInfo(messageId: Long): SnoozeInfo? {
+        snoozeInfoFailure?.let { throw it }
+        return snoozeInfo
+    }
 
     override suspend fun applyAction(
         messageId: Long,
@@ -532,6 +541,35 @@ class MessageViewModelTest {
             vm.snooze(1_800_000_000)
             assertEquals(MessageEffect.ActionRefused(ActionRefusal.CANNOT_SNOOZE), vm.effects.first())
             assertTrue(vm.state.value is MessageState.Ready)
+        }
+
+    /** #431: snoozing again while the message is coming back is refused; it then shows as waking. */
+    @Test
+    fun aWakingMessageCantBeSnoozedAgainYet() =
+        runTest {
+            val core = FakeMessageCore().apply { snoozeFailure = SnoozeFailure.Waking() }
+            val vm = messageViewModel(core)
+            core.snoozeInfo = SnoozeInfo(wakeAt = 1_800_000_000, deviceOnly = false, waking = true)
+            vm.snooze(1_900_000_000)
+            assertEquals(MessageEffect.ActionRefused(ActionRefusal.WAKING), vm.effects.first())
+            assertEquals(true, ready(vm).snooze?.waking)
+            // The wake lands: the change re-enables snoozing, with no timer.
+            core.snoozeInfo = null
+            core.events.emit(CoreEvent.MessagesChanged(folderId = 1L))
+            assertEquals(null, ready(vm).snooze)
+        }
+
+    /** #431: when the wake takes the shown row with it, the screen closes rather than offer Snooze. */
+    @Test
+    fun aWokenMessageWhoseRowIsGoneCloses() =
+        runTest {
+            val core = FakeMessageCore()
+            core.snoozeInfo = SnoozeInfo(wakeAt = 1_800_000_000, deviceOnly = false, waking = true)
+            val vm = messageViewModel(core)
+            assertEquals(true, ready(vm).snooze?.waking)
+            core.snoozeInfoFailure = SnoozeFailure.NotFound()
+            core.events.emit(CoreEvent.MessagesChanged(folderId = 1L))
+            assertEquals(MessageEffect.Close, vm.effects.first())
         }
 
     @Test

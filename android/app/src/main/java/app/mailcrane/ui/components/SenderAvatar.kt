@@ -210,18 +210,26 @@ fun avatarColorIndex(address: String): Int {
  * "AL"). Latin names give the first letters of the first and last words; other scripts give their first
  * grapheme ("山田太郎" gives "山"). Null when the name starts with no letter (emoji, symbols, empty), for the
  * generic person.
+ *
+ * One exception (#389): a display name that is the sender's own domain, or a parent of it, is one word, so
+ * "Example.com" from news@example.com (or news@mail.example.com) gives "E", not "EC". Surrounding brackets
+ * and punctuation and a leading "www." are ignored for this. Any other dotted name keeps both initials:
+ * "Jane.Doe" gives "JD".
  */
 fun avatarInitials(
     name: String,
     address: String,
 ): String? {
     val cleanName = name.trim().trim('"', '\'').trim()
-    val source =
-        when {
-            cleanName.isNotEmpty() && '@' !in cleanName -> cleanName
-            else -> address.substringBefore('@').ifBlank { cleanName.substringBefore('@') }
-        }
-    val words = source.split(Regex("[\\s._+,;()\\-]+")).filter { it.isNotEmpty() }
+    val fromName = cleanName.isNotEmpty() && '@' !in cleanName
+    val source = if (fromName) cleanName else address.substringBefore('@').ifBlank { cleanName.substringBefore('@') }
+    // A display name that is the sender's domain is one word, not "EC" (#389). Only a display name: an address's
+    // local part ("ana.lopez") holds no domain and keeps both initials.
+    val domainName = if (fromName) senderDomainName(source, address) else null
+    val words =
+        domainName?.let(::listOf)
+            // \p{Z} as well as \s: Java's \s is ASCII only, and a decoded name can hold a no-break space.
+            ?: source.split(Regex("[\\p{Z}\\s._+,;()\\-]+")).filter { it.isNotEmpty() }
     val first = words.firstOrNull()?.let(::firstGrapheme) ?: return null
     if (!Character.isLetterOrDigit(first.codePointAt(0))) return null
     val latin = Character.UnicodeScript.of(first.codePointAt(0)) == Character.UnicodeScript.LATIN
@@ -229,6 +237,27 @@ fun avatarInitials(
     val last = firstGrapheme(words.last())
     val lastOk = last != null && Character.isLetter(last.codePointAt(0))
     return (first + if (lastOk) last else "").uppercase(Locale.ROOT)
+}
+
+/**
+ * The display [name] without punctuation around it or a leading "www.", when that is the domain of [address]
+ * or a parent of it, compared case-insensitively ("Example.com" for news@example.com or news@mail.example.com);
+ * otherwise null. A name has to match the address to count, so a dotted personal name ("Jane.Doe") never does.
+ */
+private fun senderDomainName(
+    name: String,
+    address: String,
+): String? {
+    val domain =
+        address
+            .substringAfterLast('@', "")
+            .trim()
+            .trimEnd('.', '>')
+            .lowercase(Locale.ROOT)
+    val bare = name.trim { it.isWhitespace() || it in "()[]<>{}.,;:!?" }.removePrefix("www.").removePrefix("WWW.")
+    if ('.' !in bare || bare.any { it.isWhitespace() } || domain.isEmpty()) return null
+    val key = bare.lowercase(Locale.ROOT)
+    return bare.takeIf { domain == key || domain.endsWith(".$key") }
 }
 
 /** The first user-perceived character of [text] (a letter with its accents, a whole emoji), or null. */

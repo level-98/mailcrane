@@ -32,10 +32,13 @@ impl std::fmt::Debug for AccessToken {
     }
 }
 
-/// Access tokens by account, in memory only (gone when the process ends).
+/// Access tokens by database and account, in memory only (gone when the
+/// process ends). `scope` is the database's `Store::cache_scope`: account
+/// IDs start at 1 in every database, so two databases (tests running side
+/// by side, profiles) must never share an entry (#434).
 #[derive(Default)]
 pub struct TokenCache {
-    tokens: Mutex<HashMap<i64, (AccessToken, i64)>>,
+    tokens: Mutex<HashMap<(String, i64), (AccessToken, i64)>>,
 }
 
 impl std::fmt::Debug for TokenCache {
@@ -54,6 +57,7 @@ impl TokenCache {
     pub fn save(
         &self,
         secrets: &dyn SecretStore,
+        scope: &str,
         account: i64,
         tokens: &Tokens,
         now: i64,
@@ -69,7 +73,8 @@ impl TokenCache {
         let lifetime = tokens.expires_in.unwrap_or(DEFAULT_LIFETIME_SECS);
         let expires_at = now.saturating_add(i64::try_from(lifetime).unwrap_or(i64::MAX));
         let token = AccessToken(tokens.access_token.clone());
-        self.lock().insert(account, (token.clone(), expires_at));
+        self.lock()
+            .insert((scope.to_owned(), account), (token.clone(), expires_at));
         Ok(token)
     }
 
@@ -77,16 +82,18 @@ impl TokenCache {
     /// more than 5 minutes, otherwise a fresh one from the refresh token in
     /// `secrets`. `ReauthRequired` if there is no refresh token or the
     /// provider no longer accepts it (the stored one is then deleted).
+    #[allow(clippy::too_many_arguments)]
     pub async fn access_token(
         &self,
         secrets: &dyn SecretStore,
+        scope: &str,
         account: i64,
         provider: &OAuthProvider,
         now: i64,
         extra_roots: &[Vec<u8>],
         timeout: Duration,
     ) -> Result<AccessToken, OAuthError> {
-        if let Some((token, expires_at)) = self.lock().get(&account) {
+        if let Some((token, expires_at)) = self.lock().get(&(scope.to_owned(), account)) {
             if expires_at.saturating_sub(EARLY_SECS) > now {
                 return Ok(token.clone());
             }
@@ -99,9 +106,9 @@ impl TokenCache {
             .map_err(|_| OAuthError::ReauthRequired)?
             .to_owned();
         match refresh(provider, &refresh_token, extra_roots, timeout).await {
-            Ok(tokens) => self.save(secrets, account, &tokens, now),
+            Ok(tokens) => self.save(secrets, scope, account, &tokens, now),
             Err(OAuthError::ReauthRequired) => {
-                self.forget(account);
+                self.forget(scope, account);
                 let _ = secrets.delete(&SecretKey::oauth_refresh_token(account));
                 Err(OAuthError::ReauthRequired)
             }
@@ -109,12 +116,23 @@ impl TokenCache {
         }
     }
 
-    /// Drops the cached access token (after the server rejected it).
-    pub fn forget(&self, account: i64) {
-        self.lock().remove(&account);
+    /// The cached access token for `account` if it hasn't expired, without
+    /// refreshing: for the synchronous paths that build a login once
+    /// [`TokenCache::access_token`] has run.
+    pub fn cached(&self, scope: &str, account: i64, now: i64) -> Option<AccessToken> {
+        self.lock()
+            .get(&(scope.to_owned(), account))
+            .filter(|(_, expires_at)| *expires_at > now)
+            .map(|(token, _)| token.clone())
     }
 
-    fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<i64, (AccessToken, i64)>> {
+    /// Drops the cached access token (after the server rejected it, or the
+    /// account was removed).
+    pub fn forget(&self, scope: &str, account: i64) {
+        self.lock().remove(&(scope.to_owned(), account));
+    }
+
+    fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<(String, i64), (AccessToken, i64)>> {
         self.tokens.lock().unwrap_or_else(|p| p.into_inner())
     }
 }

@@ -77,7 +77,7 @@ Goal: add an IMAP account and read your inbox, online and offline.
 ## M3 — Providers and sign-in
 
 - [x] **M3-01** OAuth 2.0 framework with PKCE, using the system browser (AppAuth on Android) 🔒
-- [ ] **M3-02** Gmail: OAuth, XOAUTH2, and labels mapped to folders 🔒🧑 (needs Google app verification)
+- [ ] **M3-02** Gmail: OAuth, XOAUTH2, and labels mapped to folders 🔒🧑 (needs Google app verification; code done, real-account check and verification still to do)
   - Start verification early and budget for the yearly CASA security assessment: other open-source clients have been shown "App blocked" while waiting. Keep the app-password IMAP route working as a fallback.
 - [ ] **M3-03** Microsoft 365 and Outlook.com: OAuth and XOAUTH2 🔒🧑
 - [x] **M3-04** JMAP client (Fastmail, Stalwart and others) 🤖
@@ -117,7 +117,7 @@ Goal: add an IMAP account and read your inbox, online and offline.
 - [x] **M4-24** Sender pictures in the message list (initials on a stable colour, contact photos only after opting in, never from the network), and a Compact mailbox density without them 🤖
 - [x] **M4-25** Download recent inbox messages in the background after each sync (unmetered network by default, not in Battery Saver, last 14 days, newest 200, up to 1 MB each), so they open at once and offline; setting under Advanced 🤖
 - [x] **M4-26** Manage folders on JMAP accounts (create, rename, move, delete through Mailbox/set) 🤖
-- [ ] **M4-27** JMAP push without a gateway: register the UnifiedPush endpoint as a JMAP PushSubscription (RFC 8620 §7.2), with verification, refresh and teardown 🤖
+- [x] **M4-27** JMAP push without a gateway: register the UnifiedPush endpoint as a JMAP PushSubscription (RFC 8620 §7.2), with verification, refresh and teardown 🤖
 
 ## M5 — Privacy and security
 
