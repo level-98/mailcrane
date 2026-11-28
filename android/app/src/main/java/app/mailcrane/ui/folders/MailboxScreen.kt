@@ -210,7 +210,7 @@ fun MailboxScreen(
                                     // The neighbour only if the list it came from still holds it now (#514).
                                     val now = origin?.let { viewModel.idsNow(it) }.orEmpty()
                                     val next = messageAfterLeaving(neighbours, afterMoveAction, now)
-                                    // Nothing opened meanwhile: opening anything cancels this job (the effect on messageId).
+                                    // Nothing opened meanwhile: opening any message cancels this job.
                                     if (openMessage == null) openMessage = next
                                 }
                         },
