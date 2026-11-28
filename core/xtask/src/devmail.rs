@@ -100,7 +100,7 @@ fn adb() -> PathBuf {
 /// emulator's alias for the host, never arrive (#404 QA), while `adb
 /// reverse` works. Never a physical phone: a CA on a real device would let
 /// whoever holds the server key read its traffic, so only devices that say
-/// they are emulators (`ro.kernel.qemu` is `1`) are touched, whatever their
+/// they are emulators (`ro.kernel.qemu` or `ro.boot.qemu` is `1`) are touched, whatever their
 /// serial: a remote emulator's is `127.0.0.1:5557`, not `emulator-NNNN`
 /// (#575, docs/fleet.md).
 fn prepare_emulators(ca: &Path) {
@@ -127,10 +127,12 @@ fn prepare_emulators(ca: &Path) {
              emulator, wait for it to boot, then run this again."
         ));
     }
-    let (emulators, others) = emulators_among(&ready, |serial| qemu_prop(&adb, serial));
+    let (emulators, others) =
+        emulators_among(&ready, |serial, name| device_prop(&adb, serial, name));
     for serial in &others {
         say(format_args!(
-            "dev-mail: {serial} isn't an emulator (ro.kernel.qemu isn't 1), so it was left alone."
+            "dev-mail: {serial} isn't an emulator (neither ro.kernel.qemu nor ro.boot.qemu is 1), \
+             so it was left alone."
         ));
     }
     if emulators.is_empty() {
@@ -241,24 +243,30 @@ fn devices(listing: &str) -> (Vec<&str>, Vec<(&str, &str)>) {
     (ready, not_ready)
 }
 
+/// The properties an emulator sets to `1`. Older images set
+/// `ro.kernel.qemu`, newer ones may only set `ro.boot.qemu`; a phone sets
+/// neither (#575).
+const QEMU_PROPS: [&str; 2] = ["ro.kernel.qemu", "ro.boot.qemu"];
+
 /// Splits ready devices into emulators and everything else. A device is an
-/// emulator only if its `ro.kernel.qemu` property, from `qemu`, is `1`; a
-/// device that answers anything else, or can't be asked, is treated as a
-/// phone and never gets the CA (#575).
+/// emulator only if one of [`QEMU_PROPS`], read with `prop(serial, name)`,
+/// is `1`. A device where neither is, or that can't be asked, is treated as
+/// a phone and never gets the CA (#575): it fails closed.
 fn emulators_among<'a>(
     ready: &[&'a str],
-    qemu: impl Fn(&str) -> Option<String>,
+    prop: impl Fn(&str, &str) -> Option<String>,
 ) -> (Vec<&'a str>, Vec<&'a str>) {
-    ready
-        .iter()
-        .copied()
-        .partition(|serial| qemu(serial).is_some_and(|value| value.trim() == "1"))
+    ready.iter().copied().partition(|serial| {
+        QEMU_PROPS
+            .iter()
+            .any(|name| prop(serial, name).is_some_and(|value| value.trim() == "1"))
+    })
 }
 
-/// `adb -s <serial> shell getprop ro.kernel.qemu`, or `None` if adb failed.
-fn qemu_prop(adb: &Path, serial: &str) -> Option<String> {
+/// `adb -s <serial> shell getprop <name>`, or `None` if adb failed.
+fn device_prop(adb: &Path, serial: &str, name: &str) -> Option<String> {
     let out = Command::new(adb)
-        .args(["-s", serial, "shell", "getprop", "ro.kernel.qemu"])
+        .args(["-s", serial, "shell", "getprop", name])
         .output()
         .ok()?;
     out.status
@@ -295,9 +303,10 @@ mod tests {
         assert_eq!(devices(crlf), (vec!["127.0.0.1:5557"], vec![]));
     }
 
-    /// #575: only `ro.kernel.qemu` = 1 makes an emulator. A remote emulator
-    /// (`127.0.0.1:5557`) counts; a phone, or a device that can't be asked,
-    /// never gets the CA, whatever its serial looks like.
+    /// #575: a device is an emulator only if `ro.kernel.qemu` or
+    /// `ro.boot.qemu` is 1. Either alone is enough; a remote emulator
+    /// (`127.0.0.1:5557`) counts. Neither set, or a device that can't be
+    /// asked, is a phone and never gets the CA, whatever its serial.
     #[test]
     fn only_devices_that_say_qemu_are_emulators() {
         let ready = [
@@ -307,17 +316,29 @@ mod tests {
             "emulator-5560",
             "10.0.0.9:5555",
         ];
-        let (emulators, others) = emulators_among(&ready, |serial| match serial {
-            "emulator-5554" => Some("1\n".into()),
-            "127.0.0.1:5557" => Some("1\r\n".into()),
-            // A phone answers an empty property.
-            "R5CT0000001" => Some("\n".into()),
-            // Named like an emulator, but adb couldn't ask it.
-            "emulator-5560" => None,
-            _ => Some("0\n".into()),
+        let (emulators, others) = emulators_among(&ready, |serial, name| {
+            match (serial, name) {
+                // An older image: only ro.kernel.qemu.
+                ("emulator-5554", "ro.kernel.qemu") => Some("1\n".into()),
+                // A newer image: only ro.boot.qemu, with adb's CRLF.
+                ("127.0.0.1:5557", "ro.boot.qemu") => Some("1\r\n".into()),
+                // Named like an emulator, but adb couldn't ask it.
+                ("emulator-5560", _) => None,
+                // A phone, and everything else unset, answers empty or 0.
+                ("10.0.0.9:5555", _) => Some("0\n".into()),
+                _ => Some("\n".into()),
+            }
         });
         assert_eq!(emulators, ["emulator-5554", "127.0.0.1:5557"]);
         assert_eq!(others, ["R5CT0000001", "emulator-5560", "10.0.0.9:5555"]);
+    }
+
+    /// Neither property set (both empty): a phone.
+    #[test]
+    fn both_properties_empty_is_a_phone() {
+        let (emulators, others) = emulators_among(&["R5CT0000002"], |_, _| Some(String::new()));
+        assert!(emulators.is_empty());
+        assert_eq!(others, ["R5CT0000002"]);
     }
 
     #[test]

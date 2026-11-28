@@ -106,7 +106,7 @@ A PR without the `fleet` label is never merged by the fleet, even one the mainta
 
 ## The maintainer's phone
 
-When the maintainer's phone is plugged in with USB debugging on, QA uses it as a second test device. **A device counts as an emulator only if `adb -s <serial> shell getprop ro.kernel.qemu` returns `1`. Every other device is the maintainer's phone, and all the phone rules apply.** Never go by the serial: a remote emulator shows up as `127.0.0.1:5557`, not `emulator-NNNN` (#575). The phone holds their **real** email in the release app `app.mailcrane`. Rules, no exceptions:
+When the maintainer's phone is plugged in with USB debugging on, QA uses it as a second test device. **A device counts as an emulator only if `adb -s <serial> shell getprop ro.kernel.qemu` or `getprop ro.boot.qemu` returns `1` (newer images may set only the second). Every other device is the maintainer's phone, and all the phone rules apply.** Never go by the serial: a remote emulator shows up as `127.0.0.1:5557`, not `emulator-NNNN` (#575). The phone holds their **real** email in the release app `app.mailcrane`. Rules, no exceptions:
 
 - Only ever install, launch, drive or clear **`app.mailcrane.debug`**, the debug build (#405). Never install anything else, never `adb uninstall` or `pm clear` any other package, and never open another app.
 - Before every tap or key event, check the foreground app (`adb shell dumpsys window | grep mCurrentFocus`) is `app.mailcrane.debug`. If it isn't, stop.

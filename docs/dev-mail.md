@@ -32,7 +32,7 @@ TLS stays on, as [AGENTS.md](../AGENTS.md#4-privacy-and-hostile-content) require
 
 The app checks certificates with Android's own trust store, which includes CA certificates the user installs. The app's code is not changed and release builds are untouched. To install the CA:
 
-1. Start the emulator, then run `cargo xtask dev-mail`. It copies the CA to the emulator as `Download/mailcrane-dev-ca.crt` and forwards the ports. It only ever touches emulators, never a phone: a device counts as an emulator only if its `ro.kernel.qemu` property is `1`, so a remote emulator (`127.0.0.1:5557`) is set up and a phone never is, whatever its serial (#575).
+1. Start the emulator, then run `cargo xtask dev-mail`. It copies the CA to the emulator as `Download/mailcrane-dev-ca.crt` and forwards the ports. It only ever touches emulators, never a phone: a device counts as an emulator only if its `ro.kernel.qemu` or `ro.boot.qemu` property is `1`, so a remote emulator (`127.0.0.1:5557`) is set up and a phone never is, whatever its serial (#575).
 2. On the emulator: **Settings → Security & privacy → More security settings → Encryption & credentials → Install a certificate → CA certificate**. Accept the warning and pick `mailcrane-dev-ca.crt` from Downloads. The menu names vary a little between Android versions; searching Settings for "CA certificate" finds it.
 3. Add the account in Mailcrane with **manual setup** and the settings above.
 
