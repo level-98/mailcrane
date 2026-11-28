@@ -1,9 +1,9 @@
 [versions]
-work = "2.10.1"
+work = "2.12.0"
 # UnifiedPush connector (M4-05): Apache-2.0, no Google services; pulls in Tink (Apache-2.0).
-unifiedpush = "3.3.5"
+unifiedpush = "3.3.6"
 glance = "1.1.1"
-agp = "9.5.2"
+agp = "9.5.3"
 kotlin = "2.4.21"
 ksp = "2.3.14"
 hilt = "2.60.1"
