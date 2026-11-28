@@ -258,8 +258,6 @@ impl<'a> JmapSyncer<'a> {
             // Each local row with its JMAP email, so a refusal per email can be
             // undone per message.
             let mut rows: Vec<(String, MessageId)> = Vec::new();
-            // Rows that hold another email now: out of the op, untouched.
-            let mut stale: Vec<MessageId> = Vec::new();
             for m in &op.messages {
                 // Only while the row is still that message: in the action's
                 // folder with its UID. Row ids are reused once a row is
@@ -269,29 +267,10 @@ impl<'a> JmapSyncer<'a> {
                     .get_message_header(m.message_id)?
                     .is_some_and(|h| h.details.folder_id == op.folder_id && h.details.uid == m.uid);
                 if !same {
-                    stale.push(m.message_id);
                     continue;
                 }
                 if let Some(row) = self.store.jmap_row(m.message_id)? {
                     rows.push((row.email_id, m.message_id));
-                }
-            }
-            // Completing or failing the op would delete or revert those rows,
-            // which hold other emails now: take them out first (#541). Their
-            // emails get the server's state on the next sync.
-            if !stale.is_empty() {
-                let dropped = self.store.drop_op_messages(op.id, &stale)?;
-                if !dropped.is_empty() {
-                    tracing::warn!(
-                        dropped = dropped.len(),
-                        "queued action dropped for rows that hold other emails now"
-                    );
-                    self.listener.on_event(CoreEvent::ActionFailed {
-                        account_id: self.account,
-                        action: crate::actions::action_kind(op.kind),
-                        message_ids: dropped,
-                        reason: crate::events::SyncErrorKind::FolderReset,
-                    });
                 }
             }
             let ids: Vec<String> = rows.iter().map(|(e, _)| e.clone()).collect();

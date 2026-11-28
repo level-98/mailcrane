@@ -3,7 +3,7 @@
 use crate::events::{ActionKind, CoreEvent, EventListener, SyncErrorKind};
 use crate::sync::SyncError;
 use mailcrane_imap::{ChangeError, ImapError, Session, SystemFlag};
-use mailcrane_store::{AccountId, DroppedOp, FolderId, OpKind, PendingOp, Store};
+use mailcrane_store::{AccountId, DroppedOp, FolderId, MessageId, OpKind, PendingOp, Store};
 
 /// The first retry waits this long.
 const FIRST_RETRY_SECS: i64 = 5;
@@ -74,6 +74,22 @@ pub async fn replay(
                 uidvalidity,
                 uidnext,
             }) => {
+                // Half-done moves and deletes first, while the folder's
+                // queue is intact (`run` left the folder selected): a
+                // dropped connection leaves them queued and the folder
+                // as it is, for the next replay (#541).
+                match finish_half_done(store, session, op.folder_id).await {
+                    Ok(finished) => report.done = report.done.saturating_add(finished),
+                    Err(ChangeError::Imap(ImapError::Store(e))) => return Err(e.into()),
+                    Err(error) => {
+                        let attempts = op.attempts.saturating_add(1);
+                        let next = now.saturating_add(backoff_secs(attempts));
+                        store.defer_op(op.id, attempts, next, error_code(&error))?;
+                        tracing::info!(attempts, "finishing after a renumber deferred");
+                        report.remaining = ops.len().saturating_sub(index);
+                        break;
+                    }
+                }
                 // Reset the folder here and go on: waiting for its own sync
                 // would hold up every later action of the account (#517).
                 let dropped = store
@@ -84,12 +100,8 @@ pub async fn replay(
                     )?
                     .unwrap_or_default();
                 reset.push(op.folder_id);
-                // `run` left the folder selected, as finishing needs.
-                let count = dropped.len();
-                let left = finish_half_done(session, dropped).await;
-                report.done = report.done.saturating_add(count.saturating_sub(left.len()));
-                report.failed = report.failed.saturating_add(left.len());
-                report_folder_reset(listener, account, op.folder_id, left);
+                report.failed = report.failed.saturating_add(dropped.len());
+                report_folder_reset(listener, account, op.folder_id, dropped);
             }
             Err(error) if error.is_transient() => {
                 let attempts = op.attempts.saturating_add(1);
@@ -118,76 +130,122 @@ pub async fn replay(
     Ok(report)
 }
 
-/// Finishes the half-done actions among `dropped` (#541): a move without
-/// `MOVE` that already copied, or a move or expunge that already set
-/// `\Deleted` (AGENTS.md §3: no half-applied moves or deletes). Their UIDs
-/// are stale after the reset, so each message is found again by its
-/// `Message-ID` in the folder `session` has selected (the reset one, RFC
-/// 9051 §6.4.4), then flagged `\Deleted` and `UID EXPUNGE`d as the replay
-/// would have. A message is finished only when exactly one message there
-/// has its `Message-ID`; none means it is gone already. Returns what is
-/// left to report: the other actions as they were, and the messages of
-/// half-done ones that couldn't be finished (no `Message-ID`, several
-/// matches, or the server failed).
+/// Finishes the folder's half-done actions (#541) before its cache is reset:
+/// a move without `MOVE` that already copied, or a move or expunge that
+/// already set `\Deleted` (AGENTS.md §3: no half-applied moves or deletes).
+/// `session` has the folder selected, renumbered (RFC 9051 §2.3.1.1), so the
+/// stored UIDs are stale: each message is found again by its `Message-ID`
+/// (§6.4.4), only among messages flagged `\Deleted` once that step was
+/// done, and taken only when it is the one match and has the size the
+/// original had. Then it is flagged `\Deleted` and `UID EXPUNGE`d, as the
+/// replay would have (never a plain `EXPUNGE`).
+///
+/// An action whose messages are all finished, or gone already, is
+/// completed. A message that can't be told apart for sure (no
+/// `Message-ID`, several matches, another size, or the server refused)
+/// stays in its action, which the reset then drops and reports as
+/// unfinished. A transient error returns at once with the action still
+/// queued and the folder not reset, so the next replay or sync tries again;
+/// a local database error is returned as `ImapError::Store`. Returns how
+/// many actions were finished.
 pub(crate) async fn finish_half_done(
+    store: &Store,
     session: &mut Session,
-    dropped: Vec<DroppedOp>,
-) -> Vec<DroppedOp> {
-    let mut left = Vec::with_capacity(dropped.len());
-    for op in dropped {
-        if !op.half_done() {
-            left.push(op);
-            continue;
-        }
-        let mut unfinished = Vec::new();
-        // The messages found again: (local id, its header, its new UID).
-        let mut found: Vec<(mailcrane_store::MessageId, Option<String>, u32)> = Vec::new();
-        let mut failed = false;
-        for (id, header) in op.message_ids.iter().zip(&op.message_id_headers) {
-            let uids = match header {
-                Some(h) if !failed => session.uid_search_message_id(h).await,
-                _ => {
-                    unfinished.push((*id, header.clone()));
+    folder: FolderId,
+) -> Result<usize, ChangeError> {
+    let ops = store
+        .half_done_ops(folder)
+        .map_err(|e| ChangeError::Imap(ImapError::Store(e)))?;
+    let mut done = 0usize;
+    for op in ops {
+        let flagged = op.step >= STEP_FLAGGED_DELETED;
+        // Finished or gone already, and the ones found again: (id, UID).
+        let mut finished: Vec<MessageId> = Vec::new();
+        let mut found: Vec<(MessageId, u32)> = Vec::new();
+        let mut unfinished = false;
+        for m in &op.messages {
+            let Some(header) = &m.message_id_header else {
+                unfinished = true;
+                continue;
+            };
+            let uids = match session.uid_search_message_id_in(header, flagged).await {
+                Ok(uids) => uids,
+                Err(e) if e.is_transient() => return Err(e),
+                Err(_) => {
+                    unfinished = true;
                     continue;
                 }
             };
-            match uids.as_deref() {
-                // Gone from the folder already: nothing left to do.
-                Ok([]) => {}
-                Ok([uid]) => found.push((*id, header.clone(), *uid)),
-                Ok(_) => unfinished.push((*id, header.clone())),
-                Err(_) => {
-                    failed = true;
-                    unfinished.push((*id, header.clone()));
+            match uids.as_slice() {
+                [] => finished.push(m.message_id),
+                [uid] if same_size(session, *uid, m.size).await? => {
+                    found.push((m.message_id, *uid));
                 }
+                _ => unfinished = true,
             }
         }
         if !found.is_empty() {
-            let uids: Vec<u32> = found.iter().map(|(_, _, uid)| *uid).collect();
-            if finish(session, op.step, &uids).await.is_err() {
-                unfinished.extend(found.into_iter().map(|(id, h, _)| (id, h)));
+            let uids: Vec<u32> = found.iter().map(|(_, uid)| *uid).collect();
+            match finish(store, session, &op, &uids).await {
+                Ok(()) => finished.extend(found.iter().map(|(id, _)| *id)),
+                Err(e)
+                    if e.is_transient() || matches!(e, ChangeError::Imap(ImapError::Store(_))) =>
+                {
+                    return Err(e)
+                }
+                Err(_) => unfinished = true,
             }
         }
-        if !unfinished.is_empty() {
-            let (message_ids, message_id_headers) = unfinished.into_iter().unzip();
-            left.push(DroppedOp {
-                message_ids,
-                message_id_headers,
-                ..op
-            });
-        }
+        let saved = if unfinished {
+            store.drop_op_messages(op.id, &finished).map(|_| ())
+        } else {
+            done = done.saturating_add(1);
+            store.complete_op(op.id, false)
+        };
+        saved.map_err(|e| ChangeError::Imap(ImapError::Store(e)))?;
     }
-    left
+    Ok(done)
 }
 
-/// The rest of [`delete_for_good`] for `uids` found again after a reset:
-/// `\Deleted` unless that step was done, then `UID EXPUNGE` when the server
-/// has it (never a plain `EXPUNGE`).
-async fn finish(session: &mut Session, step: u8, uids: &[u32]) -> Result<(), ChangeError> {
-    if step < STEP_FLAGGED_DELETED {
+/// Whether message `uid` has `size` bytes (`RFC822.SIZE`), the size its
+/// original had: a duplicate with the same `Message-ID` (a mailing list
+/// copy) differs in its `Received` lines. Unknown counts as different.
+async fn same_size(
+    session: &mut Session,
+    uid: u32,
+    size: Option<i64>,
+) -> Result<bool, ChangeError> {
+    let fetched = match session.uid_fetch_headers(&[uid]).await {
+        Ok(fetched) => fetched,
+        Err(e) => {
+            let e = ChangeError::Imap(e);
+            return if e.is_transient() { Err(e) } else { Ok(false) };
+        }
+    };
+    let theirs = fetched
+        .messages
+        .iter()
+        .find(|m| m.uid == Some(uid))
+        .and_then(|m| m.size);
+    Ok(matches!((theirs, size), (Some(a), Some(b)) if i64::try_from(a).ok() == Some(b)))
+}
+
+/// The rest of [`delete_for_good`] for `uids` found again after a renumber:
+/// `\Deleted` unless that step was done (and saved, so a retry looks among
+/// flagged messages only), then `UID EXPUNGE` when the server has it.
+async fn finish(
+    store: &Store,
+    session: &mut Session,
+    op: &mailcrane_store::HalfDoneOp,
+    uids: &[u32],
+) -> Result<(), ChangeError> {
+    if op.step < STEP_FLAGGED_DELETED {
         session
             .uid_store_flag(uids, SystemFlag::Deleted, true)
             .await?;
+        store
+            .set_op_step(op.id, STEP_FLAGGED_DELETED)
+            .map_err(|e| ChangeError::Imap(ImapError::Store(e)))?;
     }
     if session.supports_uid_expunge() {
         session.uid_expunge(uids).await?;
@@ -337,9 +395,9 @@ async fn run(store: &Store, session: &mut Session, op: &PendingOp) -> Result<Out
 }
 
 /// `STORE +FLAGS (\Deleted)`, then `UID EXPUNGE` of just these UIDs when the
-/// server has it. Without it the messages stay flagged `\Deleted` (and
+/// server has it. Without it the messages stay flagged `Deleted` (and
 /// hidden locally): a plain `EXPUNGE` would also remove messages other
-/// clients marked `\Deleted`.
+/// clients marked `Deleted`.
 async fn delete_for_good(
     store: &Store,
     session: &mut Session,

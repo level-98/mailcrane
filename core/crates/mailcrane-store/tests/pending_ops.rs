@@ -453,8 +453,9 @@ fn a_partly_refused_action_leaves_a_row_that_took_the_id_alone() -> R {
 }
 
 #[test]
-fn a_dropped_action_keeps_its_progress_and_message_ids_to_be_finished() -> R {
-    // #541: a half-done move is found again by Message-ID after the reset.
+fn half_done_actions_are_listed_with_what_finds_them_again() -> R {
+    // #541: a half-done move is found again by Message-ID and size after a
+    // renumber, before the reset; the reset then reports its step.
     let f = fixture(Store::open_in_memory()?)?;
     let first = f.messages[0];
     let op = f
@@ -473,6 +474,19 @@ fn a_dropped_action_keeps_its_progress_and_message_ids_to_be_finished() -> R {
     f.store
         .queue_op(f.account, OpKind::Flag, f.inbox, None, &[flagged], 100)?
         .ok_or("queued")?;
+    let half = f.store.half_done_ops(f.inbox)?;
+    assert_eq!(half.len(), 1, "only the move: a flag is never half done");
+    assert_eq!(
+        (half[0].id, half[0].kind, half[0].step),
+        (op, OpKind::Move, 1)
+    );
+    let m = &half[0].messages[0];
+    assert_eq!(m.message_id, first.message_id);
+    assert_eq!(
+        m.message_id_header,
+        Some(format!("<{}@example.org>", first.uid))
+    );
+    assert!(m.size.is_some());
     let dropped = f
         .store
         .reset_folder_reporting(f.inbox, 2, 1)?
@@ -482,18 +496,14 @@ fn a_dropped_action_keeps_its_progress_and_message_ids_to_be_finished() -> R {
     assert_eq!((moved.kind, moved.step), (OpKind::Move, 1));
     assert!(moved.half_done());
     assert_eq!(moved.message_ids, [first.message_id]);
-    assert_eq!(
-        moved.message_id_headers,
-        [Some(format!("<{}@example.org>", first.uid))]
-    );
     assert!(!dropped[1].half_done(), "a flag never is");
     Ok(())
 }
 
 #[test]
 fn dropping_messages_from_an_action_leaves_their_rows_alone() -> R {
-    // #541: a JMAP replay takes reused rows out of the action, so completing
-    // it can't delete them.
+    // #541: the finished messages of a half-done action come out of it
+    // before the rest is dropped; their rows are left alone.
     let f = fixture(Store::open_in_memory()?)?;
     let (op, reused) = reused_after(&f, OpKind::Expunge, false)?;
     let other = f.messages[0];

@@ -497,7 +497,7 @@
     <string name="action_undone">The server didn’t accept a change, so it was undone</string>
     <string name="action_dropped_folder_reset">Some changes couldn’t be applied, because the folder was refreshed from the server</string>
     <!-- #541: a move or delete was partly done on the server when the folder was refreshed, and couldn't be finished -->
-    <string name="action_unfinished_folder_reset">A move or delete couldn’t be finished after the folder was refreshed from the server. A message may be in two folders.</string>
+    <string name="action_unfinished_folder_reset">A move or delete couldn’t be finished after the folder was refreshed from the server. A moved message may be in two folders, or a deleted one may still be there.</string>
 
     <!-- Account setup, debug builds only (#559): their signing key is public, so they must never hold a real account -->
     <string name="debug_account_warning_title">This is a debug build</string>

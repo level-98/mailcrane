@@ -1074,12 +1074,11 @@ async fn cannot_calculate_changes_drops_and_reports_queued_actions() {
 }
 
 /// #541: a row the replay finds holding another email now (row ids are
-/// reused) is taken out of the action and reported, so completing the
-/// action can't delete it.
+/// reused, with a new UID) is skipped, and completing the action leaves it
+/// alone: #503's checks of folder and UID guard it.
 #[tokio::test]
-async fn a_reused_row_is_taken_out_of_the_action_and_left_alone() {
+async fn a_reused_row_is_left_alone_by_the_action() {
     use mailcrane_core::actions::{apply_action, Action};
-    use mailcrane_core::events::{CoreEvent, SyncErrorKind};
     let s = setup().await;
     let events = Events::default();
     let mut j = syncer_with(&s, &events).await;
@@ -1121,15 +1120,5 @@ async fn a_reused_row_is_taken_out_of_the_action_and_left_alone() {
         subjects(&s.store, inbox).contains(&"Subject m9".to_string()),
         "the new email is still there"
     );
-    let reported = events.0.lock().expect("lock").iter().any(|e| {
-        matches!(
-            e,
-            CoreEvent::ActionFailed {
-                message_ids,
-                reason: SyncErrorKind::FolderReset,
-                ..
-            } if message_ids == &[row]
-        )
-    });
-    assert!(reported, "the user hears the delete was dropped");
+    assert!(events.failed_ids().is_empty(), "nothing failed");
 }

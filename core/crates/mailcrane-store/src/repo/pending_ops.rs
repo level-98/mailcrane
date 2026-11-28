@@ -329,9 +329,34 @@ pub struct DroppedOp {
     /// How far a multi-command action had got on the server (see
     /// [`PendingOp::step`]); 0 if it hadn't started.
     pub step: u8,
-    /// Each message's `Message-ID` (without angle brackets), in the order of
-    /// [`DroppedOp::message_ids`], to find it again after the reset (#541).
-    pub message_id_headers: Vec<Option<String>>,
+}
+
+/// A queued move or expunge partly carried out on the server (#541), with
+/// what it takes to find its messages again after their folder was
+/// renumbered.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HalfDoneOp {
+    /// The action.
+    pub id: OpId,
+    /// Move or expunge.
+    pub kind: OpKind,
+    /// How far it got (see [`PendingOp::step`]); more than 0.
+    pub step: u8,
+    /// Its messages.
+    pub messages: Vec<HalfDoneMessage>,
+}
+
+/// One message of a [`HalfDoneOp`], from its local row while the row is
+/// still that message (#503).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HalfDoneMessage {
+    /// The local row.
+    pub message_id: MessageId,
+    /// Its `Message-ID`, without angle brackets; `None` if it has none or
+    /// the row holds another message now.
+    pub message_id_header: Option<String>,
+    /// Its `RFC822.SIZE`, likewise.
+    pub size: Option<i64>,
 }
 
 impl DroppedOp {
@@ -360,26 +385,15 @@ pub(crate) fn take_folder_ops(
     let mut dropped = Vec::with_capacity(ops.len());
     for (id, kind, step) in ops {
         let kind = OpKind::parse(&kind)?;
-        let messages = load_messages(tx, OpId(id))?;
-        let mut message_id_headers = Vec::with_capacity(messages.len());
-        for m in &messages {
-            // Only from the row that is still that message (#503).
-            let header: Option<String> = tx
-                .query_row(
-                    &format!("SELECT message_id_header FROM messages {SAME_MESSAGE}"),
-                    params![m.message_id.0, folder.0, m.uid],
-                    |r| r.get(0),
-                )
-                .optional()?
-                .flatten();
-            message_id_headers.push(header.filter(|h| !h.is_empty()));
-        }
+        let message_ids = load_messages(tx, OpId(id))?
+            .into_iter()
+            .map(|m| m.message_id)
+            .collect();
         delete_op(tx, OpId(id))?;
         dropped.push(DroppedOp {
             kind,
-            message_ids: messages.iter().map(|m| m.message_id).collect(),
+            message_ids,
             step: narrow(step, "step")?,
-            message_id_headers,
         });
     }
     Ok(dropped)
@@ -552,10 +566,54 @@ impl Store {
         Ok(undone)
     }
 
+    /// The folder's queued moves and expunges that were partly carried out
+    /// on the server (#541), oldest first, to be finished before the folder
+    /// is reset.
+    pub fn half_done_ops(&self, folder: FolderId) -> Result<Vec<HalfDoneOp>, StoreError> {
+        let ops: Vec<(i64, String, i64)> = {
+            let mut stmt = self.conn.prepare(
+                "SELECT id, kind, step FROM pending_ops \
+                 WHERE folder_id = ?1 AND step > 0 AND kind IN ('move', 'expunge') ORDER BY id",
+            )?;
+            let rows =
+                stmt.query_map(params![folder.0], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?;
+            rows.collect::<Result<_, _>>()?
+        };
+        let mut out = Vec::with_capacity(ops.len());
+        for (id, kind, step) in ops {
+            let mut messages = Vec::new();
+            for m in load_messages(&self.conn, OpId(id))? {
+                // Only from the row that is still that message (#503).
+                let row: Option<(Option<String>, i64)> = self
+                    .conn
+                    .query_row(
+                        &format!("SELECT message_id_header, size FROM messages {SAME_MESSAGE}"),
+                        params![m.message_id.0, folder.0, m.uid],
+                        |r| Ok((r.get(0)?, r.get(1)?)),
+                    )
+                    .optional()?;
+                messages.push(HalfDoneMessage {
+                    message_id: m.message_id,
+                    message_id_header: row
+                        .as_ref()
+                        .and_then(|(h, _)| h.clone())
+                        .filter(|h| !h.is_empty()),
+                    size: row.map(|(_, size)| size),
+                });
+            }
+            out.push(HalfDoneOp {
+                id: OpId(id),
+                kind: OpKind::parse(&kind)?,
+                step: narrow(step, "step")?,
+                messages,
+            });
+        }
+        Ok(out)
+    }
+
     /// Takes `messages` out of the action without touching their rows (#541):
-    /// a JMAP replay found their rows hold other emails now (row ids are
-    /// reused), so neither completing nor failing the action may change
-    /// them. Returns the ids it took out.
+    /// the ones of a half-done action already finished after a renumber, so
+    /// the rest can be dropped and reported. Returns the ids it took out.
     pub fn drop_op_messages(
         &self,
         op: OpId,
