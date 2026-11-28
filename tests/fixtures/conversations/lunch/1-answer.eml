@@ -1,0 +1,15 @@
+From: Carol Example <carol@example.net>
+To: Ann Example <ann@example.com>, Test <test@example.org>
+Subject: Re: Lunch on Friday?
+Date: Mon, 23 Nov 2026 10:15:00 +0000
+Message-ID: <thread-lunch-2@example.net>
+In-Reply-To: <thread-lunch-1@example.com>
+References: <thread-lunch-1@example.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Friday works for me.
+
+> Shall we have lunch on Friday at noon?
+
+Expected: the newest message of the "Lunch on Friday?" conversation.

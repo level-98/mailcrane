@@ -48,7 +48,8 @@ Usage: dev-mail --state <dir> --fixtures <dir> [--new-mail-every <seconds>]
        dev-mail --state <dir> --certs-only
 
   --state <dir>            where the dev CA and server certificate are kept
-  --fixtures <dir>         tests/fixtures; every .eml under it goes in the Inbox
+  --fixtures <dir>         tests/fixtures; every .eml under it goes in the Inbox,
+                           or in Sent when named *.sent.eml
   --new-mail-every <secs>  also deliver a new message this often (for IDLE and notifications)
   --certs-only             make the certificates if needed, print the CA's path, and stop
 ";
@@ -158,8 +159,9 @@ fn save(path: &Path, bytes: &[u8], private: bool) -> Result<(), String> {
     std::fs::rename(&tmp, path).map_err(error)
 }
 
-/// Every `.eml` file under `dir`, in path order.
-fn fixtures(dir: &Path) -> Result<Vec<Vec<u8>>, String> {
+/// The `.eml` files under `dir`, in path order: those for the Inbox, and
+/// those for Sent (named `*.sent.eml`, tests/fixtures/conversations/README.md, #573).
+fn fixtures(dir: &Path) -> Result<(Vec<Vec<u8>>, Vec<Vec<u8>>), String> {
     let mut paths = Vec::new();
     let mut pending = vec![dir.to_path_buf()];
     while let Some(folder) = pending.pop() {
@@ -180,10 +182,23 @@ fn fixtures(dir: &Path) -> Result<Vec<Vec<u8>>, String> {
         }
     }
     paths.sort();
-    Ok(paths
-        .iter()
-        .filter_map(|path| std::fs::read(path).ok())
-        .collect())
+    let mut inbox = Vec::new();
+    let mut sent = Vec::new();
+    for path in &paths {
+        let Ok(bytes) = std::fs::read(path) else {
+            continue;
+        };
+        let name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().to_ascii_lowercase())
+            .unwrap_or_default();
+        if name.ends_with(".sent.eml") {
+            sent.push(bytes);
+        } else {
+            inbox.push(bytes);
+        }
+    }
+    Ok((inbox, sent))
 }
 
 /// Seconds since 1970 now.
@@ -235,12 +250,13 @@ async fn run(args: Args) -> Result<(), String> {
         }
         return Ok(());
     }
-    let inbox = fixtures(&args.fixtures)?;
+    let (inbox, sent) = fixtures(&args.fixtures)?;
     let count = inbox.len();
+    let sent_count = sent.len();
     let started = now_secs();
     let mailbox = Mailbox::new(&[
         ("INBOX", inbox),
-        ("Sent", Vec::new()),
+        ("Sent", sent),
         ("Drafts", Vec::new()),
         ("Archive", Vec::new()),
         ("Junk", Vec::new()),
@@ -268,7 +284,9 @@ async fn run(args: Args) -> Result<(), String> {
         .await?;
 
     let ca = args.state.join(CA_FILE);
-    println!("dev-mail: fake IMAP and SMTP running, {count} messages in the Inbox.");
+    println!(
+        "dev-mail: fake IMAP and SMTP running: {count} messages in the Inbox, {sent_count} in Sent."
+    );
     println!();
     println!("  On the emulator (cargo xtask dev-mail forwards the ports with adb reverse),");
     println!("  add a manual account:");

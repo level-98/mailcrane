@@ -1,0 +1,13 @@
+From: Erik Example <erik@example.net>
+To: Dana Example <dana@example.com>, Test <test@example.org>
+Subject: Re: Release plans
+Date: Tue, 24 Nov 2026 09:05:00 +0000
+Message-ID: <thread-plans-2@example.net>
+In-Reply-To: <thread-plans-1@example.com>
+References: <thread-plans-1@example.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Looks good. Can we add the settings change too?
+
+Expected: message 2 of the "Release plans" conversation.
