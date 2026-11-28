@@ -7,7 +7,14 @@
 #            changelog fragments' names and types (scripts/release_notes.py)
 #   linux    every check, and builds the debug APK (uploaded)
 #   windows  fmt, clippy and tests of the core, to keep it portable
+#   label    labels a pull request by the paths it changes (scripts/pr_checks.py)
+#   qa-gate  on a pull request: fails while it has needs-qa and not
+#            qa-verified or qa-light, so the merge queue waits for QA (#606)
 #   ci-ok    passes only if every job above passed or was rightly skipped
+#
+# A pull request also runs on `labeled` and `unlabeled`, so qa-gate sees QA's
+# label. Such a run skips linux and windows when they already passed for
+# this exact commit (nothing in the code changed), and runs them otherwise.
 #
 # What `changes` picks, from the files a pull request or merge group changes
 # (renames count as both paths):
@@ -29,6 +36,8 @@ on:
   push:
     branches: [main]
   pull_request:
+    # labeled/unlabeled: qa-gate re-checks when QA labels the PR (#606).
+    types: [opened, synchronize, reopened, labeled, unlabeled]
   # Ready for GitHub's merge queue; does nothing until it is turned on.
   merge_group:
   workflow_dispatch:
@@ -50,9 +59,14 @@ jobs:
   changes:
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    permissions:
+      contents: read
+      # On a label change: whether the builds already passed for this commit.
+      checks: read
     outputs:
       linux: ${{ steps.pick.outputs.linux }}
       windows: ${{ steps.pick.outputs.windows }}
+      prior: ${{ steps.pick.outputs.prior }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -69,9 +83,15 @@ jobs:
         id: pick
         env:
           EVENT: ${{ github.event_name }}
+          ACTION: ${{ github.event.action }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
           MERGE_GROUP_BASE: ${{ github.event.merge_group.base_sha }}
         run: |
           set -eu
+          : > "$RUNNER_TEMP/changed.txt"
+          prior=false
           base=""
           case "$EVENT" in
             pull_request) base="$(git rev-parse HEAD^1)" ;;
@@ -87,6 +107,7 @@ jobs:
             # --no-renames: a move out of android/ lists its old path too.
             files="$(git diff --name-only --no-renames "$base" HEAD)"
             printf 'changed files:\n%s\n' "$files"
+            printf '%s\n' "$files" > "$RUNNER_TEMP/changed.txt"
             android=false
             other=false
             while IFS= read -r f; do
@@ -105,11 +126,94 @@ jobs:
               linux="$android"
             fi
           fi
-          echo "linux=$linux windows=$windows"
+          # A label change alone (#606): the code is as it was, so builds that
+          # already passed for this commit aren't run again.
+          if [ "$EVENT" = pull_request ] && { [ "$ACTION" = labeled ] || [ "$ACTION" = unlabeled ]; }; then
+            passed="$(gh api "repos/$REPO/commits/$HEAD_SHA/check-runs" --paginate \
+              --jq '.check_runs[] | select(.conclusion == "success") | .name' || true)"
+            has() { printf '%s\n' "$passed" | grep -qx "$1"; }
+            if { [ "$linux" = false ] || has linux; } && { [ "$windows" = false ] || has windows; }; then
+              echo "label change: the builds already passed for $HEAD_SHA"
+              linux=false
+              windows=false
+              prior=true
+            fi
+          fi
+          echo "linux=$linux windows=$windows prior=$prior"
           {
             echo "linux=$linux"
             echo "windows=$windows"
+            echo "prior=$prior"
           } >> "$GITHUB_OUTPUT"
+
+      # Code changes need a changelog fragment, unless the PR is labelled
+      # no-changelog (#606). Names and types are checked above.
+      - name: A changelog fragment is there
+        if: github.event_name == 'pull_request'
+        env:
+          LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+        run: python3 scripts/pr_checks.py fragment "$RUNNER_TEMP/changed.txt" "$LABELS"
+
+  # Labels a pull request by its paths (#606): needs-qa, qa-light, area:*,
+  # security. Plain pull_request, never pull_request_target, and only for
+  # this repository's branches: a fork's token can't label, and fork PRs are
+  # labelled by hand.
+  label:
+    if: >-
+      github.event_name == 'pull_request' &&
+      contains(fromJSON('["opened", "synchronize", "reopened"]'), github.event.action) &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: scripts
+      - name: Label by path
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          set -eu
+          gh api "repos/$REPO/pulls/$PR/files" --paginate --jq '.[].filename' > "$RUNNER_TEMP/files.txt"
+          want="$(python3 scripts/pr_checks.py labels "$RUNNER_TEMP/files.txt" | paste -sd, -)"
+          echo "labels: ${want:-none}"
+          [ -z "$want" ] && exit 0
+          # qa-light never stays beside needs-qa: it would let the change past qa-gate.
+          if printf '%s' "$want" | grep -q 'needs-qa'; then
+            gh pr edit "$PR" --repo "$REPO" --add-label "$want" --remove-label qa-light
+          else
+            gh pr edit "$PR" --repo "$REPO" --add-label "$want"
+          fi
+
+  # Fails while the PR waits for QA (#606). It reads the PR's labels now,
+  # not the event's: labels the label job just set raise no new event.
+  qa-gate:
+    if: always() && github.event_name == 'pull_request'
+    needs: [label]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: scripts
+      - name: QA has checked it, if it needs QA
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          set -eu
+          labels="$(gh api "repos/$REPO/issues/$PR/labels" --jq '[.[].name]')"
+          echo "labels: $labels"
+          python3 scripts/pr_checks.py qa-gate "$labels"
 
   linux:
     needs: changes
@@ -185,7 +289,7 @@ jobs:
 
   ci-ok:
     if: always()
-    needs: [changes, linux, windows]
+    needs: [changes, label, qa-gate, linux, windows]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -198,9 +302,21 @@ jobs:
           WINDOWS: ${{ needs.windows.result }}
           NEED_LINUX: ${{ needs.changes.outputs.linux }}
           NEED_WINDOWS: ${{ needs.changes.outputs.windows }}
+          PRIOR: ${{ needs.changes.outputs.prior }}
+          LABEL: ${{ needs.label.result }}
+          QA_GATE: ${{ needs.qa-gate.result }}
+          EVENT: ${{ github.event_name }}
         run: |
-          echo "changes=$CHANGES linux=$LINUX ($NEED_LINUX) windows=$WINDOWS ($NEED_WINDOWS)"
+          echo "changes=$CHANGES linux=$LINUX ($NEED_LINUX) windows=$WINDOWS ($NEED_WINDOWS) prior=$PRIOR"
+          echo "label=$LABEL qa-gate=$QA_GATE"
           [ "$CHANGES" = success ] || exit 1
+          # The labeller only runs on some events; when it ran, it must have
+          # worked, or qa-gate could miss needs-qa.
+          case "$LABEL" in success | skipped) ;; *) exit 1 ;; esac
+          # On a pull request qa-gate always runs and must pass (#606).
+          if [ "$EVENT" = pull_request ]; then
+            [ "$QA_GATE" = success ] || exit 1
+          fi
           # check <needed> <result>
           check() {
             case "$2" in

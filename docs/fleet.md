@@ -103,7 +103,7 @@ The lead merges a PR labelled `fleet` through the merge queue: `gh pr merge <n> 
 
 - `ci-ok` passed on `<sha>` (branch protection doesn't require CI, so this check is the gate). A PR into the `website` branch has no `ci-ok`; its CI condition is the website workflow's `build` job on `<sha>`;
 - the review seat reviewed `<sha>` and every finding is fixed, or deferred to an issue that exists (named by number);
-- for a change under `android/`, QA verified it (`qa-verified`), noted that no device check is needed (no Compose, layout or resource change), or said exactly why it couldn't. The lead checks this against the diff's file list, not the title;
+- for a change under `android/`, QA verified it (`qa-verified`), noted that no device check is needed (no Compose, layout or resource change; `qa-light`), or said exactly why it couldn't. CI labels such a PR `needs-qa`, and its `qa-gate` job keeps `ci-ok` red until `qa-verified` or `qa-light` is on it (#606). The lead still checks this against the diff's file list, not the title;
 - the real diff matches what the PR says it changes (`git diff --stat origin/main...<sha>`): a stale branch can silently revert merged work;
 - its base is `main`. A stacked PR waits for its parent to merge; then its owner retargets it (`gh pr edit --base main`) and the lead checks the diff again;
 - no unresolved conversations and no merge conflict.

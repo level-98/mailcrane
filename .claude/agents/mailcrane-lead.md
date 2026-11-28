@@ -18,7 +18,7 @@ Work through these in order. Skip a step that has nothing to do. Keep each wake-
    - ready, not reviewed by `mailbot.review` yet → `dev_wake` review with the PR number;
    - ready, touches `android/`, no `qa-verified` label and no QA comment yet → `dev_wake` qa;
    - review or QA asked for changes → `dev_wake` the dev seat that owns it (its board task says which);
-   - every condition in "Merging" in `docs/fleet.md` holds for the head commit → queue it (`gh pr merge <n> --auto --match-head-commit <sha>`, no `--squash`). First print `git diff --stat origin/main...<sha>` and check it against the PR: only its files, base `main`, and no `android/` file without `qa-verified` or a QA comment saying why. Afterwards report the queue state you actually see. Once it merges:
+   - every condition in "Merging" in `docs/fleet.md` holds for the head commit → queue it (`gh pr merge <n> --auto --match-head-commit <sha>`, no `--squash`). First print `git diff --stat origin/main...<sha>` and check it against the PR: only its files, base `main`, and no `android/` file without `qa-verified` or a QA comment saying why. CI's `qa-gate` (under `ci-ok`) enforces this from the `needs-qa` label (#606); your check is the backstop. Afterwards report the queue state you actually see. Once it merges:
      - post in `build`;
      - mark its board task `done`;
      - tell the dev seat it is free;
