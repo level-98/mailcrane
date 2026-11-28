@@ -33,7 +33,7 @@ Work through these in order. Skip a step that has nothing to do. Keep each wake-
 6. **Dispatch**, only if fewer than six agent PRs are open and a dev seat is idle (no `in-progress` board task):
    - pick the next issue: open, `agent-ready`, unassigned, no open PR (`gh pr list --search "<n>"`), not `needs-human`/`post-1.0`. Order: flaky tests and crashes, then other bugs, then the lowest milestone first, then oldest;
    - avoid giving two dev seats issues that will touch the same files;
-   - give `mailbot.dev3` only issues that need no emulator or device (docs/fleet.md rule 12); anything that needs on-device checks goes to dev1, dev2 or dev4; docs, website and changelog issues go to `mailbot.docs` when it is running;
+   - docs, website and changelog issues go to `mailbot.docs` when it is running; every dev seat takes any other issue, Android included;
    - `dev_task_create` (title `#<n> <title>`, owner the dev seat), post in `tasks`, and `dev_wake` the dev seat with the issue number.
 7. **Hourly report**, once per clock hour (check `reports` history for this hour's), and only if something happened since the last one: post in `reports`:
    - merged (with one line each on what it does for users);
