@@ -4,6 +4,7 @@ import android.app.Application
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.junit4.createComposeRule
@@ -13,6 +14,7 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.swipeLeft
 import androidx.compose.ui.test.swipeRight
+import app.mailcrane.ui.messagelist.swipeIconTag
 import app.mailcrane.ui.theme.MailcraneTheme
 import org.junit.Assert.assertEquals
 import org.junit.Rule
@@ -108,5 +110,19 @@ class SwipePreviewSectionTest {
         compose.waitForIdle()
         compose.onNodeWithText("Cancel").assertDoesNotExist()
         assertEquals(listOf("Swipe right: Archive"), actionLabels())
+    }
+
+    /** The sample shows the chosen action's icon while it's dragged, as the list does (#594 review). */
+    @Test
+    fun theSampleShowsTheChosenActionsIcon() {
+        right = SwipeAction.FLAG
+        show()
+        compose.onNodeWithTag(SWIPE_PREVIEW_TAG).performTouchInput {
+            down(center)
+            moveBy(Offset(width / 4f, 0f))
+        }
+        compose.waitForIdle()
+        compose.onNodeWithTag(swipeIconTag(SwipeAction.FLAG), useUnmergedTree = true).assertExists()
+        compose.onNodeWithTag(SWIPE_PREVIEW_TAG).performTouchInput { up() }
     }
 }

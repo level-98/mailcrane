@@ -3,10 +3,13 @@ package app.mailcrane.settings
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ListItem
+import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Text
@@ -14,14 +17,18 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import app.mailcrane.R
 import app.mailcrane.core.MessageSummary
@@ -45,12 +52,18 @@ internal fun SwipePreviewSection(swipe: SwipeSettings) {
     var picking by rememberSaveable { mutableStateOf<Boolean?>(null) }
     val resources = LocalResources.current
     val locale = LocalConfiguration.current.locales[0]
-    val sample =
-        sampleMessage(
-            sender = resources.getString(R.string.swipe_preview_sender),
-            subject = resources.getString(R.string.swipe_preview_subject),
-        )
+    // Made once: a new date on every recomposition would format the row's date again each time.
+    val now = remember { ZonedDateTime.now() }
+    val sender = stringResource(R.string.swipe_preview_sender)
+    val subject = stringResource(R.string.swipe_preview_subject)
+    val sample = remember(sender, subject) { sampleMessage(sender, subject, now) }
     Column(Modifier.fillMaxWidth()) {
+        Text(
+            text = stringResource(R.string.swipe_preview_heading),
+            style = MaterialTheme.typography.titleSmall,
+            color = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 24.dp, bottom = 8.dp).semantics { heading() },
+        )
         Text(
             text = stringResource(R.string.swipe_preview_hint),
             style = MaterialTheme.typography.bodyMedium,
@@ -71,7 +84,7 @@ internal fun SwipePreviewSection(swipe: SwipeSettings) {
         ) {
             MessageRow(
                 message = sample,
-                now = ZonedDateTime.now(),
+                now = now,
                 locale = locale,
                 modifier = Modifier.testTag(SWIPE_PREVIEW_TAG),
             )
@@ -102,10 +115,12 @@ private fun SwipePicker(
         onDismissRequest = onDismiss,
         title = { Text(stringResource(title)) },
         text = {
-            Column(Modifier.selectableGroup()) {
+            // Scrolls: six choices don't fit in landscape or at large text sizes (#594 review).
+            Column(Modifier.verticalScroll(rememberScrollState()).selectableGroup()) {
                 for (action in SwipeAction.entries) {
                     ListItem(
                         leadingContent = { RadioButton(selected = current == action, onClick = null) },
+                        colors = ListItemDefaults.colors(containerColor = Color.Transparent),
                         modifier =
                             Modifier.selectable(
                                 selected = current == action,
@@ -127,13 +142,14 @@ private fun SwipePicker(
 private fun sampleMessage(
     sender: String,
     subject: String,
+    now: ZonedDateTime,
 ) = MessageSummary(
     id = -1,
     fromName = sender,
     fromAddr = "sample@example.com",
     subject = subject,
     snippet = "",
-    date = ZonedDateTime.now().toEpochSecond(),
+    date = now.toEpochSecond(),
     isSeen = true,
     isFlagged = false,
     hasAttachments = false,

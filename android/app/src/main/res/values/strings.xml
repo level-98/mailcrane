@@ -642,6 +642,7 @@
     <!-- Swipe actions (M4-04) -->
     <string name="settings_swipe_right">Swipe right</string>
     <string name="settings_swipe_left">Swipe left</string>
+    <string name="swipe_preview_heading">Swipe actions</string>
     <string name="swipe_preview_hint">Swipe the sample message to choose what each direction does.</string>
     <string name="swipe_preview_sender">Sample sender</string>
     <string name="swipe_preview_subject">Swipe me left or right</string>

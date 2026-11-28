@@ -53,6 +53,7 @@ import androidx.compose.ui.layout.layout
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalResources
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.CustomAccessibilityAction
@@ -678,11 +679,14 @@ internal fun SwipeableRow(
     val scope = rememberCoroutineScope()
     val resources = LocalResources.current
     val actions =
-        if (onSwipeToward != null && directionLabel != null) {
+        if (onSwipeToward != null) {
+            // The same condition as a swipe's (onDismiss below): with onSwipeToward set, TalkBack
+            // never runs a mail action either (#594 review).
             listOf(true to right, false to left)
                 .filter { it.second != SwipeAction.NONE }
-                .map { (startToEnd, _) ->
-                    CustomAccessibilityAction(directionLabel(startToEnd)) {
+                .map { (startToEnd, action) ->
+                    val label = directionLabel?.invoke(startToEnd) ?: resources.getString(a11yLabel(action))
+                    CustomAccessibilityAction(label) {
                         onSwipeToward(startToEnd)
                         true
                     }
@@ -764,9 +768,13 @@ private fun SwipeBackground(
             painter = painterResource(swipeIcon(action)),
             contentDescription = null,
             tint = onContainer,
+            modifier = Modifier.testTag(swipeIconTag(action)),
         )
     }
 }
+
+/** The tag of a swipe background's icon, for tests. */
+internal fun swipeIconTag(action: SwipeAction): String = "swipe-icon-${action.name}"
 
 private fun swipeIcon(action: SwipeAction): Int =
     when (action) {
