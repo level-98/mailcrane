@@ -130,6 +130,32 @@ class FolderDrawerViewModelTest {
     }
 
     @Test
+    fun allInboxesIsTheFirstStateWhenTheAppOpensThere() {
+        // #373 QA: the first cold start after choosing All inboxes showed an inbox. The start destination is
+        // part of the view model's first state, before any folder is read or the screen draws.
+        val core = FakeFolders(stored = listOf(INBOX, SENT), onServer = listOf(INBOX, SENT))
+        val gate = CompletableDeferred<Unit>()
+        core.refreshGate = gate
+        val vm = FolderDrawerViewModel(core, ACCOUNT, UNIFIED_FOLDER_ID)
+        assertEquals(UNIFIED_FOLDER_ID, vm.state.value.selectedFolderId)
+        gate.complete(Unit)
+        assertEquals("the refresh keeps it", UNIFIED_FOLDER_ID, vm.state.value.selectedFolderId)
+    }
+
+    @Test
+    fun aStartFolderGivenAtCreationOpensOnceTheFoldersAreRead() {
+        val core = FakeFolders(onServer = listOf(INBOX, SENT, WORK))
+        val gate = CompletableDeferred<Unit>()
+        core.refreshGate = gate
+        val vm = FolderDrawerViewModel(core, ACCOUNT, WORK.id)
+        gate.complete(Unit)
+        assertEquals(WORK, vm.state.value.selected)
+        // Already read: at once.
+        val stored = FolderDrawerViewModel(FakeFolders(stored = listOf(INBOX, SENT)), ACCOUNT, SENT.id)
+        assertEquals(SENT, stored.state.value.selected)
+    }
+
+    @Test
     fun theStartFolderOpensOnceTheFoldersAreRead() {
         // #373: a cold start, nothing stored yet; "Last used" asks for Sent before the folders arrive.
         val core = FakeFolders(onServer = listOf(INBOX, SENT, WORK))

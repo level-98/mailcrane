@@ -86,11 +86,16 @@ fun MailboxScreen(
     viewModel: FolderDrawerViewModel =
         hiltViewModel<FolderDrawerViewModel, FolderDrawerViewModel.Factory>(
             key = "folders-$accountId",
-            creationCallback = { factory -> factory.create(accountId) },
+            // The start destination is part of the first state (#373 QA): All inboxes never shows the inbox
+            // first and can't lose to it.
+            creationCallback = { factory ->
+                factory.create(accountId, if (startInUnified) UNIFIED_FOLDER_ID else startFolderId)
+            },
         ),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
-    // "Open the app on" (M4-16): the Unified Inbox or the folder shown last at start, once.
+    // "Open the app on" (M4-16): the Unified Inbox or the folder shown last at start, once. A new view model
+    // already starts there; this covers one kept from before.
     LaunchedEffect(startInUnified, startFolderId) {
         if (startInUnified) {
             viewModel.select(UNIFIED_FOLDER_ID)

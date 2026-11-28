@@ -57,16 +57,31 @@ class FolderDrawerViewModel
     constructor(
         private val core: MailboxCore,
         @Assisted private val accountId: Long,
+        /**
+         * Where the app opens ("Open the app on", #373): [UNIFIED_FOLDER_ID] or a folder of the account, or
+         * null for its inbox. Part of the first state, so no frame shows the inbox first.
+         */
+        @Assisted startFolderId: Long? = null,
     ) : ViewModel() {
         @AssistedFactory
         interface Factory {
-            fun create(accountId: Long): FolderDrawerViewModel
+            fun create(
+                accountId: Long,
+                startFolderId: Long? = null,
+            ): FolderDrawerViewModel
         }
 
-        private val _state = MutableStateFlow(FolderDrawerState())
+        private val _state =
+            MutableStateFlow(FolderDrawerState(selectedFolderId = startFolderId?.takeIf { it == UNIFIED_FOLDER_ID }))
         val state: StateFlow<FolderDrawerState> = _state.asStateFlow()
 
         private val reading = Mutex()
+
+        /**
+         * The folder to open once the folders are read, from [startIn] or the start folder. Declared
+         * before `init`, which reads it.
+         */
+        private var pendingStart: Long? = startFolderId?.takeIf { it != UNIFIED_FOLDER_ID }
 
         init {
             viewModelScope.launch {
@@ -89,9 +104,6 @@ class FolderDrawerViewModel
                 _state.update { it.copy(selectedFolderId = folderId) }
             }
         }
-
-        /** The folder to open once the folders are read, from [startIn]. */
-        private var pendingStart: Long? = null
 
         /**
          * Opens folder [folderId] at start ("Last used", #373): now if the folders are read, else once they
