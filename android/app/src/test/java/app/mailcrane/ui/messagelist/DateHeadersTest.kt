@@ -137,4 +137,3 @@ class DateHeadersTest {
         assertEquals(0, withDateHeaders(emptyList<Long>(), { it }, today, zone, DayOfWeek.MONDAY).size)
     }
 }
-// ktlint-only failure for #613 acceptance 2; reverted next.   
