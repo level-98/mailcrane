@@ -10,6 +10,7 @@ import app.mailcrane.core.MessageAction
 import app.mailcrane.core.MessageSummary
 import app.mailcrane.core.NO_FILTERS
 import app.mailcrane.core.SearchFlag
+import app.mailcrane.core.UNDO_WINDOW_MS
 import app.mailcrane.settings.FakeAppSettings
 import app.mailcrane.settings.SwipeAction
 import app.mailcrane.ui.messagelist.UndoOffer
@@ -23,6 +24,7 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -48,7 +50,7 @@ internal class FakeThreadCore : MailboxCore {
     /** A delete swipe takes the message out of the conversation, as moving it to Trash does. */
     var deleteRemoves = false
 
-    val folders =
+    var folders =
         listOf(
             FolderSummary(INBOX, "INBOX", FolderRole.INBOX, 0u, 0u, canTakeMoves = true),
             FolderSummary(ARCHIVE, "Archive", FolderRole.ARCHIVE, 0u, 0u, canTakeMoves = true),
@@ -215,8 +217,29 @@ class ConversationViewModelTest {
             vm.swipe(threadMessage(2), SwipeAction.ARCHIVE)
             assertEquals(listOf(Triple(2L, MessageAction.Archive, true)), core.swiped)
             assertEquals(UndoOffer(2, SwipeAction.ARCHIVE), vm.undo.value.offer)
-            assertEquals("the account's folders are read once", listOf(ACCOUNT), core.foldersAsked)
         }
+
+    /** #572 review: folders are read fresh, so one created after the first Move is offered on the next. */
+    @Test
+    fun aFolderCreatedAfterTheFirstMoveIsOffered() =
+        runTest {
+            val core = FakeThreadCore()
+            val vm = ConversationViewModel(core, FakeAppSettings(), THREAD)
+            vm.swipe(threadMessage(2), SwipeAction.MOVE)
+            vm.cancelMove()
+            core.folders = core.folders + FolderSummary(14, "Receipts", null, 0u, 0u, canTakeMoves = true)
+            vm.swipe(threadMessage(2), SwipeAction.MOVE)
+            assertTrue(vm.moveTargets.value!!.second.any { it.id == 14L })
+        }
+
+    /** #572 review: an Undo left over from an earlier visit, past the window, isn't shown. */
+    @Test
+    fun anOfferPastTheUndoWindowIsStale() {
+        val undo = SwipeUndo(offer = UndoOffer(2, SwipeAction.DELETE), offeredAt = 1_000)
+        assertTrue(undo.fresh(now = 1_000 + UNDO_WINDOW_MS - 1))
+        assertFalse(undo.fresh(now = 1_000 + UNDO_WINDOW_MS))
+        assertFalse("no offer is never fresh", SwipeUndo().fresh(now = 1_000))
+    }
 
     @Test
     fun aRefusedSwipeSaysWhyAndOffersNoUndo() =

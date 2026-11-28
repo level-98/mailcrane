@@ -18,6 +18,7 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -44,6 +45,7 @@ import app.mailcrane.core.MailboxCore
 import app.mailcrane.core.MessageAction
 import app.mailcrane.core.MessageSummary
 import app.mailcrane.core.SyncFailure
+import app.mailcrane.core.UNDO_WINDOW_MS
 import app.mailcrane.settings.AppSettings
 import app.mailcrane.settings.DEFAULT_SWIPE_LEFT
 import app.mailcrane.settings.DEFAULT_SWIPE_RIGHT
@@ -147,11 +149,8 @@ class ConversationViewModel
             }
         }
 
-        /** Each account's folders, read once: a conversation's messages all belong to one account. */
-        private val folders = mutableMapOf<Long, List<FolderSummary>>()
-
-        private suspend fun foldersOf(accountId: Long): List<FolderSummary> =
-            folders[accountId] ?: core.listFolders(accountId).also { folders[accountId] = it }
+        /** The account's folders, read fresh each time so new, deleted or renamed folders count (#572 review). */
+        private suspend fun foldersOf(accountId: Long): List<FolderSummary> = core.listFolders(accountId)
 
         private fun startMove(message: MessageSummary) {
             viewModelScope.launch {
@@ -222,6 +221,7 @@ class ConversationViewModel
                     it.copy(
                         inFlight = it.inFlight - 1,
                         offer = if (refused == null && undoable) UndoOffer(messageId, swipe) else it.offer,
+                        offeredAt = if (refused == null && undoable) System.currentTimeMillis() else it.offeredAt,
                     )
                 }
                 if (refused != null) _notices.send(refused)
@@ -242,7 +242,12 @@ class ConversationViewModel
 data class SwipeUndo(
     val inFlight: Int = 0,
     val offer: UndoOffer? = null,
-)
+    /** When [offer] was made, in wall-clock milliseconds: an offer older than the Undo window isn't shown. */
+    val offeredAt: Long = 0,
+) {
+    /** Whether [offer] is still within the core's Undo window at [now]. */
+    fun fresh(now: Long = System.currentTimeMillis()): Boolean = offer != null && now - offeredAt < UNDO_WINDOW_MS
+}
 
 @Composable
 fun ConversationScreen(
@@ -284,8 +289,20 @@ fun ConversationScreen(
     val offer = undo.offer
     LaunchedEffect(offer) {
         if (offer != null) {
-            if (showSwipeUndo(snackbar, resources, offer)) viewModel.undo(offer.messageId)
+            // Left over from an earlier visit, past the Undo window: dropped, not shown (#572 review).
+            if (undo.fresh() && showSwipeUndo(snackbar, resources, offer)) viewModel.undo(offer.messageId)
             viewModel.offerDone(offer)
+        }
+    }
+    // Leaving by Back or by opening a message: an Undo still on offer goes to the list (#572 review).
+    val handOff by rememberUpdatedState(onUndoHandOff)
+    DisposableEffect(viewModel) {
+        onDispose {
+            val left = viewModel.undo.value
+            left.offer?.let { offer ->
+                if (left.fresh()) handOff(offer)
+                viewModel.offerDone(offer)
+            }
         }
     }
     val moveTargets by viewModel.moveTargets.collectAsStateWithLifecycle()
@@ -354,6 +371,7 @@ fun ConversationContent(
                         now = now,
                         locale = locale,
                         modifier = Modifier.clickable { onOpenMessage(message.id) },
+                        showAccount = false,
                         // Inside a conversation each message shows its time too (#399).
                         dateStyle = RowDateStyle.CONVERSATION,
                     )
