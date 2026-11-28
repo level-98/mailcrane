@@ -207,7 +207,8 @@ class MessageListViewModel
             }
 
         /** Back or the top bar's Clear: ends selection. */
-        fun clearSelection() =
+        fun clearSelection() {
+            pendingDelete = null
             _state.update {
                 it.copy(
                     selectedMessages = emptySet(),
@@ -215,6 +216,7 @@ class MessageListViewModel
                     confirmDeleteForGood = 0,
                 )
             }
+        }
 
         /** Runs [action] on every selected row through the core, then ends selection. */
         fun bulk(action: BulkAction) {
@@ -286,6 +288,19 @@ class MessageListViewModel
          */
         private fun requestDelete() {
             val selection = currentSelection() ?: return
+            requestDeleteOf(selection, fromSelection = true)
+        }
+
+        /**
+         * The selection that "Delete for good" deletes once confirmed: a swiped conversation's (#552), else
+         * null for the current selection.
+         */
+        private var pendingDelete: BulkSelection? = null
+
+        private fun requestDeleteOf(
+            selection: BulkSelection,
+            fromSelection: Boolean,
+        ) {
             viewModelScope.launch {
                 val forGood =
                     try {
@@ -295,9 +310,12 @@ class MessageListViewModel
                         return@launch
                     }
                 if (forGood > 0) {
+                    pendingDelete = if (fromSelection) null else selection
                     _state.update { it.copy(confirmDeleteForGood = forGood) }
-                } else {
+                } else if (fromSelection) {
                     runBulk(MessageAction.Delete, BulkUndoKind.DELETED)
+                } else {
+                    runBulkOn(selection, MessageAction.Delete, BulkUndoKind.DELETED)
                 }
             }
         }
@@ -305,11 +323,20 @@ class MessageListViewModel
         /** "Delete for good" in the dialog: deletes with no Undo, since a permanent delete can't promise one. */
         fun confirmDeleteForGood() {
             _state.update { it.copy(confirmDeleteForGood = 0) }
-            runBulk(MessageAction.Delete, undo = null)
+            val swiped = pendingDelete
+            pendingDelete = null
+            if (swiped != null) {
+                runBulkOn(swiped, MessageAction.Delete, undo = null)
+            } else {
+                runBulk(MessageAction.Delete, undo = null)
+            }
         }
 
         /** The dialog was dismissed: nothing is deleted and the selection stays. */
-        fun cancelDeleteForGood() = _state.update { it.copy(confirmDeleteForGood = 0) }
+        fun cancelDeleteForGood() {
+            pendingDelete = null
+            _state.update { it.copy(confirmDeleteForGood = 0) }
+        }
 
         private fun currentSelection(): BulkSelection? {
             val current = _state.value
@@ -327,6 +354,15 @@ class MessageListViewModel
         ) {
             val selection = currentSelection() ?: return
             clearSelection()
+            runBulkOn(selection, action, undo)
+        }
+
+        /** Runs [action] on [selection] through the core, offering Undo of kind [undo] if not null. */
+        private fun runBulkOn(
+            selection: BulkSelection,
+            action: MessageAction,
+            undo: BulkUndoKind?,
+        ) {
             viewModelScope.launch {
                 try {
                     val applied = core.bulkAction(selection, action, undoable = undo != null)
@@ -369,15 +405,7 @@ class MessageListViewModel
             message: MessageSummary,
             action: SwipeAction,
         ) {
-            val (coreAction, undoable) =
-                when (action) {
-                    SwipeAction.NONE, SwipeAction.MOVE -> return
-                    SwipeAction.ARCHIVE -> MessageAction.Archive to true
-                    SwipeAction.DELETE -> MessageAction.Delete to true
-                    SwipeAction.READ_UNREAD ->
-                        (if (message.isSeen) MessageAction.MarkUnread else MessageAction.MarkRead) to false
-                    SwipeAction.FLAG -> (if (message.isFlagged) MessageAction.Unflag else MessageAction.Flag) to false
-                }
+            val (coreAction, undoable) = swipeCoreAction(message, action) ?: return
             run(message.id, coreAction, undoable, action)
         }
 
@@ -386,6 +414,47 @@ class MessageListViewModel
             messageId: Long,
             folderId: Long,
         ) = run(messageId, MessageAction.Move(folderId), undoable = false, swipe = SwipeAction.MOVE)
+
+        /**
+         * A swipe on a conversation row (#552): [action] on every message of [thread] in this folder, as
+         * selecting the conversation and using the selection bar does, with the same Undo and the same
+         * question before a delete that would be permanent. Read and flag go by the row: an unread
+         * conversation is marked read, a flagged one unflagged. Not for MOVE.
+         */
+        fun swipeThread(
+            thread: ThreadSummary,
+            action: SwipeAction,
+        ) {
+            val selection = threadSelection(thread.threadId)
+            when (action) {
+                SwipeAction.NONE, SwipeAction.MOVE -> Unit
+                SwipeAction.ARCHIVE -> runBulkOn(selection, MessageAction.Archive, BulkUndoKind.ARCHIVED)
+                // One "Delete for good?" at a time: a second swiped delete while one waits is dropped, and its row
+                // comes back (#560 review).
+                SwipeAction.DELETE -> if (pendingDelete == null) requestDeleteOf(selection, fromSelection = false)
+                SwipeAction.READ_UNREAD ->
+                    runBulkOn(
+                        selection,
+                        if (thread.unreadCount > 0u) MessageAction.MarkRead else MessageAction.MarkUnread,
+                        undo = null,
+                    )
+                SwipeAction.FLAG ->
+                    runBulkOn(
+                        selection,
+                        if (thread.isFlagged) MessageAction.Unflag else MessageAction.Flag,
+                        undo = null,
+                    )
+            }
+        }
+
+        /** The Move swipe on a conversation row, once a folder is picked (#552). */
+        fun moveThread(
+            threadId: Long,
+            folderId: Long,
+        ) = runBulkOn(threadSelection(threadId), MessageAction.Move(folderId), BulkUndoKind.MOVED)
+
+        private fun threadSelection(threadId: Long) =
+            BulkSelection(messageIds = emptyList(), folderId = folderId, threadIds = listOf(threadId))
 
         /** The snackbar's Undo. */
         fun undo(messageId: Long) {
@@ -407,13 +476,10 @@ class MessageListViewModel
             swipe: SwipeAction,
         ) {
             viewModelScope.launch {
-                try {
-                    core.swipeAction(messageId, action, undoable)
-                    if (undoable) _undoOffers.send(UndoOffer(messageId, swipe))
-                } catch (e: ActionFailure.NoArchiveFolder) {
-                    _notices.send(R.string.action_no_archive_folder)
-                } catch (e: ActionFailure) {
-                    _notices.send(R.string.action_not_applied)
+                val refused = runSwipeAction(core, messageId, action, undoable)
+                when {
+                    refused != null -> _notices.send(refused)
+                    undoable -> _undoOffers.send(UndoOffer(messageId, swipe))
                 }
             }
         }
@@ -491,7 +557,9 @@ class MessageListViewModel
         /** Drops selected rows that left the list (moved, deleted, or changed elsewhere). */
         private fun pruneSelection() =
             _state.update { s ->
-                if (!s.selecting) return@update s.copy(confirmDeleteForGood = 0)
+                // A swiped conversation's "Delete for good?" has no selection behind it: keep it until it's
+                // answered (#560 review).
+                if (!s.selecting) return@update if (pendingDelete != null) s else s.copy(confirmDeleteForGood = 0)
                 val ids = s.messages.mapTo(HashSet()) { it.id }
                 val threads = s.threads.mapTo(HashSet()) { it.threadId }
                 s.copy(
