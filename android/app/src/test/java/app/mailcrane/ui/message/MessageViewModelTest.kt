@@ -684,6 +684,54 @@ class MessageViewModelTest {
         }
 
     @Test
+    fun aMessageReopenedAfterMarkAsUnreadShowsUnreadAndCanBeMarkedReadAgain() =
+        runTest {
+            // #514 item 1: the view model is kept (keyed by message id), so a reopen used to keep "read".
+            // #372's onShown reload covers it; this proves it for Mark as unread with MANUAL.
+            val core = FakeMessageCore()
+            val settings = FakeAppSettings().apply { markRead.value = MarkReadMode.MANUAL }
+            val vm = messageViewModel(core, settings)
+            vm.onShown()
+            vm.markReadByHand()
+            assertTrue(ready(vm).message.isSeen)
+            vm.markUnread()
+            runCurrent()
+            assertEquals(listOf<MessageAction>(MessageAction.MarkUnread), core.actions)
+            core.seen = false // What the core's Mark as unread does.
+
+            vm.onShown()
+            runCurrent()
+            assertFalse("shown unread", ready(vm).message.isSeen)
+            vm.markReadByHand()
+            runCurrent()
+            assertEquals(2, core.calls.count { it == "markRead" })
+            assertTrue(ready(vm).message.isSeen)
+        }
+
+    @Test
+    fun aCancelledMarkReadAllowsAnotherTry() =
+        runTest {
+            // #514 item 5: leaving while the delayed mark-read is running cancels it; a later try still marks.
+            val core = FakeMessageCore()
+            val settings = FakeAppSettings().apply { markRead.value = MarkReadMode.AFTER_DELAY }
+            val vm = messageViewModel(core, settings)
+            core.markReadGate = kotlinx.coroutines.CompletableDeferred()
+            val timer = launch { vm.markReadAfterDelay() }
+            advanceTimeBy(2_001)
+            runCurrent()
+            assertEquals(1, core.calls.count { it == "markRead" })
+            timer.cancel()
+            runCurrent()
+            assertFalse(ready(vm).message.isSeen)
+
+            core.markReadGate = null
+            vm.markReadByHand()
+            runCurrent()
+            assertEquals(2, core.calls.count { it == "markRead" })
+            assertTrue(ready(vm).message.isSeen)
+        }
+
+    @Test
     fun onlyByHandNeverMarksOnOpenButTheButtonDoes() =
         runTest {
             val core = FakeMessageCore()

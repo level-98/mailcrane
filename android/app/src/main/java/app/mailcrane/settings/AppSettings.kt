@@ -172,8 +172,11 @@ enum class MarkReadMode {
     MANUAL,
 }
 
-/** How long a message must stay open to be marked read with [MarkReadMode.AFTER_DELAY]. */
-const val MARK_READ_DELAY_MS = 2_000L
+/** How long a message must stay open to be marked read with [MarkReadMode.AFTER_DELAY], in whole seconds. */
+const val MARK_READ_DELAY_SECONDS = 2
+
+/** [MARK_READ_DELAY_SECONDS] in milliseconds. Whole seconds, so the Settings label is exact (#514). */
+const val MARK_READ_DELAY_MS = MARK_READ_DELAY_SECONDS * 1_000L
 
 /** What shows after archiving, deleting or moving the open message (M4-15). */
 enum class AfterMoveAction {
