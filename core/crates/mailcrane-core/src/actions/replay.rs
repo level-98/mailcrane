@@ -25,7 +25,8 @@ pub struct ReplayReport {
     /// Actions now done on the server.
     pub done: usize,
     /// Actions the server refused for good (their local changes were
-    /// undone), or dropped because the server renumbered their folder.
+    /// undone), or dropped because the server renumbered their folder and
+    /// not finished (#541).
     pub failed: usize,
     /// Actions still queued (not due yet, or deferred after a failure).
     pub remaining: usize,
@@ -83,8 +84,12 @@ pub async fn replay(
                     )?
                     .unwrap_or_default();
                 reset.push(op.folder_id);
-                report.failed = report.failed.saturating_add(dropped.len());
-                report_folder_reset(listener, account, op.folder_id, dropped);
+                // `run` left the folder selected, as finishing needs.
+                let count = dropped.len();
+                let left = finish_half_done(session, dropped).await;
+                report.done = report.done.saturating_add(count.saturating_sub(left.len()));
+                report.failed = report.failed.saturating_add(left.len());
+                report_folder_reset(listener, account, op.folder_id, left);
             }
             Err(error) if error.is_transient() => {
                 let attempts = op.attempts.saturating_add(1);
@@ -113,9 +118,87 @@ pub async fn replay(
     Ok(report)
 }
 
-/// Tells the app that `folder` was emptied because the server renumbered
-/// it, and that the changes queued for it were dropped: their UIDs name
-/// other messages now (#517).
+/// Finishes the half-done actions among `dropped` (#541): a move without
+/// `MOVE` that already copied, or a move or expunge that already set
+/// `\Deleted` (AGENTS.md §3: no half-applied moves or deletes). Their UIDs
+/// are stale after the reset, so each message is found again by its
+/// `Message-ID` in the folder `session` has selected (the reset one, RFC
+/// 9051 §6.4.4), then flagged `\Deleted` and `UID EXPUNGE`d as the replay
+/// would have. A message is finished only when exactly one message there
+/// has its `Message-ID`; none means it is gone already. Returns what is
+/// left to report: the other actions as they were, and the messages of
+/// half-done ones that couldn't be finished (no `Message-ID`, several
+/// matches, or the server failed).
+pub(crate) async fn finish_half_done(
+    session: &mut Session,
+    dropped: Vec<DroppedOp>,
+) -> Vec<DroppedOp> {
+    let mut left = Vec::with_capacity(dropped.len());
+    for op in dropped {
+        if !op.half_done() {
+            left.push(op);
+            continue;
+        }
+        let mut unfinished = Vec::new();
+        // The messages found again: (local id, its header, its new UID).
+        let mut found: Vec<(mailcrane_store::MessageId, Option<String>, u32)> = Vec::new();
+        let mut failed = false;
+        for (id, header) in op.message_ids.iter().zip(&op.message_id_headers) {
+            let uids = match header {
+                Some(h) if !failed => session.uid_search_message_id(h).await,
+                _ => {
+                    unfinished.push((*id, header.clone()));
+                    continue;
+                }
+            };
+            match uids.as_deref() {
+                // Gone from the folder already: nothing left to do.
+                Ok([]) => {}
+                Ok([uid]) => found.push((*id, header.clone(), *uid)),
+                Ok(_) => unfinished.push((*id, header.clone())),
+                Err(_) => {
+                    failed = true;
+                    unfinished.push((*id, header.clone()));
+                }
+            }
+        }
+        if !found.is_empty() {
+            let uids: Vec<u32> = found.iter().map(|(_, _, uid)| *uid).collect();
+            if finish(session, op.step, &uids).await.is_err() {
+                unfinished.extend(found.into_iter().map(|(id, h, _)| (id, h)));
+            }
+        }
+        if !unfinished.is_empty() {
+            let (message_ids, message_id_headers) = unfinished.into_iter().unzip();
+            left.push(DroppedOp {
+                message_ids,
+                message_id_headers,
+                ..op
+            });
+        }
+    }
+    left
+}
+
+/// The rest of [`delete_for_good`] for `uids` found again after a reset:
+/// `\Deleted` unless that step was done, then `UID EXPUNGE` when the server
+/// has it (never a plain `EXPUNGE`).
+async fn finish(session: &mut Session, step: u8, uids: &[u32]) -> Result<(), ChangeError> {
+    if step < STEP_FLAGGED_DELETED {
+        session
+            .uid_store_flag(uids, SystemFlag::Deleted, true)
+            .await?;
+    }
+    if session.supports_uid_expunge() {
+        session.uid_expunge(uids).await?;
+    }
+    Ok(())
+}
+
+/// Tells the app that `folder` was emptied because it was refreshed from the
+/// server, and that the changes queued for it were dropped: their UIDs or
+/// rows name other messages now (#517). A half-done move or delete that
+/// couldn't be finished is reported as such (#541).
 pub(crate) fn report_folder_reset(
     listener: &dyn EventListener,
     account: AccountId,
@@ -124,16 +207,26 @@ pub(crate) fn report_folder_reset(
 ) {
     listener.on_event(CoreEvent::FolderChanged { folder_id: folder });
     for op in dropped {
-        tracing::warn!(
-            folder = folder.0,
-            kind = ?op.kind,
-            "queued action dropped: the server reset the folder"
-        );
+        let reason = if op.half_done() {
+            tracing::warn!(
+                folder = folder.0,
+                kind = ?op.kind,
+                "half-done action not finished: the folder was refreshed from the server"
+            );
+            SyncErrorKind::FolderResetUnfinished
+        } else {
+            tracing::warn!(
+                folder = folder.0,
+                kind = ?op.kind,
+                "queued action dropped: the folder was refreshed from the server"
+            );
+            SyncErrorKind::FolderReset
+        };
         listener.on_event(CoreEvent::ActionFailed {
             account_id: account,
             action: action_kind(op.kind),
             message_ids: op.message_ids,
-            reason: SyncErrorKind::FolderReset,
+            reason,
         });
     }
 }

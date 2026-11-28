@@ -451,3 +451,60 @@ fn a_partly_refused_action_leaves_a_row_that_took_the_id_alone() -> R {
         .is_some_and(|h| h.details.flags.flagged));
     Ok(())
 }
+
+#[test]
+fn a_dropped_action_keeps_its_progress_and_message_ids_to_be_finished() -> R {
+    // #541: a half-done move is found again by Message-ID after the reset.
+    let f = fixture(Store::open_in_memory()?)?;
+    let first = f.messages[0];
+    let op = f
+        .store
+        .queue_op(
+            f.account,
+            OpKind::Move,
+            f.inbox,
+            Some(f.archive),
+            &[first],
+            100,
+        )?
+        .ok_or("queued")?;
+    f.store.set_op_step(op, 1)?;
+    let flagged = f.messages[1];
+    f.store
+        .queue_op(f.account, OpKind::Flag, f.inbox, None, &[flagged], 100)?
+        .ok_or("queued")?;
+    let dropped = f
+        .store
+        .reset_folder_reporting(f.inbox, 2, 1)?
+        .ok_or("the folder exists")?;
+    assert_eq!(dropped.len(), 2);
+    let moved = &dropped[0];
+    assert_eq!((moved.kind, moved.step), (OpKind::Move, 1));
+    assert!(moved.half_done());
+    assert_eq!(moved.message_ids, [first.message_id]);
+    assert_eq!(
+        moved.message_id_headers,
+        [Some(format!("<{}@example.org>", first.uid))]
+    );
+    assert!(!dropped[1].half_done(), "a flag never is");
+    Ok(())
+}
+
+#[test]
+fn dropping_messages_from_an_action_leaves_their_rows_alone() -> R {
+    // #541: a JMAP replay takes reused rows out of the action, so completing
+    // it can't delete them.
+    let f = fixture(Store::open_in_memory()?)?;
+    let (op, reused) = reused_after(&f, OpKind::Expunge, false)?;
+    let other = f.messages[0];
+    assert_eq!(
+        f.store
+            .drop_op_messages(op, &[reused.message_id, other.message_id])?,
+        [reused.message_id],
+        "only the action's own message"
+    );
+    f.store.complete_op(op, true)?;
+    assert!(f.store.get_message_header(reused.message_id)?.is_some());
+    assert_eq!(f.store.count_pending_ops(f.account)?, 0);
+    Ok(())
+}

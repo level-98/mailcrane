@@ -495,7 +495,9 @@
     <string name="snooze_woken_title">Back from snooze</string>
     <string name="snooze_woken_no_subject">(no subject)</string>
     <string name="action_undone">The server didn’t accept a change, so it was undone</string>
-    <string name="action_dropped_folder_reset">Some changes made offline couldn’t be applied, because the server reset that folder</string>
+    <string name="action_dropped_folder_reset">Some changes couldn’t be applied, because the folder was refreshed from the server</string>
+    <!-- #541: a move or delete was partly done on the server when the folder was refreshed, and couldn't be finished -->
+    <string name="action_unfinished_folder_reset">A move or delete couldn’t be finished after the folder was refreshed from the server. A message may be in two folders.</string>
 
     <!-- Account setup, debug builds only (#559): their signing key is public, so they must never hold a real account -->
     <string name="debug_account_warning_title">This is a debug build</string>

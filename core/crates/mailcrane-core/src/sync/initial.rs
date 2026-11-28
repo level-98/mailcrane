@@ -267,14 +267,18 @@ impl<'a> FolderSyncer<'a> {
             .get_folder(folder)?
             .ok_or(SyncError::UnknownFolder)?;
         let info = self.session.select(&row.details.remote_name).await?;
-        let changed = self.reset_if_renumbered(folder, row.details.uidvalidity, &info)?;
+        let changed = self
+            .reset_if_renumbered(folder, row.details.uidvalidity, &info)
+            .await?;
         Ok((row.details.remote_name, info, changed))
     }
 
     /// Clears the folder's cache if the server's `UIDVALIDITY` is not the
-    /// stored one (RFC 9051 §2.3.1.1). Returns whether it did.
-    pub(super) fn reset_if_renumbered(
-        &self,
+    /// stored one (RFC 9051 §2.3.1.1). Returns whether it did. The folder
+    /// must be selected: half-done actions queued there are finished in it
+    /// (#541).
+    pub(super) async fn reset_if_renumbered(
+        &mut self,
         folder: FolderId,
         stored: Option<i64>,
         info: &SelectInfo,
@@ -297,7 +301,8 @@ impl<'a> FolderSyncer<'a> {
                 .unwrap_or_default();
             // With no stored UIDVALIDITY (first sync) no action can be queued
             // for the folder: actions need its messages, which need a sync.
-            crate::actions::report_folder_reset(self.listener, self.account, folder, dropped);
+            let left = crate::actions::finish_half_done(self.session, dropped).await;
+            crate::actions::report_folder_reset(self.listener, self.account, folder, left);
         }
         Ok(changed)
     }

@@ -37,8 +37,14 @@ pub enum SyncErrorKind {
     Storage,
     /// The folder or message does not exist (any more).
     NotFound,
-    /// The folder's `UIDVALIDITY` changed; sync the folder again.
+    /// The folder's `UIDVALIDITY` changed; sync the folder again. For an
+    /// action that failed: its folder was refreshed from the server, so the
+    /// change was dropped.
     FolderReset,
+    /// For an action that failed only (#541): a move or delete was partly
+    /// done when its folder was refreshed from the server, and couldn't be
+    /// finished. A moved message may now be in both folders.
+    FolderResetUnfinished,
     /// Another sync was writing to the local database and kept it busy.
     /// Local and passing: nothing is wrong with the server or the account,
     /// and the next sync works. Apps shouldn't show it as an error.
@@ -56,6 +62,7 @@ impl From<events::SyncErrorKind> for SyncErrorKind {
             events::SyncErrorKind::Storage => Self::Storage,
             events::SyncErrorKind::NotFound => Self::NotFound,
             events::SyncErrorKind::FolderReset => Self::FolderReset,
+            events::SyncErrorKind::FolderResetUnfinished => Self::FolderResetUnfinished,
             events::SyncErrorKind::Busy => Self::Busy,
         }
     }
@@ -81,8 +88,11 @@ pub enum CoreEvent {
         /// What kind of failure.
         kind: SyncErrorKind,
     },
-    /// The server refused a message action for good. Its local change was
-    /// undone (a `MessagesChanged` event comes with it); tell the user.
+    /// A queued message action won't be carried out; tell the user. Either
+    /// the server refused it for good (its local change was undone, and a
+    /// `MessagesChanged` event comes with it), or its folder was refreshed
+    /// from the server (`reason` `FolderReset`, or `FolderResetUnfinished`
+    /// for a move or delete left partly done, #541).
     ActionFailed {
         /// Row id of the account.
         account_id: i64,

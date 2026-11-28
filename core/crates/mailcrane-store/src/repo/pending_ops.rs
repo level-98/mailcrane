@@ -316,14 +316,32 @@ fn op_folder(tx: &Transaction<'_>, op: OpId) -> Result<Option<(OpKind, FolderId)
         .transpose()
 }
 
-/// A queued action dropped because its folder's `UIDVALIDITY` changed
-/// (#517): its UIDs now name other messages, so it can't be applied.
+/// A queued action dropped because its folder was refreshed from the server
+/// (#517, #541): its `UIDVALIDITY` changed, or a JMAP server couldn't say
+/// what changed. Its UIDs or rows may name other messages now, so it can't
+/// be applied as it is.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DroppedOp {
     /// What the action was.
     pub kind: OpKind,
     /// The local rows it was applied to (gone with the folder's reset).
     pub message_ids: Vec<MessageId>,
+    /// How far a multi-command action had got on the server (see
+    /// [`PendingOp::step`]); 0 if it hadn't started.
+    pub step: u8,
+    /// Each message's `Message-ID` (without angle brackets), in the order of
+    /// [`DroppedOp::message_ids`], to find it again after the reset (#541).
+    pub message_id_headers: Vec<Option<String>>,
+}
+
+impl DroppedOp {
+    /// Whether the action was partly carried out on the server (#541): a
+    /// move without `MOVE` that already copied, or a move or expunge that
+    /// already set `\Deleted`. Dropping it would leave a copy in both
+    /// folders, or a message marked deleted.
+    pub fn half_done(&self) -> bool {
+        self.step > 0 && matches!(self.kind, OpKind::Move | OpKind::Expunge)
+    }
 }
 
 /// Removes every queued action on messages of `folder`, inside `tx`, and
@@ -333,21 +351,36 @@ pub(crate) fn take_folder_ops(
     tx: &Transaction<'_>,
     folder: FolderId,
 ) -> Result<Vec<DroppedOp>, StoreError> {
-    let ops: Vec<(i64, String)> = {
+    let ops: Vec<(i64, String, i64)> = {
         let mut stmt =
-            tx.prepare("SELECT id, kind FROM pending_ops WHERE folder_id = ?1 ORDER BY id")?;
-        let rows = stmt.query_map(params![folder.0], |r| Ok((r.get(0)?, r.get(1)?)))?;
+            tx.prepare("SELECT id, kind, step FROM pending_ops WHERE folder_id = ?1 ORDER BY id")?;
+        let rows = stmt.query_map(params![folder.0], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?;
         rows.collect::<Result<_, _>>()?
     };
     let mut dropped = Vec::with_capacity(ops.len());
-    for (id, kind) in ops {
+    for (id, kind, step) in ops {
         let kind = OpKind::parse(&kind)?;
-        let message_ids = load_messages(tx, OpId(id))?
-            .into_iter()
-            .map(|m| m.message_id)
-            .collect();
+        let messages = load_messages(tx, OpId(id))?;
+        let mut message_id_headers = Vec::with_capacity(messages.len());
+        for m in &messages {
+            // Only from the row that is still that message (#503).
+            let header: Option<String> = tx
+                .query_row(
+                    &format!("SELECT message_id_header FROM messages {SAME_MESSAGE}"),
+                    params![m.message_id.0, folder.0, m.uid],
+                    |r| r.get(0),
+                )
+                .optional()?
+                .flatten();
+            message_id_headers.push(header.filter(|h| !h.is_empty()));
+        }
         delete_op(tx, OpId(id))?;
-        dropped.push(DroppedOp { kind, message_ids });
+        dropped.push(DroppedOp {
+            kind,
+            message_ids: messages.iter().map(|m| m.message_id).collect(),
+            step: narrow(step, "step")?,
+            message_id_headers,
+        });
     }
     Ok(dropped)
 }
@@ -517,6 +550,30 @@ impl Store {
         }
         tx.commit()?;
         Ok(undone)
+    }
+
+    /// Takes `messages` out of the action without touching their rows (#541):
+    /// a JMAP replay found their rows hold other emails now (row ids are
+    /// reused), so neither completing nor failing the action may change
+    /// them. Returns the ids it took out.
+    pub fn drop_op_messages(
+        &self,
+        op: OpId,
+        messages: &[MessageId],
+    ) -> Result<Vec<MessageId>, StoreError> {
+        let tx = self.write_tx()?;
+        let mut dropped = Vec::new();
+        for m in messages {
+            let n = tx.execute(
+                "DELETE FROM pending_op_messages WHERE op_id = ?1 AND message_id = ?2",
+                params![op.0, m.0],
+            )?;
+            if n > 0 {
+                dropped.push(*m);
+            }
+        }
+        tx.commit()?;
+        Ok(dropped)
     }
 
     /// The action failed for now: records the attempt and when to try next.
