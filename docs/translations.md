@@ -41,7 +41,7 @@ Unfinished languages are fine. Missing strings show in English, and a language a
 
    | Setting | Value |
    |---|---|
-   | Source code repository | `https://github.com/level-98/mailcrane.git`, branch `main` |
+   | Source code repository | `https://github.com/mailcrane/mailcrane.git`, branch `main` |
    | Repository push URL | through the Weblate GitHub app or a bot account with access to forks only |
    | Push branch | `weblate` (never `main`) |
    | File format | Android String Resource |

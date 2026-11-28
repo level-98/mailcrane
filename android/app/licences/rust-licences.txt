@@ -2164,7 +2164,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 @@end
 @@licence MPL-2.0
-@@crate mailcrane-core 0.0.0 https://github.com/level-98/mailcrane
+@@crate mailcrane-core 0.0.0 https://github.com/mailcrane/mailcrane
 @@crate dtoa-short 0.3.5 https://github.com/upsuper/dtoa-short
 @@text
 Mozilla Public License Version 2.0
@@ -2921,13 +2921,13 @@ Exhibit B - "Incompatible With Secondary Licenses" Notice
 
 @@end
 @@licence MPL-2.0
-@@crate mailcrane-ffi 0.0.0 https://github.com/level-98/mailcrane
-@@crate mailcrane-imap 0.0.0 https://github.com/level-98/mailcrane
-@@crate mailcrane-jmap 0.0.0 https://github.com/level-98/mailcrane
-@@crate mailcrane-mime 0.0.0 https://github.com/level-98/mailcrane
-@@crate mailcrane-sieve 0.0.0 https://github.com/level-98/mailcrane
-@@crate mailcrane-smtp 0.0.0 https://github.com/level-98/mailcrane
-@@crate mailcrane-store 0.0.0 https://github.com/level-98/mailcrane
+@@crate mailcrane-ffi 0.0.0 https://github.com/mailcrane/mailcrane
+@@crate mailcrane-imap 0.0.0 https://github.com/mailcrane/mailcrane
+@@crate mailcrane-jmap 0.0.0 https://github.com/mailcrane/mailcrane
+@@crate mailcrane-mime 0.0.0 https://github.com/mailcrane/mailcrane
+@@crate mailcrane-sieve 0.0.0 https://github.com/mailcrane/mailcrane
+@@crate mailcrane-smtp 0.0.0 https://github.com/mailcrane/mailcrane
+@@crate mailcrane-store 0.0.0 https://github.com/mailcrane/mailcrane
 @@crate uniffi 0.32.2 https://github.com/mozilla/uniffi-rs
 @@crate uniffi_core 0.32.2 https://github.com/mozilla/uniffi-rs
 @@crate uniffi_internal_macros 0.32.2 https://github.com/mozilla/uniffi-rs
