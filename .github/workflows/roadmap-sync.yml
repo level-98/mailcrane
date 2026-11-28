@@ -20,10 +20,17 @@
 # Setup: Settings → Actions → General → Workflow permissions →
 # tick "Allow GitHub Actions to create and approve pull requests".
 #
+# The sync PR is pushed and opened with a token from the roadmap GitHub App
+# (#599), so CI runs on it like on any other PR: GitHub doesn't start other
+# workflows for pushes and PRs made with the built-in token. Setup: create the
+# app with Contents and Pull requests (read and write) on this repository,
+# install it here, then add its App ID as the repository variable
+# ROADMAP_APP_ID and its private key as the secret ROADMAP_APP_PRIVATE_KEY.
+# Without them (a fork, or before setup) the job falls back to the built-in
+# token and says so: CI on the sync PR then waits for a maintainer's approval.
+#
 # If the merge is refused, the PR stays open for a maintainer and the run logs
-# a warning. That will happen once CI is a required check, because PRs opened
-# with the built-in token don't trigger other workflows: then close and reopen
-# the sync PR (or push to it) to run CI, and merge it by hand.
+# a warning.
 name: Sync roadmap
 
 on:
@@ -126,17 +133,50 @@ jobs:
       group: roadmap-sync
       cancel-in-progress: false
     env:
-      GH_TOKEN: ${{ github.token }}
       BRANCH: bot/roadmap-sync
+      # Secrets can't be tested in `if:`; this says only whether one is set.
+      HAS_APP_KEY: ${{ secrets.ROADMAP_APP_PRIVATE_KEY != '' }}
     steps:
+      # The app's token is minted only here, in this job, and only with the
+      # two permissions the push and the PR need. The action masks it in logs
+      # and revokes it when the job ends.
+      - name: Get the roadmap app's token
+        id: app
+        if: vars.ROADMAP_APP_ID != '' && env.HAS_APP_KEY == 'true'
+        # A broken app setup falls back to the built-in token, like none.
+        continue-on-error: true
+        uses: actions/create-github-app-token@f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc # v3.4.0
+        with:
+          app-id: ${{ vars.ROADMAP_APP_ID }}
+          private-key: ${{ secrets.ROADMAP_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+
+      - name: Say which token opens the PR
+        env:
+          OUTCOME: ${{ steps.app.outcome }}
+        run: |
+          case "$OUTCOME" in
+            success)
+              echo "Pushing and opening the sync PR with the roadmap app's token, so CI runs on it." ;;
+            failure)
+              echo "::warning::The roadmap app's token couldn't be minted (check ROADMAP_APP_ID, ROADMAP_APP_PRIVATE_KEY and the app's installation), so the sync PR uses the built-in token, and its CI waits for a maintainer's approval." ;;
+            *)
+              echo "::notice::ROADMAP_APP_ID or ROADMAP_APP_PRIVATE_KEY isn't set, so the sync PR uses the built-in token. GitHub doesn't run CI for it until a maintainer approves the run (see the setup note at the top of roadmap-sync.yml)." ;;
+          esac
+
       - uses: actions/checkout@v7
         with:
           ref: main
+          # Pushes made with this token start CI on the sync PR.
+          token: ${{ steps.app.outputs.token || github.token }}
 
       - name: Update ROADMAP.md from the issues
         run: python3 scripts/sync_roadmap.py
 
       - name: Open, refresh or close the sync PR
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token || github.token }}
         run: |
           set -euo pipefail
           open_pr=$(gh pr list --head "$BRANCH" --state open --json number --jq '.[0].number // empty')
