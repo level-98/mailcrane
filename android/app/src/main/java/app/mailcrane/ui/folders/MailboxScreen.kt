@@ -49,6 +49,7 @@ import app.mailcrane.ui.mailLayoutFor
 import app.mailcrane.ui.mailShortcuts
 import app.mailcrane.ui.message.MessageScreen
 import app.mailcrane.ui.messagelist.MessageListScreen
+import app.mailcrane.ui.messagelist.UndoOffer
 import app.mailcrane.ui.messagelist.errorText
 import app.mailcrane.ui.search.SearchScreen
 import kotlinx.coroutines.launch
@@ -108,6 +109,8 @@ fun MailboxScreen(
             var searchOpenings by rememberSaveable { mutableIntStateOf(0) }
             // An open conversation (M4-02): its thread id and title.
             var openThread by rememberSaveable { mutableStateOf<Pair<Long, String>?>(null) }
+            // An Undo a conversation handed over as it closed, for the list to show (#571).
+            var handedUndo by remember { mutableStateOf<UndoOffer?>(null) }
             if (showManageFolders) {
                 BackHandler { showManageFolders = false }
                 ManageFoldersScreen(accountId = accountId, onBack = { showManageFolders = false })
@@ -232,6 +235,7 @@ fun MailboxScreen(
                             openMessage = it
                         },
                         onShownMessages = { threadOrder = it },
+                        onUndoHandOff = { handedUndo = it },
                     )
                     return
                 }
@@ -328,6 +332,7 @@ fun MailboxScreen(
                                 openMessage = it
                             },
                             onShownMessages = { threadOrder = it },
+                            onUndoHandOff = { handedUndo = it },
                         )
                     else ->
                         saved.SaveableStateProvider("folder-${selected.id}") {
@@ -369,6 +374,8 @@ fun MailboxScreen(
                                 notice = notice,
                                 onNoticeShown = onNoticeShown,
                                 onShownMessages = { listOrder = it },
+                                handedUndo = handedUndo,
+                                onHandedUndoShown = { handedUndo = null },
                             )
                         }
                 }
