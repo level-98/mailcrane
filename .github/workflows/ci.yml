@@ -3,23 +3,34 @@
 # logic to this file.
 #
 # Runs on every pull request, merge queue group and push to main:
-#   changes  which of the jobs below this change needs (#530), and the
-#            changelog fragments' names and types (scripts/release_notes.py)
-#   linux    every check, and builds the debug APK (uploaded)
-#   windows  fmt, clippy and tests of the core, to keep it portable
-#   ci-ok    passes only if every job above passed or was rightly skipped
+#   changes       which of the jobs below this change needs (#530), and the
+#                 changelog fragments' names and types (scripts/release_notes.py)
+#   lint          design, fmt, clippy and xtask's lints, cargo deny
+#   test          the core's tests
+#   android-lint  ktlint, then Android lint
+#   android-test  the app's unit tests
+#   android-apk   the debug and release builds and their checks; uploads the
+#                 debug APK (android-debug-apk, which QA installs)
+#   windows       fmt, clippy and tests of the core, to keep it portable
+#   ci-ok         passes only if every job above passed or was rightly skipped
+#
+# The five Linux jobs together are `cargo xtask ci --strict`, split with
+# `--only` so they run side by side (#604): together they run every step, and
+# the check's name says what failed. A job that fails cancels the rest of the
+# run, so ci-ok fails within minutes instead of waiting for the slowest job.
 #
 # What `changes` picks, from the files a pull request or merge group changes
 # (renames count as both paths):
 #   docs only (docs/**, website/**, *.md at the top level)
-#            linux and windows are skipped; ci-ok still runs and passes
+#            every job is skipped; ci-ok still runs and passes
 #   android/** (and docs) only
-#            linux runs in full; windows is skipped
+#            the five Linux jobs run; windows is skipped
 #   anything else, every push to main and every hand-started run
-#            linux and windows, as before
-# docs/dev-mail.md counts as code: an xtask test reads it. Linux always runs
-# every step: checks cross the tree (strings, licences, the release guard,
-# the core's Android-only code, the OAuth redirect), so no finer split.
+#            every job
+# docs/dev-mail.md counts as code: an xtask test reads it. The Linux jobs
+# always run together: checks cross the tree (strings, licences, the release
+# guard, the core's Android-only code, the OAuth redirect), so no finer split
+# by path.
 #
 # Third-party actions are pinned to a commit SHA; the comment gives the
 # version it was taken from.
@@ -111,11 +122,15 @@ jobs:
             echo "windows=$windows"
           } >> "$GITHUB_OUTPUT"
 
-  linux:
+  lint:
     needs: changes
     if: needs.changes.outputs.linux == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      # Only to cancel the run when this job fails (the last step).
+      actions: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -124,37 +139,126 @@ jobs:
           # Same version as rust-toolchain.toml.
           toolchain: "1.100.0"
           components: rustfmt, clippy
-          # cargo-ndk builds the core for these when Gradle runs.
-          targets: aarch64-linux-android,x86_64-linux-android
 
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           workspaces: core
-          key: linux
+          key: lint
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - uses: taiki-e/install-action@fe3acb53a98b62c772db35de75ce0e4595e7ca8c # v2.90.8
         with:
-          # cargo-ndk pinned for reproducible release builds (docs/fdroid.md).
           # cargo-about checks the in-app licences list (#366).
-          tool: cargo-deny,cargo-ndk@4.1.2,cargo-about@0.9.3
+          tool: cargo-deny,cargo-about@0.9.3
 
-      - uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
+      - run: cargo xtask ci --strict --only design,fmt,lint,deny
+
+      - name: Cancel the rest of the run
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh run cancel "${{ github.run_id }}" --repo "${{ github.repository }}" || true
+
+  test:
+    needs: changes
+    if: needs.changes.outputs.linux == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      actions: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
         with:
-          distribution: temurin
-          java-version: "17"
+          toolchain: "1.100.0"
 
-      - uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4.0.4
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: core
+          key: test
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
-      - name: Install the Android NDK
-        run: sdkmanager "ndk;${NDK_VERSION}"
+      - run: cargo xtask ci --strict --only test
 
-      - uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
+      - name: Cancel the rest of the run
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh run cancel "${{ github.run_id }}" --repo "${{ github.repository }}" || true
 
-      - run: cargo xtask ci --strict
+  android-lint:
+    needs: changes
+    if: needs.changes.outputs.linux == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      actions: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: ./.github/actions/android-setup
+        with:
+          cache-key: android-lint
+
+      - run: cargo xtask ci --strict --only android-lint
         env:
           ANDROID_NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/${{ env.NDK_VERSION }}
 
-      # So the app can be installed on a phone without building it.
+      - name: Cancel the rest of the run
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh run cancel "${{ github.run_id }}" --repo "${{ github.repository }}" || true
+
+  android-test:
+    needs: changes
+    if: needs.changes.outputs.linux == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      actions: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: ./.github/actions/android-setup
+        with:
+          cache-key: android-test
+
+      - run: cargo xtask ci --strict --only android-test
+        env:
+          ANDROID_NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/${{ env.NDK_VERSION }}
+
+      - name: Cancel the rest of the run
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh run cancel "${{ github.run_id }}" --repo "${{ github.repository }}" || true
+
+  android-apk:
+    needs: changes
+    if: needs.changes.outputs.linux == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      actions: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: ./.github/actions/android-setup
+        with:
+          cache-key: android-apk
+
+      - run: cargo xtask ci --strict --only android-apk
+        env:
+          ANDROID_NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/${{ env.NDK_VERSION }}
+
+      # So the app can be installed on a phone without building it. QA
+      # downloads it by this name.
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: android-debug-apk
@@ -162,11 +266,20 @@ jobs:
           retention-days: 7
           if-no-files-found: error
 
+      - name: Cancel the rest of the run
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh run cancel "${{ github.run_id }}" --repo "${{ github.repository }}" || true
+
   windows:
     needs: changes
     if: needs.changes.outputs.windows == 'true'
     runs-on: windows-latest
     timeout-minutes: 30
+    permissions:
+      contents: read
+      actions: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -180,12 +293,20 @@ jobs:
         with:
           workspaces: core
           key: windows
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - run: cargo xtask ci --strict --only fmt,lint,test
 
+      - name: Cancel the rest of the run
+        if: failure()
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh run cancel "${{ github.run_id }}" --repo "${{ github.repository }}" || true
+
   ci-ok:
     if: always()
-    needs: [changes, linux, windows]
+    needs: [changes, lint, test, android-lint, android-test, android-apk, windows]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -194,12 +315,18 @@ jobs:
       - name: Every needed job passed
         env:
           CHANGES: ${{ needs.changes.result }}
-          LINUX: ${{ needs.linux.result }}
+          LINT: ${{ needs.lint.result }}
+          TEST: ${{ needs.test.result }}
+          ANDROID_LINT: ${{ needs.android-lint.result }}
+          ANDROID_TEST: ${{ needs.android-test.result }}
+          ANDROID_APK: ${{ needs.android-apk.result }}
           WINDOWS: ${{ needs.windows.result }}
           NEED_LINUX: ${{ needs.changes.outputs.linux }}
           NEED_WINDOWS: ${{ needs.changes.outputs.windows }}
         run: |
-          echo "changes=$CHANGES linux=$LINUX ($NEED_LINUX) windows=$WINDOWS ($NEED_WINDOWS)"
+          echo "changes=$CHANGES; linux jobs ($NEED_LINUX): lint=$LINT test=$TEST" \
+            "android-lint=$ANDROID_LINT android-test=$ANDROID_TEST android-apk=$ANDROID_APK;" \
+            "windows ($NEED_WINDOWS): $WINDOWS"
           [ "$CHANGES" = success ] || exit 1
           # check <needed> <result>
           check() {
@@ -209,5 +336,7 @@ jobs:
               *) exit 1 ;;
             esac
           }
-          check "$NEED_LINUX" "$LINUX"
+          for result in "$LINT" "$TEST" "$ANDROID_LINT" "$ANDROID_TEST" "$ANDROID_APK"; do
+            check "$NEED_LINUX" "$result"
+          done
           check "$NEED_WINDOWS" "$WINDOWS"
