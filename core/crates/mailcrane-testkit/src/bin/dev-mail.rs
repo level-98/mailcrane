@@ -159,9 +159,12 @@ fn save(path: &Path, bytes: &[u8], private: bool) -> Result<(), String> {
     std::fs::rename(&tmp, path).map_err(error)
 }
 
+/// Raw messages, one per fixture file.
+type Messages = Vec<Vec<u8>>;
+
 /// The `.eml` files under `dir`, in path order: those for the Inbox, and
 /// those for Sent (named `*.sent.eml`, tests/fixtures/conversations/README.md, #573).
-fn fixtures(dir: &Path) -> Result<(Vec<Vec<u8>>, Vec<Vec<u8>>), String> {
+fn fixtures(dir: &Path) -> Result<(Messages, Messages), String> {
     let mut paths = Vec::new();
     let mut pending = vec![dir.to_path_buf()];
     while let Some(folder) = pending.pop() {
