@@ -51,11 +51,11 @@ Change a brand colour in `colors.json`, then run `python3 design/gen_theme.py` t
 | `app-icon/android/res/` | Adaptive icon: vector foreground, colour background, monochrome layer for Android 13 themed icons, plus legacy PNGs for every density | Merge into `android/app/src/main/res` |
 | `app-icon/android/playstore-icon-512.png` | Play Console listing icon | |
 | `splash/` | Android 12+ splash icon (content inside the 192 dp circle) | |
-| `ui-icons/svg/` | 24 line icons, 24 px, 1.75 stroke, `currentColor` | Website, docs |
+| `ui-icons/svg/` | 28 line icons, 24 px, 1.75 stroke, `currentColor` | Website, docs |
 | `ui-icons/android-vector/` | The same icons as tintable VectorDrawables, `ic_mc_*.xml` | `android/app/src/main/res/drawable` |
 | `illustrations/` | Empty inbox, no results, welcome (SVG, and PNG @3x) | Empty states |
 
-The 25 UI icons: account, archive, attach, back, check, close, compose, drafts, error, folder, forward, inbox, label, mail, menu, more, refresh, reply, search, sent, settings, snooze, spam, star, trash.
+The 28 UI icons: account, archive, attach, back, check, close, compose, drafts, error, filter, folder, forward, important, inbox, label, mail, mail_open, menu, more, refresh, reply, search, sent, settings, snooze, spam, star, trash.
 
 ## Splash screens
 
