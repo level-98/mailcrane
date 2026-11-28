@@ -99,8 +99,10 @@ fn adb() -> PathBuf {
 /// `127.0.0.1`. On API 37 the app's connections to `10.0.2.2`, the
 /// emulator's alias for the host, never arrive (#404 QA), while `adb
 /// reverse` works. Never a physical phone: a CA on a real device would let
-/// whoever holds the server key read its traffic, so only emulators
-/// (`emulator-NNNN`) are touched.
+/// whoever holds the server key read its traffic, so only devices that say
+/// they are emulators (`ro.kernel.qemu` is `1`) are touched, whatever their
+/// serial: a remote emulator's is `127.0.0.1:5557`, not `emulator-NNNN`
+/// (#575, docs/fleet.md).
 fn prepare_emulators(ca: &Path) {
     let adb = adb();
     let Ok(out) = Command::new(&adb).arg("devices").output() else {
@@ -118,11 +120,17 @@ fn prepare_emulators(ca: &Path) {
         return;
     }
     let listing = String::from_utf8_lossy(&out.stdout);
-    let (emulators, not_ready) = emulators(&listing);
+    let (ready, not_ready) = devices(&listing);
     for (serial, state) in &not_ready {
         say(format_args!(
-            "dev-mail: {serial} is {state}, so it wasn't set up. Wait for it to boot (or \
-             accept the USB debugging prompt), then run this again."
+            "dev-mail: {serial} is {state}, so it wasn't checked or set up. If it's an \
+             emulator, wait for it to boot, then run this again."
+        ));
+    }
+    let (emulators, others) = emulators_among(&ready, |serial| qemu_prop(&adb, serial));
+    for serial in &others {
+        say(format_args!(
+            "dev-mail: {serial} isn't an emulator (ro.kernel.qemu isn't 1), so it was left alone."
         ));
     }
     if emulators.is_empty() {
@@ -208,18 +216,20 @@ const SETTINGS_PATH: &str = "Settings > Security & privacy > More security setti
      Encryption & credentials > Install a certificate > CA certificate \
      (or search Settings for \"CA certificate\")";
 
-/// From `adb devices` output: the emulators that are ready, and the
-/// emulators that aren't (`offline`, `unauthorized`), with their state.
-/// Phones are left out of both, as they never get the CA.
-fn emulators(listing: &str) -> (Vec<&str>, Vec<(&str, &str)>) {
+/// From `adb devices` output: the devices that are ready, and the ones that
+/// aren't (`offline`, `unauthorized`), with their state. Emulators and phones
+/// alike: which is which is asked of each ready device ([`emulators_among`]),
+/// never guessed from the serial.
+fn devices(listing: &str) -> (Vec<&str>, Vec<(&str, &str)>) {
     let mut ready = Vec::new();
     let mut not_ready = Vec::new();
     for line in listing.lines() {
+        // The header, and adb's own notes such as "* daemon started successfully".
+        if line.starts_with("List of devices") || line.starts_with('*') {
+            continue;
+        }
         let mut parts = line.split_whitespace();
         if let (Some(serial), Some(state)) = (parts.next(), parts.next()) {
-            if !serial.starts_with("emulator-") {
-                continue;
-            }
             if state == "device" {
                 ready.push(serial);
             } else {
@@ -230,28 +240,104 @@ fn emulators(listing: &str) -> (Vec<&str>, Vec<(&str, &str)>) {
     (ready, not_ready)
 }
 
+/// Splits ready devices into emulators and everything else. A device is an
+/// emulator only if its `ro.kernel.qemu` property, from `qemu`, is `1`; a
+/// device that answers anything else, or can't be asked, is treated as a
+/// phone and never gets the CA (#575).
+fn emulators_among<'a>(
+    ready: &[&'a str],
+    qemu: impl Fn(&str) -> Option<String>,
+) -> (Vec<&'a str>, Vec<&'a str>) {
+    ready
+        .iter()
+        .copied()
+        .partition(|serial| qemu(serial).is_some_and(|value| value.trim() == "1"))
+}
+
+/// `adb -s <serial> shell getprop ro.kernel.qemu`, or `None` if adb failed.
+fn qemu_prop(adb: &Path, serial: &str) -> Option<String> {
+    let out = Command::new(adb)
+        .args(["-s", serial, "shell", "getprop", "ro.kernel.qemu"])
+        .output()
+        .ok()?;
+    out.status
+        .success()
+        .then(|| String::from_utf8_lossy(&out.stdout).into_owned())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn only_ready_emulators_get_the_ca_and_others_are_named() {
-        let listing = "List of devices attached\n\
-                       emulator-5554\tdevice\n\
-                       emulator-5556\toffline\n\
-                       emulator-5558\tunauthorized\n\
-                       R5CT0000000\tdevice\n\
-                       \n";
-        let (ready, not_ready) = emulators(listing);
-        assert_eq!(ready, ["emulator-5554"]);
+    fn every_device_is_listed_whatever_its_serial() {
+        let listing = "* daemon started successfully
+                       List of devices attached
+                       emulator-5554	device
+                       127.0.0.1:5557	device
+                       emulator-5556	offline
+                       R5CT0000000	unauthorized
+                       R5CT0000001	device
+                       
+";
+        let (ready, not_ready) = devices(listing);
+        assert_eq!(ready, ["emulator-5554", "127.0.0.1:5557", "R5CT0000001"]);
         assert_eq!(
             not_ready,
             [
                 ("emulator-5556", "offline"),
-                ("emulator-5558", "unauthorized")
+                ("R5CT0000000", "unauthorized")
             ]
         );
-        assert_eq!(emulators("List of devices attached\n\n"), (vec![], vec![]));
+        assert_eq!(
+            devices(
+                "List of devices attached
+
+"
+            ),
+            (vec![], vec![])
+        );
+    }
+
+    /// #575: only `ro.kernel.qemu` = 1 makes an emulator. A remote emulator
+    /// (`127.0.0.1:5557`) counts; a phone, or a device that can't be asked,
+    /// never gets the CA, whatever its serial looks like.
+    #[test]
+    fn only_devices_that_say_qemu_are_emulators() {
+        let ready = [
+            "emulator-5554",
+            "127.0.0.1:5557",
+            "R5CT0000001",
+            "emulator-5560",
+            "10.0.0.9:5555",
+        ];
+        let (emulators, others) = emulators_among(&ready, |serial| match serial {
+            "emulator-5554" => Some(
+                "1
+"
+                .into(),
+            ),
+            "127.0.0.1:5557" => Some(
+                "1
+"
+                .into(),
+            ),
+            // A phone answers an empty property.
+            "R5CT0000001" => Some(
+                "
+"
+                .into(),
+            ),
+            // Named like an emulator, but adb couldn't ask it.
+            "emulator-5560" => None,
+            _ => Some(
+                "0
+"
+                .into(),
+            ),
+        });
+        assert_eq!(emulators, ["emulator-5554", "127.0.0.1:5557"]);
+        assert_eq!(others, ["R5CT0000001", "emulator-5560", "10.0.0.9:5555"]);
     }
 
     #[test]
