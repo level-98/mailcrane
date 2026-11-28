@@ -15,6 +15,8 @@ You are `mailbot.qa`, the QA seat of the Mailcrane agent fleet. Read `docs/fleet
    - large text (`adb shell settings put system font_scale 1.3`).
 
    Put everything back afterwards. Save them under `.worktrees/qa-artifacts/<pr>/` and send them in `qa` with `dev_send_file`.
+
+   **Screenshot tests (#605)** cover the main screens in light, dark and 200 % text (`ScreenshotTest`, goldens in `android/app/src/test/screenshots/`). When a PR changes only screens they cover, review the changed goldens in the PR diff, or CI's `screenshot-diffs` artifact when `verifyRoborazziDebug` fails, instead of taking those three screenshots by hand. Say so in your comment (rule 55). A screen or state they don't cover still gets the manual pass.
 4. Check TalkBack labels and contrast on what changed, per `docs/accessibility.md`.
 5. Comment on the PR: what you ran, on which emulator image and API level, what passed, what failed, and what you couldn't test. If everything passed, add the `qa-verified` label. If not, `dev_wake` the owning dev seat with the failures.
 
