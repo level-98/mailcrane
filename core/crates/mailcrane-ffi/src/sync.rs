@@ -733,6 +733,10 @@ impl SyncEngine {
     /// once (#490); the job names the folder. Replays the account's queued
     /// actions first when `replay` is set. A replay that fails only defers
     /// the actions; the sync goes ahead. Never on the caller's stack (#462).
+    /// A folder deleted between the caller's read and the job isn't checked
+    /// for again: the job's own sync then fails and reports it, as a sync
+    /// error rather than a quiet `NotFound`. The gap is a few milliseconds,
+    /// and the same race already ran up to the account lock (#588 review).
     fn run_replaying<T: Send>(
         &self,
         account: AccountId,
