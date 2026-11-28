@@ -142,7 +142,36 @@ if ($useSccache) {
     Write-Host 'sccache is not installed, so each seat builds its own dependencies. To share them: cargo install sccache --locked'
 }
 
+# The prepush check as a git pre-push hook (#596). Worktrees share the main
+# checkout's hooks, so one hook covers every seat; it runs the pushing
+# worktree's own scripts/fleet/prepush.sh. A hook that isn't ours is never
+# overwritten.
+$hookMarker = '# mailcrane-fleet-prepush (#596)'
+$hookText = @"
+#!/bin/sh
+${hookMarker}: installed by scripts/fleet/start-fleet.ps1.
+# Runs the fleet's formatting check (ktlint on changed Kotlin, cargo fmt) before every push.
+root=`$(git rev-parse --show-toplevel)
+script="`$root/scripts/fleet/prepush.sh"
+# A branch from before the script existed has nothing to run.
+[ -f "`$script" ] || exit 0
+exec sh "`$script"
+"@
+$hookPath = Join-Path (& git -C $root rev-parse --path-format=absolute --git-common-dir) 'hooks\pre-push'
+$hookState = if (-not (Test-Path $hookPath)) {
+    'install'
+} elseif ((Get-Content -Raw $hookPath) -like "*$hookMarker*") {
+    'ours'
+} else {
+    'foreign'
+}
+
 if ($DryRun) {
+    switch ($hookState) {
+        'install' { Write-Host "  would install the prepush check as the git pre-push hook ($hookPath)" }
+        'ours' { Write-Host '  the prepush check is already the git pre-push hook' }
+        'foreign' { Write-Host "  would leave $hookPath alone: it's another hook, so the prepush check isn't installed" }
+    }
     foreach ($seat in $Seats) {
         $dir = if ($seat -eq 'lead') { $root } else { Join-Path $root ".worktrees\$seat" }
         $state = if ($seat -eq 'lead' -or (Test-Path $dir)) { 'exists' } else { 'would be created' }
@@ -151,6 +180,20 @@ if ($DryRun) {
         Write-Host "  would start mailbot.$seat ($($roles[$seat]), model: $modelText) in $dir ($state)"
     }
     exit 0
+}
+
+# --- The prepush hook --------------------------------------------------------
+
+switch ($hookState) {
+    'foreign' {
+        Write-Host "Left $hookPath alone: it's another pre-push hook. Seats run scripts/fleet/prepush.ps1 by hand."
+    }
+    default {
+        # LF endings, so Git for Windows' sh runs it.
+        New-Item -ItemType Directory -Force (Split-Path $hookPath -Parent) | Out-Null
+        [IO.File]::WriteAllText($hookPath, ($hookText -replace "`r`n", "`n") + "`n", (New-Object Text.UTF8Encoding $false))
+        if ($hookState -eq 'install') { Write-Host "Installed the prepush check as the git pre-push hook." }
+    }
 }
 
 # --- Worktrees ---------------------------------------------------------------
