@@ -8,8 +8,8 @@ generate_feeds = false
 build_search_index = false
 
 [extra]
-github_url = "https://github.com/level-98/mailcrane"
-discussions_url = "https://github.com/level-98/mailcrane/discussions"
+github_url = "https://github.com/mailcrane/mailcrane"
+discussions_url = "https://github.com/mailcrane/mailcrane/discussions"
 # Android minSdk 26 (android/app/build.gradle.kts on main).
 min_android = "8.0"
 # true while static/screens/*.png are the neutral placeholders: alt text then

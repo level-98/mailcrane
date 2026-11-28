@@ -14,7 +14,7 @@ from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 
-REPOSITORY = "level-98/mailcrane"
+REPOSITORY = "mailcrane/mailcrane"
 API_URL = f"https://api.github.com/repos/{REPOSITORY}/issues"
 TASK_PATTERN = re.compile(r"^\[((?:M[0-8])|P)-(\d{2})\]\s+(.+)$", re.IGNORECASE)
 # Milestones list features only. A bug is an issue labelled `bug` and never

@@ -19,6 +19,6 @@ Remote images are hidden until you tap **Load remote images**, because loading t
 
 ## Reporting a problem
 
-For a project or website issue, search [open GitHub issues](https://github.com/level-98/mailcrane/issues) or start a [Discussion](https://github.com/level-98/mailcrane/discussions). Include the app version and platform when relevant, but never include passwords, account details, message contents, or private screenshots.
+For a project or website issue, search [open GitHub issues](https://github.com/mailcrane/mailcrane/issues) or start a [Discussion](https://github.com/mailcrane/mailcrane/discussions). Include the app version and platform when relevant, but never include passwords, account details, message contents, or private screenshots.
 
-For security problems, follow the private reporting instructions in [SECURITY.md](https://github.com/level-98/mailcrane/blob/main/SECURITY.md), not a public issue.
+For security problems, follow the private reporting instructions in [SECURITY.md](https://github.com/mailcrane/mailcrane/blob/main/SECURITY.md), not a public issue.
