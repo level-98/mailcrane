@@ -31,8 +31,10 @@ $KtlintUrl = "https://repo1.maven.org/maven2/com/pinterest/ktlint/ktlint-cli/$Kt
 $root = (git rev-parse --show-toplevel).Trim()
 Set-Location $root
 
-# The branch's changes against the base, plus anything not committed yet.
-$changed = @(git diff --name-only --diff-filter=ACMR "$Base...HEAD") + @(git diff --name-only --diff-filter=ACMR HEAD) |
+# The branch's changes against the base, plus anything not committed yet:
+# changed files and new files git doesn't track yet (#596).
+$changed = @(git diff --name-only --diff-filter=ACMR "$Base...HEAD") + @(git diff --name-only --diff-filter=ACMR HEAD) +
+    @(git ls-files --others --exclude-standard) |
     Where-Object { $_ } | Sort-Object -Unique
 $kotlin = @($changed | Where-Object { $_ -match '^android/.*\.kts?$' -and $_ -notmatch '/build/' })
 $rust = @($changed | Where-Object { $_ -match '^core/' })
