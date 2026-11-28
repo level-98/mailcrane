@@ -1102,24 +1102,6 @@ fn opening_on_one_account_while_another_account_syncs_works() {
     let a = store
         .insert_jmap_account(&new_account("ana@example.org"), &server.base_url())
         .expect("account a");
-    let b = store
-        .insert_account(&new_account("bea@example.net"))
-        .expect("account b");
-    let b_inbox = store
-        .upsert_folder(&NewFolder {
-            account_id: b,
-            remote_name: "INBOX".into(),
-            display_name: "INBOX".into(),
-            delimiter: Some("/".into()),
-            role: None,
-            uidvalidity: Some(1),
-            uidnext: None,
-            highestmodseq: None,
-            is_subscribed: true,
-            selectable: true,
-            virtual_role: None,
-        })
-        .expect("b inbox");
     drop(store);
     let platform = Arc::new(Platform::default());
     platform
@@ -1146,42 +1128,30 @@ fn opening_on_one_account_while_another_account_syncs_works() {
         .pop()
         .expect("the message");
 
-    // Account B "syncs": batch after batch of headers, each batch one write
-    // transaction through the store, as a real sync writes them. Each one
-    // gives way to an urgent writer before it starts (`yield_to_urgent`),
-    // which is what lets the open's save in. (A bare statement loop that never
-    // gives way would starve any other writer: SQLite's busy handler isn't
-    // fair, and on Windows it lost every race, #488's first CI run.)
+    // Account B "syncs" (#505): it holds SQLite's write lock the whole
+    // time, as one long sync transaction would, and lets go only while
+    // another thread writes urgently, which is what the store's own write
+    // transactions do (`yield_to_urgent`). So the open succeeds only if its
+    // save is marked urgent. Without the mark, B never lets go and the save
+    // times out with SQLITE_BUSY, on every OS and every disk: no luck with
+    // gaps between B's transactions, as the free-running batches had.
     let stop = std::sync::atomic::AtomicBool::new(false);
+    let key = path.to_string_lossy().into_owned();
     let fetched = std::thread::scope(|scope| {
         scope.spawn(|| {
-            let store = Store::open(&path).expect("b's store");
-            let mut uid = 1u32;
-            while !stop.load(std::sync::atomic::Ordering::SeqCst) {
-                let batch: Vec<mailcrane_store::NewMessageHeader> = (0..50)
-                    .map(|i| mailcrane_store::NewMessageHeader {
-                        folder_id: b_inbox,
-                        uid: uid.wrapping_add(i),
-                        message_id_header: None,
-                        in_reply_to: None,
-                        references_json: "[]".into(),
-                        thread_id: None,
-                        subject: format!("B {}", uid.wrapping_add(i)),
-                        from_name: None,
-                        from_addr: Some("someone@example.net".into()),
-                        to_json: "[]".into(),
-                        cc_json: "[]".into(),
-                        date: 1_790_000_000,
-                        internal_date: 1_790_000_000,
-                        size: 10,
-                        flags: Default::default(),
-                        keywords_json: "[]".into(),
-                        has_attachments: false,
-                        snippet: String::new(),
-                    })
-                    .collect();
-                let _ = store.upsert_message_headers(&batch);
-                uid = uid.wrapping_add(50);
+            let conn = rusqlite::Connection::open(&path).expect("b's connection");
+            let running = || !stop.load(std::sync::atomic::Ordering::SeqCst);
+            let pause = || std::thread::sleep(std::time::Duration::from_millis(2));
+            while running() {
+                conn.execute_batch("BEGIN IMMEDIATE")
+                    .expect("b takes the write lock");
+                while running() && !mailcrane_store::urgent_writers_waiting(&key) {
+                    pause();
+                }
+                conn.execute_batch("COMMIT").expect("b lets go");
+                while running() && mailcrane_store::urgent_writers_waiting(&key) {
+                    pause();
+                }
             }
         });
         // Stops B however the open ends, a panic included, so the scope
