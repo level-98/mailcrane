@@ -133,6 +133,10 @@ jobs:
       actions: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The token stays out of .git/config: this job's token can cancel
+          # runs (actions: write), and build code shouldn't reach it.
+          persist-credentials: false
 
       - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
         with:
@@ -169,6 +173,10 @@ jobs:
       actions: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The token stays out of .git/config: this job's token can cancel
+          # runs (actions: write), and build code shouldn't reach it.
+          persist-credentials: false
 
       - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
         with:
@@ -198,6 +206,10 @@ jobs:
       actions: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The token stays out of .git/config: this job's token can cancel
+          # runs (actions: write), and build code shouldn't reach it.
+          persist-credentials: false
 
       - uses: ./.github/actions/android-setup
         with:
@@ -223,6 +235,10 @@ jobs:
       actions: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The token stays out of .git/config: this job's token can cancel
+          # runs (actions: write), and build code shouldn't reach it.
+          persist-credentials: false
 
       - uses: ./.github/actions/android-setup
         with:
@@ -248,6 +264,10 @@ jobs:
       actions: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The token stays out of .git/config: this job's token can cancel
+          # runs (actions: write), and build code shouldn't reach it.
+          persist-credentials: false
 
       - uses: ./.github/actions/android-setup
         with:
@@ -282,6 +302,10 @@ jobs:
       actions: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The token stays out of .git/config: this job's token can cancel
+          # runs (actions: write), and build code shouldn't reach it.
+          persist-credentials: false
 
       - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
         with:
