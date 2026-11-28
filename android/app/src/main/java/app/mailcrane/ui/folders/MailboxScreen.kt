@@ -7,7 +7,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DrawerValue
-import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.PermanentNavigationDrawer
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -378,7 +377,7 @@ fun MailboxScreen(
                 if (permanentDrawer) {
                     PermanentNavigationDrawer(drawerContent = drawer) { panes() }
                 } else {
-                    ModalNavigationDrawer(drawerState = drawerState, drawerContent = drawer) { panes() }
+                    ModalFolderDrawer(drawerState = drawerState, drawerContent = drawer) { panes() }
                 }
             }
         }
