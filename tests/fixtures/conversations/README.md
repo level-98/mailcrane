@@ -10,7 +10,8 @@ Each folder is one conversation, linked by `Message-ID`, `In-Reply-To` and
 
 - `lunch/`: 2 messages, both in the Inbox.
 - `plans/`: 4 messages in the Inbox, one of them a reply from the dev-mail
-  account itself (`test@example.org`).
+  account itself (`test@example.org`). Under Load test mail, whose account is
+  `fixtures@example.org`, it shows as from another sender.
 - `trip/`: 3 messages over two folders: 2 in the Inbox and the reply sent from
   `test@example.org` in Sent.
 
