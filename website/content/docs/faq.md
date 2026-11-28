@@ -13,7 +13,7 @@ For testers, the download page already has an unofficial nightly test build of t
 
 ## Is there an iPhone version?
 
-Not before Mailcrane 1.0. Mailcrane is an Android app, and no iOS app is planned until after the 1.0 release ([decision 0005](https://github.com/level-98/mailcrane/blob/main/docs/decisions/0005-no-ios-before-1-0.md)). The mail engine is written in Rust and kept platform-neutral, so an iPhone app stays possible later.
+Not before Mailcrane 1.0. Mailcrane is an Android app, and no iOS app is planned until after the 1.0 release ([decision 0005](https://github.com/mailcrane/mailcrane/blob/main/docs/decisions/0005-no-ios-before-1-0.md)). The mail engine is written in Rust and kept platform-neutral, so an iPhone app stays possible later.
 
 ## Which providers will work?
 
@@ -29,4 +29,4 @@ Yes. The screenshots on the home page come from the app as it is today, filled w
 
 ## How can I help?
 
-Read [Contribute](@/contribute.md) or browse [open issues](https://github.com/level-98/mailcrane/issues).
+Read [Contribute](@/contribute.md) or browse [open issues](https://github.com/mailcrane/mailcrane/issues).

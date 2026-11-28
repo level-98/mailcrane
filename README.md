@@ -14,6 +14,6 @@ The site artifact includes `CNAME` for `mailcrane.app`. A repository owner still
 
 ## Project
 
-Mailcrane is a free, open-source email app for Android and iOS. It is in early development; there is no app to download yet. Read the [roadmap](ROADMAP.md), [architecture](docs/architecture.md), and [contributor guide](CONTRIBUTING.md), or [browse open issues](https://github.com/level-98/mailcrane/issues).
+Mailcrane is a free, open-source email app for Android and iOS. It is in early development; there is no app to download yet. Read the [roadmap](ROADMAP.md), [architecture](docs/architecture.md), and [contributor guide](CONTRIBUTING.md), or [browse open issues](https://github.com/mailcrane/mailcrane/issues).
 
 The site reuses the project brand from [`design/`](design/) and includes the proposed app screens. Its light/dark theme follows the system preference by default and remembers a manual selection.

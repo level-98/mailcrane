@@ -10,25 +10,25 @@ class BuildSnapshotTests(unittest.TestCase):
                 "number": 12,
                 "title": "[M0-02] Second task",
                 "state": "open",
-                "html_url": "https://github.com/level-98/mailcrane/issues/12",
+                "html_url": "https://github.com/mailcrane/mailcrane/issues/12",
             },
             {
                 "number": 11,
                 "title": "[M0-01] First task",
                 "state": "closed",
-                "html_url": "https://github.com/level-98/mailcrane/issues/11",
+                "html_url": "https://github.com/mailcrane/mailcrane/issues/11",
             },
             {
                 "number": 40,
                 "title": "[P-01] Launch check",
                 "state": "open",
-                "html_url": "https://github.com/level-98/mailcrane/issues/40",
+                "html_url": "https://github.com/mailcrane/mailcrane/issues/40",
             },
             {
                 "number": 99,
                 "title": "Untracked issue",
                 "state": "open",
-                "html_url": "https://github.com/level-98/mailcrane/issues/99",
+                "html_url": "https://github.com/mailcrane/mailcrane/issues/99",
             },
         ]
 
@@ -56,7 +56,7 @@ class BuildSnapshotTests(unittest.TestCase):
                 "number": number,
                 "title": title,
                 "state": "open",
-                "html_url": f"https://github.com/level-98/mailcrane/issues/{number}",
+                "html_url": f"https://github.com/mailcrane/mailcrane/issues/{number}",
             }
             for number, title in titles.items()
         ]
@@ -81,14 +81,14 @@ class BuildSnapshotTests(unittest.TestCase):
                 "title": "[M4-24] A feature",
                 "state": "open",
                 "labels": [{"name": "m4"}],
-                "html_url": "https://github.com/level-98/mailcrane/issues/50",
+                "html_url": "https://github.com/mailcrane/mailcrane/issues/50",
             },
             {
                 "number": 51,
                 "title": "[M4-26] Something found along the way",
                 "state": "open",
                 "labels": [{"name": "bug"}, {"name": "m4"}],
-                "html_url": "https://github.com/level-98/mailcrane/issues/51",
+                "html_url": "https://github.com/mailcrane/mailcrane/issues/51",
             },
         ]
 
@@ -104,7 +104,7 @@ class BuildSnapshotTests(unittest.TestCase):
                 "number": 61,
                 "title": "[M8-01] Attachments browser",
                 "state": "open",
-                "html_url": "https://github.com/level-98/mailcrane/issues/61",
+                "html_url": "https://github.com/mailcrane/mailcrane/issues/61",
             },
         ]
 
@@ -119,7 +119,7 @@ class BuildSnapshotTests(unittest.TestCase):
                 "number": number,
                 "title": f"[M0-{number:02}] Task {number}",
                 "state": "closed" if number == 1 else "open",
-                "html_url": f"https://github.com/level-98/mailcrane/issues/{number}",
+                "html_url": f"https://github.com/mailcrane/mailcrane/issues/{number}",
             }
             for number in range(1, 9)
         ]

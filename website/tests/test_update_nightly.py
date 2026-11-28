@@ -7,7 +7,7 @@ from unittest import mock
 from scripts import update_nightly
 from scripts.update_nightly import build_snapshot
 
-REPO = "https://github.com/level-98/mailcrane"
+REPO = "https://github.com/mailcrane/mailcrane"
 
 
 def release(

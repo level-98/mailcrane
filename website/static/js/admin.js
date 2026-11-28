@@ -5,7 +5,7 @@
 // - GitHub text (titles, names, labels) comes from anyone, so it only ever
 //   reaches the page through textContent, never innerHTML.
 // - Links are built from validated numbers, or are URLs checked to start with
-//   https://github.com/level-98/mailcrane/.
+//   https://github.com/mailcrane/mailcrane/.
 // - Unauthenticated, GitHub allows 60 requests an hour per network, and a 304
 //   counts like any other answer. So this page spends at most BUDGET requests
 //   per rolling hour in this browser (counted in localStorage, so reloads and
@@ -20,7 +20,9 @@
 "use strict";
 
 (() => {
-  const OWNER = "level-98";
+  const OWNER = "mailcrane";
+  // The maintainer's account: the fleet posts its reports and reviews as it.
+  const MAINTAINER = "level-98";
   const API = `https://api.github.com/repos/${OWNER}/mailcrane`;
   const REPO = `https://github.com/${OWNER}/mailcrane`;
   const HOUR = 60 * 60 * 1000;
@@ -141,11 +143,11 @@
   const ENDPOINTS = {
     reports: {
       path: () => `/issues/${REPORTS_ISSUE}/comments?per_page=100&since=${reportsSince()}`,
-      // Only the repository owner's own reports count (the fleet posts as
-      // the owner); anyone else could type the same start.
+      // Only the maintainer's own reports count (the fleet posts as that
+      // account); anyone else could type the same start.
       slim: (data) =>
         list(data)
-          .filter((c) => c && text(c.user && c.user.login) === OWNER && text(c.body).startsWith(REPORT_START))
+          .filter((c) => c && text(c.user && c.user.login) === MAINTAINER && text(c.body).startsWith(REPORT_START))
           .map((c) => ({ url: text(c.html_url), created_at: text(c.created_at), body: text(c.body).slice(0, 8000) }))
           .sort((a, b) => time(b.created_at) - time(a.created_at))
           .slice(0, REPORTS_SHOWN),
@@ -306,10 +308,10 @@
     const oldest = comments.length > 0 ? time(comments[comments.length - 1].created_at) : 0;
     const reviews = {};
     fleet.forEach((pr) => {
-      // Only the repository owner's own comments count (the fleet posts as
-      // the owner); anyone else could type the same prefix.
+      // Only the maintainer's own comments count (the fleet posts as that
+      // account); anyone else could type the same prefix.
       const mine = comments.filter(
-        (c) => c.number === pr.number && c.login === OWNER && c.start.startsWith("**mailbot.review:**"),
+        (c) => c.number === pr.number && c.login === MAINTAINER && c.start.startsWith("**mailbot.review:**"),
       );
       let state;
       if (mine.some((c) => isSha(pr.sha) && c.start.includes(pr.sha.slice(0, 7)))) state = "head";

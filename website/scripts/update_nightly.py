@@ -16,7 +16,7 @@ from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
-REPOSITORY = "level-98/mailcrane"
+REPOSITORY = "mailcrane/mailcrane"
 API_URL = f"https://api.github.com/repos/{REPOSITORY}/releases?per_page=50"
 REPO_URL = f"https://github.com/{REPOSITORY}"
 DOWNLOAD_PREFIX = f"{REPO_URL}/releases/download/"

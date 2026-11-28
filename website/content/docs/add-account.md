@@ -26,4 +26,4 @@ Mailcrane signs in to both servers before saving anything. If one fails, it says
 
 ## Getting help
 
-Ask in [GitHub Discussions](https://github.com/level-98/mailcrane/discussions) or see [troubleshooting](@/docs/troubleshooting.md). Never post your password, app password, sign-in code or private mail.
+Ask in [GitHub Discussions](https://github.com/mailcrane/mailcrane/discussions) or see [troubleshooting](@/docs/troubleshooting.md). Never post your password, app password, sign-in code or private mail.
