@@ -22,9 +22,13 @@ ROLES = [
     ("Surface", "surface", "dark.surface"),
     ("SurfaceDim", "surfaceDim", "dark.surfaceHigh"),
     ("SurfaceHigh", "surfaceDim", "dark.surfaceHigh"),
+    ("SurfaceHighest", "surfaceHighest", "dark.surfaceHighest"),
     ("Ink", "ink", "dark.ink"),
     ("InkMuted", "inkMuted", "dark.inkMuted"),
+    # Component boundaries (off switches, outlined fields and buttons): 3:1 (#395).
     ("Outline", "outline", "dark.outline"),
+    # Dividers only: subtle on purpose, so not checked.
+    ("OutlineVariant", "outlineVariant", "dark.outlineVariant"),
     ("Error", "error", "error"),
     ("OnError", "fixed-white", "dark.surface"),
     ("Success", "success", "success"),
@@ -107,7 +111,24 @@ def check_contrast(data):
                     f"{theme}: {foreground}/{background}={ratio:.2f}:1 "
                     f"(required 4.5:1, {foreground_hex} on {background_hex})"
                 )
+        # Non-text contrast (WCAG 2.2 SC 1.4.11, #395): the outline that draws an off
+        # switch, an outlined field or button must show against the page and its containers.
+        for background in NON_TEXT_BACKGROUNDS:
+            outline_hex = values["Outline"]
+            background_hex = values[background]
+            ratio = contrast_ratio(outline_hex, background_hex)
+            if ratio < 3.0:
+                failures.append(
+                    f"{theme}: Outline/{background}={ratio:.2f}:1 "
+                    f"(required 3:1 for non-text, {outline_hex} on {background_hex})"
+                )
     return failures
+
+
+# What `outline` is drawn on: background and surface (Surface), surfaceContainer
+# (SurfaceDim), surfaceContainerHigh (SurfaceHigh), and surfaceContainerHighest
+# (SurfaceHighest), the off switch's track under its outline-coloured thumb (#494 review).
+NON_TEXT_BACKGROUNDS = ("Surface", "SurfaceDim", "SurfaceHigh", "SurfaceHighest")
 
 
 def kotlin_hex(value):
@@ -156,9 +177,10 @@ def android_source(mapped):
         ("surfaceContainer", "SurfaceDim"),
         ("surfaceContainerHigh", "SurfaceHigh"),
         ("surfaceContainerLow", "SurfaceDim"),
+        ("surfaceContainerHighest", "SurfaceHighest"),
         ("onSurfaceVariant", "InkMuted"),
         ("outline", "Outline"),
-        ("outlineVariant", "Outline"),
+        ("outlineVariant", "OutlineVariant"),
         ("error", "Error"),
         ("onError", "OnError"),
     ]

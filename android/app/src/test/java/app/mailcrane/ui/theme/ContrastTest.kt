@@ -76,4 +76,55 @@ class ContrastTest {
                 check("dark", MailcraneDarkColors, MailcraneDarkExtendedColors.success)
         assertTrue(failures.joinToString("\n"), failures.isEmpty())
     }
+
+    /**
+     * #395: `outline` draws off switches, outlined fields and buttons, and unselected checkboxes, so it
+     * must show against the page and its containers at 3:1 (WCAG 2.2 SC 1.4.11, non-text contrast).
+     */
+    @Test
+    fun componentOutlinesMeetNonTextContrast() {
+        val failures =
+            listOf("light" to MailcraneLightColors, "dark" to MailcraneDarkColors).flatMap { (scheme, s) ->
+                listOf(
+                    "background" to s.background,
+                    "surface" to s.surface,
+                    "surfaceContainer" to s.surfaceContainer,
+                    "surfaceContainerHigh" to s.surfaceContainerHigh,
+                    // The off switch's track, under its outline-coloured thumb (#494 review).
+                    "surfaceContainerHighest" to s.surfaceContainerHighest,
+                ).mapNotNull { (name, bg) ->
+                    val ratio = contrast(s.outline, bg)
+                    if (ratio < 3.0) "$scheme: outline on $name is %.2f:1".format(ratio) else null
+                }
+            }
+        assertTrue(failures.joinToString("\n"), failures.isEmpty())
+    }
+
+    /**
+     * #395: an enabled off switch stands out more than a disabled one. Material draws a disabled off
+     * thumb in onSurface at 38% alpha; with the old outline, the enabled one was the fainter of the two.
+     */
+    @Test
+    fun anEnabledOffSwitchShowsMoreThanADisabledOne() {
+        for ((scheme, s) in listOf("light" to MailcraneLightColors, "dark" to MailcraneDarkColors)) {
+            val enabled = contrast(s.outline, s.surface)
+            val disabled = contrast(s.onSurface.copy(alpha = DISABLED_ALPHA).compositeOver(s.surface), s.surface)
+            val message = "$scheme: enabled off %.2f:1, disabled off %.2f:1".format(enabled, disabled)
+            assertTrue(message, enabled > disabled)
+        }
+    }
+
+    /** Dividers keep their subtle colour: outlineVariant isn't raised with outline (#395). */
+    @Test
+    fun dividersStaySubtle() {
+        for ((scheme, s) in listOf("light" to MailcraneLightColors, "dark" to MailcraneDarkColors)) {
+            val ratio = contrast(s.outlineVariant, s.surface)
+            assertTrue("$scheme: outlineVariant is %.2f:1, no longer a subtle divider".format(ratio), ratio < 2.0)
+        }
+    }
+
+    private companion object {
+        /** Material 3's alpha for disabled content (its disabled switch thumb uses it too). */
+        const val DISABLED_ALPHA = 0.38f
+    }
 }
