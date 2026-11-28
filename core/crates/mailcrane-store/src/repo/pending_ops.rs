@@ -115,6 +115,40 @@ pub struct CancelReport {
     pub folders: Vec<FolderId>,
 }
 
+/// What [`Store::queue_ops`] did.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct QueuedOps {
+    /// Each op in order, `None` where every message cancelled out or was
+    /// skipped.
+    pub ids: Vec<Option<OpId>>,
+    /// Messages left out because a wake is moving them (#544).
+    pub skipped_waking: Vec<MessageId>,
+}
+
+/// Whether a wake is moving `message`: its snooze row is `to_wake` past
+/// step 0, and the message is one of the copies the wake moves (the one in
+/// Snoozed or in its destination, the original folder or the Inbox).
+/// Other copies of the same Message-ID, such as Gmail's All Mail or a Sent
+/// copy, can still be moved. ('snoozed' is mailcrane-core's
+/// SNOOZED_FOLDER_NAME, matched the same way, ignoring case.)
+fn is_waking(
+    tx: &Transaction<'_>,
+    account: AccountId,
+    message: MessageId,
+) -> Result<bool, StoreError> {
+    Ok(tx.query_row(
+        "SELECT EXISTS (SELECT 1 FROM snoozes s JOIN messages msg \
+             ON msg.message_id_header = s.message_id_header \
+             JOIN folders f ON f.id = msg.folder_id \
+             WHERE msg.id = ?1 AND s.account_id = ?2 AND f.account_id = ?2 \
+             AND s.state = 'to_wake' AND s.step > 0 \
+             AND (f.id = s.original_folder_id OR f.role = 'inbox' \
+                  OR lower(f.remote_name) = 'snoozed'))",
+        params![message.0, account.0],
+        |r| r.get(0),
+    )?)
+}
+
 /// [`Store::queue_op`]'s work inside an open transaction.
 fn queue_in_tx(
     tx: &Transaction<'_>,
@@ -126,26 +160,12 @@ fn queue_in_tx(
     now: i64,
 ) -> Result<Option<OpId>, StoreError> {
     // Read in this transaction, before anything changes, so no wake can
-    // start in between (lead's decision on G6). Only the copies the wake
-    // moves count: the one in Snoozed and the one in its destination (the
-    // original folder, or the Inbox). Other copies of the same Message-ID,
-    // such as Gmail's All Mail or a Sent copy, can still be moved.
-    // ('snoozed' is mailcrane-core's SNOOZED_FOLDER_NAME, matched the same
-    // way, ignoring case.)
-    for m in messages {
-        let waking: bool = tx.query_row(
-            "SELECT EXISTS (SELECT 1 FROM snoozes s JOIN messages msg \
-                 ON msg.message_id_header = s.message_id_header \
-                 JOIN folders f ON f.id = msg.folder_id \
-                 WHERE msg.id = ?1 AND s.account_id = ?2 AND f.account_id = ?2 \
-                 AND s.state = 'to_wake' AND s.step > 0 \
-                 AND (f.id = s.original_folder_id OR f.role = 'inbox' \
-                      OR lower(f.remote_name) = 'snoozed'))",
-            params![m.message_id.0, account.0],
-            |r| r.get(0),
-        )?;
-        if waking && matches!(kind, OpKind::Move | OpKind::Expunge) {
-            return Err(StoreError::Waking);
+    // start in between (lead's decision on G6).
+    if matches!(kind, OpKind::Move | OpKind::Expunge) {
+        for m in messages {
+            if is_waking(tx, account, m.message_id)? {
+                return Err(StoreError::Waking);
+            }
         }
     }
     let mut kept: Vec<OpMessage> = Vec::new();
@@ -395,24 +415,42 @@ impl Store {
 
     /// Several [`Store::queue_op`]s (e.g. one per folder for a multi-select
     /// action, M4-14) in one transaction: all are applied and queued, or on
-    /// error none is. Returns each op in order, `None` where every message
-    /// cancelled out.
-    pub fn queue_ops(&self, ops: &[NewOp], now: i64) -> Result<Vec<Option<OpId>>, StoreError> {
+    /// error none is. A move or delete leaves out the messages a wake is
+    /// moving and reports them in [`QueuedOps::skipped_waking`], so one
+    /// waking message doesn't refuse the whole selection (#544); only when
+    /// every message is waking does it fail, with [`StoreError::Waking`],
+    /// and change nothing.
+    pub fn queue_ops(&self, ops: &[NewOp], now: i64) -> Result<QueuedOps, StoreError> {
         let tx = self.write_tx()?;
-        let mut ids = Vec::with_capacity(ops.len());
+        let mut out = QueuedOps {
+            ids: Vec::with_capacity(ops.len()),
+            skipped_waking: Vec::new(),
+        };
+        let mut total = 0usize;
         for op in ops {
-            ids.push(queue_in_tx(
-                &tx,
-                op.account,
-                op.kind,
-                op.folder,
-                op.dest,
-                &op.messages,
-                now,
-            )?);
+            total = total.saturating_add(op.messages.len());
+            let mut messages = Vec::with_capacity(op.messages.len());
+            for m in &op.messages {
+                if matches!(op.kind, OpKind::Move | OpKind::Expunge)
+                    && is_waking(&tx, op.account, m.message_id)?
+                {
+                    out.skipped_waking.push(m.message_id);
+                } else {
+                    messages.push(*m);
+                }
+            }
+            out.ids.push(if messages.is_empty() {
+                None
+            } else {
+                queue_in_tx(&tx, op.account, op.kind, op.folder, op.dest, &messages, now)?
+            });
+        }
+        if total > 0 && out.skipped_waking.len() == total {
+            // Dropped without commit: nothing changed.
+            return Err(StoreError::Waking);
         }
         tx.commit()?;
-        Ok(ids)
+        Ok(out)
     }
 
     /// The account's queued actions in the order they were made, including

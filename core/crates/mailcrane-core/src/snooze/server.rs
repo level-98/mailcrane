@@ -623,6 +623,21 @@ fn advance(
             s.copy_uid = copy_uid;
         }
     } else {
+        // The MOVE or COPY is on the server already: keep the UID it named,
+        // so the next pass finds that copy by its UID, and knows it as ours,
+        // rather than by the UIDNEXT floor (#544). Guarded on its own: only
+        // while the row is still at step 1 for this target.
+        if let Some(uid) = copy_uid {
+            if store
+                .record_snooze_copy_uid_if(s.id, s.target_uidnext, uid)
+                .map_err(store_err)?
+            {
+                tracing::info!(
+                    snooze = s.id.0,
+                    "kept the copy's UID after a lost step write"
+                );
+            }
+        }
         tracing::info!(
             snooze = s.id.0,
             step,

@@ -489,6 +489,7 @@
     <string name="snooze_unsnooze">Unsnooze</string>
     <string name="snooze_no_message_id">This message can’t be snoozed.</string>
     <string name="snooze_waking">Waking…</string>
+    <string name="bulk_skipped_waking">Messages coming back from snooze right now were left as they were. Try again once they’re back.</string>
     <string name="snooze_waking_try_again">This message is on its way back from snooze. You can snooze it again once it’s back.</string>
     <string name="snooze_channel_name">Snoozed messages</string>
     <string name="snooze_channel_description">When a snoozed message comes back</string>

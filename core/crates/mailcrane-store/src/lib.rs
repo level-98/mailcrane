@@ -14,8 +14,8 @@ pub use repo::PushSubscriptionRow;
 pub use repo::{is_valid_authserv_id, MAX_AUTHSERV_ID_LEN};
 pub use repo::{
     CancelReport, Correspondent, Draft, DraftFields, DraftId, DroppedOp, NewOp, NewOutboxMessage,
-    NewRule, OpId, OpKind, OpMessage, OutboxId, OutboxMessage, OutboxState, PendingOp, Rule,
-    RuleAction, RuleCondition, RuleId, SaveSentCopy, ScheduleMode, SearchFilter, SentCopy,
+    NewRule, OpId, OpKind, OpMessage, OutboxId, OutboxMessage, OutboxState, PendingOp, QueuedOps,
+    Rule, RuleAction, RuleCondition, RuleId, SaveSentCopy, ScheduleMode, SearchFilter, SentCopy,
     ServerCopy, SignatureSetting, ThreadSummary, UnthreadedMessage, ACCOUNT_COLOR_COUNT,
     MAX_SIGNATURE_BYTES,
 };

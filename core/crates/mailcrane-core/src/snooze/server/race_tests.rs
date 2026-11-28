@@ -146,3 +146,72 @@ async fn a_wake_replaced_at_step_0_sends_nothing_and_keeps_the_new_snooze() {
         (SnoozeState::ToSnooze, 0, LATER_WAKE)
     );
 }
+
+/// #544: the user reads the message while a wake's MOVE is in flight, so
+/// the step write after the committed MOVE loses. The UID the server named
+/// for the copy (COPYUID, RFC 4315 §3) is still recorded, by its own
+/// guarded write, so the next pass finds that copy by its UID instead of
+/// by the UIDNEXT floor.
+#[tokio::test]
+async fn the_copy_uid_is_kept_when_the_step_write_after_a_move_loses() {
+    let (imap, store, account) = Box::pin(snoozed_and_due()).await;
+    let mut s = row(&store, account);
+    assert_eq!(
+        (s.state, s.step, s.copy_uid),
+        (SnoozeState::ToWake, 0, None)
+    );
+    let snoozed = folder(&store, account, "Snoozed");
+    let message = store
+        .find_message_by_header(snoozed, "lunch@example.net")
+        .expect("find")
+        .expect("in Snoozed");
+
+    // The sync's half of move_uids: record step 1, then MOVE.
+    let mut session = connect(&imap).await;
+    let target = session.select("INBOX").await.expect("select INBOX");
+    assert!(start_move(&store, &mut s, target.uidnext).expect("start"));
+    session.select("Snoozed").await.expect("select Snoozed");
+    let uids = session
+        .uid_search_message_id("lunch@example.net")
+        .await
+        .expect("search");
+    let copy = session
+        .uid_move_returning(&uids, "INBOX")
+        .await
+        .expect("move");
+    let copy_uid = copy.expect("the server names the copy");
+    session.logout().await;
+
+    // Meanwhile the user read it: the step write loses...
+    crate::actions::apply_action(
+        &store,
+        &[message],
+        crate::actions::Action::MarkRead,
+        NOW,
+        &Quiet,
+    )
+    .expect("read");
+    assert!(!advance(&store, &mut s, STEP_FLAGGED_DELETED, copy).expect("advance"));
+    // ...but the copy's UID is kept, at step 1.
+    let now = row(&store, account);
+    assert_eq!(
+        (now.step, now.copy_uid),
+        (STEP_COPY_STARTED, Some(copy_uid))
+    );
+    assert!(copy_is_ours(&now));
+
+    // The next pass finishes the wake on that copy.
+    Box::pin(run_sync(&imap, &store, account, WAKE + 120)).await;
+    assert_eq!(
+        imap.mailbox().messages("INBOX").await.len(),
+        1,
+        "one copy in the Inbox"
+    );
+    assert!(
+        list_snoozed(&store, Some(account))
+            .expect("list")
+            .iter()
+            .all(|r| r.state != SnoozeState::ToWake),
+        "the wake finished"
+    );
+}
