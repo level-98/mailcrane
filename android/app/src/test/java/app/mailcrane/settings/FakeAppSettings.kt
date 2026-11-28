@@ -139,7 +139,7 @@ class FakeAppSettings(
         group.value = enabled
     }
 
-    private val lastAccount = MutableStateFlow(0L)
+    val lastAccount = MutableStateFlow(0L)
     override val lastAccountId: StateFlow<Long> = lastAccount
 
     override suspend fun setLastAccountId(id: Long) {

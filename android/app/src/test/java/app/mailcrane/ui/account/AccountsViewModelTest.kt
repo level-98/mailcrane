@@ -177,8 +177,13 @@ class AccountsViewModelTest {
     @Test
     fun startChoiceCoversEveryCase() {
         val ids = listOf(1L, 2L)
-        assertEquals(StartChoice(2, unified = false), startChoice(StartView.Last, ids, 2, 7))
-        assertEquals(StartChoice(1, unified = false), startChoice(StartView.Last, ids, 99, 7))
+        // Last used: the folder shown last, in the account shown last (#373).
+        assertEquals(StartChoice(2, unified = false, folderId = 7), startChoice(StartView.Last, ids, 2, 7))
+        assertEquals(StartChoice(2, unified = false), startChoice(StartView.Last, ids, 2, 0))
+        // The account shown last is gone: All inboxes (#373, lead's decision).
+        assertEquals(StartChoice(1, unified = true), startChoice(StartView.Last, ids, 99, 7))
+        // Nothing shown yet (a new install): the first account.
+        assertEquals(StartChoice(1, unified = false), startChoice(StartView.Last, ids, 0, 0))
         assertEquals(StartChoice(2, unified = true), startChoice(StartView.Last, ids, 2, UNIFIED_FOLDER_ID))
         assertEquals(StartChoice(2, unified = true), startChoice(StartView.Unified, ids, 2, 7))
         assertEquals(StartChoice(1, unified = false), startChoice(StartView.Account(1), ids, 2, UNIFIED_FOLDER_ID))
@@ -187,7 +192,51 @@ class AccountsViewModelTest {
         // One account: no Unified Inbox, whatever was chosen or shown last.
         assertEquals(StartChoice(1, false, resetToLast = true), startChoice(StartView.Unified, listOf(1L), 1, 7))
         assertEquals(StartChoice(1, unified = false), startChoice(StartView.Last, listOf(1L), 1, UNIFIED_FOLDER_ID))
+        assertEquals(StartChoice(1, unified = false), startChoice(StartView.Last, listOf(1L), 99, 7))
     }
+
+    @Test
+    fun aColdStartReopensTheFolderShownLastFromSettings() =
+        runTest {
+            // #373: only what settings kept (no saved UI state), as after a reboot or a swipe from Recents.
+            val settings =
+                FakeAppSettings().apply {
+                    lastAccount.value = 2
+                    lastFolder.value = 7
+                }
+            val vm = AccountsViewModel(FakeAccounts(mutableListOf(acct(1), acct(2))), settings)
+            assertEquals(2L, vm.state.value.currentId)
+            assertEquals(7L, vm.state.value.startFolderId)
+            assertFalse(vm.state.value.startInUnified)
+            vm.startShown()
+            assertEquals(null, vm.state.value.startFolderId)
+        }
+
+    @Test
+    fun aColdStartAfterTheLastAccountWentOpensAllInboxes() =
+        runTest {
+            val settings =
+                FakeAppSettings().apply {
+                    lastAccount.value = 9
+                    lastFolder.value = 7
+                }
+            val vm = AccountsViewModel(FakeAccounts(mutableListOf(acct(1), acct(2))), settings)
+            assertTrue(vm.state.value.startInUnified)
+            assertEquals(null, vm.state.value.startFolderId)
+        }
+
+    @Test
+    fun switchingAccountsDropsTheStartFolder() =
+        runTest {
+            val settings =
+                FakeAppSettings().apply {
+                    lastAccount.value = 2
+                    lastFolder.value = 7
+                }
+            val vm = AccountsViewModel(FakeAccounts(mutableListOf(acct(1), acct(2))), settings)
+            vm.select(1)
+            assertEquals(null, vm.state.value.startFolderId)
+        }
 
     @Test
     fun withOneAccountTheUnifiedChoiceFallsBackToLastUsed() =

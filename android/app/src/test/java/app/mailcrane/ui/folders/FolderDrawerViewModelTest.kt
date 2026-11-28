@@ -130,6 +130,40 @@ class FolderDrawerViewModelTest {
     }
 
     @Test
+    fun theStartFolderOpensOnceTheFoldersAreRead() {
+        // #373: a cold start, nothing stored yet; "Last used" asks for Sent before the folders arrive.
+        val core = FakeFolders(onServer = listOf(INBOX, SENT, WORK))
+        val gate = CompletableDeferred<Unit>()
+        core.refreshGate = gate
+        val vm = FolderDrawerViewModel(core, ACCOUNT)
+        vm.startIn(SENT.id)
+        gate.complete(Unit)
+        assertEquals(SENT, vm.state.value.selected)
+    }
+
+    @Test
+    fun theStartFolderOpensWhenTheFoldersAreAlreadyRead() {
+        val vm = FolderDrawerViewModel(FakeFolders(stored = listOf(INBOX, SENT, WORK)), ACCOUNT)
+        vm.startIn(WORK.id)
+        assertEquals(WORK, vm.state.value.selected)
+    }
+
+    @Test
+    fun aStartFolderThatIsGoneLeavesTheInboxOpen() {
+        // #373: deleted or renamed away since: the account's inbox instead.
+        val core = FakeFolders(onServer = listOf(INBOX, SENT))
+        val gate = CompletableDeferred<Unit>()
+        core.refreshGate = gate
+        val vm = FolderDrawerViewModel(core, ACCOUNT)
+        vm.startIn(WORK.id)
+        gate.complete(Unit)
+        assertEquals(INBOX, vm.state.value.selected)
+        val stored = FolderDrawerViewModel(FakeFolders(stored = listOf(INBOX, SENT)), ACCOUNT)
+        stored.startIn(WORK.id)
+        assertEquals(INBOX, stored.state.value.selected)
+    }
+
+    @Test
     fun leavingAllInboxesOpensTheAccountsInbox() {
         val vm = FolderDrawerViewModel(FakeFolders(stored = listOf(INBOX, SENT, WORK)), ACCOUNT)
         vm.select(UNIFIED_FOLDER_ID)

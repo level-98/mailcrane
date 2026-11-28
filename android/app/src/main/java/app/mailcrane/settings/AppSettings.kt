@@ -202,7 +202,10 @@ sealed interface StartView {
         val accountId: Long,
     ) : StartView
 
-    /** The account and inbox (or Unified Inbox) shown last: the behaviour before M4-16. */
+    /**
+     * The account and folder (or Unified Inbox) shown last, kept in settings so a cold start reopens them
+     * (#373). A folder the account no longer has opens its inbox; an account that is gone opens All inboxes.
+     */
     data object Last : StartView
 
     companion object {

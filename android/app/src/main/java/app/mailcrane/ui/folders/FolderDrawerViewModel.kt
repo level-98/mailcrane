@@ -90,6 +90,21 @@ class FolderDrawerViewModel
             }
         }
 
+        /** The folder to open once the folders are read, from [startIn]. */
+        private var pendingStart: Long? = null
+
+        /**
+         * Opens folder [folderId] at start ("Last used", #373): now if the folders are read, else once they
+         * are. If the account no longer has it, the inbox stays open.
+         */
+        fun startIn(folderId: Long) {
+            if (_state.value.folders.isEmpty()) {
+                pendingStart = folderId
+            } else {
+                select(folderId)
+            }
+        }
+
         /** Opens the account's inbox (or its first folder), such as when leaving All inboxes. */
         fun openInbox() {
             _state.update { it.copy(selectedFolderId = defaultFolder(it.folders, null) ?: it.selectedFolderId) }
@@ -133,6 +148,9 @@ class FolderDrawerViewModel
                     }
                 val unified = core.unifiedUnreadCount()
                 val manage = core.canManageFolders(accountId)
+                // The start folder, the first time there are folders to look it up in (#373).
+                val start = pendingStart?.takeIf { id -> folders.any { it.id == id } }
+                if (folders.isNotEmpty()) pendingStart = null
                 _state.update { current ->
                     val open =
                         current.selectedFolderId?.takeIf { id ->
@@ -140,7 +158,7 @@ class FolderDrawerViewModel
                         }
                     current.copy(
                         folders = folders,
-                        selectedFolderId = open ?: defaultFolder(folders, preferred),
+                        selectedFolderId = start ?: open ?: defaultFolder(folders, preferred),
                         isLoading = current.isLoading && folders.isEmpty(),
                         loadError = if (folders.isEmpty()) current.loadError else null,
                         unifiedUnread = unified,

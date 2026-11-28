@@ -71,6 +71,8 @@ fun MailboxScreen(
     onMessageOpened: () -> Unit = {},
     /** Open the Unified Inbox first (M4-16); [onStartShown] once it is. */
     startInUnified: Boolean = false,
+    /** Open this folder first ("Last used", #373); its inbox if the account no longer has it. */
+    startFolderId: Long? = null,
     onStartShown: () -> Unit = {},
     /** The folder shown changed ([UNIFIED_FOLDER_ID] for the Unified Inbox), for "Last used" (M4-16). */
     onFolderShown: (Long) -> Unit = {},
@@ -88,10 +90,13 @@ fun MailboxScreen(
         ),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
-    // "Open the app on" (M4-16): the Unified Inbox at start, once.
-    LaunchedEffect(startInUnified) {
+    // "Open the app on" (M4-16): the Unified Inbox or the folder shown last at start, once.
+    LaunchedEffect(startInUnified, startFolderId) {
         if (startInUnified) {
             viewModel.select(UNIFIED_FOLDER_ID)
+            onStartShown()
+        } else if (startFolderId != null) {
+            viewModel.startIn(startFolderId)
             onStartShown()
         }
     }
