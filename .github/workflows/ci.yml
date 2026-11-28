@@ -154,6 +154,15 @@ jobs:
         env:
           ANDROID_NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/${{ env.NDK_VERSION }}
 
+      # A screenshot diff (#605): the compared, actual and diff images, for review and QA.
+      - if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: screenshot-diffs
+          path: android/app/build/outputs/roborazzi/
+          retention-days: 7
+          if-no-files-found: ignore
+
       # So the app can be installed on a phone without building it.
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:

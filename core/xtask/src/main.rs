@@ -79,7 +79,8 @@ Commands:
   test      cargo test --workspace, then the fixture loader tests (#289)
   deny      cargo deny check, then a check that android/app/licences/rust-licences.txt
             is current (needs cargo-about 0.9.3)
-  android   ktlintCheck, lintDebug, testDebugUnitTest, assembleDebug and checkFreeDependencies
+  android   ktlintCheck, lintDebug, verifyRoborazziDebug (the unit tests and screenshot
+            tests), assembleDebug and checkFreeDependencies
             through Gradle; then assembleRelease and assembleDebug, and a check that
             each APK packages its own core (the debug one has the fixture loader)
   bindings  generate Kotlin and Swift bindings into core/target/bindings/
@@ -588,17 +589,19 @@ fn android(ctx: &Ctx) -> Result<Outcome, Error> {
     // and proves the app really builds, not only that it lints and tests.
     // checkFreeDependencies (M6-04): the release build is free software
     // only, as F-Droid requires.
+    // verifyRoborazziDebug is testDebugUnitTest that also compares the
+    // screenshot tests with their goldens (#605), failing on a diff.
     let args = [
         "ktlintCheck",
         "lintDebug",
-        "testDebugUnitTest",
+        "verifyRoborazziDebug",
         "assembleDebug",
         "checkFreeDependencies",
     ];
     let wrapper = wrapper.display().to_string();
     if !run(&dir, &wrapper, &args)? {
         return Ok(Outcome::Failed(
-            "`./gradlew ktlintCheck lintDebug testDebugUnitTest assembleDebug checkFreeDependencies` failed"
+            "`./gradlew ktlintCheck lintDebug verifyRoborazziDebug assembleDebug checkFreeDependencies` failed"
                 .into(),
         ));
     }
