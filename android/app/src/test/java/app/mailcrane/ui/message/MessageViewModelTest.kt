@@ -716,4 +716,21 @@ class MessageViewModelTest {
             assertEquals(MessageEffect.ActionRefused(ActionRefusal.FAILED), vm.effects.first())
             assertTrue(vm.state.value is MessageState.Ready)
         }
+
+    /** #504: moving, archiving or deleting a message coming back from snooze is refused as such. */
+    @Test
+    fun aWakingMessageCantBeMovedArchivedOrDeletedYet() =
+        runTest {
+            val core = FakeMessageCore().apply { actionFailure = ActionFailure.Waking() }
+            val vm = messageViewModel(core)
+            core.snoozeInfo = SnoozeInfo(wakeAt = 1_800_000_000, deviceOnly = false, waking = true)
+            vm.archive()
+            assertEquals(MessageEffect.ActionRefused(ActionRefusal.LEAVING_WHILE_WAKING), vm.effects.first())
+            assertEquals("now shows as waking, so the screen disables them", true, ready(vm).snooze?.waking)
+            vm.delete()
+            assertEquals(MessageEffect.ActionRefused(ActionRefusal.LEAVING_WHILE_WAKING), vm.effects.first())
+            vm.moveTo(9)
+            assertEquals(MessageEffect.ActionRefused(ActionRefusal.LEAVING_WHILE_WAKING), vm.effects.first())
+            assertTrue("still open", vm.state.value is MessageState.Ready)
+        }
 }

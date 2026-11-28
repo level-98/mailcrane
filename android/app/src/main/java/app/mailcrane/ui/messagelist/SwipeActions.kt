@@ -38,6 +38,9 @@ internal suspend fun runSwipeAction(
         null
     } catch (_: ActionFailure.NoArchiveFolder) {
         R.string.action_no_archive_folder
+    } catch (_: ActionFailure.Waking) {
+        // Coming back from snooze (#504): said as such, not as a generic failure.
+        R.string.action_waking
     } catch (_: ActionFailure) {
         R.string.action_not_applied
     }

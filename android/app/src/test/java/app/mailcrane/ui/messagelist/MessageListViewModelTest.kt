@@ -766,4 +766,19 @@ class MessageListViewModelTest {
             assertEquals(MessageAction.Move(9), action)
             assertEquals(BulkUndoKind.MOVED, vm.bulkUndoOffers.first().kind)
         }
+
+    /** #504: a swipe or bulk action on a message coming back from snooze says so, not a generic error. */
+    @Test
+    fun actionsOnAWakingMessageSayItIsComingBack() =
+        runTest {
+            val core = FakeMailbox(stored = 3).apply { actionFailure = ActionFailure.Waking() }
+            val vm = MessageListViewModel(core, FakeAppSettings(), FOLDER)
+            vm.swipe(core.messages.first(), SwipeAction.ARCHIVE)
+            assertEquals(R.string.action_waking, vm.notices.first())
+            vm.toggleMessage(3)
+            vm.bulk(BulkAction.ARCHIVE)
+            assertEquals(R.string.action_waking, vm.notices.first())
+            vm.swipeThread(swipedThread(), SwipeAction.ARCHIVE)
+            assertEquals(R.string.action_waking, vm.notices.first())
+        }
 }

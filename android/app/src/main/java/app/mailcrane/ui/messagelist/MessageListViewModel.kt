@@ -377,6 +377,9 @@ class MessageListViewModel
                     _notices.send(R.string.action_no_archive_folder)
                 } catch (e: ActionFailure.MixedAccounts) {
                     _notices.send(R.string.bulk_move_one_account)
+                } catch (e: ActionFailure.Waking) {
+                    // A message in the selection is coming back from snooze (#504); nothing was changed.
+                    _notices.send(R.string.action_waking)
                 } catch (e: ActionFailure) {
                     _notices.send(R.string.action_not_applied)
                 }

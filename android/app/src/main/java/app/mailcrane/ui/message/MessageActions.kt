@@ -46,21 +46,23 @@ data class MessageActions(
 
 /**
  * The toolbar actions for an open message: archive, delete, mark unread, flag, and "Move to…" in
- * the overflow menu. [moveTargets] are the folders the message can move to.
+ * the overflow menu. [moveTargets] are the folders the message can move to. While the message is
+ * [waking] from snooze, snooze, archive, delete and move are disabled until it lands (#431, #504):
+ * the core would refuse them.
  */
 @Composable
 fun RowScope.MessageToolbarActions(
     flagged: Boolean,
     moveTargets: List<FolderSummary>,
     actions: MessageActions,
-    snoozeEnabled: Boolean = true,
+    waking: Boolean = false,
 ) {
     var menuOpen by rememberSaveable { mutableStateOf(false) }
     var picking by rememberSaveable { mutableStateOf(false) }
-    IconButton(onClick = actions.onArchive) {
+    IconButton(onClick = actions.onArchive, enabled = !waking) {
         Icon(painterResource(R.drawable.ic_mc_archive), contentDescription = stringResource(R.string.message_archive))
     }
-    IconButton(onClick = actions.onDelete) {
+    IconButton(onClick = actions.onDelete, enabled = !waking) {
         Icon(painterResource(R.drawable.ic_mc_trash), contentDescription = stringResource(R.string.message_delete))
     }
     val markRead = actions.onMarkRead
@@ -72,7 +74,7 @@ fun RowScope.MessageToolbarActions(
         )
     }
     actions.onSnooze?.let { snooze ->
-        IconButton(onClick = snooze, enabled = snoozeEnabled) {
+        IconButton(onClick = snooze, enabled = !waking) {
             Icon(painterResource(R.drawable.ic_mc_snooze), contentDescription = stringResource(R.string.message_snooze))
         }
     }
@@ -92,6 +94,7 @@ fun RowScope.MessageToolbarActions(
             DropdownMenuItem(
                 text = { Text(stringResource(R.string.message_move)) },
                 leadingIcon = { Icon(painterResource(R.drawable.ic_mc_folder), contentDescription = null) },
+                enabled = !waking,
                 onClick = {
                     menuOpen = false
                     picking = true

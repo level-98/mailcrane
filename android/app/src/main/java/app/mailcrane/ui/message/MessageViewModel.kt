@@ -120,6 +120,9 @@ enum class ActionRefusal {
     /** The message is coming back from snooze right now: snooze it again once it has (#431). */
     WAKING,
 
+    /** The message is coming back from snooze right now: move, archive or delete it once it has (#504). */
+    LEAVING_WHILE_WAKING,
+
     /** The message or folder is gone, or the database failed. */
     FAILED,
 }
@@ -484,8 +487,11 @@ class MessageViewModel
                     val reason =
                         when (e) {
                             is ActionFailure.NoArchiveFolder -> ActionRefusal.NO_ARCHIVE_FOLDER
+                            is ActionFailure.Waking -> ActionRefusal.LEAVING_WHILE_WAKING
                             else -> ActionRefusal.FAILED
                         }
+                    // Waking: the message now shows as waking, with these actions disabled until it lands.
+                    if (e is ActionFailure.Waking) snoozeRefresh.trySend(Unit)
                     _effects.send(MessageEffect.ActionRefused(reason))
                 }
             }

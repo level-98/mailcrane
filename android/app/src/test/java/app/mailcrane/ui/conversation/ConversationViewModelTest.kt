@@ -171,4 +171,14 @@ class ConversationViewModelTest {
             vm.swipe(message(1), SwipeAction.ARCHIVE)
             assertEquals(R.string.action_no_archive_folder, vm.notices.first())
         }
+
+    /** #504: a swipe on a message coming back from snooze says so. */
+    @Test
+    fun aSwipeOnAWakingMessageSaysItIsComingBack() =
+        runTest {
+            val core = FakeThreadCore().apply { actionFailure = ActionFailure.Waking() }
+            val vm = ConversationViewModel(core, FakeAppSettings(), THREAD)
+            vm.swipe(message(1), SwipeAction.DELETE)
+            assertEquals(R.string.action_waking, vm.notices.first())
+        }
 }
