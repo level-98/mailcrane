@@ -24,7 +24,10 @@ class MessageToolbarWakingTest {
     @get:Rule
     val compose = createComposeRule()
 
-    private fun show(waking: Boolean) {
+    private fun show(
+        waking: Boolean,
+        locked: Boolean = waking,
+    ) {
         compose.setContent {
             MailcraneTheme {
                 Row {
@@ -33,6 +36,7 @@ class MessageToolbarWakingTest {
                         moveTargets = listOf(FolderSummary(9, "Projects", null, 0u, 0u)),
                         actions = MessageActions(onSnooze = {}),
                         waking = waking,
+                        locked = locked,
                     )
                 }
             }
@@ -49,6 +53,17 @@ class MessageToolbarWakingTest {
         compose.onNodeWithText("Move to…").assertIsNotEnabled()
         // What doesn't leave the folder still works.
         compose.onNodeWithContentDescription("Mark as unread").assertIsEnabled()
+    }
+
+    /** #570 review: another copy of a waking message (Gmail's All Mail, say) can still move. */
+    @Test
+    fun anotherCopyOfAWakingMessageCanStillMoveButNotSnooze() {
+        show(waking = true, locked = false)
+        compose.onNodeWithContentDescription("Archive").assertIsEnabled()
+        compose.onNodeWithContentDescription("Delete").assertIsEnabled()
+        compose.onNodeWithContentDescription("Snooze").assertIsNotEnabled()
+        compose.onNodeWithContentDescription("More options").performClick()
+        compose.onNodeWithText("Move to…").assertIsEnabled()
     }
 
     @Test

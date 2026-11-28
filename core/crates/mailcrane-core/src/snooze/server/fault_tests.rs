@@ -746,6 +746,20 @@ async fn other_copies_of_a_waking_message_can_still_be_moved() {
         .find_message_by_header(archive, MID)
         .expect("find")
         .expect("the Archive copy");
+    // #504: the apps ask the store the same question to disable the actions.
+    assert!(
+        !store.is_waking_copy(other, account).expect("ask"),
+        "the Archive copy isn't locked"
+    );
+    let snoozed = folder(&store, account, SNOOZED_FOLDER_NAME).expect("Snoozed");
+    let locked = store
+        .find_message_by_header(snoozed, MID)
+        .expect("find")
+        .expect("the Snoozed copy");
+    assert!(
+        store.is_waking_copy(locked, account).expect("ask"),
+        "the Snoozed copy is locked"
+    );
     assert!(
         apply_action(&store, &[other], Action::Delete, ACT, &Quiet).is_ok(),
         "the Archive copy isn't the one waking"

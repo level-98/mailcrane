@@ -115,6 +115,32 @@ pub struct CancelReport {
     pub folders: Vec<FolderId>,
 }
 
+/// Whether `message` is a copy that a wake of `account` is moving back right
+/// now (past its first step): the one in Snoozed, or the one in the wake's
+/// destination (its original folder, or the Inbox). Move and expunge of such
+/// a copy are refused until the wake lands ([`StoreError::Waking`]). Other
+/// copies of the same Message-ID, such as Gmail's All Mail or a Sent copy,
+/// can still be moved. The apps ask the same question to disable those
+/// actions (#504). ('snoozed' is mailcrane-core's SNOOZED_FOLDER_NAME,
+/// matched the same way, ignoring case.)
+fn waking_copy(
+    conn: &rusqlite::Connection,
+    message: MessageId,
+    account: AccountId,
+) -> Result<bool, StoreError> {
+    Ok(conn.query_row(
+        "SELECT EXISTS (SELECT 1 FROM snoozes s JOIN messages msg \
+             ON msg.message_id_header = s.message_id_header \
+             JOIN folders f ON f.id = msg.folder_id \
+             WHERE msg.id = ?1 AND s.account_id = ?2 AND f.account_id = ?2 \
+             AND s.state = 'to_wake' AND s.step > 0 \
+             AND (f.id = s.original_folder_id OR f.role = 'inbox' \
+                  OR lower(f.remote_name) = 'snoozed'))",
+        params![message.0, account.0],
+        |r| r.get(0),
+    )?)
+}
+
 /// [`Store::queue_op`]'s work inside an open transaction.
 fn queue_in_tx(
     tx: &Transaction<'_>,
@@ -126,24 +152,9 @@ fn queue_in_tx(
     now: i64,
 ) -> Result<Option<OpId>, StoreError> {
     // Read in this transaction, before anything changes, so no wake can
-    // start in between (lead's decision on G6). Only the copies the wake
-    // moves count: the one in Snoozed and the one in its destination (the
-    // original folder, or the Inbox). Other copies of the same Message-ID,
-    // such as Gmail's All Mail or a Sent copy, can still be moved.
-    // ('snoozed' is mailcrane-core's SNOOZED_FOLDER_NAME, matched the same
-    // way, ignoring case.)
+    // start in between (lead's decision on G6).
     for m in messages {
-        let waking: bool = tx.query_row(
-            "SELECT EXISTS (SELECT 1 FROM snoozes s JOIN messages msg \
-                 ON msg.message_id_header = s.message_id_header \
-                 JOIN folders f ON f.id = msg.folder_id \
-                 WHERE msg.id = ?1 AND s.account_id = ?2 AND f.account_id = ?2 \
-                 AND s.state = 'to_wake' AND s.step > 0 \
-                 AND (f.id = s.original_folder_id OR f.role = 'inbox' \
-                      OR lower(f.remote_name) = 'snoozed'))",
-            params![m.message_id.0, account.0],
-            |r| r.get(0),
-        )?;
+        let waking = waking_copy(tx, m.message_id, account)?;
         if waking && matches!(kind, OpKind::Move | OpKind::Expunge) {
             return Err(StoreError::Waking);
         }
@@ -372,6 +383,17 @@ fn delete_op(tx: &Transaction<'_>, op: OpId) -> Result<(), StoreError> {
 }
 
 impl Store {
+    /// Whether this copy of a message is locked by a wake in progress, so
+    /// move, archive and delete of it would be refused (#504). See
+    /// [`waking_copy`].
+    pub fn is_waking_copy(
+        &self,
+        message: MessageId,
+        account: AccountId,
+    ) -> Result<bool, StoreError> {
+        waking_copy(&self.conn, message, account)
+    }
+
     /// Applies `kind` locally to `messages` (all in `folder`) and queues it,
     /// in one transaction. Flag actions set the flag; move and expunge hide
     /// the messages. A flag action on a message whose opposite is still

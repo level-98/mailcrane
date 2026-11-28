@@ -47,8 +47,9 @@ data class MessageActions(
 /**
  * The toolbar actions for an open message: archive, delete, mark unread, flag, and "Move to…" in
  * the overflow menu. [moveTargets] are the folders the message can move to. While the message is
- * [waking] from snooze, snooze, archive, delete and move are disabled until it lands (#431, #504):
- * the core would refuse them.
+ * [waking] from snooze, Snooze is disabled until it lands (#431). While this copy is [locked] by
+ * the wake (the core's `copy_locked`), Archive, Delete and Move are too (#504): the core would
+ * refuse them. Other copies of a waking message, such as Gmail's All Mail, can still move.
  */
 @Composable
 fun RowScope.MessageToolbarActions(
@@ -56,13 +57,14 @@ fun RowScope.MessageToolbarActions(
     moveTargets: List<FolderSummary>,
     actions: MessageActions,
     waking: Boolean = false,
+    locked: Boolean = false,
 ) {
     var menuOpen by rememberSaveable { mutableStateOf(false) }
     var picking by rememberSaveable { mutableStateOf(false) }
-    IconButton(onClick = actions.onArchive, enabled = !waking) {
+    IconButton(onClick = actions.onArchive, enabled = !locked) {
         Icon(painterResource(R.drawable.ic_mc_archive), contentDescription = stringResource(R.string.message_archive))
     }
-    IconButton(onClick = actions.onDelete, enabled = !waking) {
+    IconButton(onClick = actions.onDelete, enabled = !locked) {
         Icon(painterResource(R.drawable.ic_mc_trash), contentDescription = stringResource(R.string.message_delete))
     }
     val markRead = actions.onMarkRead
@@ -94,7 +96,7 @@ fun RowScope.MessageToolbarActions(
             DropdownMenuItem(
                 text = { Text(stringResource(R.string.message_move)) },
                 leadingIcon = { Icon(painterResource(R.drawable.ic_mc_folder), contentDescription = null) },
-                enabled = !waking,
+                enabled = !locked,
                 onClick = {
                     menuOpen = false
                     picking = true

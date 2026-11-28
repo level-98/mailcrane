@@ -315,9 +315,10 @@ fun MessageContent(
                             flagged = state.message.isFlagged,
                             moveTargets = folders.filter { it.id != state.message.folderId && it.takesMoves },
                             actions = actions,
-                            // Coming back from snooze: it can be snoozed again, moved, archived or deleted once
-                            // it lands (#431, #504).
+                            // Coming back from snooze: it can be snoozed again once it lands (#431); if this
+                            // is the copy the wake moves, it can be moved, archived or deleted then too (#504).
                             waking = state.snooze?.waking == true,
+                            locked = state.snooze?.copyLocked == true,
                         )
                     }
                 },
