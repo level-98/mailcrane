@@ -5,6 +5,11 @@ import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.layout.LookaheadScope
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.test.getBoundsInRoot
 import androidx.compose.ui.test.hasClickAction
@@ -18,6 +23,7 @@ import app.mailcrane.R
 import app.mailcrane.core.MessageSummary
 import app.mailcrane.ui.theme.MailcraneTheme
 import kotlinx.coroutines.runBlocking
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -163,5 +169,105 @@ class FabClearanceUiTest {
                 .value
         val gap = rootBottom - lastRowBottom()
         assertTrue("last row ends $gap dp above the bottom; the button's space is kept", gap >= 56f)
+    }
+
+    /** #497: inside a lookahead scope, as in the app (`MailHome`'s shared transition), only that pass counts. */
+    @Test
+    fun theLastRowEndsAboveTheComposeButtonInALookaheadScope() {
+        val listState = LazyListState()
+        compose.setContent {
+            MailcraneTheme {
+                LookaheadScope {
+                    MessageListContent(
+                        state = state,
+                        title = "Inbox",
+                        snackbar = SnackbarHostState(),
+                        onRefresh = {},
+                        onLoadMore = {},
+                        listState = listState,
+                        onCompose = {},
+                    )
+                }
+            }
+        }
+        compose.waitForIdle()
+        compose.runOnIdle {
+            runBlocking { listState.scrollToItem(listState.layoutInfo.totalItemsCount - 1, 100_000) }
+        }
+        compose.waitForIdle()
+        val bottom = lastRowBottom()
+        val top = fabTop()
+        assertTrue("lookahead: last row ends at $bottom dp, compose button starts at $top dp", bottom <= top)
+    }
+
+    /** #497: a long-press at the end starts selection without moving the rows under the finger. */
+    @Test
+    fun startingSelectionAtTheEndDoesNotMoveTheRows() {
+        val listState = LazyListState()
+        var shown by mutableStateOf(state)
+        compose.setContent {
+            MailcraneTheme {
+                MessageListContent(
+                    state = shown,
+                    title = "Inbox",
+                    snackbar = SnackbarHostState(),
+                    onRefresh = {},
+                    onLoadMore = {},
+                    listState = listState,
+                    onCompose = {},
+                )
+            }
+        }
+        compose.waitForIdle()
+        compose.runOnIdle {
+            runBlocking { listState.scrollToItem(listState.layoutInfo.totalItemsCount - 1, 100_000) }
+        }
+        compose.waitForIdle()
+        val before = lastRowBottom()
+        shown = state.copy(selectedMessages = setOf(1L))
+        compose.waitForIdle()
+        assertEquals("the last row stays put", before, lastRowBottom(), 0.5f)
+    }
+
+    /**
+     * #497: the button's height is saved in dp, so a list restored at another density (Display size, another
+     * display) gets the same end space on its first frame, before the button is measured again.
+     */
+    @Test
+    fun aRestoreAtAnotherDensityKeepsTheSameEndSpaceOnItsFirstFrame() {
+        val restoration = StateRestorationTester(compose)
+        lateinit var listState: LazyListState
+        var density by mutableFloatStateOf(2.625f)
+        restoration.setContent {
+            listState = rememberLazyListState()
+            CompositionLocalProvider(LocalDensity provides Density(density, 1f)) {
+                MailcraneTheme {
+                    MessageListContent(
+                        state = state,
+                        title = "Inbox",
+                        snackbar = SnackbarHostState(),
+                        onRefresh = {},
+                        onLoadMore = {},
+                        listState = listState,
+                        onCompose = {},
+                    )
+                }
+            }
+        }
+        compose.waitForIdle()
+        compose.runOnIdle {
+            runBlocking { listState.scrollToItem(listState.layoutInfo.totalItemsCount - 1, 100_000) }
+        }
+        compose.waitForIdle()
+        // The first frame after the restore uses the saved height: hold the clock so the button's new
+        // measure can't correct it first. Saved in px, 56 dp at 2.625 would come back as 42 dp at 3.5.
+        density = 3.5f
+        compose.mainClock.autoAdvance = false
+        restoration.emulateSavedInstanceStateRestore()
+        compose.mainClock.advanceTimeByFrame()
+        val bottom = lastRowBottom()
+        val top = fabTop()
+        compose.mainClock.autoAdvance = true
+        assertTrue("first frame: last row ends at $bottom dp, compose button starts at $top dp", bottom <= top)
     }
 }
