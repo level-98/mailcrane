@@ -52,6 +52,12 @@ pub struct SnoozeInfo {
     /// first step): it can't be snoozed again until it lands (#431). Not
     /// set for a wake that hasn't started or is waiting to retry.
     pub waking: bool,
+    /// While waking, this copy is one the wake moves (the one in Snoozed,
+    /// its original folder or the Inbox): move, archive and delete of it are
+    /// refused until it lands (#504). Other copies, such as Gmail's All Mail,
+    /// can still be moved.
+    #[uniffi(default = false)]
+    pub copy_locked: bool,
 }
 
 impl From<&Snooze> for SnoozeInfo {
@@ -60,6 +66,7 @@ impl From<&Snooze> for SnoozeInfo {
             wake_at: s.wake_at,
             device_only: s.device_only(),
             waking: s.state == SnoozeState::ToWake && s.step > 0,
+            copy_locked: false,
         }
     }
 }
@@ -146,7 +153,15 @@ impl SyncEngine {
         let snooze = store
             .get_snooze(folder.details.account_id, &mid)
             .map_err(storage)?;
-        Ok(snooze.as_ref().map(SnoozeInfo::from))
+        let Some(snooze) = snooze else {
+            return Ok(None);
+        };
+        let mut info = SnoozeInfo::from(&snooze);
+        info.copy_locked = info.waking
+            && store
+                .is_waking_copy(MessageId(message_id), folder.details.account_id)
+                .map_err(storage)?;
+        Ok(Some(info))
     }
 
     /// The earliest wake time of any snooze still waiting, for scheduling
@@ -247,6 +262,7 @@ mod tests {
                 wake_at: wake,
                 device_only: false,
                 waking: false,
+                copy_locked: false,
             }))
         );
         assert_eq!(engine.next_snooze_wake(), Ok(Some(wake)));
