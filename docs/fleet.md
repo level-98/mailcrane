@@ -204,6 +204,8 @@ It creates the worktrees, wires each one to Synapse, and opens one terminal wind
 
 If `sccache` is installed (`cargo install sccache --locked`), every seat builds through it with one shared cache in `.worktrees/sccache` (up to 10G), so a new worktree doesn't rebuild every dependency (#531). Each seat keeps its own `CARGO_TARGET_DIR`. Without sccache nothing changes; the script and `-DryRun` say which applies. It takes effect when seats start.
 
+**Disk space** (#615): each seat's cargo target directory grows by about 20 GB a day, because every source change leaves a new hash directory. `scripts/fleet/disk-sweep.ps1` shows, in GB, what is stale: the workspace's own cargo build and incremental directories untouched for over 24 hours (the 8 newest of each crate or target always stay), and the APKs of closed PRs in `qa-artifacts`. It also reports what it never deletes: AVDs, system images, the Gradle caches, Temp and `qa-target`. It's a dry run by default. `-Apply -HeavyJobHeld` deletes, only while you hold `locks/heavy-job` and no cargo, rustc or Java process is running, and only under `.worktrees/`. The lead runs it at the first wake-up of each day and whenever the drive has under 50 GB free, and adds "disk: X GB free, swept Y GB" to the report. `scripts/fleet/disk-sweep.test.ps1` checks its rules on a fixture.
+
 ## Known gaps
 
 - **When Synapse is down:** work from GitHub, which is the record anyway. Put results and hand-offs in PR and issue comments, and check your PRs and issues for new comments at every wake-up.
