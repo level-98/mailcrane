@@ -361,9 +361,10 @@ pub(crate) fn smtp_settings(
     config.command_timeout = options.timeout;
     config.extra_root_certs = options.extra_root_certs.clone();
     let auth = match credential {
-        Credential::Password(password) => SmtpAuth::Password {
+        // Moved, not copied: the emptied original is wiped on drop (#521).
+        Credential::Password(mut password) => SmtpAuth::Password {
             username: account.username,
-            password: mailcrane_smtp::Secret::new(password),
+            password: mailcrane_smtp::Secret::new(std::mem::take(&mut *password)),
         },
         Credential::OAuth(token) => SmtpAuth::XOAuth2 {
             username: account.username,

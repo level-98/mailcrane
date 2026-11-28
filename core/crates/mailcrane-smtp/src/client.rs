@@ -13,6 +13,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::TcpStream;
+use zeroize::Zeroizing;
 
 const MAX_LINE: usize = 4096;
 const MAX_REPLY_LINES: usize = 100;
@@ -202,7 +203,12 @@ impl Conn {
 
     async fn command(&mut self, line: &str) -> Result<Reply, SmtpError> {
         let limit = self.command_timeout;
-        within(limit, self.write(format!("{line}\r\n").as_bytes())).await??;
+        // Sized up front and wiped after sending: an AUTH line carries the
+        // password or token (#521).
+        let mut out = Zeroizing::new(Vec::with_capacity(line.len() + 2));
+        out.extend_from_slice(line.as_bytes());
+        out.extend_from_slice(b"\r\n");
+        within(limit, self.write(&out)).await??;
         self.reply().await
     }
 
@@ -322,8 +328,20 @@ async fn upgrade(
         .map_err(|_| SmtpError::TlsFailure)
 }
 
-fn b64(text: &str) -> String {
-    STANDARD.encode(text)
+/// `text` in base64, wiped when dropped: it may be a password or token
+/// (#521).
+fn b64(text: &str) -> Zeroizing<String> {
+    Zeroizing::new(STANDARD.encode(text))
+}
+
+/// `parts` joined, in a buffer sized up front so it never grows and leaves a
+/// copy of a secret behind, and wiped when dropped (#521).
+fn joined(parts: &[&str]) -> Zeroizing<String> {
+    let mut out = Zeroizing::new(String::with_capacity(parts.iter().map(|p| p.len()).sum()));
+    for part in parts {
+        out.push_str(part);
+    }
+    out
 }
 
 /// RFC 4616 PLAIN, falling back to the de-facto LOGIN mechanism.
@@ -346,11 +364,9 @@ async fn authenticate(conn: &mut Conn, caps: &Reply, auth: &SmtpAuth) -> Result<
         return Err(SmtpError::AuthFailed);
     }
     if plain {
+        let plain = b64(&joined(&["\0", username, "\0", password]));
         let reply = conn
-            .command(&format!(
-                "AUTH PLAIN {}",
-                b64(&format!("\0{username}\0{password}"))
-            ))
+            .command(&joined(&["AUTH PLAIN ", plain.as_str()]))
             .await?;
         match reply.code {
             235 => return Ok(()),
@@ -395,11 +411,15 @@ async fn authenticate_xoauth2(
     if !caps.auth_mechanisms().iter().any(|m| m == "XOAUTH2") {
         return Err(SmtpError::AuthFailed);
     }
+    let payload = b64(&joined(&[
+        "user=",
+        username,
+        "\x01auth=Bearer ",
+        token,
+        "\x01\x01",
+    ]));
     let reply = conn
-        .command(&format!(
-            "AUTH XOAUTH2 {}",
-            b64(&format!("user={username}\x01auth=Bearer {token}\x01\x01"))
-        ))
+        .command(&joined(&["AUTH XOAUTH2 ", payload.as_str()]))
         .await?;
     match reply.code {
         235 => Ok(()),

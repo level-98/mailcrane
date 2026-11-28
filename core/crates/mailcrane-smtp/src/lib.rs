@@ -24,17 +24,19 @@ pub use error::SmtpError;
 
 use std::fmt;
 
-/// A password or token. Never shown in `Debug` output.
+/// A password or token. Never shown in `Debug` output, and wiped from
+/// memory when dropped (#521). `Clone` stays for callers that keep a login
+/// to send again; each copy is wiped on drop too.
 #[derive(Clone, PartialEq, Eq)]
-pub struct Secret(String);
+pub struct Secret(zeroize::Zeroizing<String>);
 
 impl Secret {
     pub fn new(value: impl Into<String>) -> Self {
-        Self(value.into())
+        Self(zeroize::Zeroizing::new(value.into()))
     }
 
     pub(crate) fn expose(&self) -> &str {
-        &self.0
+        self.0.as_str()
     }
 }
 

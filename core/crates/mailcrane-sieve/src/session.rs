@@ -10,6 +10,7 @@ use std::future::Future;
 use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::TcpStream;
+use zeroize::Zeroizing;
 
 /// The ManageSieve port (RFC 5804 §1.8).
 pub const DEFAULT_PORT: u16 = 4190;
@@ -320,13 +321,22 @@ impl Session {
             return Err(SieveError::NoSupportedMechanism);
         }
         // RFC 4616: authzid NUL authcid NUL passwd, base64 (RFC 5804 §2.1).
-        let mut plain = Vec::with_capacity(username.len() + password.expose().len() + 2);
+        // Each copy of the password is sized up front, so it never grows and
+        // leaves a copy behind, and wiped after use (#521).
+        let mut plain = Zeroizing::new(Vec::with_capacity(
+            username.len() + password.expose().len() + 2,
+        ));
         plain.push(0);
         plain.extend_from_slice(username.as_bytes());
         plain.push(0);
         plain.extend_from_slice(password.expose().as_bytes());
-        let mut cmd = b"AUTHENTICATE \"PLAIN\" ".to_vec();
-        string_arg(&mut cmd, &STANDARD.encode(&plain));
+        let encoded = Zeroizing::new(STANDARD.encode(&*plain));
+        const PREFIX: &[u8] = b"AUTHENTICATE \"PLAIN\" ";
+        // Base64 needs no escaping. string_arg adds quotes, or (over 1024
+        // bytes) a literal's {n+} header and CRLF, at most 26 bytes; then CRLF.
+        let mut cmd = Zeroizing::new(Vec::with_capacity(PREFIX.len() + encoded.len() + 28));
+        cmd.extend_from_slice(PREFIX);
+        string_arg(&mut cmd, &encoded);
         cmd.extend_from_slice(b"\r\n");
         let r = conn.command(&cmd).await?;
         if r.status != Status::Ok {

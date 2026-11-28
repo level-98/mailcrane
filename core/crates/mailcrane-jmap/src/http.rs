@@ -19,7 +19,8 @@ pub const MAX_RESPONSE_BYTES: usize = 32 * 1024 * 1024;
 /// Most redirects followed while discovering the session.
 const MAX_REDIRECTS: usize = 3;
 
-/// How to authenticate. `Debug` never shows the secret.
+/// How to authenticate. `Debug` never shows the secret, and it's wiped from
+/// memory when dropped (#521), clones included.
 #[derive(Clone, PartialEq, Eq)]
 pub enum Auth {
     /// HTTP Basic with an app password (RFC 7617).
@@ -40,16 +41,42 @@ impl std::fmt::Debug for Auth {
     }
 }
 
+impl Drop for Auth {
+    fn drop(&mut self) {
+        self.wipe();
+    }
+}
+
 impl Auth {
-    fn header(&self) -> String {
+    /// Wipes the password or token, as dropping does.
+    fn wipe(&mut self) {
+        use zeroize::Zeroize;
+        match self {
+            Self::Basic { password, .. } => password.zeroize(),
+            Self::Bearer(token) => token.zeroize(),
+        }
+    }
+}
+
+impl Auth {
+    /// The `Authorization` value, built in buffers sized up front (so none
+    /// grows and leaves a copy behind) and wiped when dropped (#521).
+    fn header(&self) -> zeroize::Zeroizing<String> {
+        let joined = |parts: &[&str]| {
+            let mut out =
+                zeroize::Zeroizing::new(String::with_capacity(parts.iter().map(|p| p.len()).sum()));
+            for part in parts {
+                out.push_str(part);
+            }
+            out
+        };
         match self {
             Self::Basic { username, password } => {
-                format!(
-                    "Basic {}",
-                    base64(format!("{username}:{password}").as_bytes())
-                )
+                let pair = joined(&[username, ":", password]);
+                let encoded = zeroize::Zeroizing::new(base64(pair.as_bytes()));
+                joined(&["Basic ", &encoded])
             }
-            Self::Bearer(token) => format!("Bearer {token}"),
+            Self::Bearer(token) => joined(&["Bearer ", token]),
         }
     }
 }
@@ -170,7 +197,13 @@ async fn send_inner(
         .header(hyper::header::HOST, host_header)
         .header(hyper::header::ACCEPT, "application/json");
     if let Some(a) = auth {
-        builder = builder.header(hyper::header::AUTHORIZATION, a.header());
+        // hyper keeps its own copy of the value, out of our reach to wipe;
+        // marked sensitive, so hyper never logs or compresses it (#521).
+        let header = a.header();
+        let mut value =
+            hyper::header::HeaderValue::from_str(&header).map_err(|_| JmapError::Unauthorized)?;
+        value.set_sensitive(true);
+        builder = builder.header(hyper::header::AUTHORIZATION, value);
     }
     let bytes = match body {
         Some((bytes, content_type)) => {
@@ -280,6 +313,20 @@ fn base64(bytes: &[u8]) -> String {
 
 #[cfg(test)]
 mod tests {
+    /// #521: dropping wipes the secret.
+    #[test]
+    fn wiping_clears_the_secret() {
+        let mut basic = Auth::Basic {
+            username: "ana".into(),
+            password: "hunter2".into(),
+        };
+        basic.wipe();
+        assert!(matches!(&basic, Auth::Basic { password, .. } if password.is_empty()));
+        let mut bearer = Auth::Bearer("tok-123".into());
+        bearer.wipe();
+        assert!(matches!(&bearer, Auth::Bearer(t) if t.is_empty()));
+    }
+
     use super::*;
 
     #[test]
@@ -306,7 +353,7 @@ mod tests {
         };
         assert!(!format!("{basic:?}").contains("hunter2"));
         assert!(!format!("{:?}", Auth::Bearer("tok-123".into())).contains("tok-123"));
-        assert_eq!(basic.header(), "Basic YWxpY2U6aHVudGVyMg==");
+        assert_eq!(basic.header().as_str(), "Basic YWxpY2U6aHVudGVyMg==");
     }
 
     #[test]

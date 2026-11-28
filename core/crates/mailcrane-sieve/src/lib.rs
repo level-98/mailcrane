@@ -23,17 +23,19 @@ pub use session::{Capabilities, ScriptInfo, Session, SieveConfig, DEFAULT_PORT};
 
 use std::fmt;
 
-/// A password, kept out of `Debug` output.
+/// A password, kept out of `Debug` output, and wiped from memory when
+/// dropped (#521). `Clone` stays for callers that keep a login to use
+/// again; each copy is wiped on drop too.
 #[derive(Clone)]
-pub struct Secret(String);
+pub struct Secret(zeroize::Zeroizing<String>);
 
 impl Secret {
     pub fn new(value: impl Into<String>) -> Self {
-        Self(value.into())
+        Self(zeroize::Zeroizing::new(value.into()))
     }
 
     pub(crate) fn expose(&self) -> &str {
-        &self.0
+        self.0.as_str()
     }
 }
 
@@ -48,6 +50,12 @@ pub const CRATE_NAME: &str = env!("CARGO_PKG_NAME");
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_secret_never_shows_in_debug() {
+        let secret = super::Secret::new("hunter2-example");
+        assert_eq!(format!("{secret:?}"), "Secret(***)");
+    }
+
     use super::*;
 
     #[test]

@@ -46,14 +46,38 @@ pub(crate) struct Command {
     pub(crate) segments: Vec<Vec<u8>>,
 }
 
-/// Builds `<tag> <name> <args...>\r\n`.
+/// The most bytes `arg` can take in a command, its leading space included:
+/// a string fully escaped and quoted, or a literal with its `{n}\r\n` header
+/// (at most 24 bytes for any length).
+fn worst_case(arg: &Arg<'_>) -> usize {
+    1 + match arg {
+        Arg::Raw(text) => text.len(),
+        Arg::Built(text) => text.len(),
+        Arg::KeywordList(keyword) => keyword.len() + 2,
+        Arg::Str(bytes) => (2 * bytes.len() + 2).max(bytes.len() + 24),
+        Arg::Literal(bytes) => bytes.len() + 24,
+    }
+}
+
+/// Builds `<tag> <name> <args...>\r\n`. Every segment's buffer is sized up
+/// front for the worst case of what goes in it, so none grows: growing frees
+/// the old buffer unwiped, and a `LOGIN` argument is a password (#521).
 pub(crate) fn build(tag: String, name: &str, args: &[Arg<'_>]) -> Result<Command, ImapError> {
     let mut segments = Vec::new();
-    let mut current = Vec::new();
+    // What the rest of the command can take, from argument `i` on.
+    let rest = |i: usize| {
+        args.get(i..)
+            .unwrap_or_default()
+            .iter()
+            .map(worst_case)
+            .sum::<usize>()
+            + 2
+    };
+    let mut current = Vec::with_capacity(tag.len() + 1 + name.len() + rest(0));
     current.extend_from_slice(tag.as_bytes());
     current.push(b' ');
     current.extend_from_slice(name.as_bytes());
-    for arg in args {
+    for (i, arg) in args.iter().enumerate() {
         current.push(b' ');
         match arg {
             Arg::Raw(text) => current.extend_from_slice(text.as_bytes()),
@@ -78,7 +102,8 @@ pub(crate) fn build(tag: String, name: &str, args: &[Arg<'_>]) -> Result<Command
             Arg::Str(bytes) => {
                 if let Some(literal) = push_string(bytes, &mut current)? {
                     current.extend_from_slice(format!("{{{}}}\r\n", literal.len()).as_bytes());
-                    segments.push(std::mem::take(&mut current));
+                    let next = Vec::with_capacity(literal.len() + rest(i + 1));
+                    segments.push(std::mem::replace(&mut current, next));
                     current.extend_from_slice(literal);
                 }
             }
@@ -87,7 +112,8 @@ pub(crate) fn build(tag: String, name: &str, args: &[Arg<'_>]) -> Result<Command
                     return Err(ImapError::InvalidInput);
                 }
                 current.extend_from_slice(format!("{{{}}}\r\n", bytes.len()).as_bytes());
-                segments.push(std::mem::take(&mut current));
+                let next = Vec::with_capacity(bytes.len() + rest(i + 1));
+                segments.push(std::mem::replace(&mut current, next));
                 current.extend_from_slice(bytes);
             }
         }
@@ -125,6 +151,38 @@ fn push_string<'a>(bytes: &'a [u8], out: &mut Vec<u8>) -> Result<Option<&'a [u8]
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// #521: no buffer grows while a password is written into it, whichever
+    /// form it takes (atom, quoted with escapes, or literal): each segment's
+    /// capacity is still the size it was made with.
+    #[test]
+    fn login_buffers_never_grow() {
+        for password in [
+            &b"plain"[..],
+            br#"quo"te\back"#,
+            &[b'"'; 300][..],
+            "naïve-ünicode".as_bytes(),
+        ] {
+            let args = [Arg::Str(b"ana@example.org"), Arg::Str(password)];
+            let cmd = build("A0001".into(), "LOGIN", &args).expect("built");
+            let first = 5 + 1 + 5 + args.iter().map(worst_case).sum::<usize>() + 2;
+            let first_segment = cmd.segments.first().expect("a segment");
+            assert_eq!(
+                first_segment.capacity(),
+                first,
+                "the first segment never grew"
+            );
+            for (n, segment) in cmd.segments.iter().enumerate().skip(1) {
+                assert!(segment.len() <= segment.capacity(), "segment {n}");
+                // A literal's segment holds the literal and the rest, no more.
+                assert_eq!(
+                    segment.capacity(),
+                    password.len() + 2,
+                    "segment {n} never grew"
+                );
+            }
+        }
+    }
 
     fn one(args: &[Arg<'_>]) -> Vec<Vec<u8>> {
         build("A0001".into(), "LOGIN", args)

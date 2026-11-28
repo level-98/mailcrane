@@ -260,3 +260,9 @@ async fn xoauth2_signs_in_with_the_token() {
 fn secret_is_not_printed() {
     assert!(!format!("{:?}", auth()).contains("s3cret-value"));
 }
+
+#[test]
+fn a_secret_never_shows_in_debug() {
+    let secret = crate::Secret::new("hunter2-example");
+    assert_eq!(format!("{secret:?}"), "Secret(***)");
+}

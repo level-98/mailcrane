@@ -63,17 +63,19 @@ pub enum ImapAuth {
     XOAuth2(Secret),
 }
 
-/// A password or token. Never shown in `Debug` output.
+/// A password or token. Never shown in `Debug` output, and wiped from
+/// memory when dropped (#521). `Clone` stays: the connection pool keeps the
+/// login to reconnect with, and each copy is wiped on drop too.
 #[derive(Clone, PartialEq, Eq)]
-pub struct Secret(String);
+pub struct Secret(zeroize::Zeroizing<String>);
 
 impl Secret {
     pub fn new(value: impl Into<String>) -> Self {
-        Self(value.into())
+        Self(zeroize::Zeroizing::new(value.into()))
     }
 
     pub(crate) fn expose(&self) -> &str {
-        &self.0
+        self.0.as_str()
     }
 }
 
@@ -89,6 +91,14 @@ pub const CRATE_NAME: &str = env!("CARGO_PKG_NAME");
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_secret_never_shows_in_debug() {
+        let secret = Secret::new("hunter2-example");
+        assert_eq!(format!("{secret:?}"), "Secret(***)");
+        let auth = ImapAuth::Password(Secret::new("hunter2-example"));
+        assert!(!format!("{auth:?}").contains("hunter2"));
+    }
 
     #[test]
     fn crate_name_matches() {
