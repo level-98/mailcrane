@@ -57,6 +57,8 @@ A pull request runs only the jobs its files need (the `changes` job decides, #53
 | `changes` | Ubuntu | Which jobs the change needs, from its files. |
 | `ci-ok` | Ubuntu | Passes only if every job the change needs passed. Look here first. |
 
+The roadmap sync PRs (`bot/roadmap-sync`, from [`roadmap-sync.yml`](.github/workflows/roadmap-sync.yml)) are opened with a small GitHub App's token, so CI runs on them like on any other PR. Without the app's `ROADMAP_APP_ID` variable and `ROADMAP_APP_PRIVATE_KEY` secret, they fall back to the built-in token, and a maintainer approves their CI run by hand (#599).
+
 ## Review
 
 Mailcrane may have only one maintainer, so review is set up not to block:

@@ -3,7 +3,7 @@
 # When a roadmap issue ("[M1-04] …") is closed, reopened or retitled, once a
 # day, or when run by hand, this runs scripts/sync_roadmap.py. If ROADMAP.md
 # needs changing it opens (or refreshes) one PR from the `bot/roadmap-sync`
-# branch and squash-merges it straight away. It never pushes to `main`, so
+# branch and sets it to merge once CI passes. It never pushes to `main`, so
 # branch protection still applies.
 #
 # The website job checks out the separate `website` branch, refreshes its local
@@ -20,10 +20,18 @@
 # Setup: Settings → Actions → General → Workflow permissions →
 # tick "Allow GitHub Actions to create and approve pull requests".
 #
-# If the merge is refused, the PR stays open for a maintainer and the run logs
-# a warning. That will happen once CI is a required check, because PRs opened
-# with the built-in token don't trigger other workflows: then close and reopen
-# the sync PR (or push to it) to run CI, and merge it by hand.
+# The sync PR is pushed and opened with a token from the roadmap GitHub App
+# (#599), so CI runs on it like on any other PR: GitHub doesn't start other
+# workflows for pushes and PRs made with the built-in token. Setup: create the
+# app with Contents and Pull requests (read and write) on this repository,
+# install it here, then add its App ID as the repository variable
+# ROADMAP_APP_ID and its private key as the secret ROADMAP_APP_PRIVATE_KEY.
+# Without them (a fork, or before setup) the job falls back to the built-in
+# token and says so: CI on the sync PR then waits for a maintainer's approval.
+#
+# The PR is set to merge on its own (`--auto`, through the merge queue) once
+# ci-ok passes. If GitHub refuses that, the PR stays open for a maintainer and
+# the run logs a warning.
 name: Sync roadmap
 
 on:
@@ -126,17 +134,50 @@ jobs:
       group: roadmap-sync
       cancel-in-progress: false
     env:
-      GH_TOKEN: ${{ github.token }}
       BRANCH: bot/roadmap-sync
+      # Secrets can't be tested in `if:`; this says only whether one is set.
+      HAS_APP_KEY: ${{ secrets.ROADMAP_APP_PRIVATE_KEY != '' }}
     steps:
+      # The app's token is minted only here, in this job, and only with the
+      # two permissions the push and the PR need. The action masks it in logs
+      # and revokes it when the job ends.
+      - name: Get the roadmap app's token
+        id: app
+        if: vars.ROADMAP_APP_ID != '' && env.HAS_APP_KEY == 'true'
+        # A broken app setup falls back to the built-in token, like none.
+        continue-on-error: true
+        uses: actions/create-github-app-token@f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc # v3.4.0
+        with:
+          app-id: ${{ vars.ROADMAP_APP_ID }}
+          private-key: ${{ secrets.ROADMAP_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+
+      - name: Say which token opens the PR
+        env:
+          OUTCOME: ${{ steps.app.outcome }}
+        run: |
+          case "$OUTCOME" in
+            success)
+              echo "Pushing and opening the sync PR with the roadmap app's token, so CI runs on it." ;;
+            failure)
+              echo "::warning::The roadmap app's token couldn't be minted (check ROADMAP_APP_ID, ROADMAP_APP_PRIVATE_KEY and the app's installation), so the sync PR uses the built-in token, and its CI waits for a maintainer's approval." ;;
+            *)
+              echo "::notice::ROADMAP_APP_ID or ROADMAP_APP_PRIVATE_KEY isn't set, so the sync PR uses the built-in token. GitHub doesn't run CI for it until a maintainer approves the run (see the setup note at the top of roadmap-sync.yml)." ;;
+          esac
+
       - uses: actions/checkout@v7
         with:
           ref: main
+          # Pushes made with this token start CI on the sync PR.
+          token: ${{ steps.app.outputs.token || github.token }}
 
       - name: Update ROADMAP.md from the issues
         run: python3 scripts/sync_roadmap.py
 
       - name: Open, refresh or close the sync PR
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token || github.token }}
         run: |
           set -euo pipefail
           open_pr=$(gh pr list --head "$BRANCH" --state open --json number --jq '.[0].number // empty')
@@ -160,7 +201,7 @@ jobs:
           if [ -z "$open_pr" ]; then
             pr_url=$(gh pr create --base main --head "$BRANCH" \
               --title "docs: sync roadmap with issues" \
-              --body "Automated by \`.github/workflows/roadmap-sync.yml\`: ticks or unticks task boxes in \`ROADMAP.md\` to match the issues (\`scripts/sync_roadmap.py\`). The workflow merges this PR itself; if it's still open, the merge was refused (see the run log). This branch is rebuilt from \`main\` on every run, so don't push your own changes to it.")
+              --body "Automated by \`.github/workflows/roadmap-sync.yml\`: ticks or unticks task boxes in \`ROADMAP.md\` to match the issues (\`scripts/sync_roadmap.py\`). The workflow sets it to merge once ci-ok passes; if it stays open, see the run log. This branch is rebuilt from \`main\` on every run, so don't push your own changes to it.")
             pr="${pr_url##*/}"
             echo "Opened PR #$pr."
           else
@@ -168,17 +209,13 @@ jobs:
             echo "Refreshed PR #$pr."
           fi
 
-          # Merge only the commit pushed above, so nothing else can slip in.
-          # Right after a push GitHub takes a few seconds to work out whether
-          # the PR can be merged, and refuses the merge until then, so retry
-          # for up to about a minute.
+          # Queue only the commit pushed above, so nothing else can slip in.
+          # --auto: GitHub merges it through the merge queue once ci-ok passes,
+          # which it can only do when CI ran (the app's token, above). With the
+          # built-in token it waits for a maintainer to approve the CI run.
           head=$(git rev-parse HEAD)
-          for attempt in 1 2 3 4 5 6; do
-            if gh pr merge "$pr" --squash --delete-branch --match-head-commit "$head"; then
-              echo "Merged PR #$pr."
-              exit 0
-            fi
-            echo "Merge attempt $attempt refused; trying again shortly."
-            sleep 10
-          done
-          echo "::warning::Couldn't merge PR #$pr (branch protection may need a review or a CI check). It's left open for a maintainer."
+          if gh pr merge "$pr" --auto --match-head-commit "$head"; then
+            echo "PR #$pr will merge once ci-ok passes."
+          else
+            echo "::warning::Couldn't set PR #$pr to merge on its own (branch protection may need a review). It's left open for a maintainer."
+          fi
