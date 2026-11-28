@@ -153,12 +153,14 @@ class SettingsViewModel
 /**
  * The app's settings. Per-account options (signature, Sent copy, colour, Advanced) live on each
  * account's own page, opened from its row under Accounts (#396). Rules still opens the rules of
- * the mailbox open behind Settings (#500).
+ * the mailbox open behind Settings, and names that account ([rulesAccount], #500).
  */
 @Composable
 fun SettingsScreen(
     onBack: () -> Unit,
     onOpenRules: (() -> Unit)? = null,
+    /** The account whose rules [onOpenRules] opens: its name, or its address when it has none. */
+    rulesAccount: String? = null,
     accounts: List<app.mailcrane.core.AccountSummary> = emptyList(),
     onAddAccount: (() -> Unit)? = null,
     onRemoveAccount: (Long) -> Unit = {},
@@ -262,11 +264,7 @@ fun SettingsScreen(
         onOpenRules?.let { open ->
             // Its own heading, so it doesn't read as one of the security settings above it (#394).
             SectionHeading(R.string.settings_rules_header)
-            androidx.compose.material3.ListItem(
-                headlineContent = { Text(stringResource(R.string.rules_settings_row)) },
-                supportingContent = { Text(stringResource(R.string.rules_settings_summary)) },
-                modifier = Modifier.clickable(onClick = open),
-            )
+            RulesRow(account = rulesAccount, onOpen = open)
         }
         AdvancedSection()
         // Its own heading, so TalkBack doesn't read it as part of Advanced (#394, #492 review).
@@ -562,3 +560,24 @@ fun swipeLabel(action: SwipeAction): Int =
         SwipeAction.FLAG -> R.string.swipe_flag
         SwipeAction.MOVE -> R.string.swipe_move
     }
+
+/** The row that opens the rules of [account] (#500): "Rules for <account>", or "Rules" if unknown. */
+@Composable
+internal fun RulesRow(
+    account: String?,
+    onOpen: () -> Unit,
+) {
+    ListItem(
+        headlineContent = {
+            Text(
+                if (account != null) {
+                    stringResource(R.string.rules_settings_row_for, account)
+                } else {
+                    stringResource(R.string.rules_settings_row)
+                },
+            )
+        },
+        supportingContent = { Text(stringResource(R.string.rules_settings_summary)) },
+        modifier = Modifier.clickable(onClick = onOpen),
+    )
+}

@@ -383,6 +383,8 @@
     <!-- Local rules (M4-09) -->
     <string name="rules_title">Rules</string>
     <string name="rules_settings_row">Rules</string>
+    <!-- #500: the row names the account whose rules it opens, by name or address -->
+    <string name="rules_settings_row_for">Rules for %1$s</string>
     <string name="rules_settings_summary">Sort new mail automatically on this device</string>
     <!-- About Mailcrane (Settings, #75) -->
     <string name="about_title">About Mailcrane</string>
