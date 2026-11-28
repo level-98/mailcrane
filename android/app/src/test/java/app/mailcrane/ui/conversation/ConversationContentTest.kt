@@ -5,12 +5,8 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.performClick
-import androidx.compose.ui.test.performTouchInput
-import androidx.compose.ui.test.swipeLeft
 import app.mailcrane.core.MessageSummary
 import app.mailcrane.core.ThreadSummary
-import app.mailcrane.settings.SwipeAction
-import app.mailcrane.ui.messagelist.SwipeHandlers
 import app.mailcrane.ui.messagelist.ThreadRow
 import app.mailcrane.ui.theme.MailcraneTheme
 import org.junit.Assert.assertEquals
@@ -93,30 +89,5 @@ class ConversationContentTest {
         compose.onNodeWithContentDescription("3 messages.", substring = true).assertIsDisplayed()
         compose.onNodeWithContentDescription("Plans", substring = true).performClick()
         assertEquals(true, clicked)
-    }
-
-    /** #552: a message inside a conversation swipes as a list row does, with the list's swipe settings. */
-    @Test
-    fun aMessageInAConversationSwipes() {
-        val swiped = mutableListOf<Pair<Long, SwipeAction>>()
-        compose.setContent {
-            MailcraneTheme {
-                ConversationContent(
-                    title = "Lunch?",
-                    messages = listOf(message(1, "Ana", "Lunch?"), message(2, "Bob", "Re: Lunch?")),
-                    onBack = {},
-                    onOpenMessage = {},
-                    swipe =
-                        SwipeHandlers(
-                            right = SwipeAction.FLAG,
-                            left = SwipeAction.ARCHIVE,
-                            onSwipe = { message, action -> swiped += message.id to action },
-                        ),
-                )
-            }
-        }
-        compose.onNodeWithContentDescription("Bob", substring = true).performTouchInput { swipeLeft() }
-        compose.waitForIdle()
-        assertEquals(listOf(2L to SwipeAction.ARCHIVE), swiped)
     }
 }

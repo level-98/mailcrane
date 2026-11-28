@@ -766,4 +766,21 @@ class MessageListViewModelTest {
             assertEquals(MessageAction.Move(9), action)
             assertEquals(BulkUndoKind.MOVED, vm.bulkUndoOffers.first().kind)
         }
+
+    /** #560 review: a reload (new mail, a sync) doesn't close a swiped conversation's "Delete for good?". */
+    @Test
+    fun aSwipedConversationsDeleteQuestionOutlivesAReload() =
+        runTest {
+            val core = FakeMailbox(stored = 3).apply { forGood = 3 }
+            val vm = MessageListViewModel(core, FakeAppSettings(), FOLDER)
+            vm.swipeThread(swipedThread(), SwipeAction.DELETE)
+            assertEquals(3, vm.state.value.confirmDeleteForGood)
+            core.events.tryEmit(CoreEvent.MessagesChanged(FOLDER))
+            assertEquals("still asking after the reload", 3, vm.state.value.confirmDeleteForGood)
+            // A second swiped delete while the first waits doesn't replace it.
+            vm.swipeThread(swipedThread().copy(threadId = 6), SwipeAction.DELETE)
+            vm.confirmDeleteForGood()
+            assertEquals(listOf(4L), core.bulkCalls.single().first.threadIds)
+            assertEquals(0, vm.state.value.confirmDeleteForGood)
+        }
 }

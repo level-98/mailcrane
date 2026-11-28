@@ -429,7 +429,9 @@ class MessageListViewModel
             when (action) {
                 SwipeAction.NONE, SwipeAction.MOVE -> Unit
                 SwipeAction.ARCHIVE -> runBulkOn(selection, MessageAction.Archive, BulkUndoKind.ARCHIVED)
-                SwipeAction.DELETE -> requestDeleteOf(selection, fromSelection = false)
+                // One "Delete for good?" at a time: a second swiped delete while one waits is dropped, and its row
+                // comes back (#560 review).
+                SwipeAction.DELETE -> if (pendingDelete == null) requestDeleteOf(selection, fromSelection = false)
                 SwipeAction.READ_UNREAD ->
                     runBulkOn(
                         selection,
@@ -555,7 +557,9 @@ class MessageListViewModel
         /** Drops selected rows that left the list (moved, deleted, or changed elsewhere). */
         private fun pruneSelection() =
             _state.update { s ->
-                if (!s.selecting) return@update s.copy(confirmDeleteForGood = 0)
+                // A swiped conversation's "Delete for good?" has no selection behind it: keep it until it's
+                // answered (#560 review).
+                if (!s.selecting) return@update if (pendingDelete != null) s else s.copy(confirmDeleteForGood = 0)
                 val ids = s.messages.mapTo(HashSet()) { it.id }
                 val threads = s.threads.mapTo(HashSet()) { it.threadId }
                 s.copy(
