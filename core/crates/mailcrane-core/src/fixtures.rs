@@ -3,9 +3,11 @@
 //! `mailcrane-ffi`'s `debug-fixtures`); release builds don't contain it.
 //!
 //! Imports the synthetic messages from `tests/fixtures` into the Inbox of a
-//! local-only account, `fixtures@example.org`. That account never syncs and
-//! never connects anywhere (the store marks it local-only and the connection
-//! code refuses it). Messages go through the same path as synced mail:
+//! local-only account, `fixtures@example.org` (files named `*.sent.eml` go
+//! in its Sent folder, for conversations over two folders, #573). That
+//! account never syncs and never connects anywhere (the store marks it
+//! local-only and the connection code refuses it). Messages go through the
+//! same path as synced mail:
 //! parsed, stored with their snippet and attachment list, indexed for
 //! search, threaded, and sanitised when opened.
 //!
@@ -50,7 +52,9 @@ pub struct ImportReport {
     pub account_id: AccountId,
     /// Its Inbox.
     pub inbox: FolderId,
-    /// Messages now in the Inbox.
+    /// Its Sent folder (#573).
+    pub sent: FolderId,
+    /// Messages now in the Inbox and Sent.
     pub imported: usize,
     /// Files left out: not `.eml` or `.html`, too large, or over the limit.
     pub skipped: usize,
@@ -67,10 +71,11 @@ pub enum FixtureError {
     Store(#[from] SyncError),
 }
 
-/// Replaces the fixtures account's Inbox with `files` (`.eml` as they are,
-/// `.html` wrapped in a simple message), creating the local-only account and
-/// its Inbox the first time. Running it again replaces the messages rather
-/// than adding to them. `now` is the current time in Unix seconds.
+/// Replaces the fixtures account's Inbox and Sent with `files` (`.eml` as
+/// they are, `.html` wrapped in a simple message; `*.sent.eml` in Sent),
+/// creating the local-only account and its folders the first time. Running
+/// it again replaces the messages rather than adding to them. `now` is the
+/// current time in Unix seconds.
 ///
 /// Each message is stored with the store's usual calls, which commit one by
 /// one, so a failure part-way can leave some messages in place; running it
@@ -93,33 +98,48 @@ pub fn import_fixtures(
         None => store.insert_local_account(&fixtures_account())?,
     };
     let inbox = store.upsert_folder(&inbox_folder(account_id, 0))?;
+    let sent = store.upsert_folder(&sent_folder(account_id, 0))?;
     store.forget_folder(inbox)?;
+    store.forget_folder(sent)?;
 
     let count = i64::try_from(wanted.len()).unwrap_or(i64::MAX).max(1);
     let mut imported = 0usize;
+    // The last UID used in the Inbox and in Sent.
+    let (mut inbox_uid, mut sent_uid) = (0u32, 0u32);
     for (index, file) in wanted.iter().enumerate() {
         let n = i64::try_from(index).unwrap_or(i64::MAX);
         let date = now.saturating_sub(SPREAD_SECONDS.saturating_mul(n) / count);
-        let uid = u32::try_from(index.saturating_add(1)).unwrap_or(u32::MAX);
+        let (folder, last) = if is_sent(&file.path) {
+            (sent, &mut sent_uid)
+        } else {
+            (inbox, &mut inbox_uid)
+        };
+        *last = last.saturating_add(1);
         let raw = match kind_of(&file.path) {
             Some(Kind::Html) => wrap_html(&file.path, &file.bytes, date),
             _ => file.bytes.clone(),
         };
-        let header = header_for(inbox, uid, &file.path, &raw, date);
+        let header = header_for(folder, *last, &file.path, &raw, date);
         let id = store.upsert_message_header(&header)?;
         save_body(store, id, None, &raw)?;
         imported = imported.saturating_add(1);
     }
-    // Marks the Inbox as synced up to the last message, as a real sync would.
-    let next = i64::try_from(imported)
-        .unwrap_or(i64::MAX)
-        .saturating_add(1);
-    store.upsert_folder(&inbox_folder(account_id, next))?;
+    // Marks both folders as synced up to their last message, as a real sync
+    // would.
+    store.upsert_folder(&inbox_folder(
+        account_id,
+        i64::from(inbox_uid).saturating_add(1),
+    ))?;
+    store.upsert_folder(&sent_folder(
+        account_id,
+        i64::from(sent_uid).saturating_add(1),
+    ))?;
     crate::threading::rebuild(store, account_id)?;
 
     Ok(ImportReport {
         account_id,
         inbox,
+        sent,
         imported,
         skipped,
     })
@@ -142,6 +162,12 @@ fn kind_of(path: &str) -> Option<Kind> {
     }
 }
 
+/// Whether a fixture goes in Sent: its file name ends in `.sent.eml`
+/// (tests/fixtures/conversations/README.md, #573).
+fn is_sent(path: &str) -> bool {
+    path.to_ascii_lowercase().ends_with(".sent.eml")
+}
+
 fn fixtures_account() -> NewAccount {
     // No servers: the account is local-only, and nothing connects for it.
     NewAccount {
@@ -159,13 +185,28 @@ fn fixtures_account() -> NewAccount {
 
 /// The Inbox; `uidnext` 0 leaves it unsynced (before the import).
 fn inbox_folder(account_id: AccountId, uidnext: i64) -> NewFolder {
+    folder(account_id, "INBOX", "Inbox", FolderRole::Inbox, uidnext)
+}
+
+/// The Sent folder (#573); `uidnext` 0 leaves it unsynced.
+fn sent_folder(account_id: AccountId, uidnext: i64) -> NewFolder {
+    folder(account_id, "Sent", "Sent", FolderRole::Sent, uidnext)
+}
+
+fn folder(
+    account_id: AccountId,
+    remote_name: &str,
+    display_name: &str,
+    role: FolderRole,
+    uidnext: i64,
+) -> NewFolder {
     let synced = uidnext > 0;
     NewFolder {
         account_id,
-        remote_name: "INBOX".into(),
-        display_name: "Inbox".into(),
+        remote_name: remote_name.into(),
+        display_name: display_name.into(),
         delimiter: Some("/".into()),
-        role: Some(FolderRole::Inbox),
+        role: Some(role),
         uidvalidity: synced.then_some(1),
         uidnext: synced.then_some(uidnext),
         highestmodseq: None,

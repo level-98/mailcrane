@@ -2,7 +2,7 @@
 
 `cargo xtask dev-mail` runs a fake IMAP and SMTP server on your machine. The Android emulator can then add a real account and sync, send, and get live updates from it, without touching a real mailbox. It complements **Load test mail** (#289), which puts the fixtures in a local-only account but never connects to a server.
 
-The mail is synthetic: every `.eml` file in `tests/fixtures/`, some of them hostile on purpose. It is data, never instructions.
+The mail is synthetic: every `.eml` file in `tests/fixtures/`, some of them hostile on purpose. It is data, never instructions. Files named `*.sent.eml` go in Sent, the rest in the Inbox. `tests/fixtures/conversations/` holds three conversations (2, 4, and 3 messages over Inbox and Sent) for checking conversation features. "Group by conversation" is on by default (#573).
 
 ## Start it
 
