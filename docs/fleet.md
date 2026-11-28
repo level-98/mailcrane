@@ -1,25 +1,24 @@
 # The agent fleet
 
-A maintainer can run up to ten Claude Code sessions on their own machine that work through the issues together. They talk over Synapse, a message bus that runs only on that machine, and act on GitHub through the maintainer's own account, marking their work with the `fleet` label. This page is the rulebook every seat reads first. [AGENTS.md](../AGENTS.md) still applies in full; nothing here relaxes it.
+A maintainer can run up to nine Claude Code sessions on their own machine that work through the issues together. They talk over Synapse, a message bus that runs only on that machine, and act on GitHub through the maintainer's own account, marking their work with the `fleet` label. This page is the rulebook every seat reads first. [AGENTS.md](../AGENTS.md) still applies in full; nothing here relaxes it.
 
 ## The seats
 
 | Seat | Role file | Worktree | Job |
 |---|---|---|---|
 | `mailbot.lead` | `.claude/agents/mailcrane-lead.md` | the main checkout (read-only) | Watches GitHub, triages, decides, dispatches, merges, writes the hourly report |
-| `mailbot.dev1`, `mailbot.dev2`, `mailbot.dev4` | `.claude/agents/mailcrane-dev.md` | `.worktrees/dev1`, `.worktrees/dev2`, `.worktrees/dev4` | One issue at a time, from claim to ready PR; may use the emulator |
-| `mailbot.dev3` | `.claude/agents/mailcrane-dev.md` | `.worktrees/dev3` | Like the other dev seats, but only issues that need no emulator or device (see rule 12). Not in the default seats: start it with `-Seats dev3` (only dev3, alongside a running fleet) or a list such as `-Seats lead,dev1,dev2,dev3,dev4,review,qa` |
+| `mailbot.dev1`, `mailbot.dev2`, `mailbot.dev3` | `.claude/agents/mailcrane-dev.md` | `.worktrees/dev1`, `.worktrees/dev2`, `.worktrees/dev3` | One issue at a time, from claim to ready PR, Android and emulator work included |
 | `mailbot.review` | `.claude/agents/mailcrane-review.md` | `.worktrees/review` | Code review of every `fleet` PR marked ready |
 | `mailbot.qa` | `.claude/agents/mailcrane-qa.md` | `.worktrees/qa` | Emulator checks and screenshots of UI PRs; exploratory passes that file bugs |
 | `mailbot.spec` | `.claude/agents/mailcrane-spec.md` | `.worktrees/spec` (read-only) | Triages open issues and writes their specs, so at least 10 are `agent-ready`; it adds no labels, the lead does. Not in the default seats |
 | `mailbot.docs` | `.claude/agents/mailcrane-docs.md` | `.worktrees/docs` | User docs, the website, README and CONTRIBUTING, changelog fragments and nightly release notes; never app code. Not in the default seats |
 | `mailbot.coach` | `.claude/agents/mailcrane-coach.md` | `.worktrees/coach` (read-only) | Finds repeated friction in the pipeline, measures the #474 metrics and sends the lead proposals. Advise-only: the lead decides. Not in the default seats |
 
-The spec, docs and coach seats were added on 2026-11-28 (#582), with dev4, by the maintainer's decision.
+The spec, docs and coach seats were added on 2026-11-28 (#582), by the maintainer's decision. The same day the maintainer dropped the planned dev4 seat and made dev3 a full dev seat, with no emulator restriction (#595).
 
 Start them all with `scripts/fleet/start-fleet.ps1` (see [Running it](#running-it)).
 
-**Models** (#507, approved by the maintainer on 2026-11-27): `qa` and `dev3` run on Sonnet, because emulator checks and small, no-emulator tasks don't need the larger model. `lead`, `review`, `dev1`, `dev2`, `dev4`, `spec`, `docs` and `coach` use the account's default model (Opus).
+**Models** (#507, approved by the maintainer on 2026-11-27; dev3 moved to Opus on 2026-11-28, #595): `qa` runs on Sonnet, because emulator checks don't need the larger model. Every other seat uses the account's default model (Opus).
 
 ## The source of truth
 
@@ -93,19 +92,23 @@ Only these still go to the maintainer, as a `dev_ask` card:
 6. **Lock before editing a file another seat might touch** (`dev_sync_will_edit`, `dev_sync_lock`), release when the PR is pushed. Lock keys are relative to the worktree root, so `core/crates/x/src/lib.rs` is the same lock in every worktree.
 7. **Never claim a check passed that you didn't run.** Say what you skipped and why.
 8. **At most six agent PRs open at once**, across all the dev seats and the docs seat. At six, the lead stops dispatching new issues and puts its effort into getting the open ones finished.
-9. **Pace with `ScheduleWakeup`**: 1200–1800 s when idle; a direct message or `dev_wake` wakes a seat sooner. Never poll in a tight loop.
+9. **Pace with `ScheduleWakeup`**: a long fallback (1800–3600 s) while work is in flight, and none when your queue is empty (see [Pipeline rules](#pipeline-rules)); a direct message or `dev_wake` wakes a seat sooner. Never poll in a tight loop. The lead is the exception: it always paces itself with `ScheduleWakeup`, with its CI monitor as its wake signal, so it never goes idle-blind.
 10. **Stuck for more than an hour** on the same failure: post in `alerts`, update the board task to `blocked`, and move on or go idle.
-11. **One heavy job on the machine at a time.** Memory is the real limit. A heavy job is a full cargo workspace build or test (`cargo test --workspace`, a full `cargo xtask ci`), any cargo build into a cold target directory, a Gradle build, the emulator, or a long under-load test loop. Take the Synapse lock `locks/heavy-job` (`dev_sync_lock`) before starting one, in a call of its own, and start the job only after the result says you hold it, never in the same batch of tool calls. Release it as soon as the job ends. While anyone holds it, run no other cargo or Gradle builds or tests at all; `cargo fmt` and `./gradlew ktlintCheck` are fine at any time. Before releasing it, run `./gradlew --stop` or `adb emu kill`, because Gradle and Kotlin daemons and the emulator keep their memory after the job. `./gradlew --stop` stops every daemon under the shared Gradle home, other seats' runs included, so run it only while you hold the lock, as the last step before releasing. **Queue order:** QA checks that block a merge go first, then dev runs that unblock a waiting PR, then everything else. A seat that wants the lock says so in `tasks`, and the holder hands it on in that order. After a stop for low memory, nothing heavy restarts without the lead's OK. No background watcher loops (CI watchers included): the lead watches CI (see [Pipeline rules](#pipeline-rules)). Without the lock, run the targeted checks you can (`cargo test -p <crate>`, clippy on the crates you touched, `cargo fmt --all --check`), push, and keep the PR a **draft** until `ci-ok` is green on its head: CI runs `cargo xtask ci --strict`, the command [AGENTS.md §7](../AGENTS.md#7-checks) asks for, and §7 already says to state what you couldn't run. The PR body says what ran locally and what was left to CI.
-12. **Emulator work goes to dev1, dev2, dev4 and QA.** dev3 takes only issues that need no emulator or device: core and Rust, testkit, CI and workflows, docs and the website, and Android changes fully covered by JVM unit tests. QA's emulator is off by default. QA starts it only (a) to verify an open PR that touches `android/`, (b) for a post-merge device check, or (c) for an exploratory pass when no PR needs it; always while holding `locks/heavy-job` with nothing else heavy running, and always shut down (`adb emu kill`) as soon as it's done.
+11. **One heavy job on the machine at a time.** Memory is the real limit. A heavy job is any cargo build, check, clippy or test (rustc's memory spikes; #474 rule 52), a Gradle build, a local emulator, or a long under-load test loop. QA's remote VM isn't one: it uses no laptop memory (#474 rule 54). A short one (a one- or two-minute `cargo check` or test run) can ask in `tasks` for a quick slot of the lock. Take the Synapse lock `locks/heavy-job` (`dev_sync_lock`) before starting one, in a call of its own, and start the job only after the result says you hold it, never in the same batch of tool calls. Release it as soon as the job ends. While anyone holds it, run no other cargo or Gradle builds or tests at all; `cargo fmt` and `./gradlew ktlintCheck` are fine at any time. Before releasing it, run `./gradlew --stop` or `adb emu kill`, because Gradle and Kotlin daemons and the emulator keep their memory after the job. `./gradlew --stop` stops every daemon under the shared Gradle home, other seats' runs included, so run it only while you hold the lock, as the last step before releasing. **Queue order:** QA checks that block a merge go first, then dev runs that unblock a waiting PR, then everything else. A seat that wants the lock says so in `tasks`, and the holder hands it on in that order. After a stop for low memory, nothing heavy restarts without the lead's OK. No background watcher loops: the lead's CI monitor is the only one (see [Pipeline rules](#pipeline-rules)). Without the lock, run only `scripts/fleet/prepush.ps1` (ktlint and `cargo fmt` need no lock), push, and keep the PR a **draft** until `ci-ok` is green on its head: CI runs `cargo xtask ci --strict`, the command [AGENTS.md §7](../AGENTS.md#7-checks) asks for, and §7 already says to state what you couldn't run. The PR body says what ran locally and what was left to CI.
+12. **QA's emulator is off by default.** QA starts it only (a) to verify an open PR that touches `android/`, (b) for a post-merge device check, or (c) for an exploratory pass when no PR needs it. The remote VM needs no lock; QA takes `locks/heavy-job` only for a local emulator or a local build. It always shuts down as soon as it's done: the remote VM stopped and confirmed `stopped` (a local emulator: `adb emu kill`). Dev seats leave on-device checks to QA, or use the shared remote emulator through QA's routine.
 
 ## Merging
 
-The lead merges a PR labelled `fleet` (squash, `gh pr merge --squash --match-head-commit <sha>`) only when all of these hold for its current head commit `<sha>`:
+The lead merges a PR labelled `fleet` through the merge queue: `gh pr merge <n> --auto --match-head-commit <sha>`, without `--squash` (the queue sets the method). It queues it only when all of these hold for its current head commit `<sha>`:
 
-- `ci-ok` passed on `<sha>` (branch protection doesn't require CI, so this check is the gate);
-- the review seat reviewed `<sha>` and every finding is fixed or answered on the PR;
-- for a change under `android/`, QA verified it (`qa-verified`) or said exactly why it couldn't;
+- `ci-ok` passed on `<sha>` (branch protection doesn't require CI, so this check is the gate). A PR into the `website` branch has no `ci-ok`; its CI condition is the website workflow's `build` job on `<sha>`;
+- the review seat reviewed `<sha>` and every finding is fixed, or deferred to an issue that exists (named by number);
+- for a change under `android/`, QA verified it (`qa-verified`), noted that no device check is needed (no Compose, layout or resource change), or said exactly why it couldn't. The lead checks this against the diff's file list, not the title;
+- the real diff matches what the PR says it changes (`git diff --stat origin/main...<sha>`): a stale branch can silently revert merged work;
+- its base is `main`. A stacked PR waits for its parent to merge; then its owner retargets it (`gh pr edit --base main`) and the lead checks the diff again;
 - no unresolved conversations and no merge conflict.
+
+The queue runs `ci-ok` on the PR combined with the latest `main` and then merges it, so a PR doesn't have to be up to date with `main`. A failed queue run removes the PR from the queue, and the lead wakes its owner. The lead's merge scripts report the queue state they actually see afterwards, never a fixed "queued" line.
 
 There is no waiting period: merge as soon as these hold, `security` PRs included.
 
@@ -135,36 +138,53 @@ PR bodies follow the template, tick **AI-assisted** with `Claude Code (<model>)`
 
 ## Pipeline rules
 
-These came from things that cost time on the first full day (the working list is #474; the lead adds to it and posts changes in `tasks`, and the ones that hold up move here).
+These came from things that cost time in the fleet's first days. The working list is #474: the lead adds rules there and posts changes in `tasks`, and the ones that hold up move here.
+
+**Every seat**
+- One post per event, in one place. Don't repeat a channel post to the lead by DM; DM the lead only when it must decide or act. No messages without content ("noted", "thanks", or "started" when the board already shows it).
+- Talk to the next seat directly: devs wake review and QA, review wakes devs. The lead routes merges and decisions.
+- Read narrowly: grep CI logs for the failing lines, read file ranges, use compact history. The maintainer may compact or restart a seat at a merge boundary; all state is on GitHub and Synapse.
+- Idle means asleep: with nothing in your queue, stop the wake-up loop (`ScheduleWakeup` with `stop`) and wait for a `dev_wake`. With work in flight, use a long fallback (1800–3600 s) and rely on wakes, not polling.
+- Bulk GitHub writes (labelling many issues, board backfills) go at most one every 20 s: GitHub's secondary rate limit covers the maintainer's whole login, which every seat shares.
+- Memory: run `./gradlew --stop` after every Gradle run, before releasing `locks/heavy-job`. When free memory drops under about 4 GB, the lead may call memory-short mode (no local builds; draft PRs, with CI as the compile and test check) until it lifts it.
 
 **Review**
 - One full pass per PR: every finding in round 1, with the review tool run before posting, not after.
 - At most two rounds. Round 2 checks the fixes and anything new in the diff. After that only real bugs (crash, data loss, security, wrong behaviour) block; nits and new edge cases go into one follow-up issue that the dev files and links.
 - When edge cases keep coming, ask in round 1 for an oracle: a property or differential test.
 - Match the depth to the risk: docs-only, test-only and website-content PRs get one light pass (accuracy, rule compliance, links). Deep edge-case review is for code that touches mail data, sync or security.
+- A finding that depends on a library's internals is checked against that library's source in round 1, before it's called important.
+- Resolve each thread you verify as fixed. "Cleared" means no blockers **and** your threads resolved. Clear a PR only when every deferral names an issue number.
+- When no PR waits, audit existing code, one high-risk area at a time and at most one every two hours: MIME parsers and the sanitiser, IMAP response parsing, credentials and secrets, sync and store write paths, the FFI boundary, then the Android display of message content. One issue per real finding with a concrete failure; nothing speculative.
 
 **Dev seats**
 - Never idle while waiting: when a PR waits on CI, review or QA, start the next dispatched item. At most three items in flight, as long as all but one are only waiting on CI, review or QA; work for a waiting PR comes first.
-- Reply to every finding in one push, then mark ready. Propose a deferral yourself when a fix would restart QA for a nit.
-- Merge `main` into your branch only once review has no blockers left, just before it can merge (branch protection wants it up to date), not every time `main` moves: each merge restarts CI. Exception: a conflict, or a fix you need from `main`.
-- Run the format checks before every push: `scripts/fleet/prepush.ps1` (or `prepush.sh`). It runs the standalone ktlint, at the Gradle plugin's version, on the Kotlin files the branch changes, and `cargo fmt --all --check` when Rust changed, in a few seconds with no Gradle and no heavy-job lock (#564). Fix what it reports before pushing; never push past it.
-- When you merge `main` in, say whether there were conflicts.
-- Keep your Synapse status current: call `dev_sync_checkin` with what you're on whenever you switch items. The lead's idle check reads it.
+- Base every branch on a fresh `origin/main`, and check `git diff --stat origin/main...HEAD` before you push: it must list only your files.
+- Before every push, run `scripts/fleet/prepush.ps1` (or `prepush.sh`): the standalone ktlint on the changed Kotlin files and `cargo fmt --all --check`, in seconds, with no Gradle and no lock (#564). Then, under `locks/heavy-job` (or a quick slot of it), the targeted checks: `cargo check` and `cargo clippy -p <changed crates>` with the affected tests (`cargo test -p <crate> <module>`), or for Android `./gradlew :app:compileDebugKotlin`, the changed test classes and `:app:lintDebug`. Without the lock, push a draft and let CI be the check. A change to a signature, an import or a call site is never pushed uncompiled; for a one- or two-minute compile, ask in `tasks` for a quick slot of the lock.
+- Push a new test and its fix together, never a deliberately failing commit on its own; put the "fails without the fix" proof from a local run in the PR body.
+- Reply to every finding in one push, then mark ready. In that same push, answer each thread ("fixed in <sha>" or "deferred to #N") and resolve it. Defer only to an issue you have already filed (one tracking issue per PR is fine). Propose a deferral yourself when a fix would restart QA for a nit.
+- Merge `main` into your branch only for a conflict or a fix you need from it: the merge queue tests the PR against the latest `main`. When you do, say whether there were conflicts.
+- Keep your Synapse status current: call `dev_sync_checkin` with what you're on whenever you switch items, and in the same turn as every "▶️ Started" post (rule 56). The lead's idle check reads it.
 - Keep PRs small; anything else you notice becomes an issue.
 
 **QA**
-- Check a PR once review has no important findings left, so each PR is checked once.
+- Check a PR once review has no important findings left and `ci-ok` is green on its head, so each PR is checked once. Work oldest first, and post each verdict as soon as you have it.
+- An `android/` diff with no Compose, layout or resource changes gets a short "no device check needed: <why>" comment instead of an emulator check (rule 55).
 - Do several PRs per emulator session, and skip re-checks when nothing under `android/` changed except merges from `main`.
-- Run the emulator with 2 GB of RAM and 2 cores (`-memory 2048 -cores 2`), so other seats can still run light checks.
-- Install the PR's CI APK (the `android-debug-apk` artifact of its run) with `adb install -r`, not a local build: it has the same debug signature as the snapshot's app (ADR 0011).
-- Boot the emulator from a ready snapshot (`qa-ready`: dev CA, debug app and the dev-mail account, synthetic mail only) with `-no-snapshot-save`. Refresh it when the app's schema changes or the dev CA rotates. Emulators only: the dev CA never goes on the phone.
+- The emulator is the remote VM on the maintainer's server (rules 43 and 44 in #474), reached over an SSH tunnel; adb is never exposed on the network. Start it only for a session. It uses no laptop memory, so QA takes `locks/heavy-job` only for a local build, and dev builds can run meanwhile (rule 54). Afterwards always disconnect, close the tunnel, stop the VM and confirm it reports `stopped`, failed sessions included. A local emulator, when one is used, gets 2 GB of RAM and 2 cores (`-memory 2048 -cores 2`).
+- Install the PR's CI APK (the `android-debug-apk` artifact of its run) with `adb install -r`, not a local build: it has the same debug signature as the snapshot's app (ADR 0011). Build locally only when CI has no APK for the head, under `locks/heavy-job`.
+- Boot from a ready snapshot (`qa-ready`: dev CA, debug app and the dev-mail account, synthetic mail only) with `-no-snapshot-save`. Refresh it when the app's schema changes or the dev CA rotates. Emulators only: the dev CA never goes on the phone.
+- Clipboard sharing stays off on every emulator, because the host clipboard can hold the maintainer's real data. Check screenshots taken with the keyboard open for clipboard suggestions before sharing them.
+- Test anything that persists across launches with a true cold start (force-stop, swipe away from Recents, or reboot): saved instance state can fake a pass.
 
 **Lead**
 - Specs name the tricky inputs and the test oracle up front.
 - Keep one item queued per dev seat, and group similar issues (rule 5).
-- Watch CI for everyone: check `ci-ok` on every open fleet PR at every wake-up, and wake the owner when it finishes, pass or fail.
-- Merge on the first wake-up after the last condition in [Merging](#merging) holds.
+- Watch CI for everyone: a light CI monitor (one poll a minute) wakes you when any fleet PR's `ci-ok` finishes, and you pass the result to the owner at once, pass or fail. Check `ci-ok` on every open fleet PR at each wake-up too.
+- Run `scripts/fleet/retro.ps1` at each wake-up (#577), and turn each repeated item into a #474 rule.
+- Merge on the first wake-up after the last condition in [Merging](#merging) holds. The merge step refuses to queue when the diff lists `android/` files and the PR has neither `qa-verified` nor a QA comment saying why it couldn't test.
 - Check "unedited merge of main" yourself: a new head counts as reviewed when its parents are the reviewed commit and main's tip, and its tree equals `git merge-tree --write-tree <reviewed> <main>`. Only a conflict resolved by hand goes back to review.
+- Start a new seat only when at least 4 GB of memory is free with no Gradle running (each seat costs about 0.6 GB).
 
 ## Running it
 
@@ -180,7 +200,7 @@ Then, from the repository root:
 scripts/fleet/start-fleet.ps1
 ```
 
-It creates the worktrees, wires each one to Synapse, and opens one terminal window per seat. Close a window to stop that seat. By default it starts `lead`, `dev1`, `dev2`, `dev4`, `review` and `qa`. `-Seats` replaces that list: `-Seats lead,dev1` starts only those two, `-Seats dev3` starts only the third dev seat, and `-Seats spec,docs,coach` starts those three (for a fleet that's already running). `-DryRun` checks everything and prints what it would start, each seat's model included, without creating worktrees or opening windows. Each seat starts on its default model (see [Models](#the-seats)); `-Model <name>` puts every seat on that model instead. A change of model takes effect when a seat is restarted. Worktrees get the main checkout's `.claude/settings.local.json` without Synapse's own hooks (any other hooks are kept): the Synapse registry binds the project to the main checkout only, so those hooks would always refuse there. Seats call `dev_sync_will_edit`, `dev_sync_did_edit` and the locks themselves.
+It creates the worktrees, wires each one to Synapse, and opens one terminal window per seat. Close a window to stop that seat. By default it starts `lead`, `dev1`, `dev2`, `dev3`, `review` and `qa`. `-Seats` replaces that list: `-Seats lead,dev1` starts only those two, and `-Seats spec,docs,coach` starts those three (for a fleet that's already running). `-DryRun` checks everything and prints what it would start, each seat's model included, without creating worktrees or opening windows. Each seat starts on its default model (see [Models](#the-seats)); `-Model <name>` puts every seat on that model instead. A change of model takes effect when a seat is restarted. Worktrees get the main checkout's `.claude/settings.local.json` without Synapse's own hooks (any other hooks are kept): the Synapse registry binds the project to the main checkout only, so those hooks would always refuse there. Seats call `dev_sync_will_edit`, `dev_sync_did_edit` and the locks themselves.
 
 If `sccache` is installed (`cargo install sccache --locked`), every seat builds through it with one shared cache in `.worktrees/sccache` (up to 10G), so a new worktree doesn't rebuild every dependency (#531). Each seat keeps its own `CARGO_TARGET_DIR`. Without sccache nothing changes; the script and `-DryRun` say which applies. It takes effect when seats start.
 
