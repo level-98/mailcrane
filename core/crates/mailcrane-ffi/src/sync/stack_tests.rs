@@ -206,3 +206,104 @@ fn a_job_that_could_not_run_is_reported_for_its_account() {
     assert_eq!(ran, Ok(3));
     assert_eq!(collect.0.lock().expect("lock").len(), events.len());
 }
+
+#[test]
+fn the_entry_points_report_a_job_thread_that_could_not_run() {
+    // #490: the test above checks only the mapping. This one drives the real
+    // entry points with every account job's thread "failing to start", so if
+    // one of them went back to plain `on_job_thread` it would send no event
+    // and this would fail: `refresh_folders`, `run_replaying` (an IMAP
+    // sync), `run_jmap` (a JMAP sync) and `pooled` (an IMAP open).
+    let dir = tempfile::tempdir().expect("dir");
+    let path = dir.path().join("wiring.db");
+    let store = Store::open(&path).expect("store");
+    let new_account = |email: &str| mailcrane_store::NewAccount {
+        display_name: email.into(),
+        email: email.into(),
+        imap_host: "imap.example.org".into(),
+        imap_port: 993,
+        imap_security: mailcrane_store::Security::Tls,
+        smtp_host: "smtp.example.org".into(),
+        smtp_port: 465,
+        smtp_security: mailcrane_store::Security::Tls,
+        username: email.into(),
+    };
+    let imap = store
+        .insert_account(&new_account("ana@example.org"))
+        .expect("imap account");
+    let jmap = store
+        .insert_jmap_account(&new_account("bea@example.net"), "https://127.0.0.1:9/jmap")
+        .expect("jmap account");
+    let inbox = |account| {
+        store
+            .upsert_folder(&mailcrane_store::NewFolder {
+                account_id: account,
+                remote_name: "INBOX".into(),
+                display_name: "INBOX".into(),
+                delimiter: Some("/".into()),
+                role: None,
+                uidvalidity: Some(1),
+                uidnext: None,
+                highestmodseq: None,
+                is_subscribed: true,
+                selectable: true,
+                virtual_role: None,
+            })
+            .expect("inbox")
+    };
+    let imap_inbox = inbox(imap);
+    let jmap_inbox = inbox(jmap);
+    let message = store
+        .upsert_message_header(&mailcrane_store::NewMessageHeader {
+            folder_id: imap_inbox,
+            uid: 1,
+            message_id_header: None,
+            in_reply_to: None,
+            references_json: "[]".into(),
+            thread_id: None,
+            subject: "Not opened yet".into(),
+            from_name: None,
+            from_addr: Some("bob@example.net".into()),
+            to_json: "[]".into(),
+            cc_json: "[]".into(),
+            date: 1_790_000_000,
+            internal_date: 1_790_000_000,
+            size: 10,
+            flags: Default::default(),
+            keywords_json: "[]".into(),
+            has_attachments: false,
+            snippet: String::new(),
+        })
+        .expect("message");
+    drop(store);
+
+    let collect = Arc::new(super::tests::Collect::default());
+    let engine = SyncEngine::new(path.to_string_lossy().into_owned(), collect.clone());
+    engine
+        .job_threads_fail
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    let network = failed(events::SyncErrorKind::Network);
+    assert_eq!(engine.refresh_folders(imap.0), Err(network.clone()));
+    assert_eq!(engine.sync_folder(imap_inbox.0), Err(network.clone()));
+    assert_eq!(engine.sync_folder(jmap_inbox.0), Err(network.clone()));
+    assert_eq!(engine.fetch_body(message.0), Err(network));
+
+    let reported: Vec<i64> = collect
+        .0
+        .lock()
+        .expect("lock")
+        .iter()
+        .filter_map(|event| match event {
+            CoreEvent::SyncError {
+                account_id,
+                kind: SyncErrorKind::Network,
+            } => Some(*account_id),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        reported,
+        [imap.0, imap.0, jmap.0, imap.0],
+        "each entry point reported its account once"
+    );
+}
