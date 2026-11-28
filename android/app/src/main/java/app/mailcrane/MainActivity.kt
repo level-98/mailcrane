@@ -181,6 +181,10 @@ class MainActivity : FragmentActivity() {
                         onAccountsChanged = accountsModel::refresh,
                         openMessageId = openRequest?.takeIf { it.first == id }?.second,
                         onMessageOpened = { openRequest = null },
+                        startInUnified = accounts.startInUnified,
+                        startFolderId = accounts.startFolderId,
+                        onStartShown = accountsModel::startShown,
+                        onFolderShown = accountsModel::folderShown,
                     )
                 }
             else ->

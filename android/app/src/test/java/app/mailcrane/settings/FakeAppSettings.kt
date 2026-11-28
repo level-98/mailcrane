@@ -139,11 +139,25 @@ class FakeAppSettings(
         group.value = enabled
     }
 
-    private val lastAccount = MutableStateFlow(0L)
+    val lastAccount = MutableStateFlow(0L)
     override val lastAccountId: StateFlow<Long> = lastAccount
 
     override suspend fun setLastAccountId(id: Long) {
         lastAccount.value = id
+    }
+
+    val lastFolder = MutableStateFlow(0L)
+    override val lastFolderId: StateFlow<Long> = lastFolder
+
+    override suspend fun setLastFolderId(id: Long) {
+        lastFolder.value = id
+    }
+
+    val start = MutableStateFlow<StartView>(StartView.Last)
+    override val startView: StateFlow<StartView> = start
+
+    override suspend fun setStartView(view: StartView) {
+        start.value = view
     }
 
     private val hideOutside = MutableStateFlow(false)

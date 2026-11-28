@@ -18,6 +18,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
@@ -67,6 +68,13 @@ fun MailboxScreen(
     /** A message to open now (from a widget, M4-11). */
     openMessageId: Long? = null,
     onMessageOpened: () -> Unit = {},
+    /** Open the Unified Inbox first (M4-16); [onStartShown] once it is. */
+    startInUnified: Boolean = false,
+    /** Open this folder first ("Last used", #373); its inbox if the account no longer has it. */
+    startFolderId: Long? = null,
+    onStartShown: () -> Unit = {},
+    /** The folder shown changed ([UNIFIED_FOLDER_ID] for the Unified Inbox), for "Last used" (M4-16). */
+    onFolderShown: (Long) -> Unit = {},
     onCompose: (() -> Unit)? = null,
     composeFabModifier: Modifier = Modifier,
     notice: String? = null,
@@ -77,10 +85,27 @@ fun MailboxScreen(
     viewModel: FolderDrawerViewModel =
         hiltViewModel<FolderDrawerViewModel, FolderDrawerViewModel.Factory>(
             key = "folders-$accountId",
-            creationCallback = { factory -> factory.create(accountId) },
+            // The start destination is part of the first state (#373 QA): All inboxes never shows the inbox
+            // first and can't lose to it.
+            creationCallback = { factory ->
+                factory.create(accountId, if (startInUnified) UNIFIED_FOLDER_ID else startFolderId)
+            },
         ),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
+    // "Open the app on" (M4-16): the Unified Inbox or the folder shown last at start, once. A new view model
+    // already starts there; this covers one kept from before.
+    LaunchedEffect(startInUnified, startFolderId) {
+        if (startInUnified) {
+            viewModel.select(UNIFIED_FOLDER_ID)
+            onStartShown()
+        } else if (startFolderId != null) {
+            viewModel.startIn(startFolderId)
+            onStartShown()
+        }
+    }
+    val folderShown by rememberUpdatedState(onFolderShown)
+    LaunchedEffect(state.selectedFolderId) { state.selectedFolderId?.let { folderShown(it) } }
     val selected = state.selected
     val loadError = state.loadError
     when {
@@ -283,7 +308,14 @@ fun MailboxScreen(
                     currentAccountId = accountId,
                     onSwitchAccount = { id ->
                         closeDrawer()
-                        onSwitchAccount(id)
+                        if (id == accountId) {
+                            // The current account, tapped in All inboxes: open its inbox (#373 review).
+                            viewModel.openInbox()
+                            openMessage = null
+                            openThread = null
+                        } else {
+                            onSwitchAccount(id)
+                        }
                     },
                     unifiedUnread = state.unifiedUnread,
                     onOpenOutbox = {

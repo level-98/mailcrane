@@ -57,16 +57,31 @@ class FolderDrawerViewModel
     constructor(
         private val core: MailboxCore,
         @Assisted private val accountId: Long,
+        /**
+         * Where the app opens ("Open the app on", #373): [UNIFIED_FOLDER_ID] or a folder of the account, or
+         * null for its inbox. Part of the first state, so no frame shows the inbox first.
+         */
+        @Assisted startFolderId: Long? = null,
     ) : ViewModel() {
         @AssistedFactory
         interface Factory {
-            fun create(accountId: Long): FolderDrawerViewModel
+            fun create(
+                accountId: Long,
+                startFolderId: Long? = null,
+            ): FolderDrawerViewModel
         }
 
-        private val _state = MutableStateFlow(FolderDrawerState())
+        private val _state =
+            MutableStateFlow(FolderDrawerState(selectedFolderId = startFolderId?.takeIf { it == UNIFIED_FOLDER_ID }))
         val state: StateFlow<FolderDrawerState> = _state.asStateFlow()
 
         private val reading = Mutex()
+
+        /**
+         * The folder to open once the folders are read, from [startIn] or the start folder. Declared
+         * before `init`, which reads it.
+         */
+        private var pendingStart: Long? = startFolderId?.takeIf { it != UNIFIED_FOLDER_ID }
 
         init {
             viewModelScope.launch {
@@ -88,6 +103,23 @@ class FolderDrawerViewModel
             if (folderId == UNIFIED_FOLDER_ID || _state.value.folders.any { it.id == folderId }) {
                 _state.update { it.copy(selectedFolderId = folderId) }
             }
+        }
+
+        /**
+         * Opens folder [folderId] at start ("Last used", #373): now if the folders are read, else once they
+         * are. If the account no longer has it, the inbox stays open.
+         */
+        fun startIn(folderId: Long) {
+            if (_state.value.folders.isEmpty()) {
+                pendingStart = folderId
+            } else {
+                select(folderId)
+            }
+        }
+
+        /** Opens the account's inbox (or its first folder), such as when leaving All inboxes. */
+        fun openInbox() {
+            _state.update { it.copy(selectedFolderId = defaultFolder(it.folders, null) ?: it.selectedFolderId) }
         }
 
         /** Tries again after the folder list couldn't be loaded. */
@@ -128,6 +160,9 @@ class FolderDrawerViewModel
                     }
                 val unified = core.unifiedUnreadCount()
                 val manage = core.canManageFolders(accountId)
+                // The start folder, the first time there are folders to look it up in (#373).
+                val start = pendingStart?.takeIf { id -> folders.any { it.id == id } }
+                if (folders.isNotEmpty()) pendingStart = null
                 _state.update { current ->
                     val open =
                         current.selectedFolderId?.takeIf { id ->
@@ -135,7 +170,7 @@ class FolderDrawerViewModel
                         }
                     current.copy(
                         folders = folders,
-                        selectedFolderId = open ?: defaultFolder(folders, preferred),
+                        selectedFolderId = start ?: open ?: defaultFolder(folders, preferred),
                         isLoading = current.isLoading && folders.isEmpty(),
                         loadError = if (folders.isEmpty()) current.loadError else null,
                         unifiedUnread = unified,

@@ -56,6 +56,12 @@ fun MailHome(
     onAccountsChanged: () -> Unit = {},
     openMessageId: Long? = null,
     onMessageOpened: () -> Unit = {},
+    /** Open the Unified Inbox first (M4-16). */
+    startInUnified: Boolean = false,
+    startFolderId: Long? = null,
+    onStartShown: () -> Unit = {},
+    /** The folder shown changed, for "Open the app on: Last used" (M4-16). */
+    onFolderShown: (Long) -> Unit = {},
 ) {
     var composing by rememberSaveable { mutableStateOf(false) }
     var reply by rememberSaveable { mutableStateOf<ReplyRequest?>(null) }
@@ -142,6 +148,10 @@ fun MailHome(
                     onAccountsChanged = onAccountsChanged,
                     openMessageId = openMessageId,
                     onMessageOpened = onMessageOpened,
+                    startInUnified = startInUnified,
+                    startFolderId = startFolderId,
+                    onStartShown = onStartShown,
+                    onFolderShown = onFolderShown,
                     onCompose = {
                         reply = null
                         draft = null

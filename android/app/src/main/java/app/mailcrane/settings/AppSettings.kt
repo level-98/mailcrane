@@ -124,6 +124,16 @@ interface AppSettings {
 
     suspend fun setLastAccountId(id: Long)
 
+    /** The folder shown last (M4-16): [app.mailcrane.core.UNIFIED_FOLDER_ID] for the Unified Inbox; 0 for none. */
+    val lastFolderId: Flow<Long>
+
+    suspend fun setLastFolderId(id: Long)
+
+    /** "Open the app on" (M4-16). Last used, by default. */
+    val startView: Flow<StartView>
+
+    suspend fun setStartView(view: StartView)
+
     /** Whether the user was asked about suggestions from their contacts (M2-08); asked once. */
     val contactsPromptAnswered: Flow<Boolean>
 
@@ -185,6 +195,46 @@ enum class AfterMoveAction {
 
     /** The list itself: the behaviour before M4-15. */
     LIST,
+}
+
+/** Which view the app opens on (M4-16). */
+sealed interface StartView {
+    /** The Unified Inbox: every account's inbox. */
+    data object Unified : StartView
+
+    /** The inbox of account [accountId]. */
+    data class Account(
+        val accountId: Long,
+    ) : StartView
+
+    /**
+     * The account and folder (or Unified Inbox) shown last, kept in settings so a cold start reopens them
+     * (#373). A folder the account no longer has opens its inbox; an account that is gone opens All inboxes.
+     */
+    data object Last : StartView
+
+    companion object {
+        /** How it is stored. */
+        fun encode(view: StartView): String =
+            when (view) {
+                Unified -> "unified"
+                Last -> "last"
+                is Account -> "account:${view.accountId}"
+            }
+
+        /** The stored [text], or [Last] for anything else (an old or edited file). */
+        fun decode(text: String?): StartView =
+            when {
+                text == "unified" -> Unified
+                text?.startsWith("account:") == true ->
+                    text
+                        .removePrefix("account:")
+                        .toLongOrNull()
+                        ?.takeIf { it > 0 }
+                        ?.let { Account(it) } ?: Last
+                else -> Last
+            }
+    }
 }
 
 /** How tightly the message list packs its rows (M4-24). */
@@ -288,6 +338,18 @@ class DataStoreAppSettings(
 
     override suspend fun setLastAccountId(id: Long) {
         dataStore.edit { it[LAST_ACCOUNT] = id }
+    }
+
+    override val lastFolderId: Flow<Long> = prefs.map { it[LAST_FOLDER] ?: 0L }
+
+    override suspend fun setLastFolderId(id: Long) {
+        dataStore.edit { it[LAST_FOLDER] = id }
+    }
+
+    override val startView: Flow<StartView> = prefs.map { StartView.decode(it[START_VIEW]) }
+
+    override suspend fun setStartView(view: StartView) {
+        dataStore.edit { it[START_VIEW] = StartView.encode(view) }
     }
 
     override val contactsPromptAnswered: Flow<Boolean> = prefs.map { it[CONTACTS_PROMPT] ?: false }
@@ -435,6 +497,8 @@ class DataStoreAppSettings(
         val DYNAMIC_COLOR = booleanPreferencesKey("dynamic_color")
         val DARK_BODIES = booleanPreferencesKey("dark_message_bodies")
         val LAST_ACCOUNT = longPreferencesKey("last_account_id")
+        val LAST_FOLDER = longPreferencesKey("last_folder_id")
+        val START_VIEW = stringPreferencesKey("start_view")
         val HIDE_OUTSIDE = booleanPreferencesKey("hide_content_outside_app")
         val GROUP_THREADS = booleanPreferencesKey("group_by_conversation")
         val APP_LOCK = booleanPreferencesKey("app_lock_enabled")
