@@ -821,6 +821,9 @@ tasks.matching { it.name.startsWith("runKtlint") }.configureEach {
 // ktlint must not look at generated bindings. Compare with "/" on every OS,
 // since Windows paths use backslashes.
 ktlint {
+    // Pinned, and the same in scripts/fleet/prepush.{sh,ps1}, which run the standalone CLI before a
+    // push (#564); `cargo xtask ci` checks they match.
+    version.set("1.5.0")
     filter {
         exclude { it.file.invariantSeparatorsPath.contains("/build/") }
     }
