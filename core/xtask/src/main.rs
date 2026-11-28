@@ -61,6 +61,24 @@ const CI_STEPS: [Step; 6] = [
     },
 ];
 
+/// The `android` step in three parts, for CI's parallel jobs (#604):
+/// `--only android-lint,android-test,android-apk` checks what `android`
+/// checks. A plain `ci` runs `android` instead, in one Gradle run.
+const ANDROID_PARTS: [Step; 3] = [
+    Step {
+        name: "android-lint",
+        run: android_lint,
+    },
+    Step {
+        name: "android-test",
+        run: android_test,
+    },
+    Step {
+        name: "android-apk",
+        run: android_apk,
+    },
+];
+
 const BINDINGS: Step = Step {
     name: "bindings",
     run: bindings,
@@ -82,6 +100,10 @@ Commands:
   android   ktlintCheck, lintDebug, testDebugUnitTest, assembleDebug and checkFreeDependencies
             through Gradle; then assembleRelease and assembleDebug, and a check that
             each APK packages its own core (the debug one has the fixture loader)
+  android-lint, android-test, android-apk
+            the android step in three parts, for CI's parallel jobs (#604): ktlintCheck
+            then lintDebug; testDebugUnitTest; and the APK builds and checks. Only with
+            --only (or as a command); a plain ci runs android
   bindings  generate Kotlin and Swift bindings into core/target/bindings/
   fuzz <target> [--seconds N]
             run a fuzz target (default 60 s); needs nightly and cargo-fuzz.
@@ -166,19 +188,14 @@ fn real_main() -> Result<ExitCode, Error> {
     let ctx = context()?;
 
     let steps: Vec<&Step> = if command == "ci" {
-        for name in options.only.iter().chain(&options.skip) {
-            if !CI_STEPS.iter().any(|s| s.name == name) {
-                return Err(format!("unknown step `{name}` (see `cargo xtask help`)"));
-            }
-        }
-        CI_STEPS
-            .iter()
-            .filter(|s| options.only.is_empty() || options.only.iter().any(|o| o == s.name))
-            .filter(|s| !options.skip.iter().any(|o| o == s.name))
-            .collect()
+        select_steps(&options)?
     } else if command == "bindings" {
         vec![&BINDINGS]
-    } else if let Some(step) = CI_STEPS.iter().find(|s| s.name == command) {
+    } else if let Some(step) = CI_STEPS
+        .iter()
+        .chain(&ANDROID_PARTS)
+        .find(|s| s.name == command)
+    {
         vec![step]
     } else {
         return Err(format!(
@@ -196,6 +213,29 @@ fn real_main() -> Result<ExitCode, Error> {
         results.push((step.name, outcome));
     }
     Ok(summarise(&results, options.strict))
+}
+
+/// The steps `ci` runs with these options: every step of [`CI_STEPS`], or
+/// with `--only` the named ones, which may also be [`ANDROID_PARTS`]; less
+/// any `--skip`ped. In table order.
+fn select_steps(options: &Options) -> Result<Vec<&'static Step>, Error> {
+    let known = || CI_STEPS.iter().chain(&ANDROID_PARTS);
+    for name in options.only.iter().chain(&options.skip) {
+        if !known().any(|s| s.name == name) {
+            return Err(format!("unknown step `{name}` (see `cargo xtask help`)"));
+        }
+    }
+    let chosen: Vec<&'static Step> = if options.only.is_empty() {
+        CI_STEPS.iter().collect()
+    } else {
+        known()
+            .filter(|s| options.only.iter().any(|o| o == s.name))
+            .collect()
+    };
+    Ok(chosen
+        .into_iter()
+        .filter(|s| !options.skip.iter().any(|o| o == s.name))
+        .collect())
 }
 
 fn parse_options(args: impl Iterator<Item = String>) -> Result<Options, Error> {
@@ -562,11 +602,13 @@ fn deny(ctx: &Ctx) -> Result<Outcome, Error> {
     licences::check(ctx)
 }
 
-fn android(ctx: &Ctx) -> Result<Outcome, Error> {
+/// The Gradle wrapper in `android/` and that directory, or why the Android
+/// steps are skipped on this machine.
+fn gradle_wrapper(ctx: &Ctx) -> Result<(PathBuf, String), Outcome> {
     let dir = ctx.root.join("android");
     let gradlew = dir.join("gradlew");
     if !gradlew.is_file() {
-        return Ok(Outcome::Skipped(
+        return Err(Outcome::Skipped(
             "android/gradlew does not exist yet".into(),
         ));
     }
@@ -574,7 +616,7 @@ fn android(ctx: &Ctx) -> Result<Outcome, Error> {
         .iter()
         .any(|v| env::var_os(v).is_some_and(|s| !s.is_empty()));
     if !has_sdk {
-        return Ok(Outcome::Skipped(
+        return Err(Outcome::Skipped(
             "neither ANDROID_HOME nor ANDROID_SDK_ROOT is set".into(),
         ));
     }
@@ -583,6 +625,27 @@ fn android(ctx: &Ctx) -> Result<Outcome, Error> {
         dir.join("gradlew.bat")
     } else {
         gradlew
+    };
+    let wrapper = wrapper.display().to_string();
+    Ok((dir, wrapper))
+}
+
+/// Runs `./gradlew <tasks>` in `dir`; the failure names the command.
+fn gradle_run(dir: &Path, wrapper: &str, tasks: &[&str]) -> Result<Option<Outcome>, Error> {
+    if run(dir, wrapper, tasks)? {
+        Ok(None)
+    } else {
+        Ok(Some(Outcome::Failed(format!(
+            "`./gradlew {}` failed",
+            tasks.join(" ")
+        ))))
+    }
+}
+
+fn android(ctx: &Ctx) -> Result<Outcome, Error> {
+    let (dir, wrapper) = match gradle_wrapper(ctx) {
+        Ok(found) => found,
+        Err(skipped) => return Ok(skipped),
     };
     // assembleDebug cross-compiles the core for both ABIs (the buildRust task)
     // and proves the app really builds, not only that it lints and tests.
@@ -595,20 +658,57 @@ fn android(ctx: &Ctx) -> Result<Outcome, Error> {
         "assembleDebug",
         "checkFreeDependencies",
     ];
-    let wrapper = wrapper.display().to_string();
-    if !run(&dir, &wrapper, &args)? {
-        return Ok(Outcome::Failed(
-            "`./gradlew ktlintCheck lintDebug testDebugUnitTest assembleDebug checkFreeDependencies` failed"
-                .into(),
-        ));
+    if let Some(failed) = gradle_run(&dir, &wrapper, &args)? {
+        return Ok(failed);
     }
-    // Each APK must package its own core: a debug APK built after a release
-    // build once shipped the release core and crashed at launch (#71 review).
-    // Release, then debug again, in that order, so the debug APK CI uploads
-    // is the one checked.
+    apk_checks(&dir, &wrapper)
+}
+
+/// `android`'s formatting and lint (#604): ktlint first, on its own, so a
+/// formatting error fails before anything is compiled.
+fn android_lint(ctx: &Ctx) -> Result<Outcome, Error> {
+    let (dir, wrapper) = match gradle_wrapper(ctx) {
+        Ok(found) => found,
+        Err(skipped) => return Ok(skipped),
+    };
+    for tasks in [&["ktlintCheck"][..], &["lintDebug"][..]] {
+        if let Some(failed) = gradle_run(&dir, &wrapper, tasks)? {
+            return Ok(failed);
+        }
+    }
+    Ok(Outcome::Passed)
+}
+
+/// `android`'s unit tests (#604).
+fn android_test(ctx: &Ctx) -> Result<Outcome, Error> {
+    let (dir, wrapper) = match gradle_wrapper(ctx) {
+        Ok(found) => found,
+        Err(skipped) => return Ok(skipped),
+    };
+    Ok(gradle_run(&dir, &wrapper, &["testDebugUnitTest"])?.unwrap_or(Outcome::Passed))
+}
+
+/// `android`'s builds (#604): the debug APK and the free-dependencies check,
+/// then [`apk_checks`].
+fn android_apk(ctx: &Ctx) -> Result<Outcome, Error> {
+    let (dir, wrapper) = match gradle_wrapper(ctx) {
+        Ok(found) => found,
+        Err(skipped) => return Ok(skipped),
+    };
+    if let Some(failed) = gradle_run(&dir, &wrapper, &["assembleDebug", "checkFreeDependencies"])? {
+        return Ok(failed);
+    }
+    apk_checks(&dir, &wrapper)
+}
+
+/// Each APK must package its own core: a debug APK built after a release
+/// build once shipped the release core and crashed at launch (#71 review).
+/// Release, then debug again, in that order, so the debug APK CI uploads is
+/// the one checked.
+fn apk_checks(dir: &Path, wrapper: &str) -> Result<Outcome, Error> {
     for task in ["assembleRelease", "assembleDebug"] {
-        if !run(&dir, &wrapper, &[task])? {
-            return Ok(Outcome::Failed(format!("`./gradlew {task}` failed")));
+        if let Some(failed) = gradle_run(dir, wrapper, &[task])? {
+            return Ok(failed);
         }
     }
     let outputs = dir.join("app/build/outputs/apk");
@@ -961,6 +1061,38 @@ mod tests {
         let o = parse(&["--skip", "design", "--skip", "deny,android,"]).unwrap();
         assert_eq!(o.skip, ["design", "deny", "android"]);
         assert!(o.only.is_empty());
+    }
+
+    fn names(options: &Options) -> Vec<&'static str> {
+        select_steps(options)
+            .unwrap()
+            .into_iter()
+            .map(|s| s.name)
+            .collect()
+    }
+
+    /// #604: a plain `ci` still runs everything, `android` in one piece; the
+    /// parts run only when named.
+    #[test]
+    fn ci_runs_every_step_and_android_whole() {
+        let all = names(&parse(&["--strict"]).unwrap());
+        assert_eq!(all, ["design", "fmt", "lint", "test", "deny", "android"]);
+    }
+
+    #[test]
+    fn only_picks_the_android_parts_in_table_order() {
+        let o = parse(&["--only", "android-apk,android-lint"]).unwrap();
+        assert_eq!(names(&o), ["android-lint", "android-apk"]);
+        let o = parse(&["--only", "design,fmt,lint,deny"]).unwrap();
+        assert_eq!(names(&o), ["design", "fmt", "lint", "deny"]);
+    }
+
+    #[test]
+    fn an_unknown_step_is_an_error() {
+        let o = parse(&["--only", "android-bogus"]).unwrap();
+        assert!(select_steps(&o).is_err());
+        let o = parse(&["--skip", "nope"]).unwrap();
+        assert!(select_steps(&o).is_err());
     }
 
     #[test]
