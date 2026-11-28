@@ -140,7 +140,7 @@ These came from things that cost time on the first full day (the working list is
 - Never idle while waiting: when a PR waits on CI, review or QA, start the next dispatched item. At most three items in flight, as long as all but one are only waiting on CI, review or QA; work for a waiting PR comes first.
 - Reply to every finding in one push, then mark ready. Propose a deferral yourself when a fix would restart QA for a nit.
 - Merge `main` into your branch only once review has no blockers left, just before it can merge (branch protection wants it up to date), not every time `main` moves: each merge restarts CI. Exception: a conflict, or a fix you need from `main`.
-- Run the format checks before every push: `cargo fmt --all --check`, and ktlint on changed Kotlin files.
+- Run the format checks before every push: `scripts/fleet/prepush.ps1` (or `prepush.sh`). It runs the standalone ktlint, at the Gradle plugin's version, on the Kotlin files the branch changes, and `cargo fmt --all --check` when Rust changed, in a few seconds with no Gradle and no heavy-job lock (#564). Fix what it reports before pushing; never push past it.
 - When you merge `main` in, say whether there were conflicts.
 - Keep your Synapse status current: call `dev_sync_checkin` with what you're on whenever you switch items. The lead's idle check reads it.
 - Keep PRs small; anything else you notice becomes an issue.

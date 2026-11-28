@@ -8,6 +8,7 @@ mod apk;
 mod devmail;
 mod ispdb;
 mod licences;
+mod prepush;
 mod release;
 mod strings;
 
@@ -357,6 +358,18 @@ fn fmt(ctx: &Ctx) -> Result<Outcome, Error> {
 fn lint(ctx: &Ctx) -> Result<Outcome, Error> {
     if let Err(problem) = release_guard(ctx) {
         return Ok(Outcome::Failed(format!("release guard: {problem}")));
+    }
+    // The pre-push ktlint is the Gradle plugin's version (#564).
+    let read = |path: &str| std::fs::read_to_string(ctx.root.join(path)).unwrap_or_default();
+    match prepush::check_pins(
+        &read("android/app/build.gradle.kts"),
+        &read("scripts/fleet/prepush.sh"),
+        &read("scripts/fleet/prepush.ps1"),
+    ) {
+        Ok(version) => say(format_args!(
+            "ktlint: Gradle and the pre-push scripts pin {version}"
+        )),
+        Err(problem) => return Ok(Outcome::Failed(format!("ktlint pins: {problem}"))),
     }
     // Translations from Weblate keep the English placeholders (#69).
     match strings::check_dir(&ctx.root.join("android/app/src/main/res")) {
