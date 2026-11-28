@@ -34,3 +34,4 @@ Options we didn't pick:
 - On UIDPLUS servers (most of them), #450 can't happen. On others, a wake resumed at step 1 leaves the read state alone, and the rest is as before.
 - The IMAP client gains `uid_move_returning` and `uid_copy_returning`, which return the copy's UID. `uid_move` and `uid_copy` are unchanged for the archive and move actions.
 - Related decisions on G6, recorded in the `snooze/server.rs` doc: a move or delete of a message whose wake is past step 0 is refused, in the same transaction that reads the row (as #431 does for re-snoozing). A wake held up by dropped connections isn't given up.
+- Later (#544): a multi-select move or delete leaves out the messages a wake is moving and applies the rest; only a selection that is all waking is refused. And when the step write after a committed MOVE or COPY loses, the copy's UID is still recorded (guarded on step 1 and the same target UIDNEXT), so the next pass finds the copy by its UID.

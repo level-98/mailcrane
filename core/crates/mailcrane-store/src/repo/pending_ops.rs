@@ -168,6 +168,21 @@ fn queue_in_tx(
             }
         }
     }
+    apply_and_queue_in_tx(tx, account, kind, folder, dest, messages, now)
+}
+
+/// [`queue_in_tx`] after its waking check: applies the action locally and
+/// queues it. [`Store::queue_ops`] calls it directly for messages it has
+/// already checked in the same transaction (#544 review).
+fn apply_and_queue_in_tx(
+    tx: &Transaction<'_>,
+    account: AccountId,
+    kind: OpKind,
+    folder: FolderId,
+    dest: Option<FolderId>,
+    messages: &[OpMessage],
+    now: i64,
+) -> Result<Option<OpId>, StoreError> {
     let mut kept: Vec<OpMessage> = Vec::new();
     for m in messages {
         apply_local(tx, kind, folder, *m)?;
@@ -442,7 +457,7 @@ impl Store {
             out.ids.push(if messages.is_empty() {
                 None
             } else {
-                queue_in_tx(&tx, op.account, op.kind, op.folder, op.dest, &messages, now)?
+                apply_and_queue_in_tx(&tx, op.account, op.kind, op.folder, op.dest, &messages, now)?
             });
         }
         if total > 0 && out.skipped_waking.len() == total {

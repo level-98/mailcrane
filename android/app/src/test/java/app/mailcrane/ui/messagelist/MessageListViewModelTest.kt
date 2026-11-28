@@ -568,6 +568,17 @@ class MessageListViewModelTest {
         }
 
     @Test
+    fun aBulkActionOnOnlyWakingMessagesSaysSo() =
+        runTest {
+            val core = FakeMailbox(stored = 3)
+            val vm = MessageListViewModel(core, FakeAppSettings(), FOLDER)
+            core.actionFailure = ActionFailure.Waking()
+            vm.toggleMessage(3)
+            vm.bulk(BulkAction.ARCHIVE)
+            assertEquals(R.string.bulk_skipped_waking, vm.notices.first())
+        }
+
+    @Test
     fun aRefusedBulkActionSaysWhy() =
         runTest {
             val core = FakeMailbox(stored = 3)

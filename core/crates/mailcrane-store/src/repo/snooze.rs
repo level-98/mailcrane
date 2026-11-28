@@ -653,11 +653,15 @@ impl Store {
         target_uidnext: Option<u32>,
         copy_uid: u32,
     ) -> Result<bool, StoreError> {
-        let n = self.conn.execute(
+        // Through write_tx, like the other guarded writes: it waits out a
+        // busy database and gives way to the user's urgent writes.
+        let tx = self.write_tx()?;
+        let n = tx.execute(
             "UPDATE snoozes SET copy_uid = ?3 WHERE id = ?1 AND step = 1 \
              AND target_uidnext IS ?2 AND copy_uid IS NULL",
             params![id.0, target_uidnext, copy_uid],
         )?;
+        tx.commit()?;
         Ok(n > 0)
     }
 

@@ -214,9 +214,10 @@ impl SyncEngine {
     }
 
     /// Multi-select (M4-14): applies `action` to everything in `selection`,
-    /// across folders and accounts, all or nothing, one queued op per
-    /// folder, except that a move or delete leaves out messages coming back
-    /// from snooze and counts them in `skipped_waking`. Delete moves to each account's Trash, or deletes for good in
+    /// across folders and accounts, one queued op per folder. A move or
+    /// delete leaves out messages coming back from snooze and counts them in
+    /// `skipped_waking` (#544); everything else is all or nothing, and a
+    /// selection that is all waking fails with `Waking`. Delete moves to each account's Trash, or deletes for good in
     /// Trash or without one. A move needs messages of one account
     /// (`MixedAccounts` otherwise). Doesn't wait for a running sync.
     pub fn apply_bulk_action(
