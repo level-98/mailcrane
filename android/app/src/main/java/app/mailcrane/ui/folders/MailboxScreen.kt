@@ -50,6 +50,7 @@ import app.mailcrane.ui.message.MessageScreen
 import app.mailcrane.ui.messagelist.MessageListScreen
 import app.mailcrane.ui.messagelist.errorText
 import app.mailcrane.ui.search.SearchScreen
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 
 /**
@@ -165,9 +166,19 @@ fun MailboxScreen(
             val leaveOrder = if (openThread != null) threadOrder else listOrder
             // Whether the open message came from search, which isn't a list to step through (#372 review).
             var openedFromSearch by remember { mutableStateOf(false) }
-            // Its neighbours in the list it was opened from, taken when it opened: by id, and from that list
-            // even if another one is shown later (#372 review).
-            val neighbours = remember(messageId) { if (openedFromSearch) null else neighboursIn(leaveOrder, messageId) }
+            // The list it was opened from and its neighbours there, taken when it opened: by id, and from that
+            // list even if another one is shown later (#372 review). Opening the same message from elsewhere
+            // (search, after the list) takes them again (#514).
+            val origin =
+                remember(messageId, openedFromSearch) {
+                    originOf(messageId, openedFromSearch, state.selectedFolderId, openThread?.first, leaveOrder)
+                }
+            val neighbours = origin?.let { neighboursIn(it.order, messageId) }
+            val leaving = rememberCoroutineScope()
+            // Looking up the neighbour to open after a move (#514). Any message opened meanwhile wins over it,
+            // even the same one again (#566 review).
+            var leaveJob by remember { mutableStateOf<Job?>(null) }
+            LaunchedEffect(messageId) { if (messageId != null) leaveJob?.cancel() }
             val afterMove: AfterMoveViewModel = hiltViewModel()
             val afterMoveAction by afterMove.action.collectAsStateWithLifecycle()
             val openMessageAt: (Int) -> Unit = { delta ->
@@ -185,12 +196,22 @@ fun MailboxScreen(
                         onBack = { openMessage = null },
                         folders = state.folders,
                         onLeft = {
-                            val next = messageAfterLeaving(neighbours, afterMoveAction, leaveOrder)
                             // One pane, the lists aren't shown while a message is open, so their orders aren't
                             // refreshed: drop the message from them, or J/K could open it again (#372 review).
                             listOrder = listOrder - messageId
                             threadOrder = threadOrder - messageId
-                            openMessage = next
+                            // Closed at once, so a second tap can't act on it again while the list is read: a
+                            // second Delete would delete its copy in Trash for good (#566 review).
+                            openMessage = null
+                            leaveJob?.cancel()
+                            leaveJob =
+                                leaving.launch {
+                                    // The neighbour only if the list it came from still holds it now (#514).
+                                    val now = origin?.let { viewModel.idsNow(it) }.orEmpty()
+                                    val next = messageAfterLeaving(neighbours, afterMoveAction, now)
+                                    // Nothing opened meanwhile: opening any message cancels this job.
+                                    if (openMessage == null) openMessage = next
+                                }
                         },
                         onReply = onReply,
                         onComposeTo = onComposeTo,

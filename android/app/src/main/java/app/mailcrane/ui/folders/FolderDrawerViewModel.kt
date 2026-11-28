@@ -90,6 +90,28 @@ class FolderDrawerViewModel
             }
         }
 
+        /**
+         * The messages of [origin]'s list as they are now, read from the store: the conversation's, or the
+         * newest of the folder (the Unified Inbox too), as many as it showed and a page more. For "After
+         * deleting or moving": one pane, the list isn't shown while a message is open, so the order it last
+         * reported may still hold a message that left meanwhile (#514). Empty when the list can't be read, so
+         * the list shows instead of a neighbour (#566 review).
+         */
+        suspend fun idsNow(origin: Origin): List<Long> {
+            val window = origin.order.size + ORIGIN_SLACK
+            val messages =
+                try {
+                    when {
+                        origin.threadId != null -> core.listThreadMessages(origin.threadId)
+                        origin.folderId == UNIFIED_FOLDER_ID -> core.listUnifiedInbox(0, window)
+                        else -> core.listMessages(origin.folderId, 0, window)
+                    }
+                } catch (e: SyncFailure) {
+                    return emptyList()
+                }
+            return messages.map { it.id }
+        }
+
         /** Tries again after the folder list couldn't be loaded. */
         fun retry() {
             _state.update { it.copy(isLoading = it.folders.isEmpty(), loadError = null) }
@@ -145,6 +167,9 @@ class FolderDrawerViewModel
             }
         }
     }
+
+/** How many messages past the shown ones [FolderDrawerViewModel.idsNow] reads, for mail that arrived since. */
+private const val ORIGIN_SLACK = 50
 
 /** The folder to open when none is: the inbox, else [preferred], else the first one. */
 internal fun defaultFolder(
