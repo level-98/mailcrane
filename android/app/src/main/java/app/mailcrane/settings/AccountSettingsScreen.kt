@@ -47,11 +47,13 @@ import dagger.assisted.Assisted
 import dagger.assisted.AssistedFactory
 import dagger.assisted.AssistedInject
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /** How the last save of the signature went. */
 enum class SaveStatus { NONE, SAVED, TOO_LONG, FAILED }
@@ -145,8 +147,11 @@ class AccountSettingsViewModel
             _state.update { it.copy(color = before.copy(chosen = color)) }
             viewModelScope.launch {
                 try {
-                    core.setAccountColor(accountId, color)
-                    onSaved()
+                    // Saved and announced together, even if the page closes meanwhile (#492 review).
+                    withContext(NonCancellable) {
+                        core.setAccountColor(accountId, color)
+                        onSaved()
+                    }
                 } catch (_: SettingsFailure) {
                     _state.update { it.copy(color = before) }
                 }
