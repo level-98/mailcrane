@@ -18,6 +18,7 @@ Write one when you add a dependency, change a public API or the database schema,
 | [0007](0007-jmap-storage-schema.md) | JMAP storage schema: mapping tables, one message row per mailbox | accepted |
 | [0008](0008-android-tls-platform-verifier.md) | TLS certificate checks on Android with `rustls-platform-verifier` | accepted |
 | [0009](0009-snooze-copy-uid.md) | The exact UID of a snooze's copy (`snoozes.copy_uid`, COPYUID) | accepted |
+| [0011](0011-shared-debug-signing-key.md) | A shared, committed signing key for debug builds only | accepted |
 
 ## Template
 

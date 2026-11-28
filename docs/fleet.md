@@ -89,7 +89,7 @@ When the maintainer's phone is plugged in with USB debugging on, QA uses it as a
 - Before every tap or key event, check the foreground app (`adb shell dumpsys window | grep mCurrentFocus`) is `app.mailcrane.debug`. If it isn't, stop.
 - In the debug app, use only **Load test mail** (synthetic, never connects). Never add a real account, never type a real address, never send anything. The dev mail CA (`cargo xtask dev-mail`) never goes on the phone.
 - Screenshots from the phone are only of the debug app, and are deleted from the phone afterwards.
-- **Keep it current:** after each merge to `main`, QA builds the debug APK from `origin/main` (a Gradle build, so under `locks/heavy-job`, rule 11) and installs it on the phone with `adb -s <serial> install -r` (replace only, never uninstall first). If the install fails, say so in `qa`; don't work around it.
+- **Keep it current:** after each merge to `main`, QA downloads the `android-debug-apk` artifact from that merge's CI run on `main` and installs it on the phone with `adb -s <serial> install -r` (replace only, never uninstall first). No local Gradle build is needed: every debug APK is signed with the same committed debug key ([ADR 0011](decisions/0011-shared-debug-signing-key.md), #545), so any CI build replaces the last. If the install fails, say so in `qa`; don't work around it. When the shared key first arrives, the maintainer uninstalls `app.mailcrane.debug` on the phone once themselves, because the signature changes; seats never do.
 
 ## GitHub identity
 
@@ -126,6 +126,7 @@ These came from things that cost time on the first full day (the working list is
 - Check a PR once review has no important findings left, so each PR is checked once.
 - Do several PRs per emulator session, and skip re-checks when nothing under `android/` changed except merges from `main`.
 - Run the emulator with 2 GB of RAM and 2 cores (`-memory 2048 -cores 2`), so other seats can still run light checks.
+- Install the PR's CI APK (the `android-debug-apk` artifact of its run) with `adb install -r`, not a local build: it has the same debug signature as the snapshot's app (ADR 0011).
 - Boot the emulator from a ready snapshot (`qa-ready`: dev CA, debug app and the dev-mail account, synthetic mail only) with `-no-snapshot-save`. Refresh it when the app's schema changes or the dev CA rotates. Emulators only: the dev CA never goes on the phone.
 
 **Lead**
