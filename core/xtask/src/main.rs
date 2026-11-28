@@ -340,13 +340,15 @@ fn design(ctx: &Ctx) -> Result<Outcome, Error> {
             "unittest",
             "scripts/test_release_notes.py",
             "scripts/test_prune_test_builds.py",
+            "scripts/test_pr_checks.py",
         ],
     ]
     .concat();
     let ok = run(&ctx.root, python, &scripts)?;
     Ok(outcome(
         ok,
-        "python -m unittest scripts/test_release_notes.py scripts/test_prune_test_builds.py",
+        "python -m unittest scripts/test_release_notes.py scripts/test_prune_test_builds.py \
+         scripts/test_pr_checks.py",
     ))
 }
 
