@@ -43,6 +43,13 @@ impl std::fmt::Debug for Auth {
 
 impl Drop for Auth {
     fn drop(&mut self) {
+        self.wipe();
+    }
+}
+
+impl Auth {
+    /// Wipes the password or token, as dropping does.
+    fn wipe(&mut self) {
         use zeroize::Zeroize;
         match self {
             Self::Basic { password, .. } => password.zeroize(),
@@ -190,7 +197,13 @@ async fn send_inner(
         .header(hyper::header::HOST, host_header)
         .header(hyper::header::ACCEPT, "application/json");
     if let Some(a) = auth {
-        builder = builder.header(hyper::header::AUTHORIZATION, a.header().as_str());
+        // hyper keeps its own copy of the value, out of our reach to wipe;
+        // marked sensitive, so hyper never logs or compresses it (#521).
+        let header = a.header();
+        let mut value =
+            hyper::header::HeaderValue::from_str(&header).map_err(|_| JmapError::Unauthorized)?;
+        value.set_sensitive(true);
+        builder = builder.header(hyper::header::AUTHORIZATION, value);
     }
     let bytes = match body {
         Some((bytes, content_type)) => {
@@ -300,6 +313,20 @@ fn base64(bytes: &[u8]) -> String {
 
 #[cfg(test)]
 mod tests {
+    /// #521: dropping wipes the secret.
+    #[test]
+    fn wiping_clears_the_secret() {
+        let mut basic = Auth::Basic {
+            username: "ana".into(),
+            password: "hunter2".into(),
+        };
+        basic.wipe();
+        assert!(matches!(&basic, Auth::Basic { password, .. } if password.is_empty()));
+        let mut bearer = Auth::Bearer("tok-123".into());
+        bearer.wipe();
+        assert!(matches!(&bearer, Auth::Bearer(t) if t.is_empty()));
+    }
+
     use super::*;
 
     #[test]

@@ -332,8 +332,9 @@ impl Session {
         plain.extend_from_slice(password.expose().as_bytes());
         let encoded = Zeroizing::new(STANDARD.encode(&*plain));
         const PREFIX: &[u8] = b"AUTHENTICATE \"PLAIN\" ";
-        // Base64 needs no escaping: quotes and CRLF are all string_arg adds.
-        let mut cmd = Zeroizing::new(Vec::with_capacity(PREFIX.len() + encoded.len() + 4));
+        // Base64 needs no escaping. string_arg adds quotes, or (over 1024
+        // bytes) a literal's {n+} header and CRLF, at most 26 bytes; then CRLF.
+        let mut cmd = Zeroizing::new(Vec::with_capacity(PREFIX.len() + encoded.len() + 28));
         cmd.extend_from_slice(PREFIX);
         string_arg(&mut cmd, &encoded);
         cmd.extend_from_slice(b"\r\n");

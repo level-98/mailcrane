@@ -50,6 +50,35 @@ pub struct Tokens {
     pub refresh_token: Option<String>,
 }
 
+impl Drop for Tokens {
+    fn drop(&mut self) {
+        self.wipe();
+    }
+}
+
+impl Tokens {
+    /// Wipes both tokens, as dropping does (#521).
+    fn wipe(&mut self) {
+        use zeroize::Zeroize;
+        self.access_token.zeroize();
+        if let Some(refresh) = &mut self.refresh_token {
+            refresh.zeroize();
+        }
+    }
+}
+
+/// Wipes every string in `value`, such as a token endpoint's reply once the
+/// tokens are taken out (#521). Keys aren't secret and stay.
+fn wipe_json(value: &mut Value) {
+    use zeroize::Zeroize;
+    match value {
+        Value::String(s) => s.zeroize(),
+        Value::Array(items) => items.iter_mut().for_each(wipe_json),
+        Value::Object(map) => map.values_mut().for_each(wipe_json),
+        _ => {}
+    }
+}
+
 impl std::fmt::Debug for Tokens {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Tokens")
@@ -165,8 +194,18 @@ async fn token_request(
     timeout: Duration,
 ) -> Result<Tokens, OAuthError> {
     let reply = post_form(&provider.token_endpoint, body, extra_roots, timeout).await?;
-    let json: Value = serde_json::from_slice(&reply.body).map_err(|_| OAuthError::Malformed)?;
-    if !(200..300).contains(&reply.status) {
+    // The body and the parsed reply hold the tokens: both are wiped once the
+    // tokens are taken out (#521).
+    let raw = zeroize::Zeroizing::new(reply.body);
+    let mut json: Value = serde_json::from_slice(&raw).map_err(|_| OAuthError::Malformed)?;
+    let tokens = tokens_from_reply(reply.status, &json);
+    wipe_json(&mut json);
+    tokens
+}
+
+/// The tokens in a token endpoint's reply with `status`, or why there are none.
+fn tokens_from_reply(status: u16, json: &Value) -> Result<Tokens, OAuthError> {
+    if !(200..300).contains(&status) {
         // RFC 6749 §5.2: the error code, never shown or logged as text.
         return Err(match json.get("error").and_then(Value::as_str) {
             Some("invalid_grant") => OAuthError::ReauthRequired,
@@ -208,6 +247,26 @@ fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
 
 #[cfg(test)]
 mod tests {
+    /// #521: dropping wipes both tokens, and a reply's strings are wiped.
+    #[test]
+    fn tokens_and_replies_are_wiped() {
+        let mut t = Tokens {
+            access_token: "secret-access".into(),
+            expires_in: Some(3600),
+            refresh_token: Some("secret-refresh".into()),
+        };
+        t.wipe();
+        assert!(t.access_token.is_empty());
+        assert_eq!(t.refresh_token.as_deref(), Some(""));
+        let mut reply =
+            serde_json::json!({"access_token": "a", "nested": [{"refresh_token": "r"}], "n": 3});
+        wipe_json(&mut reply);
+        assert_eq!(
+            reply,
+            serde_json::json!({"access_token": "", "nested": [{"refresh_token": ""}], "n": 3})
+        );
+    }
+
     use super::*;
 
     pub(crate) fn provider(token: &str) -> OAuthProvider {

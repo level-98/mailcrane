@@ -247,7 +247,13 @@ impl Session {
         }
         let cmd = command::build(self.tags.next(), name, args)?;
         let limit = self.command_timeout;
-        within(limit, exchange(&mut self.conn, cmd.tag, cmd.segments)).await?
+        // A LOGIN line carries the password: wiped after sending (#521).
+        let wipe = if name.eq_ignore_ascii_case("LOGIN") {
+            Wipe::Yes
+        } else {
+            Wipe::No
+        };
+        within(limit, exchange(&mut self.conn, cmd.tag, cmd.segments, wipe)).await?
     }
 
     pub(crate) async fn run_command(
@@ -343,7 +349,12 @@ impl Session {
         let limit = self.command_timeout;
         within(
             limit,
-            exchange(&mut self.conn, tag, vec![start, response, b"\r\n".to_vec()]),
+            exchange(
+                &mut self.conn,
+                tag,
+                vec![start, response, b"\r\n".to_vec()],
+                Wipe::Yes,
+            ),
         )
         .await?
     }
@@ -368,7 +379,11 @@ impl Session {
         payload.extend_from_slice(password.expose().as_bytes());
         let response = line(&Zeroizing::new(b64::encode(&payload)));
         let limit = self.command_timeout;
-        within(limit, exchange(&mut self.conn, tag, vec![start, response])).await?
+        within(
+            limit,
+            exchange(&mut self.conn, tag, vec![start, response], Wipe::Yes),
+        )
+        .await?
     }
 
     /// The personal namespace prefix (RFC 2342), such as `INBOX.`, when the
@@ -721,7 +736,8 @@ async fn start_tls(
         Some(caps) => caps,
         None => {
             let cmd = command::build(tags.next(), "CAPABILITY", &[])?;
-            let done = within(limit, exchange(&mut conn, cmd.tag, cmd.segments)).await??;
+            let done =
+                within(limit, exchange(&mut conn, cmd.tag, cmd.segments, Wipe::No)).await??;
             expect_ok(&done)?;
             capabilities_in(&done).ok_or(ImapError::Protocol)?
         }
@@ -730,7 +746,7 @@ async fn start_tls(
         return Err(ImapError::StartTlsNotOffered);
     }
     let cmd = command::build(tags.next(), "STARTTLS", &[])?;
-    let done = within(limit, exchange(&mut conn, cmd.tag, cmd.segments)).await??;
+    let done = within(limit, exchange(&mut conn, cmd.tag, cmd.segments, Wipe::No)).await??;
     if done.status != StatusKind::Ok {
         return Err(ImapError::StartTlsNotOffered);
     }
@@ -750,8 +766,6 @@ async fn start_tls(
     Ok((conn, (Condition::Ok, empty)))
 }
 
-/// Sends `segments`, waiting for a `+` continuation between them, and
-/// collects responses until the one tagged `tag`.
 /// `text` and CRLF, as one line to send, in a buffer sized up front so it
 /// never grows and leaves a copy of a secret behind (#521).
 fn line(text: &str) -> Vec<u8> {
@@ -761,19 +775,47 @@ fn line(text: &str) -> Vec<u8> {
     out
 }
 
+/// Whether `exchange` wipes what it sent: only for a command carrying a
+/// password or token (`LOGIN`, `AUTHENTICATE`), never for others such as a
+/// large `APPEND` (#590 review).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Wipe {
+    Yes,
+    No,
+}
+
+/// Sends `segments`, waiting for a `+` continuation between them, and
+/// collects responses until the one tagged `tag`.
 async fn exchange(
     conn: &mut Connection,
     tag: String,
     segments: Vec<Vec<u8>>,
+    wipe: Wipe,
 ) -> Result<Done, ImapError> {
     let mut untagged = Vec::new();
-    // Every segment is wiped when it's dropped, however this returns: a
-    // LOGIN or AUTHENTICATE line carries the password or token (#521).
-    // Moving each buffer in copies nothing.
-    let segments: Vec<Zeroizing<Vec<u8>>> = segments.into_iter().map(Zeroizing::new).collect();
-    let mut segments = segments.into_iter();
+    // When asked, every segment is wiped when this returns, however it
+    // returns (#521); otherwise they're freed as they are.
+    struct Segments {
+        parts: Vec<Vec<u8>>,
+        wipe: bool,
+    }
+    impl Drop for Segments {
+        fn drop(&mut self) {
+            if self.wipe {
+                use zeroize::Zeroize;
+                for part in &mut self.parts {
+                    part.zeroize();
+                }
+            }
+        }
+    }
+    let segments = Segments {
+        parts: segments,
+        wipe: wipe == Wipe::Yes,
+    };
+    let mut segments = segments.parts.iter();
     if let Some(first) = segments.next() {
-        conn.write(&first).await?;
+        conn.write(first).await?;
     }
     for segment in segments {
         loop {
@@ -795,7 +837,7 @@ async fn exchange(
                 Response::Tagged { .. } => return Err(ImapError::Protocol),
             }
         }
-        conn.write(&segment).await?;
+        conn.write(segment).await?;
     }
     loop {
         match conn.read_response().await? {
@@ -887,5 +929,17 @@ mod label_tests {
             assert!(name.chars().all(|c| c.is_ascii_alphabetic()), "{name}");
             assert_eq!(format!("{error:?}"), name);
         }
+    }
+}
+
+#[cfg(test)]
+mod wipe_tests {
+    use super::line;
+
+    /// #521: an auth line is built at its final size, never grown.
+    #[test]
+    fn an_auth_line_is_built_at_its_final_size() {
+        let built = line("dXNlcj1hbmEBYXV0aD1CZWFyZXIgdG9rZW4BAQ==");
+        assert_eq!(built.len(), built.capacity());
     }
 }
