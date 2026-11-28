@@ -1,20 +1,25 @@
 # The agent fleet
 
-A maintainer can run up to six Claude Code sessions on their own machine that work through the issues together. They talk over Synapse, a message bus that runs only on that machine, and act on GitHub through the maintainer's own account, marking their work with the `fleet` label. This page is the rulebook every seat reads first. [AGENTS.md](../AGENTS.md) still applies in full; nothing here relaxes it.
+A maintainer can run up to ten Claude Code sessions on their own machine that work through the issues together. They talk over Synapse, a message bus that runs only on that machine, and act on GitHub through the maintainer's own account, marking their work with the `fleet` label. This page is the rulebook every seat reads first. [AGENTS.md](../AGENTS.md) still applies in full; nothing here relaxes it.
 
 ## The seats
 
 | Seat | Role file | Worktree | Job |
 |---|---|---|---|
 | `mailbot.lead` | `.claude/agents/mailcrane-lead.md` | the main checkout (read-only) | Watches GitHub, triages, decides, dispatches, merges, writes the hourly report |
-| `mailbot.dev1`, `mailbot.dev2` | `.claude/agents/mailcrane-dev.md` | `.worktrees/dev1`, `.worktrees/dev2` | One issue at a time, from claim to ready PR |
-| `mailbot.dev3` | `.claude/agents/mailcrane-dev.md` | `.worktrees/dev3` | Like dev1 and dev2, but only issues that need no emulator or device (see rule 12). Not in the default seats: start it with `-Seats dev3` (only dev3, alongside a running fleet) or a list such as `-Seats lead,dev1,dev2,dev3,review,qa` |
+| `mailbot.dev1`, `mailbot.dev2`, `mailbot.dev4` | `.claude/agents/mailcrane-dev.md` | `.worktrees/dev1`, `.worktrees/dev2`, `.worktrees/dev4` | One issue at a time, from claim to ready PR; may use the emulator |
+| `mailbot.dev3` | `.claude/agents/mailcrane-dev.md` | `.worktrees/dev3` | Like the other dev seats, but only issues that need no emulator or device (see rule 12). Not in the default seats: start it with `-Seats dev3` (only dev3, alongside a running fleet) or a list such as `-Seats lead,dev1,dev2,dev3,dev4,review,qa` |
 | `mailbot.review` | `.claude/agents/mailcrane-review.md` | `.worktrees/review` | Code review of every `fleet` PR marked ready |
 | `mailbot.qa` | `.claude/agents/mailcrane-qa.md` | `.worktrees/qa` | Emulator checks and screenshots of UI PRs; exploratory passes that file bugs |
+| `mailbot.spec` | `.claude/agents/mailcrane-spec.md` | `.worktrees/spec` (read-only) | Triages open issues and writes their specs, so at least 10 are `agent-ready`; the lead adds the label. Not in the default seats |
+| `mailbot.docs` | `.claude/agents/mailcrane-docs.md` | `.worktrees/docs` | User docs, the website, README and CONTRIBUTING, changelog fragments and nightly release notes; never app code. Not in the default seats |
+| `mailbot.coach` | `.claude/agents/mailcrane-coach.md` | `.worktrees/coach` (read-only) | Finds repeated friction in the pipeline, measures the #474 metrics and sends the lead proposals. Advise-only: the lead decides. Not in the default seats |
+
+The spec, docs and coach seats were added on 2026-11-28 (#582), with dev4, by the maintainer's decision.
 
 Start them all with `scripts/fleet/start-fleet.ps1` (see [Running it](#running-it)).
 
-**Models** (#507, approved by the maintainer on 2026-11-27): `qa` and `dev3` run on Sonnet, because emulator checks and small, no-emulator tasks don't need the larger model. `lead`, `review`, `dev1` and `dev2` use the account's default model (Opus).
+**Models** (#507, approved by the maintainer on 2026-11-27): `qa` and `dev3` run on Sonnet, because emulator checks and small, no-emulator tasks don't need the larger model. `lead`, `review`, `dev1`, `dev2`, `dev4`, `spec`, `docs` and `coach` use the account's default model (Opus).
 
 ## The source of truth
 
@@ -46,11 +51,13 @@ It adds the issue or PR if it isn't there yet, sets only the fields given (`-Gro
 ## The flow
 
 ```
-issue ─▶ lead triages ─▶ agent-ready ─▶ lead dispatches to a free dev (dev_wake)
+issue ─▶ spec drafts the spec ─▶ lead checks it ─▶ agent-ready ─▶ lead dispatches to a free dev (dev_wake)
       ─▶ dev: /claim, branch, fix + test, cargo xtask ci, draft PR, ready
       ─▶ review (comments) ∥ qa (emulator, screenshots, qa-verified)
       ─▶ dev fixes findings ─▶ lead merges (see Merging) ─▶ qa installs the new build on the phone
 ```
+
+Triage: the spec seat reads each unlabelled issue and the code, and writes the spec (Goal, Files, Acceptance criteria, Test steps) as a comment. The lead glances at it and adds `agent-ready`; the spec seat never adds that label itself. Without the spec seat running, the lead writes specs as before.
 
 ## Channels
 
@@ -85,11 +92,11 @@ Only these still go to the maintainer, as a `dev_ask` card:
 5. **One issue per dev seat, one PR per issue.** Claims are made as the maintainer, who has no claim limit (`claim.yml`). **Exception, for the fleet only** (the maintainer's decision of 2026-11-27): the lead may dispatch a small group of similar issues (same screen or files, same root cause, or the same kind of small fix; at most 4, one area) as one PR, with one `Closes #n` line per issue. Contributors who are people keep one issue per PR.
 6. **Lock before editing a file another seat might touch** (`dev_sync_will_edit`, `dev_sync_lock`), release when the PR is pushed. Lock keys are relative to the worktree root, so `core/crates/x/src/lib.rs` is the same lock in every worktree.
 7. **Never claim a check passed that you didn't run.** Say what you skipped and why.
-8. **At most six agent PRs open at once.** At six, the lead stops dispatching new issues and puts its effort into getting the open ones finished.
+8. **At most six agent PRs open at once**, across all the dev seats and the docs seat. At six, the lead stops dispatching new issues and puts its effort into getting the open ones finished.
 9. **Pace with `ScheduleWakeup`**: 1200–1800 s when idle; a direct message or `dev_wake` wakes a seat sooner. Never poll in a tight loop.
 10. **Stuck for more than an hour** on the same failure: post in `alerts`, update the board task to `blocked`, and move on or go idle.
 11. **One heavy job on the machine at a time.** Memory is the real limit. A heavy job is a full cargo workspace build or test (`cargo test --workspace`, a full `cargo xtask ci`), any cargo build into a cold target directory, a Gradle build, the emulator, or a long under-load test loop. Take the Synapse lock `locks/heavy-job` (`dev_sync_lock`) before starting one, in a call of its own, and start the job only after the result says you hold it, never in the same batch of tool calls. Release it as soon as the job ends. While anyone holds it, run no other cargo or Gradle builds or tests at all; `cargo fmt` and `./gradlew ktlintCheck` are fine at any time. Before releasing it, run `./gradlew --stop` or `adb emu kill`, because Gradle and Kotlin daemons and the emulator keep their memory after the job. `./gradlew --stop` stops every daemon under the shared Gradle home, other seats' runs included, so run it only while you hold the lock, as the last step before releasing. **Queue order:** QA checks that block a merge go first, then dev runs that unblock a waiting PR, then everything else. A seat that wants the lock says so in `tasks`, and the holder hands it on in that order. After a stop for low memory, nothing heavy restarts without the lead's OK. No background watcher loops (CI watchers included): the lead watches CI (see [Pipeline rules](#pipeline-rules)). Without the lock, run the targeted checks you can (`cargo test -p <crate>`, clippy on the crates you touched, `cargo fmt --all --check`), push, and keep the PR a **draft** until `ci-ok` is green on its head: CI runs `cargo xtask ci --strict`, the command [AGENTS.md §7](../AGENTS.md#7-checks) asks for, and §7 already says to state what you couldn't run. The PR body says what ran locally and what was left to CI.
-12. **Emulator work goes to dev1, dev2 and QA.** dev3 takes only issues that need no emulator or device: core and Rust, testkit, CI and workflows, docs and the website, and Android changes fully covered by JVM unit tests. QA's emulator is off by default. QA starts it only (a) to verify an open PR that touches `android/`, (b) for a post-merge device check, or (c) for an exploratory pass when no PR needs it; always while holding `locks/heavy-job` with nothing else heavy running, and always shut down (`adb emu kill`) as soon as it's done.
+12. **Emulator work goes to dev1, dev2, dev4 and QA.** dev3 takes only issues that need no emulator or device: core and Rust, testkit, CI and workflows, docs and the website, and Android changes fully covered by JVM unit tests. QA's emulator is off by default. QA starts it only (a) to verify an open PR that touches `android/`, (b) for a post-merge device check, or (c) for an exploratory pass when no PR needs it; always while holding `locks/heavy-job` with nothing else heavy running, and always shut down (`adb emu kill`) as soon as it's done.
 
 ## Merging
 
@@ -173,7 +180,7 @@ Then, from the repository root:
 scripts/fleet/start-fleet.ps1
 ```
 
-It creates the worktrees, wires each one to Synapse, and opens one terminal window per seat. Close a window to stop that seat. By default it starts `lead`, `dev1`, `dev2`, `review` and `qa`. `-Seats` replaces that list: `-Seats lead,dev1` starts only those two, and `-Seats dev3` starts only the third dev seat (for a fleet that's already running). `-DryRun` checks everything and prints what it would start, each seat's model included, without creating worktrees or opening windows. Each seat starts on its default model (see [Models](#the-seats)); `-Model <name>` puts every seat on that model instead. A change of model takes effect when a seat is restarted. Worktrees get the main checkout's `.claude/settings.local.json` without Synapse's own hooks (any other hooks are kept): the Synapse registry binds the project to the main checkout only, so those hooks would always refuse there. Seats call `dev_sync_will_edit`, `dev_sync_did_edit` and the locks themselves.
+It creates the worktrees, wires each one to Synapse, and opens one terminal window per seat. Close a window to stop that seat. By default it starts `lead`, `dev1`, `dev2`, `dev4`, `review` and `qa`. `-Seats` replaces that list: `-Seats lead,dev1` starts only those two, `-Seats dev3` starts only the third dev seat, and `-Seats spec,docs,coach` starts those three (for a fleet that's already running). `-DryRun` checks everything and prints what it would start, each seat's model included, without creating worktrees or opening windows. Each seat starts on its default model (see [Models](#the-seats)); `-Model <name>` puts every seat on that model instead. A change of model takes effect when a seat is restarted. Worktrees get the main checkout's `.claude/settings.local.json` without Synapse's own hooks (any other hooks are kept): the Synapse registry binds the project to the main checkout only, so those hooks would always refuse there. Seats call `dev_sync_will_edit`, `dev_sync_did_edit` and the locks themselves.
 
 If `sccache` is installed (`cargo install sccache --locked`), every seat builds through it with one shared cache in `.worktrees/sccache` (up to 10G), so a new worktree doesn't rebuild every dependency (#531). Each seat keeps its own `CARGO_TARGET_DIR`. Without sccache nothing changes; the script and `-DryRun` say which applies. It takes effect when seats start.
 
