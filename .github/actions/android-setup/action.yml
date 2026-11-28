@@ -1,0 +1,48 @@
+# The toolchains the Android jobs in ci.yml share (#604): Rust with the two
+# Android targets, cargo-ndk, Java, the Android SDK and the pinned NDK, and
+# Gradle. Caches are written only on main, so pull requests don't push
+# main's caches out (GitHub keeps 10 GB per repository).
+#
+# Third-party actions are pinned to a commit SHA; the comment gives the
+# version it was taken from.
+name: Android setup
+description: Rust for Android, cargo-ndk, Java, the Android SDK and NDK, and Gradle, as ci.yml's Android jobs need them.
+inputs:
+  cache-key:
+    description: The Rust cache key, one per job (each builds different things).
+    required: true
+runs:
+  using: composite
+  steps:
+    - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
+      with:
+        # Same version as rust-toolchain.toml.
+        toolchain: "1.100.0"
+        # cargo-ndk builds the core for these when Gradle runs.
+        targets: aarch64-linux-android,x86_64-linux-android
+
+    - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      with:
+        workspaces: core
+        key: ${{ inputs.cache-key }}
+        save-if: ${{ github.ref == 'refs/heads/main' }}
+
+    - uses: taiki-e/install-action@fe3acb53a98b62c772db35de75ce0e4595e7ca8c # v2.90.8
+      with:
+        # Pinned for reproducible release builds (docs/fdroid.md).
+        tool: cargo-ndk@4.1.2
+
+    - uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
+      with:
+        distribution: temurin
+        java-version: "17"
+
+    - uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4.0.4
+
+    - name: Install the Android NDK
+      shell: bash
+      run: sdkmanager "ndk;${NDK_VERSION}"
+
+    - uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
+      with:
+        cache-read-only: ${{ github.ref != 'refs/heads/main' }}
