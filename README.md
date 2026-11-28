@@ -125,7 +125,7 @@ Mail logic is written in Rust; the app has a native UI on top. Details and reaso
 **You need:** Rust via `rustup` (`rust-toolchain.toml` picks the version). For the app, JDK 17+, the Android SDK and NDK, the Android Rust targets and `cargo-ndk` (details in [android/README.md](android/README.md)). No Docker or test accounts needed: tests use built-in fake mail servers.
 
 ```bash
-git clone https://github.com/level-98/mailcrane.git
+git clone https://github.com/mailcrane/mailcrane.git
 cd mailcrane
 
 cargo xtask ci          # every check CI runs, in one command

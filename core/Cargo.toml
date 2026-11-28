@@ -9,7 +9,7 @@ version = "0.0.0"
 edition = "2021"
 license = "MPL-2.0"
 publish = false
-repository = "https://github.com/level-98/mailcrane"
+repository = "https://github.com/mailcrane/mailcrane"
 
 [workspace.lints.clippy]
 unwrap_used = "deny"

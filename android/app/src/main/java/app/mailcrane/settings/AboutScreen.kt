@@ -43,8 +43,8 @@ import app.mailcrane.R
 object AboutLinks {
     const val WEBSITE = "https://mailcrane.app"
     const val PRIVACY = "https://mailcrane.app/privacy/"
-    const val SOURCE = "https://github.com/level-98/mailcrane"
-    const val LICENCE = "https://github.com/level-98/mailcrane/blob/main/LICENSE"
+    const val SOURCE = "https://github.com/mailcrane/mailcrane"
+    const val LICENCE = "https://github.com/mailcrane/mailcrane/blob/main/LICENSE"
 }
 
 /** What the About screen shows about this build. */
