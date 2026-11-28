@@ -23,6 +23,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.take
+import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
@@ -307,6 +309,32 @@ class MessageListViewModelTest {
             vm.actionsUndone.first()
             assertEquals(3, vm.state.value.messages.size)
         }
+
+    @Test
+    fun aFolderResetNoticeIsNotReplacedByALaterOneAndShowsOnce() =
+        runTest {
+            // #541: a reset drops several changes at once, and a refusal can follow before the snackbar shows.
+            val core = FakeMailbox(stored = 3)
+            val vm = MessageListViewModel(core, FakeAppSettings(), FOLDER)
+            val reset = CoreEvent.ActionFailed(1, ActionKind.MOVE, listOf(7L), SyncErrorKind.FOLDER_RESET)
+            core.events.tryEmit(reset)
+            core.events.tryEmit(reset.copy(messageIds = listOf(8L)))
+            core.events.tryEmit(CoreEvent.ActionFailed(1, ActionKind.FLAG, listOf(9L), SyncErrorKind.PROTOCOL))
+            val shown = vm.actionsUndone.take(2).toList()
+            assertEquals(listOf(R.string.action_dropped_folder_reset, R.string.action_undone), shown)
+            // Shown: the same notice can come again later.
+            core.events.tryEmit(reset)
+            assertEquals(R.string.action_dropped_folder_reset, vm.actionsUndone.first())
+        }
+
+    @Test
+    fun eachFolderResetReasonHasItsOwnNotice() {
+        val failed = CoreEvent.ActionFailed(1, ActionKind.MOVE, listOf(7L), SyncErrorKind.PROTOCOL)
+        val notice = { reason: SyncErrorKind -> undoneMessage(failed.copy(reason = reason)) }
+        assertEquals(R.string.action_dropped_folder_reset, notice(SyncErrorKind.FOLDER_RESET))
+        assertEquals(R.string.action_unfinished_folder_reset, notice(SyncErrorKind.FOLDER_RESET_UNFINISHED))
+        assertEquals(R.string.action_undone, notice(SyncErrorKind.PROTOCOL))
+    }
 
     @Test
     fun eventsForOtherFoldersAreIgnored() {

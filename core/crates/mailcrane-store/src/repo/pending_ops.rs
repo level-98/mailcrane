@@ -316,14 +316,57 @@ fn op_folder(tx: &Transaction<'_>, op: OpId) -> Result<Option<(OpKind, FolderId)
         .transpose()
 }
 
-/// A queued action dropped because its folder's `UIDVALIDITY` changed
-/// (#517): its UIDs now name other messages, so it can't be applied.
+/// A queued action dropped because its folder was refreshed from the server
+/// (#517, #541): its `UIDVALIDITY` changed, or a JMAP server couldn't say
+/// what changed. Its UIDs or rows may name other messages now, so it can't
+/// be applied as it is.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DroppedOp {
     /// What the action was.
     pub kind: OpKind,
     /// The local rows it was applied to (gone with the folder's reset).
     pub message_ids: Vec<MessageId>,
+    /// How far a multi-command action had got on the server (see
+    /// [`PendingOp::step`]); 0 if it hadn't started.
+    pub step: u8,
+}
+
+/// A queued move or expunge partly carried out on the server (#541), with
+/// what it takes to find its messages again after their folder was
+/// renumbered.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HalfDoneOp {
+    /// The action.
+    pub id: OpId,
+    /// Move or expunge.
+    pub kind: OpKind,
+    /// How far it got (see [`PendingOp::step`]); more than 0.
+    pub step: u8,
+    /// Its messages.
+    pub messages: Vec<HalfDoneMessage>,
+}
+
+/// One message of a [`HalfDoneOp`], from its local row while the row is
+/// still that message (#503).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HalfDoneMessage {
+    /// The local row.
+    pub message_id: MessageId,
+    /// Its `Message-ID`, without angle brackets; `None` if it has none or
+    /// the row holds another message now.
+    pub message_id_header: Option<String>,
+    /// Its `RFC822.SIZE`, likewise.
+    pub size: Option<i64>,
+}
+
+impl DroppedOp {
+    /// Whether the action was partly carried out on the server (#541): a
+    /// move without `MOVE` that already copied, or a move or expunge that
+    /// already set `\Deleted`. Dropping it would leave a copy in both
+    /// folders, or a message marked deleted.
+    pub fn half_done(&self) -> bool {
+        self.step > 0 && matches!(self.kind, OpKind::Move | OpKind::Expunge)
+    }
 }
 
 /// Removes every queued action on messages of `folder`, inside `tx`, and
@@ -333,21 +376,25 @@ pub(crate) fn take_folder_ops(
     tx: &Transaction<'_>,
     folder: FolderId,
 ) -> Result<Vec<DroppedOp>, StoreError> {
-    let ops: Vec<(i64, String)> = {
+    let ops: Vec<(i64, String, i64)> = {
         let mut stmt =
-            tx.prepare("SELECT id, kind FROM pending_ops WHERE folder_id = ?1 ORDER BY id")?;
-        let rows = stmt.query_map(params![folder.0], |r| Ok((r.get(0)?, r.get(1)?)))?;
+            tx.prepare("SELECT id, kind, step FROM pending_ops WHERE folder_id = ?1 ORDER BY id")?;
+        let rows = stmt.query_map(params![folder.0], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?;
         rows.collect::<Result<_, _>>()?
     };
     let mut dropped = Vec::with_capacity(ops.len());
-    for (id, kind) in ops {
+    for (id, kind, step) in ops {
         let kind = OpKind::parse(&kind)?;
         let message_ids = load_messages(tx, OpId(id))?
             .into_iter()
             .map(|m| m.message_id)
             .collect();
         delete_op(tx, OpId(id))?;
-        dropped.push(DroppedOp { kind, message_ids });
+        dropped.push(DroppedOp {
+            kind,
+            message_ids,
+            step: narrow(step, "step")?,
+        });
     }
     Ok(dropped)
 }
@@ -517,6 +564,74 @@ impl Store {
         }
         tx.commit()?;
         Ok(undone)
+    }
+
+    /// The folder's queued moves and expunges that were partly carried out
+    /// on the server (#541), oldest first, to be finished before the folder
+    /// is reset.
+    pub fn half_done_ops(&self, folder: FolderId) -> Result<Vec<HalfDoneOp>, StoreError> {
+        let ops: Vec<(i64, String, i64)> = {
+            let mut stmt = self.conn.prepare(
+                "SELECT id, kind, step FROM pending_ops \
+                 WHERE folder_id = ?1 AND step > 0 AND kind IN ('move', 'expunge') ORDER BY id",
+            )?;
+            let rows =
+                stmt.query_map(params![folder.0], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?;
+            rows.collect::<Result<_, _>>()?
+        };
+        let mut out = Vec::with_capacity(ops.len());
+        for (id, kind, step) in ops {
+            let mut messages = Vec::new();
+            for m in load_messages(&self.conn, OpId(id))? {
+                // Only from the row that is still that message (#503).
+                let row: Option<(Option<String>, i64)> = self
+                    .conn
+                    .query_row(
+                        &format!("SELECT message_id_header, size FROM messages {SAME_MESSAGE}"),
+                        params![m.message_id.0, folder.0, m.uid],
+                        |r| Ok((r.get(0)?, r.get(1)?)),
+                    )
+                    .optional()?;
+                messages.push(HalfDoneMessage {
+                    message_id: m.message_id,
+                    message_id_header: row
+                        .as_ref()
+                        .and_then(|(h, _)| h.clone())
+                        .filter(|h| !h.is_empty()),
+                    size: row.map(|(_, size)| size),
+                });
+            }
+            out.push(HalfDoneOp {
+                id: OpId(id),
+                kind: OpKind::parse(&kind)?,
+                step: narrow(step, "step")?,
+                messages,
+            });
+        }
+        Ok(out)
+    }
+
+    /// Takes `messages` out of the action without touching their rows (#541):
+    /// the ones of a half-done action already finished after a renumber, so
+    /// the rest can be dropped and reported. Returns the ids it took out.
+    pub fn drop_op_messages(
+        &self,
+        op: OpId,
+        messages: &[MessageId],
+    ) -> Result<Vec<MessageId>, StoreError> {
+        let tx = self.write_tx()?;
+        let mut dropped = Vec::new();
+        for m in messages {
+            let n = tx.execute(
+                "DELETE FROM pending_op_messages WHERE op_id = ?1 AND message_id = ?2",
+                params![op.0, m.0],
+            )?;
+            if n > 0 {
+                dropped.push(*m);
+            }
+        }
+        tx.commit()?;
+        Ok(dropped)
     }
 
     /// The action failed for now: records the attempt and when to try next.

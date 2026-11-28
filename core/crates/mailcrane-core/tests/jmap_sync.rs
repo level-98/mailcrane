@@ -1028,3 +1028,97 @@ async fn a_flagged_mailbox_is_virtual_and_an_important_one_ordinary() {
     assert_eq!(by_name("Work").virtual_role, None);
     assert_eq!(by_name("Inbox").role, Some(FolderRole::Inbox));
 }
+
+/// #541: after `cannotCalculateChanges` every folder is forgotten, and the
+/// changes queued there are dropped and reported: they were keyed by the
+/// rows the refill reuses for other emails.
+#[tokio::test]
+async fn cannot_calculate_changes_drops_and_reports_queued_actions() {
+    use mailcrane_core::actions::{apply_action, Action};
+    use mailcrane_core::events::{CoreEvent, SyncErrorKind};
+    let s = setup().await;
+    let events = Events::default();
+    let mut j = syncer_with(&s, &events).await;
+    let inbox = j
+        .refresh_mailboxes()
+        .await
+        .expect("mailboxes")
+        .expect("inbox");
+    j.sync_folder(inbox).await.expect("first sync");
+    let m2 = s
+        .store
+        .list_messages(inbox, 10, 0)
+        .expect("list")
+        .into_iter()
+        .find(|m| m.details.subject == "Subject m2")
+        .map(|m| m.id)
+        .expect("m2");
+    apply_action(&s.store, &[m2], Action::MarkRead, 0, &NoListener).expect("mark read");
+    assert_eq!(s.store.count_pending_ops(s.account).expect("count"), 1);
+    s.store
+        .set_jmap_state(s.account, "Email", "bogus")
+        .expect("state");
+    j.sync_folder(inbox).await.expect("sync starts over");
+    assert_eq!(s.store.count_pending_ops(s.account).expect("count"), 0);
+    let reported = events.0.lock().expect("lock").iter().any(|e| {
+        matches!(
+            e,
+            CoreEvent::ActionFailed {
+                message_ids,
+                reason: SyncErrorKind::FolderReset,
+                ..
+            } if message_ids == &[m2]
+        )
+    });
+    assert!(reported, "the user hears the change was dropped");
+}
+
+/// #541: a row the replay finds holding another email now (row ids are
+/// reused, with a new UID) is skipped, and completing the action leaves it
+/// alone: #503's checks of folder and UID guard it.
+#[tokio::test]
+async fn a_reused_row_is_left_alone_by_the_action() {
+    use mailcrane_core::actions::{apply_action, Action};
+    let s = setup().await;
+    let events = Events::default();
+    let mut j = syncer_with(&s, &events).await;
+    let inbox = j
+        .refresh_mailboxes()
+        .await
+        .expect("mailboxes")
+        .expect("inbox");
+    j.sync_folder(inbox).await.expect("sync");
+    // The newest row, so a new row takes its id once it's deleted.
+    let row = s
+        .store
+        .list_messages(inbox, 10, 0)
+        .expect("list")
+        .into_iter()
+        .map(|m| m.id)
+        .max_by_key(|id| id.0)
+        .expect("a row");
+    apply_action(&s.store, &[row], Action::Delete, 0, &NoListener).expect("delete");
+    // The row goes (as a sync that saw the email leave would delete it), and
+    // a new email takes its id.
+    s.store.delete_message_rows(&[row]).expect("delete row");
+    s.server
+        .deliver(email("m9", "mb-inbox", "2026-11-26T08:00:00Z", false));
+    j.sync_folder(inbox).await.expect("sync the new email");
+    let reused = s
+        .store
+        .list_messages(inbox, 10, 0)
+        .expect("list")
+        .into_iter()
+        .find(|m| m.details.subject == "Subject m9")
+        .map(|m| m.id)
+        .expect("m9");
+    assert_eq!(reused, row, "the id was reused");
+
+    j.replay_actions(0).await.expect("replay");
+    assert_eq!(s.store.count_pending_ops(s.account).expect("count"), 0);
+    assert!(
+        subjects(&s.store, inbox).contains(&"Subject m9".to_string()),
+        "the new email is still there"
+    );
+    assert!(events.failed_ids().is_empty(), "nothing failed");
+}

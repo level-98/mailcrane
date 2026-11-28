@@ -124,7 +124,10 @@ impl FolderSyncer<'_> {
         }
 
         let info = self.session.select(&cached.remote_name).await?;
-        if self.reset_if_renumbered(folder, Some(cached.uidvalidity), &info)? {
+        if self
+            .reset_if_renumbered(folder, Some(cached.uidvalidity), &info)
+            .await?
+        {
             return self.initial(folder, &info).await;
         }
         match (cached.modseq, info.highestmodseq) {
@@ -196,7 +199,10 @@ impl FolderSyncer<'_> {
             .select_qresync(&cached.remote_name, params)
             .await?;
         // §3.2.5.2: with another UIDVALIDITY the server sent no changes.
-        if self.reset_if_renumbered(folder, Some(cached.uidvalidity), &answer.info)? {
+        if self
+            .reset_if_renumbered(folder, Some(cached.uidvalidity), &answer.info)
+            .await?
+        {
             return self.initial(folder, &answer.info).await;
         }
         let highest = match answer.info.highestmodseq {

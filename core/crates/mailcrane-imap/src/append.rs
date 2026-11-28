@@ -101,18 +101,28 @@ impl Session {
     /// §6.4.4): the UIDs of messages with that Message-ID, ascending. `id`
     /// is without angle brackets.
     pub async fn uid_search_message_id(&mut self, id: &str) -> Result<Vec<u32>, ChangeError> {
+        self.uid_search_message_id_in(id, false).await
+    }
+
+    /// [`Session::uid_search_message_id`], only among messages flagged
+    /// `\Deleted` when `deleted` is set (the `DELETED` search key, RFC 9051
+    /// §6.4.4).
+    pub async fn uid_search_message_id_in(
+        &mut self,
+        id: &str,
+        deleted: bool,
+    ) -> Result<Vec<u32>, ChangeError> {
         let value = format!("<{id}>");
-        let done = self
-            .run_command(
-                "UID",
-                &[
-                    Arg::Raw("SEARCH"),
-                    Arg::Raw("HEADER"),
-                    Arg::Raw("Message-ID"),
-                    Arg::Str(value.as_bytes()),
-                ],
-            )
-            .await?;
+        let mut args = vec![
+            Arg::Raw("SEARCH"),
+            Arg::Raw("HEADER"),
+            Arg::Raw("Message-ID"),
+            Arg::Str(value.as_bytes()),
+        ];
+        if deleted {
+            args.push(Arg::Raw("DELETED"));
+        }
+        let done = self.run_command("UID", &args).await?;
         if done.status != StatusKind::Ok {
             return Err(ChangeError::Refused { transient: false });
         }

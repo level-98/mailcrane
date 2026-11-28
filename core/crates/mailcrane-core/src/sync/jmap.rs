@@ -792,7 +792,7 @@ impl<'a> JmapSyncer<'a> {
                 tracing::warn!(
                     folder = folder.0,
                     kind = ?op.kind,
-                    "queued action dropped: the folder was forgotten"
+                    "queued action dropped: the folder was refreshed from the server"
                 );
                 self.listener.on_event(CoreEvent::ActionFailed {
                     account_id: self.account,

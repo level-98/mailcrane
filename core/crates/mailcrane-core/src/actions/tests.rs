@@ -809,3 +809,246 @@ async fn a_renumbered_folder_does_not_hold_up_other_folders_actions() {
         }
     )));
 }
+
+/// A message with its own `Message-ID`, so it can be found again (#541).
+fn with_id(n: usize) -> Vec<u8> {
+    format!(
+        "From: bob@example.org\r\nSubject: Message {n}\r\nMessage-ID: <m{n}@example.org>\r\n\r\nBody {n}\r\n"
+    )
+    .into_bytes()
+}
+
+/// Archives UID 1 without `MOVE`, and drops the connection right after the
+/// `UID COPY`: the action is half done (copied, the original still there).
+async fn half_done_archive(imap: &FakeImap, s: &Setup, events: &Events) -> MessageId {
+    let id = s.message(1);
+    act(s, 1, Action::Archive, events);
+    // Login (three commands), SELECT and UID COPY, then drop at the STORE.
+    let flaky = FakeImap::builder()
+        .mailbox(imap.mailbox().clone())
+        .user(USER, PASSWORD)
+        .quirk(Quirk::NoMove)
+        .fault(Fault::DropAfterCommands(6))
+        .start()
+        .await
+        .expect("starts");
+    let mut session = connect(&flaky).await;
+    let first = replay(&s.store, &mut session, events, s.account, NOW)
+        .await
+        .expect("replay");
+    assert_eq!(first.remaining, 1);
+    assert_eq!(s.store.pending_ops(s.account).expect("ops")[0].step, 1);
+    assert_eq!(server_uids(imap, "Archive").await.len(), 1, "copied");
+    id
+}
+
+fn folder_reset_reasons(events: &Events) -> Vec<SyncErrorKind> {
+    events
+        .all()
+        .iter()
+        .filter_map(|e| match e {
+            CoreEvent::ActionFailed { reason, .. } => Some(*reason),
+            _ => None,
+        })
+        .collect()
+}
+
+#[tokio::test]
+async fn a_half_done_move_is_finished_by_message_id_after_a_renumber() {
+    // #541: the copy is in Archive; dropping the move would leave the
+    // original in the inbox too (AGENTS.md §3).
+    let imap = fake(&[Quirk::NoMove], &[]).await;
+    imap.mailbox()
+        .replace_folder("INBOX", (1..=3).map(with_id).collect())
+        .await;
+    let s = setup(&imap, Store::open_in_memory().expect("store")).await;
+    let events = Events::default();
+    half_done_archive(&imap, &s, &events).await;
+    // The server renumbers the inbox: same messages, new UIDVALIDITY.
+    imap.mailbox().set_uidvalidity(2);
+    imap.mailbox()
+        .replace_folder("INBOX", [3, 1, 2].into_iter().map(with_id).collect())
+        .await;
+
+    let report = replay_now(&imap, &s, &events, NOW + 60).await;
+    assert_eq!((report.done, report.failed), (1, 0));
+    // Found again as UID 2 now, deleted and expunged; nothing else touched.
+    assert_eq!(server_uids(&imap, "INBOX").await, [1, 3]);
+    assert_eq!(server_uids(&imap, "Archive").await.len(), 1, "one copy");
+    assert_eq!(s.store.count_pending_ops(s.account).expect("count"), 0);
+    assert!(
+        folder_reset_reasons(&events).is_empty(),
+        "nothing to report"
+    );
+}
+
+#[tokio::test]
+async fn a_half_done_move_that_cant_be_told_apart_is_reported_unfinished() {
+    // #541: two messages share the Message-ID after the reset, so neither
+    // is deleted; the user hears the move wasn't finished. Here the sync
+    // finds the renumbering first.
+    let imap = fake(&[Quirk::NoMove], &[]).await;
+    imap.mailbox()
+        .replace_folder("INBOX", (1..=3).map(with_id).collect())
+        .await;
+    let s = setup(&imap, Store::open_in_memory().expect("store")).await;
+    let events = Events::default();
+    let id = half_done_archive(&imap, &s, &events).await;
+    imap.mailbox().set_uidvalidity(2);
+    imap.mailbox()
+        .replace_folder("INBOX", [1, 1, 2].into_iter().map(with_id).collect())
+        .await;
+
+    let mut session = connect(&imap).await;
+    FolderSyncer::new(
+        &s.store,
+        &mut session,
+        &events,
+        s.account,
+        SyncConfig::default(),
+    )
+    .sync_folder(s.inbox)
+    .await
+    .expect("sync");
+    session.logout().await;
+
+    assert_eq!(server_uids(&imap, "INBOX").await, [1, 2, 3], "untouched");
+    assert_eq!(s.store.count_pending_ops(s.account).expect("count"), 0);
+    assert!(events.all().contains(&CoreEvent::ActionFailed {
+        account_id: s.account,
+        action: ActionKind::Move,
+        message_ids: vec![id],
+        reason: SyncErrorKind::FolderResetUnfinished,
+    }));
+}
+
+#[tokio::test]
+async fn an_action_not_yet_started_is_dropped_as_before_after_a_renumber() {
+    // #541: only half-done actions are finished; one that never reached the
+    // server is dropped and reported as a plain folder reset.
+    let imap = fake(&[], &[]).await;
+    imap.mailbox()
+        .replace_folder("INBOX", (1..=3).map(with_id).collect())
+        .await;
+    let s = setup(&imap, Store::open_in_memory().expect("store")).await;
+    let events = Events::default();
+    act(&s, 1, Action::Archive, &events);
+    imap.mailbox().set_uidvalidity(2);
+    let report = replay_now(&imap, &s, &events, NOW + 1).await;
+    assert_eq!((report.done, report.failed), (0, 1));
+    assert_eq!(server_uids(&imap, "INBOX").await.len(), 3, "not archived");
+    assert_eq!(folder_reset_reasons(&events), [SyncErrorKind::FolderReset]);
+}
+
+/// [`with_id`] with another body: the same `Message-ID`, another size.
+fn with_id_other_body(n: usize) -> Vec<u8> {
+    format!(
+        "From: bob@example.org\r\nSubject: Message {n}\r\nMessage-ID: <m{n}@example.org>\r\n\r\nA longer, different body {n}\r\n"
+    )
+    .into_bytes()
+}
+
+#[tokio::test]
+async fn a_lone_match_of_another_size_is_not_expunged() {
+    // #585 review: the original was deleted elsewhere; a duplicate with its
+    // Message-ID (a mailing-list copy) must not be taken for it.
+    let imap = fake(&[Quirk::NoMove], &[]).await;
+    imap.mailbox()
+        .replace_folder("INBOX", (1..=3).map(with_id).collect())
+        .await;
+    let s = setup(&imap, Store::open_in_memory().expect("store")).await;
+    let events = Events::default();
+    let id = half_done_archive(&imap, &s, &events).await;
+    imap.mailbox().set_uidvalidity(2);
+    imap.mailbox()
+        .replace_folder("INBOX", vec![with_id_other_body(1), with_id(2)])
+        .await;
+
+    let report = replay_now(&imap, &s, &events, NOW + 60).await;
+    assert_eq!((report.done, report.failed), (0, 1));
+    assert_eq!(server_uids(&imap, "INBOX").await, [1, 2], "untouched");
+    assert!(events.all().contains(&CoreEvent::ActionFailed {
+        account_id: s.account,
+        action: ActionKind::Move,
+        message_ids: vec![id],
+        reason: SyncErrorKind::FolderResetUnfinished,
+    }));
+}
+
+#[tokio::test]
+async fn a_half_done_move_past_the_flag_is_found_among_flagged_messages_only() {
+    // #585 review: once `\Deleted` was set, only a flagged message can be
+    // the original; an unflagged duplicate of the same size stays.
+    let imap = fake(&[Quirk::NoMove], &[]).await;
+    imap.mailbox()
+        .replace_folder("INBOX", (1..=3).map(with_id).collect())
+        .await;
+    let s = setup(&imap, Store::open_in_memory().expect("store")).await;
+    let events = Events::default();
+    act(&s, 1, Action::Archive, &events);
+    // Login, SELECT, UID COPY and UID STORE answered, then a drop at the
+    // UID EXPUNGE.
+    let flaky = FakeImap::builder()
+        .mailbox(imap.mailbox().clone())
+        .user(USER, PASSWORD)
+        .quirk(Quirk::NoMove)
+        .fault(Fault::DropAfterCommands(7))
+        .start()
+        .await
+        .expect("starts");
+    let mut session = connect(&flaky).await;
+    replay(&s.store, &mut session, &events, s.account, NOW)
+        .await
+        .expect("replay");
+    assert_eq!(s.store.pending_ops(s.account).expect("ops")[0].step, 2);
+    imap.mailbox().set_uidvalidity(2);
+    imap.mailbox()
+        .replace_folder("INBOX", vec![with_id(1), with_id(1), with_id(2)])
+        .await;
+    imap.mailbox().add_flag("INBOX", 2, "\\Deleted").await;
+
+    let report = replay_now(&imap, &s, &events, NOW + 60).await;
+    assert_eq!((report.done, report.failed), (1, 0));
+    assert_eq!(server_uids(&imap, "INBOX").await, [1, 3], "the flagged one");
+    assert!(folder_reset_reasons(&events).is_empty());
+}
+
+#[tokio::test]
+async fn finishing_cut_off_by_a_dropped_connection_is_tried_again() {
+    // #585 review: the half-done move stays queued and the folder isn't
+    // reset until it is finished.
+    let imap = fake(&[Quirk::NoMove], &[]).await;
+    imap.mailbox()
+        .replace_folder("INBOX", (1..=3).map(with_id).collect())
+        .await;
+    let s = setup(&imap, Store::open_in_memory().expect("store")).await;
+    let events = Events::default();
+    half_done_archive(&imap, &s, &events).await;
+    imap.mailbox().set_uidvalidity(2);
+    imap.mailbox()
+        .replace_folder("INBOX", (1..=3).map(with_id).collect())
+        .await;
+    // Login and SELECT answered, then a drop at the UID SEARCH.
+    let flaky = FakeImap::builder()
+        .mailbox(imap.mailbox().clone())
+        .user(USER, PASSWORD)
+        .quirk(Quirk::NoMove)
+        .fault(Fault::DropAfterCommands(5))
+        .start()
+        .await
+        .expect("starts");
+    let mut session = connect(&flaky).await;
+    let cut = replay(&s.store, &mut session, &events, s.account, NOW + 60)
+        .await
+        .expect("replay");
+    assert_eq!(cut.remaining, 1);
+    assert_eq!(s.store.count_pending_ops(s.account).expect("count"), 1);
+    let inbox = s.store.get_folder(s.inbox).expect("get").expect("inbox");
+    assert_eq!(inbox.details.uidvalidity, Some(1), "not reset yet");
+    assert!(folder_reset_reasons(&events).is_empty());
+
+    let report = replay_now(&imap, &s, &events, NOW + 600).await;
+    assert_eq!((report.done, report.failed), (1, 0));
+    assert_eq!(server_uids(&imap, "INBOX").await, [2, 3]);
+    assert_eq!(server_uids(&imap, "Archive").await.len(), 1, "one copy");
+}

@@ -22,8 +22,16 @@ pub enum SyncErrorKind {
     Storage,
     /// The folder or message does not exist (any more).
     NotFound,
-    /// The folder's `UIDVALIDITY` changed; sync the folder again.
+    /// The folder's `UIDVALIDITY` changed; sync the folder again. For
+    /// [`CoreEvent::ActionFailed`]: the folder was refreshed from the server
+    /// (renumbered, or a JMAP server couldn't say what changed), so a change
+    /// queued there was dropped.
     FolderReset,
+    /// For [`CoreEvent::ActionFailed`] only (#541): a move or delete was
+    /// partly done on the server when its folder was refreshed, and couldn't
+    /// be finished. A moved message may now be in both folders, or a deleted
+    /// one only marked deleted.
+    FolderResetUnfinished,
     /// Another sync was writing to the local database and kept it busy.
     /// Local and passing: nothing is wrong with the server or the account,
     /// and the next sync works. Apps shouldn't show it as an error.
@@ -68,8 +76,13 @@ pub enum CoreEvent {
         /// What kind of failure.
         kind: SyncErrorKind,
     },
-    /// The server refused a message action for good. Its local change was
-    /// undone, so the messages are back as they were; tell the user.
+    /// A queued message action won't be carried out; tell the user. Either
+    /// the server refused it for good (its local change was undone, so the
+    /// messages are back as they were), or its folder was refreshed from the
+    /// server (`reason` [`SyncErrorKind::FolderReset`], or
+    /// [`SyncErrorKind::FolderResetUnfinished`] for a move or delete left
+    /// partly done, #541); then the folder's messages come again from the
+    /// server.
     ActionFailed {
         /// The messages' account.
         account_id: AccountId,

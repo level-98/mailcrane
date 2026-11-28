@@ -34,6 +34,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
@@ -122,7 +123,10 @@ class MessageListViewModel
          */
         val errors: Flow<SyncErrorKind> = _errors.receiveAsFlow().filter { it != SyncErrorKind.BUSY }
 
-        private val _actionsUndone = Channel<Int>(Channel.CONFLATED)
+        // Buffered, so a later notice never replaces an earlier one (#541); [noticesQueued] keeps the same
+        // notice from queueing twice, as when a folder reset drops several changes at once.
+        private val _actionsUndone = Channel<Int>(Channel.BUFFERED)
+        private val noticesQueued = mutableSetOf<Int>()
 
         /** The swipe settings (right, left). */
         val swipes: StateFlow<Pair<SwipeAction, SwipeAction>> =
@@ -485,7 +489,7 @@ class MessageListViewModel
         }
 
         /** What to tell the user when a queued change couldn't be applied: a string resource. */
-        val actionsUndone: Flow<Int> = _actionsUndone.receiveAsFlow()
+        val actionsUndone: Flow<Int> = _actionsUndone.receiveAsFlow().onEach { noticesQueued.remove(it) }
 
         /** How many of the newest messages the list holds; grows as you scroll. */
         private var window = PAGE_SIZE
@@ -500,7 +504,10 @@ class MessageListViewModel
             viewModelScope.launch {
                 core.events
                     .filter { it is CoreEvent.ActionFailed }
-                    .collect { _actionsUndone.send(undoneMessage(it as CoreEvent.ActionFailed)) }
+                    .collect {
+                        val notice = undoneMessage(it as CoreEvent.ActionFailed)
+                        if (noticesQueued.add(notice)) _actionsUndone.send(notice)
+                    }
             }
             viewModelScope.launch {
                 reload()
@@ -658,8 +665,13 @@ private fun CoreEvent.isAbout(folderId: Long): Boolean =
     }
 
 /**
- * The message for a change that couldn't be applied: the server refused it (and it was undone), or the server
- * reset the folder, so changes queued there no longer point at the right messages (#517).
+ * The message for a change that couldn't be applied: the server refused it (and it was undone); the folder was
+ * refreshed from the server, so changes queued there no longer point at the right messages (#517); or a move or
+ * delete was partly done then and couldn't be finished (#541).
  */
 internal fun undoneMessage(failed: CoreEvent.ActionFailed): Int =
-    if (failed.reason == SyncErrorKind.FOLDER_RESET) R.string.action_dropped_folder_reset else R.string.action_undone
+    when (failed.reason) {
+        SyncErrorKind.FOLDER_RESET -> R.string.action_dropped_folder_reset
+        SyncErrorKind.FOLDER_RESET_UNFINISHED -> R.string.action_unfinished_folder_reset
+        else -> R.string.action_undone
+    }

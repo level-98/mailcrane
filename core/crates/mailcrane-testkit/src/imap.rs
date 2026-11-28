@@ -1691,13 +1691,20 @@ async fn handle_uid_command(
                 .filter(
                     |m| match args.first().map(|p| p.to_ascii_uppercase()).as_deref() {
                         Some("UID") => in_uid_set(args.get(1).copied().unwrap_or(""), m.uid, max),
-                        // `HEADER <name> <value>`: a substring match on that
-                        // header, case-insensitive (RFC 9051 §6.4.4).
-                        Some("HEADER") => header_contains(
-                            &m.raw,
-                            args.get(1).copied().unwrap_or(""),
-                            args.get(2).copied().unwrap_or("").trim_matches('"'),
-                        ),
+                        // `HEADER <name> <value> [DELETED]`: a substring match
+                        // on that header, case-insensitive, and with `DELETED`
+                        // only among messages flagged \Deleted (RFC 9051
+                        // §6.4.4).
+                        Some("HEADER") => {
+                            header_contains(
+                                &m.raw,
+                                args.get(1).copied().unwrap_or(""),
+                                args.get(2).copied().unwrap_or("").trim_matches('"'),
+                            ) && (!args
+                                .get(3)
+                                .is_some_and(|k| k.eq_ignore_ascii_case("DELETED"))
+                                || m.flags.iter().any(|f| f.eq_ignore_ascii_case("\\Deleted")))
+                        }
                         // `CHARSET UTF-8 <keys>`: every key must match.
                         Some(_) if charset => search_keys_match(m, args),
                         _ => true,

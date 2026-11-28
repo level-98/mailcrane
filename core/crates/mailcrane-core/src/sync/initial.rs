@@ -267,19 +267,35 @@ impl<'a> FolderSyncer<'a> {
             .get_folder(folder)?
             .ok_or(SyncError::UnknownFolder)?;
         let info = self.session.select(&row.details.remote_name).await?;
-        let changed = self.reset_if_renumbered(folder, row.details.uidvalidity, &info)?;
+        let changed = self
+            .reset_if_renumbered(folder, row.details.uidvalidity, &info)
+            .await?;
         Ok((row.details.remote_name, info, changed))
     }
 
     /// Clears the folder's cache if the server's `UIDVALIDITY` is not the
-    /// stored one (RFC 9051 §2.3.1.1). Returns whether it did.
-    pub(super) fn reset_if_renumbered(
-        &self,
+    /// stored one (RFC 9051 §2.3.1.1). Returns whether it did. The folder
+    /// must be selected: half-done actions queued there are finished in it
+    /// first (#541).
+    pub(super) async fn reset_if_renumbered(
+        &mut self,
         folder: FolderId,
         stored: Option<i64>,
         info: &SelectInfo,
     ) -> Result<bool, SyncError> {
         let changed = stored != Some(i64::from(info.uidvalidity));
+        if changed && stored.is_some() {
+            // Half-done moves and deletes first, in the selected folder; on
+            // a failure the folder isn't reset, so the next sync tries
+            // again (#541).
+            match crate::actions::finish_half_done(self.store, self.session, folder).await {
+                Ok(_) => {}
+                Err(mailcrane_imap::ChangeError::Imap(e)) => return Err(SyncError::Imap(e)),
+                Err(mailcrane_imap::ChangeError::Refused { .. }) => {
+                    return Err(SyncError::Imap(ImapError::Protocol))
+                }
+            }
+        }
         if changed {
             if stored.is_some() {
                 tracing::info!(
