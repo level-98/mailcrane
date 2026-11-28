@@ -20,8 +20,13 @@ base=${1:-origin/main}
 root=$(git rev-parse --show-toplevel)
 cd "$root"
 
-# The branch's changes against the base, plus anything not committed yet.
-changed=$( { git diff --name-only --diff-filter=ACMR "$base"...HEAD; git diff --name-only --diff-filter=ACMR HEAD; } | sort -u)
+# The branch's changes against the base, plus anything not committed yet:
+# changed files and new files git doesn't track yet (#596).
+changed=$( {
+    git diff --name-only --diff-filter=ACMR "$base"...HEAD
+    git diff --name-only --diff-filter=ACMR HEAD
+    git ls-files --others --exclude-standard
+} | sort -u)
 
 kotlin=$(printf '%s\n' "$changed" | grep -E '^android/.*\.kts?$' | grep -v '/build/' || true)
 rust=$(printf '%s\n' "$changed" | grep -E '^core/' || true)
