@@ -39,12 +39,17 @@ pub struct MessageSummary {
     pub is_flagged: bool,
     /// Whether the message has attachments.
     pub has_attachments: bool,
-    /// Its account, in the Unified Inbox (M4-01); 0 in single-folder lists.
+    /// Its account, in the Unified Inbox (M4-01) and in a conversation
+    /// (#571); 0 in single-folder lists.
     #[uniffi(default = 0)]
     pub account_id: i64,
     /// A colour for the account's marker (0–7), in the Unified Inbox.
     #[uniffi(default = 0)]
     pub account_color: u32,
+    /// The folder this copy of the message is in. A conversation spans
+    /// folders, so its actions need to know each message's (#571).
+    #[uniffi(default = 0)]
+    pub folder_id: i64,
 }
 
 /// Colours for account markers.
@@ -113,6 +118,7 @@ impl From<MessageHeader> for MessageSummary {
             has_attachments: d.has_attachments,
             account_id: 0,
             account_color: 0,
+            folder_id: d.folder_id.0,
         }
     }
 }

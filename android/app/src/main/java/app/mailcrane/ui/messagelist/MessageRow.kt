@@ -79,6 +79,11 @@ fun MessageRow(
     avatarName: String = message.fromName,
     count: Int? = null,
     dateStyle: RowDateStyle = RowDateStyle.LIST,
+    /**
+     * Whether to mark the message's account: in the Unified Inbox, where rows come from several accounts.
+     * A conversation is in one account, so its rows don't, although they know it (#571).
+     */
+    showAccount: Boolean = message.accountId != 0L,
 ) {
     val comfortable = LocalMailboxDensity.current == MailboxDensity.COMFORTABLE
     val resources = LocalResources.current
@@ -146,7 +151,7 @@ fun MessageRow(
                 )
                 // In the Unified Inbox the account colour sits on the picture's edge (M4-01), offset outward
                 // so it never covers the initials. Fixed in dp, like the circle, whatever the font scale.
-                if (message.accountId != 0L) {
+                if (showAccount) {
                     Box(
                         modifier =
                             Modifier
@@ -179,7 +184,7 @@ fun MessageRow(
         Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 // In the Unified Inbox, which account it came to (M4-01); on the picture when there is one.
-                if (message.accountId != 0L && !comfortable) {
+                if (showAccount && !comfortable) {
                     Box(Modifier.padding(end = 6.dp)) {
                         app.mailcrane.ui.components
                             .AccountDot(message.accountColor.toInt(), size = dotSize)

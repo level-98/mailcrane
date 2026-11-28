@@ -5,6 +5,7 @@ use crate::sync::{failed, SyncFailure};
 use mailcrane_core::events;
 use mailcrane_core::threading;
 use mailcrane_store::{FolderId, Store, ThreadId};
+use std::collections::HashMap;
 
 /// One row of the conversation list.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
@@ -77,7 +78,27 @@ pub fn list_thread_messages(
     let rows = store
         .thread_messages(ThreadId(thread_id))
         .map_err(storage)?;
-    Ok(rows.into_iter().map(MessageSummary::from).collect())
+    // Each message's account, from its folder (#571): a conversation's actions (move's folder
+    // picker) need it. One lookup per folder.
+    let mut accounts: HashMap<i64, i64> = HashMap::new();
+    rows.into_iter()
+        .map(|header| {
+            let mut summary = MessageSummary::from(header);
+            let account = match accounts.get(&summary.folder_id) {
+                Some(account) => *account,
+                None => {
+                    let account = store
+                        .get_folder(FolderId(summary.folder_id))
+                        .map_err(storage)?
+                        .map_or(0, |folder| folder.details.account_id.0);
+                    accounts.insert(summary.folder_id, account);
+                    account
+                }
+            };
+            summary.account_id = account;
+            Ok(summary)
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -158,5 +179,10 @@ mod tests {
         assert_eq!(threads[1].participants, ["P2", "P1"]);
         let messages = list_thread_messages(path, threads[1].thread_id).expect("messages");
         assert_eq!(messages.len(), 2);
+        // #571: each message carries its real account and folder, for the conversation's actions.
+        for message in &messages {
+            assert_eq!(message.account_id, account.0);
+            assert_eq!(message.folder_id, folder.0);
+        }
     }
 }

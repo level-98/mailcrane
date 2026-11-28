@@ -648,6 +648,7 @@
     <string name="swipe_read_unread">Mark read or unread</string>
     <string name="swipe_flag">Flag or unflag</string>
     <string name="swipe_move">Move to…</string>
+    <string name="conversation_already_archived">This message is already archived.</string>
     <string name="swipe_archived">Archived</string>
     <string name="swipe_deleted">Deleted</string>
     <string name="swipe_undo_too_late">Too late to undo: the change already reached the server</string>

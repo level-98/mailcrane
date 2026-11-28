@@ -104,6 +104,9 @@ fun MessageListScreen(
     onOpenThread: (Long, String) -> Unit = { _, _ -> },
     /** The ids shown, in order, for next/previous message (M4-13). */
     onShownMessages: (List<Long>) -> Unit = {},
+    /** An Undo handed over by a conversation that closed while offering it (#571), and its "shown". */
+    handedUndo: UndoOffer? = null,
+    onHandedUndoShown: () -> Unit = {},
     viewModel: MessageListViewModel =
         hiltViewModel<MessageListViewModel, MessageListViewModel.Factory>(
             key = "folder-$folderId",
@@ -124,6 +127,15 @@ fun MessageListScreen(
     LaunchedEffect(viewModel) {
         viewModel.undoOffers.collect { offer ->
             if (showSwipeUndo(snackbar, resources, offer)) viewModel.undo(offer.messageId)
+        }
+    }
+    val handedShown by rememberUpdatedState(onHandedUndoShown)
+    LaunchedEffect(handedUndo) {
+        val offer = handedUndo ?: return@LaunchedEffect
+        try {
+            if (showSwipeUndo(snackbar, resources, offer)) viewModel.undo(offer.messageId)
+        } finally {
+            handedShown()
         }
     }
     val swipes by viewModel.swipes.collectAsStateWithLifecycle()
@@ -661,6 +673,8 @@ internal fun SwipeableRow(
     /** TalkBack's label for an action on this row. */
     a11yLabel: (SwipeAction) -> Int,
     onSwipe: (SwipeAction) -> Unit,
+    /** Whether an action takes the row out of its list, so it stays swiped away until the list drops it. */
+    removesRow: (SwipeAction) -> Boolean = ::swipeRemovesRow,
     content: @Composable () -> Unit,
 ) {
     // Not saved: material3's dismiss effect runs onDismiss whenever the state isn't Settled, so a row
@@ -686,13 +700,14 @@ internal fun SwipeableRow(
     val currentRight by rememberUpdatedState(right)
     val currentLeft by rememberUpdatedState(left)
     val currentOnSwipe by rememberUpdatedState(onSwipe)
+    val currentRemovesRow by rememberUpdatedState(removesRow)
     val onDismiss: (SwipeToDismissBoxValue) -> Unit =
         remember(state, scope) {
             { value ->
                 val action = if (value == SwipeToDismissBoxValue.StartToEnd) currentRight else currentLeft
                 currentOnSwipe(action)
                 scope.launch {
-                    if (swipeRemovesRow(action)) delay(SWIPE_REMOVE_TIMEOUT_MS)
+                    if (currentRemovesRow(action)) delay(SWIPE_REMOVE_TIMEOUT_MS)
                     state.reset()
                 }
             }
