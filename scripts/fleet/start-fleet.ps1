@@ -22,6 +22,10 @@ scripts/fleet/start-fleet.ps1 -Seats dev3
 Starts the third dev seat, which only takes issues that need no emulator (docs/fleet.md).
 
 .EXAMPLE
+scripts/fleet/start-fleet.ps1 -Seats spec,docs,coach
+Starts the spec writer, the docs seat and the coach alongside a running fleet.
+
+.EXAMPLE
 scripts/fleet/start-fleet.ps1 -Seats dev3 -DryRun
 Checks everything and prints what it would start, without creating worktrees or opening windows.
 #>
@@ -29,7 +33,7 @@ Checks everything and prints what it would start, without creating worktrees or 
 # otherwise bind the stray 'dev1' to -PermissionMode.
 [CmdletBinding(PositionalBinding = $false)]
 param(
-    [string[]] $Seats = @('lead', 'dev1', 'dev2', 'review', 'qa'),
+    [string[]] $Seats = @('lead', 'dev1', 'dev2', 'dev4', 'review', 'qa'),
     [string] $PermissionMode = 'auto',
     [string] $Model = '',
     # Check and print the plan only: no fetch, no worktrees, no windows.
@@ -44,8 +48,13 @@ $roles = @{
     dev2   = 'mailcrane-dev'
     # Not in the default -Seats: only for issues that need no emulator.
     dev3   = 'mailcrane-dev'
+    dev4   = 'mailcrane-dev'
     review = 'mailcrane-review'
     qa     = 'mailcrane-qa'
+    # Not in the default -Seats (#582).
+    spec   = 'mailcrane-spec'
+    docs   = 'mailcrane-docs'
+    coach  = 'mailcrane-coach'
 }
 
 # Per-seat default model (#507, #474 rule 32): emulator checks and small,
