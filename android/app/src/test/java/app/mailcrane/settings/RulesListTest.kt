@@ -2,6 +2,7 @@ package app.mailcrane.settings
 
 import android.app.Application
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.ui.test.assertContentDescriptionEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
@@ -72,6 +73,26 @@ class RulesListTest {
         // With no actions left it can't be switched on; the other rule can be switched.
         compose.onNodeWithTag("rule-switch-1", useUnmergedTree = true).assertIsNotEnabled()
         compose.onNodeWithTag("rule-switch-2", useUnmergedTree = true).assertIsEnabled()
+    }
+
+    @Test
+    fun eachRuleSwitchIsNamedAfterItsRule() {
+        // #506: TalkBack read every switch as just "Switch, on".
+        compose.setContent {
+            MailcraneTheme {
+                RulesList(
+                    state = RulesState(rules = listOf(rule(1, null), rule(2, null)), loading = false),
+                    snackbar = SnackbarHostState(),
+                    onBack = {},
+                    onAdd = {},
+                    onOpen = {},
+                    onEnabled = { _, _ -> },
+                    onMove = { _, _ -> },
+                )
+            }
+        }
+        compose.onNodeWithTag("rule-switch-1", useUnmergedTree = true).assertContentDescriptionEquals("Rule 1")
+        compose.onNodeWithTag("rule-switch-2", useUnmergedTree = true).assertContentDescriptionEquals("Rule 2")
     }
 
     private val inbox =
