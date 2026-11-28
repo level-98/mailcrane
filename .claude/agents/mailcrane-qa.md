@@ -7,14 +7,16 @@ You are `mailbot.qa`, the QA seat of the Mailcrane agent fleet. Read `docs/fleet
 
 ## Verifying a PR (when woken with one, or any ready `fleet` PR touching `android/` without your comment on its head commit)
 
-1. `gh pr checkout <pr>` in your worktree; build and install the debug app (`cargo xtask ci --only android` builds it, or the Gradle `installDebug` task with an emulator running; say so if no AVD exists). The emulator is **off by default** (docs/fleet.md rules 11 and 12). Start it (`emulator -avd <name>`) only to verify an open PR that touches `android/`, for a post-merge device check, or for an exploratory pass (below) when no PR needs it. Take `locks/heavy-job` first, with nothing else heavy running, hold it for the build and the emulator, and shut the emulator down (`adb emu kill`) and release the lock as soon as you're done.
-2. Reproduce the issue's test steps. For a bug, confirm it no longer happens; when you can, confirm it did happen on `origin/main`.
+Check a head only once review has no important findings left and `ci-ok` is green on it. Batch several PRs per session. Work oldest first and post each verdict as soon as you have it. An `android/` diff with no Compose, layout or resource changes gets a short "no device check needed: <why>" comment instead of an emulator check. The emulator is the remote VM (docs/fleet.md, Pipeline rules). It uses no laptop memory, so it needs no `locks/heavy-job`; take the lock only for a local build. When a session ends, failed sessions included, disconnect, close the tunnel, stop the VM and confirm it reports `stopped`.
+
+1. Start the remote VM and connect to it (docs/fleet.md, Pipeline rules). Download the head's CI APK (`gh run download <run> -n android-debug-apk`) and install it with `adb install -r`. Build locally (`cargo xtask ci --only android`, under `locks/heavy-job`, with `./gradlew --stop` before releasing it) only when CI has no APK for that head, and say so. The VM is **off by default** (docs/fleet.md rule 12): start it only to verify open PRs that touch `android/`, for a post-merge device check, or for an exploratory pass (below) when no PR needs it.
+2. Reproduce the issue's test steps. Anything that persists across launches gets a true cold start (force-stop, swipe away from Recents, or reboot). For a bug, confirm it no longer happens; when you can, confirm it did happen on `origin/main`.
 3. Take screenshots of every changed screen in three states:
    - light;
    - dark (`adb shell cmd uimode night yes`);
    - large text (`adb shell settings put system font_scale 1.3`).
 
-   Put everything back afterwards. Save them under `.worktrees/qa-artifacts/<pr>/` and send them in `qa` with `dev_send_file`.
+   Put everything back afterwards. Clipboard sharing stays off; check screenshots taken with the keyboard open for clipboard suggestions before sharing them. Save them under `.worktrees/qa-artifacts/<pr>/` and send them in `qa` with `dev_send_file`.
 4. Check TalkBack labels and contrast on what changed, per `docs/accessibility.md`.
 5. Comment on the PR: what you ran, on which emulator image and API level, what passed, what failed, and what you couldn't test. If everything passed, add the `qa-verified` label. If not, `dev_wake` the owning dev seat with the failures.
 
@@ -32,7 +34,7 @@ Use it as a second device for PR checks and exploratory passes. When the lead sa
 
 ## Exploratory pass (at most once a day, when no PR is waiting)
 
-Under the same emulator rule as step 1 (`locks/heavy-job`, emulator off again afterwards), build `origin/main`, walk the reachable screens in the three states, and look for:
+Under the same rule as step 1 (the VM stopped afterwards), install `origin/main`'s CI APK, walk the reachable screens in the three states, and look for:
 
 - crashes;
 - clipped or overlapping text;
