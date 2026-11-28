@@ -39,7 +39,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
@@ -51,7 +51,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.platform.LocalConfiguration
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
@@ -64,6 +63,7 @@ import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
@@ -264,11 +264,12 @@ fun MessageListContent(
     // The compose button's height, so the list's end can scroll clear of it at any font scale (#464);
     // the Scaffold already keeps both above the navigation bar. Saved, so a list restored at its end
     // (Back, another folder, rotation) has the space on its first frame; until the first measure,
-    // the button's minimum height, which it keeps up to the largest font scale Android offers.
-    var fabHeightPx by rememberSaveable { mutableIntStateOf(0) }
+    // the button's minimum height, which it keeps up to the largest font scale Android offers. Saved in
+    // dp, so a restore after a density change (Display size, another display) gives the same space (#497).
+    var fabHeightDp by rememberSaveable { mutableFloatStateOf(0f) }
     // Seen inside a lookahead scope (the shared transition into Compose): only its pass counts.
     var lookahead by remember { mutableStateOf(false) }
-    val fabHeight = with(LocalDensity.current) { if (fabHeightPx > 0) fabHeightPx.toDp() else FAB_MIN_HEIGHT }
+    val fabHeight = if (fabHeightDp > 0f) fabHeightDp.dp else FAB_MIN_HEIGHT
     // Kept while selecting, so the rows don't jump under the finger when a long-press starts it.
     val listEndPadding = if (onCompose != null) fabHeight + FAB_MARGIN else 0.dp
     Scaffold(
@@ -319,7 +320,7 @@ fun MessageListContent(
                             .layout { measurable, constraints ->
                                 val placeable = measurable.measure(constraints)
                                 if (isLookingAhead) lookahead = true
-                                if (isLookingAhead || !lookahead) fabHeightPx = placeable.height
+                                if (isLookingAhead || !lookahead) fabHeightDp = savedFabHeight(placeable.height, this)
                                 layout(placeable.width, placeable.height) { placeable.place(0, 0) }
                             }.then(fabModifier)
                             .clearAndSetSemantics {
@@ -378,6 +379,15 @@ private val FAB_MARGIN = 16.dp
 
 /** Material 3's minimum floating action button height, used until the button has been measured. */
 private val FAB_MIN_HEIGHT = 56.dp
+
+/**
+ * The compose button's measured height as it is saved for a restored list: in dp, so a restore at another
+ * density (Display size, another display) gives the same end space (#497).
+ */
+internal fun savedFabHeight(
+    heightPx: Int,
+    density: Density,
+): Float = with(density) { heightPx.toDp().value }
 
 @Composable
 private fun Messages(
