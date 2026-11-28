@@ -1,6 +1,7 @@
 package app.mailcrane.ui.conversation
 
 import android.app.Application
+import androidx.compose.ui.test.SemanticsNodeInteraction
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
@@ -135,10 +136,16 @@ class ConversationContentTest {
             }
         }
         val row = compose.onNodeWithContentDescription("Bob", substring = true)
-        val start = row.fetchSemanticsNode().positionInRoot.x
+        val start = left(row)
         compose.mainClock.autoAdvance = false
         row.performTouchInput { swipeLeft() }
         compose.mainClock.advanceTimeBy(1_000)
-        assertEquals("back in place within a second", start, row.fetchSemanticsNode().positionInRoot.x, 1f)
+        assertEquals("back in place within a second", start, left(row), 1f)
     }
+
+    // Where the row is, unclipped: a row swiped off the screen has a negative x.
+    private fun left(row: SemanticsNodeInteraction) =
+        row
+            .fetchSemanticsNode()
+            .positionInRoot.x
 }
