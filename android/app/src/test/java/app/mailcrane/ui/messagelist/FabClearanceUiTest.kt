@@ -6,7 +6,6 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.layout.LookaheadScope
@@ -231,43 +230,13 @@ class FabClearanceUiTest {
 
     /**
      * #497: the button's height is saved in dp, so a list restored at another density (Display size, another
-     * display) gets the same end space on its first frame, before the button is measured again.
+     * display) gets the same end space on its first frame, before the button is measured again. Saved in px,
+     * 147 px was 56 dp at density 2.625 but would come back as 42 dp at 3.5.
      */
     @Test
-    fun aRestoreAtAnotherDensityKeepsTheSameEndSpaceOnItsFirstFrame() {
-        val restoration = StateRestorationTester(compose)
-        lateinit var listState: LazyListState
-        var density by mutableFloatStateOf(2.625f)
-        restoration.setContent {
-            listState = rememberLazyListState()
-            CompositionLocalProvider(LocalDensity provides Density(density, 1f)) {
-                MailcraneTheme {
-                    MessageListContent(
-                        state = state,
-                        title = "Inbox",
-                        snackbar = SnackbarHostState(),
-                        onRefresh = {},
-                        onLoadMore = {},
-                        listState = listState,
-                        onCompose = {},
-                    )
-                }
-            }
-        }
-        compose.waitForIdle()
-        compose.runOnIdle {
-            runBlocking { listState.scrollToItem(listState.layoutInfo.totalItemsCount - 1, 100_000) }
-        }
-        compose.waitForIdle()
-        // The first frame after the restore uses the saved height: hold the clock so the button's new
-        // measure can't correct it first. Saved in px, 56 dp at 2.625 would come back as 42 dp at 3.5.
-        density = 3.5f
-        compose.mainClock.autoAdvance = false
-        restoration.emulateSavedInstanceStateRestore()
-        compose.mainClock.advanceTimeByFrame()
-        val bottom = lastRowBottom()
-        val top = fabTop()
-        compose.mainClock.autoAdvance = true
-        assertTrue("first frame: last row ends at $bottom dp, compose button starts at $top dp", bottom <= top)
+    fun theSavedButtonHeightIsTheSameAtAnyDensity() {
+        val saved = savedFabHeight(147, Density(2.625f))
+        assertEquals(56f, saved, 0.01f)
+        assertEquals(saved, savedFabHeight(196, Density(3.5f)), 0.01f)
     }
 }

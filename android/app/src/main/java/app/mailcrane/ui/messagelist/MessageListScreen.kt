@@ -63,6 +63,7 @@ import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
@@ -319,7 +320,7 @@ fun MessageListContent(
                             .layout { measurable, constraints ->
                                 val placeable = measurable.measure(constraints)
                                 if (isLookingAhead) lookahead = true
-                                if (isLookingAhead || !lookahead) fabHeightDp = placeable.height.toDp().value
+                                if (isLookingAhead || !lookahead) fabHeightDp = savedFabHeight(placeable.height, this)
                                 layout(placeable.width, placeable.height) { placeable.place(0, 0) }
                             }.then(fabModifier)
                             .clearAndSetSemantics {
@@ -378,6 +379,15 @@ private val FAB_MARGIN = 16.dp
 
 /** Material 3's minimum floating action button height, used until the button has been measured. */
 private val FAB_MIN_HEIGHT = 56.dp
+
+/**
+ * The compose button's measured height as it is saved for a restored list: in dp, so a restore at another
+ * density (Display size, another display) gives the same end space (#497).
+ */
+internal fun savedFabHeight(
+    heightPx: Int,
+    density: Density,
+): Float = with(density) { heightPx.toDp().value }
 
 @Composable
 private fun Messages(
