@@ -229,7 +229,8 @@ class ConversationViewModelTest {
             vm.cancelMove()
             core.folders = core.folders + FolderSummary(14, "Receipts", null, 0u, 0u, canTakeMoves = true)
             vm.swipe(threadMessage(2), SwipeAction.MOVE)
-            assertTrue(vm.moveTargets.value!!.second.any { it.id == 14L })
+            val (_, offered) = vm.moveTargets.value!!
+            assertTrue(offered.any { it.id == 14L })
         }
 
     /** #572 review: an Undo left over from an earlier visit, past the window, isn't shown. */
