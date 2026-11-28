@@ -66,7 +66,9 @@ fun RowScope.MessageToolbarActions(
     val markRead = actions.onMarkRead
     IconButton(onClick = markRead ?: actions.onMarkUnread) {
         Icon(
-            painter = painterResource(R.drawable.ic_mc_mail),
+            // An open envelope for Mark as read, the closed one for Mark as unread, so the button visibly
+            // changes when a delayed mark-read lands (#511).
+            painter = painterResource(if (markRead != null) R.drawable.ic_mc_mail_open else R.drawable.ic_mc_mail),
             contentDescription =
                 stringResource(if (markRead != null) R.string.message_mark_read else R.string.message_mark_unread),
         )
