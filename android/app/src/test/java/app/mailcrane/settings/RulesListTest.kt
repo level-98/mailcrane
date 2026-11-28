@@ -5,9 +5,11 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performClick
 import app.mailcrane.core.FolderRole
 import app.mailcrane.core.FolderSummary
 import app.mailcrane.core.RuleActionInfo
@@ -15,6 +17,7 @@ import app.mailcrane.core.RuleConditionInfo
 import app.mailcrane.core.RuleInfo
 import app.mailcrane.core.RuleInput
 import app.mailcrane.ui.theme.MailcraneTheme
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -113,5 +116,33 @@ class RulesListTest {
         compose.onNodeWithTag("rule-virtual-target-1", useUnmergedTree = true).assertIsDisplayed()
         compose.onNodeWithTag("rule-virtual-target-2", useUnmergedTree = true).assertDoesNotExist()
         compose.onNodeWithTag("rule-switch-1", useUnmergedTree = true).assertIsEnabled()
+    }
+
+    @Test
+    fun theTopBarNamesTheAccountTheRulesBelongTo() {
+        // #500: "this account only" rules are saved to the account behind Settings; the screen says which.
+        compose.setContent {
+            MailcraneTheme {
+                RulesList(
+                    state = RulesState(rules = listOf(rule(1, null)), loading = false),
+                    snackbar = SnackbarHostState(),
+                    onBack = {},
+                    onAdd = {},
+                    onOpen = {},
+                    onEnabled = { _, _ -> },
+                    onMove = { _, _ -> },
+                    accountName = "Ann",
+                )
+            }
+        }
+        compose.onNodeWithTag("rules-account", useUnmergedTree = true).assertTextEquals("Ann")
+    }
+
+    @Test
+    fun theSettingsRowSaysWhoseRulesItOpens() {
+        var opened = false
+        compose.setContent { MailcraneTheme { RulesRow(account = "b.user@example.com", onOpen = { opened = true }) } }
+        compose.onNodeWithText("Rules for b.user@example.com").assertIsDisplayed().performClick()
+        assertTrue(opened)
     }
 }

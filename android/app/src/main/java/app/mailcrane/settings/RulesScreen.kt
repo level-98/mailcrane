@@ -46,6 +46,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
@@ -421,6 +422,8 @@ fun RulesScreen(
     accountId: Long,
     onBack: () -> Unit,
     startWith: RuleDraft? = null,
+    /** The account the rules belong to, shown in the top bar (#500): its name, or its address. */
+    accountName: String? = null,
     viewModel: RulesViewModel =
         hiltViewModel<RulesViewModel, RulesViewModel.Factory>(
             key = "rules-$accountId",
@@ -472,6 +475,7 @@ fun RulesScreen(
         onEnabled = viewModel::setEnabled,
         onMove = viewModel::move,
         onUseServerRules = viewModel::useServerRules,
+        accountName = accountName,
     )
 }
 
@@ -486,6 +490,7 @@ internal fun RulesList(
     onEnabled: (Long, Boolean) -> Unit,
     onMove: (Long, Int) -> Unit,
     onUseServerRules: () -> Unit = {},
+    accountName: String? = null,
 ) {
     var confirmSwitch by rememberSaveable { mutableStateOf(false) }
     val notice = state.notice
@@ -509,7 +514,22 @@ internal fun RulesList(
         snackbarHost = { SnackbarHost(snackbar) },
         topBar = {
             TopAppBar(
-                title = { Text(stringResource(R.string.rules_title)) },
+                title = {
+                    // Which account's rules these are (#500): "this account only" rules are saved to it.
+                    Column {
+                        Text(stringResource(R.string.rules_title))
+                        accountName?.let {
+                            Text(
+                                text = it,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.testTag("rules-account"),
+                            )
+                        }
+                    }
+                },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(

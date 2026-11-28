@@ -34,6 +34,7 @@ import app.mailcrane.core.UNIFIED_FOLDER_ID
 import app.mailcrane.settings.RuleDraft
 import app.mailcrane.settings.RulesScreen
 import app.mailcrane.settings.SettingsScreen
+import app.mailcrane.settings.accountName
 import app.mailcrane.ui.MailLayout
 import app.mailcrane.ui.MailPanes
 import app.mailcrane.ui.NoMessageSelected
@@ -98,6 +99,8 @@ fun MailboxScreen(
             var showSettings by rememberSaveable { mutableStateOf(false) }
             // The Rules screen (M4-09), opened from Settings or from a message.
             var showRules by rememberSaveable { mutableStateOf(false) }
+            // The account the Rules screen belongs to, named on its row and its top bar (#500).
+            val rulesAccount = accounts.firstOrNull { it.id == accountId }?.let(::accountName)
             var ruleFrom by rememberSaveable { mutableStateOf<String?>(null) }
             var showDrafts by rememberSaveable { mutableStateOf(false) }
             var showOutbox by rememberSaveable { mutableStateOf(false) }
@@ -145,6 +148,7 @@ fun MailboxScreen(
                     accountId = accountId,
                     onBack = close,
                     startWith = ruleFrom?.let { RuleDraft.fromSender(it) },
+                    accountName = rulesAccount,
                 )
                 return
             }
@@ -157,6 +161,7 @@ fun MailboxScreen(
                     onRemoveAccount = onRemoveAccount,
                     onAccountsChanged = onAccountsChanged,
                     onOpenRules = { showRules = true },
+                    rulesAccount = rulesAccount,
                 )
                 return
             }
