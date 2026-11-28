@@ -225,6 +225,15 @@ pub fn urgent_here(db_path: &str) -> bool {
     URGENT_HERE.with(|here| here.borrow().iter().any(|k| k == db_path))
 }
 
+/// Whether any thread in this process is writing urgently to the database
+/// at `db_path` right now ([`urgent_writes`]). For a writer that holds the
+/// write lock outside [`Store`], such as a test standing in for another
+/// account's long sync, to give way as [`Store`]'s own write transactions do
+/// (#505). `db_path` is spelled as it was given to [`Store::open`].
+pub fn urgent_writers_waiting(db_path: &str) -> bool {
+    others_urgent(db_path)
+}
+
 /// Whether another thread is writing urgently to the database `key`.
 fn others_urgent(key: &str) -> bool {
     URGENT_WRITERS
