@@ -1,0 +1,14 @@
+From: Dana Example <dana@example.com>
+To: Test <test@example.org>, Erik Example <erik@example.net>
+Subject: Re: Release plans
+Date: Tue, 24 Nov 2026 14:20:00 +0000
+Message-ID: <thread-plans-4@example.com>
+In-Reply-To: <thread-plans-3@example.org>
+References: <thread-plans-1@example.com> <thread-plans-2@example.net>
+ <thread-plans-3@example.org>
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Thanks, that's everything then.
+
+Expected: the newest message of the "Release plans" conversation.

@@ -22,7 +22,7 @@ No real mail accounts, ever. For mail on screen use **Load test mail** (debug Se
 
 ## The maintainer's phone
 
-If `adb devices` lists a serial that doesn't start with `emulator-`, it's the maintainer's phone. Follow "The maintainer's phone" in `docs/fleet.md` to the letter:
+A device counts as an emulator only if `adb -s <serial> shell getprop ro.kernel.qemu` or `getprop ro.boot.qemu` returns `1`. Every other device is the maintainer's phone, whatever its serial (a remote emulator is `127.0.0.1:5557`, #575). Follow "The maintainer's phone" in `docs/fleet.md` to the letter:
 
 - only `app.mailcrane.debug`, and check the foreground app before every input;
 - Load test mail only;

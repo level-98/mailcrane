@@ -5,9 +5,9 @@ body:
   - type: markdown
     attributes:
       value: |
-        Thanks for testing! Your report becomes a row in [docs/providers.md](https://github.com/level-98/mailcrane/blob/main/docs/providers.md).
+        Thanks for testing! Your report becomes a row in [docs/providers.md](https://github.com/mailcrane/mailcrane/blob/main/docs/providers.md).
 
-        ⚠️ **Never include your email address, password, app password, tokens, server logins, message content or screenshots showing any of these.** Name the provider only. Write `example.com` or `[redacted]` where you need a placeholder. Something that looks like a security problem goes to [private reporting](https://github.com/level-98/mailcrane/security/advisories/new) instead.
+        ⚠️ **Never include your email address, password, app password, tokens, server logins, message content or screenshots showing any of these.** Name the provider only. Write `example.com` or `[redacted]` where you need a placeholder. Something that looks like a security problem goes to [private reporting](https://github.com/mailcrane/mailcrane/security/advisories/new) instead.
   - type: input
     id: provider
     attributes:

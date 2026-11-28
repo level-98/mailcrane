@@ -403,9 +403,11 @@ async fn without_move_or_uidplus_it_never_sends_a_bare_expunge() {
     assert!(!received.iter().any(|c| c == "EXPUNGE"), "{received:?}");
     assert!(!received.iter().any(|c| c == "UID EXPUNGE"));
     // The original stays flagged \Deleted on the server, hidden locally.
+    // So does the other client's message: it survives on the server, and
+    // like any \Deleted message it isn't listed (#519).
     assert_eq!(server_flags(&imap, "INBOX", 1).await, ["\\Deleted"]);
     assert!(server_uids(&imap, "INBOX").await.contains(&3));
-    assert_eq!(s.visible_uids(s.inbox), [2, 3]);
+    assert_eq!(s.visible_uids(s.inbox), [2]);
     assert_eq!(s.store.list_uids(s.inbox).expect("uids"), [1, 2, 3]);
 }
 

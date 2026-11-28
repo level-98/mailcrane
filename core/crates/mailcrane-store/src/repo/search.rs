@@ -31,14 +31,15 @@ pub struct SearchFilter {
 }
 
 impl Store {
-    /// The messages matching `filter`, newest first, leaving out hidden ones.
+    /// The messages matching `filter`, newest first, leaving out hidden ones
+    /// and ones flagged `\Deleted` (#519).
     /// A message stored in several of the searched folders comes once (see
     /// `one_copy_each` in `repo/messages.rs`), and `limit` counts messages,
     /// not copies.
     pub fn search_messages(&self, filter: &SearchFilter) -> Result<Vec<MessageHeader>, StoreError> {
         let mut sql = String::from(
             "SELECT m.*, {RANK} FROM messages m JOIN folders f ON f.id = m.folder_id \
-             WHERE m.hidden = 0",
+             WHERE m.hidden = 0 AND m.deleted = 0",
         );
         let mut args: Vec<Value> = Vec::new();
         let mut bind = |sql: &mut String, clause: &str, value: Value| {

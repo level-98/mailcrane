@@ -224,10 +224,11 @@ impl Store {
         Ok(out)
     }
 
-    /// Counts messages in the folder that are not `\Seen`.
+    /// Counts messages in the folder that are not `\Seen`, leaving out
+    /// hidden ones and ones flagged `\Deleted` (#519).
     pub fn count_unread(&self, folder: FolderId) -> Result<u64, StoreError> {
         let n: i64 = self.conn.query_row(
-            "SELECT count(*) FROM messages WHERE folder_id = ?1 AND seen = 0 AND hidden = 0",
+            "SELECT count(*) FROM messages WHERE folder_id = ?1 AND seen = 0 AND hidden = 0 AND deleted = 0",
             params![folder.0],
             |r| r.get(0),
         )?;
