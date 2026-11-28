@@ -224,6 +224,7 @@ fn devices(listing: &str) -> (Vec<&str>, Vec<(&str, &str)>) {
     let mut ready = Vec::new();
     let mut not_ready = Vec::new();
     for line in listing.lines() {
+        let line = line.trim();
         // The header, and adb's own notes such as "* daemon started successfully".
         if line.starts_with("List of devices") || line.starts_with('*') {
             continue;
@@ -271,15 +272,14 @@ mod tests {
 
     #[test]
     fn every_device_is_listed_whatever_its_serial() {
-        let listing = "* daemon started successfully
-                       List of devices attached
-                       emulator-5554	device
-                       127.0.0.1:5557	device
-                       emulator-5556	offline
-                       R5CT0000000	unauthorized
-                       R5CT0000001	device
-                       
-";
+        let listing = "* daemon started successfully\n\
+                       List of devices attached\n\
+                       emulator-5554\tdevice\n\
+                       127.0.0.1:5557\tdevice\n\
+                       emulator-5556\toffline\n\
+                       R5CT0000000\tunauthorized\n\
+                       R5CT0000001\tdevice\n\
+                       \n";
         let (ready, not_ready) = devices(listing);
         assert_eq!(ready, ["emulator-5554", "127.0.0.1:5557", "R5CT0000001"]);
         assert_eq!(
@@ -289,14 +289,10 @@ mod tests {
                 ("R5CT0000000", "unauthorized")
             ]
         );
-        assert_eq!(
-            devices(
-                "List of devices attached
-
-"
-            ),
-            (vec![], vec![])
-        );
+        assert_eq!(devices("List of devices attached\n\n"), (vec![], vec![]));
+        // adb on Windows ends lines with CRLF.
+        let crlf = "List of devices attached\r\n127.0.0.1:5557\tdevice\r\n\r\n";
+        assert_eq!(devices(crlf), (vec!["127.0.0.1:5557"], vec![]));
     }
 
     /// #575: only `ro.kernel.qemu` = 1 makes an emulator. A remote emulator
@@ -312,29 +308,13 @@ mod tests {
             "10.0.0.9:5555",
         ];
         let (emulators, others) = emulators_among(&ready, |serial| match serial {
-            "emulator-5554" => Some(
-                "1
-"
-                .into(),
-            ),
-            "127.0.0.1:5557" => Some(
-                "1
-"
-                .into(),
-            ),
+            "emulator-5554" => Some("1\n".into()),
+            "127.0.0.1:5557" => Some("1\r\n".into()),
             // A phone answers an empty property.
-            "R5CT0000001" => Some(
-                "
-"
-                .into(),
-            ),
+            "R5CT0000001" => Some("\n".into()),
             // Named like an emulator, but adb couldn't ask it.
             "emulator-5560" => None,
-            _ => Some(
-                "0
-"
-                .into(),
-            ),
+            _ => Some("0\n".into()),
         });
         assert_eq!(emulators, ["emulator-5554", "127.0.0.1:5557"]);
         assert_eq!(others, ["R5CT0000001", "emulator-5560", "10.0.0.9:5555"]);
