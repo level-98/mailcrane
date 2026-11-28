@@ -51,6 +51,7 @@ import app.mailcrane.ui.message.MessageScreen
 import app.mailcrane.ui.messagelist.MessageListScreen
 import app.mailcrane.ui.messagelist.errorText
 import app.mailcrane.ui.search.SearchScreen
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 
 /**
@@ -175,6 +176,10 @@ fun MailboxScreen(
                 }
             val neighbours = origin?.let { neighboursIn(it.order, messageId) }
             val leaving = rememberCoroutineScope()
+            // Looking up the neighbour to open after a move (#514). Any message opened meanwhile wins over it,
+            // even the same one again (#566 review).
+            var leaveJob by remember { mutableStateOf<Job?>(null) }
+            LaunchedEffect(messageId) { if (messageId != null) leaveJob?.cancel() }
             val afterMove: AfterMoveViewModel = hiltViewModel()
             val afterMoveAction by afterMove.action.collectAsStateWithLifecycle()
             val openMessageAt: (Int) -> Unit = { delta ->
@@ -196,12 +201,18 @@ fun MailboxScreen(
                             // refreshed: drop the message from them, or J/K could open it again (#372 review).
                             listOrder = listOrder - messageId
                             threadOrder = threadOrder - messageId
-                            leaving.launch {
-                                // The neighbour only if the list it came from still holds it now (#514).
-                                val now = origin?.let { viewModel.idsNow(it) }.orEmpty()
-                                val next = messageAfterLeaving(neighbours, afterMoveAction, now)
-                                if (openMessage == messageId) openMessage = next
-                            }
+                            // Closed at once, so a second tap can't act on it again while the list is read: a
+                            // second Delete would delete its copy in Trash for good (#566 review).
+                            openMessage = null
+                            leaveJob?.cancel()
+                            leaveJob =
+                                leaving.launch {
+                                    // The neighbour only if the list it came from still holds it now (#514).
+                                    val now = origin?.let { viewModel.idsNow(it) }.orEmpty()
+                                    val next = messageAfterLeaving(neighbours, afterMoveAction, now)
+                                    // Nothing opened meanwhile: opening anything cancels this job (the effect on messageId).
+                                    if (openMessage == null) openMessage = next
+                                }
                         },
                         onReply = onReply,
                         onComposeTo = onComposeTo,

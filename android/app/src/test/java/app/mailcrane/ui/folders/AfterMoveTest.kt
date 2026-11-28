@@ -18,10 +18,10 @@ class AfterMoveTest {
     @Test
     fun nextAndPreviousAreTheNeighboursFromWhenItOpened() {
         assertEquals(Neighbours(previous = 10, next = 30), of20)
-        // One pane: the list isn't on screen, so its last order still has the message.
+        // The list read from the store may still hold the message itself; its neighbours are what count.
         assertEquals(30L, messageAfterLeaving(of20, AfterMoveAction.NEXT, order))
         assertEquals(10L, messageAfterLeaving(of20, AfterMoveAction.PREVIOUS, order))
-        // Side by side: the list refreshed first and dropped it.
+        // Or it no longer holds the message itself.
         assertEquals(30L, messageAfterLeaving(of20, AfterMoveAction.NEXT, listOf(10L, 30L)))
     }
 

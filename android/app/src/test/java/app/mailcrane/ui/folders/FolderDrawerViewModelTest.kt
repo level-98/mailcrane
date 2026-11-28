@@ -13,6 +13,7 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.resetMain
+import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -44,6 +45,7 @@ private class FakeFolders(
     var refreshGate: CompletableDeferred<Unit>? = null
     var refreshFailure: SyncErrorKind? = null
     var listFailure: SyncErrorKind? = null
+    var messagesFailure: SyncErrorKind? = null
     var refreshCalls = 0
 
     override suspend fun listFolders(accountId: Long): List<FolderSummary> {
@@ -84,7 +86,10 @@ private class FakeFolders(
         folderId: Long,
         offset: Int,
         limit: Int,
-    ): List<MessageSummary> = emptyList()
+    ): List<MessageSummary> {
+        messagesFailure?.let { throw SyncFailure.Failed(it) }
+        return emptyList()
+    }
 
     override suspend fun syncFolder(folderId: Long) = Unit
 
@@ -218,4 +223,14 @@ class FolderDrawerViewModelTest {
         assertNull(vm.state.value.loadError)
         assertNull(vm.state.value.selected)
     }
+
+    @Test
+    fun aListThatCantBeReadAfterAMoveGivesNoNeighbour() =
+        runTest {
+            // #566 review: a failed read must not crash the app; empty means the list shows.
+            val core = FakeFolders(stored = listOf(INBOX))
+            val vm = FolderDrawerViewModel(core, ACCOUNT)
+            core.messagesFailure = SyncErrorKind.STORAGE
+            assertEquals(emptyList<Long>(), vm.idsNow(Origin(INBOX.id, null, listOf(10L, 20L))))
+        }
 }
