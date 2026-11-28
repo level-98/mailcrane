@@ -57,7 +57,7 @@ issue ─▶ spec drafts the spec ─▶ lead checks it ─▶ agent-ready ─�
       ─▶ dev fixes findings ─▶ lead merges (see Merging) ─▶ qa installs the new build on the phone
 ```
 
-Triage: the spec seat reads each unlabelled issue and the code, and writes the spec (Goal, Files, Acceptance criteria, Test steps) as a comment. The lead glances at it and adds `agent-ready` (or `needs-human`, when the spec seat suggests it); the spec seat adds no labels at all. If a permission check blocks its comment, it sends the spec to the lead by direct message and the lead posts it. Without the spec seat running, the lead writes specs as before.
+Triage: the spec seat reads each unlabelled issue and the code, and writes the spec (Goal, Files, Acceptance criteria, Test steps) as a comment. The lead glances at it and adds `agent-ready` (or `needs-human`, when the spec seat suggests it); the spec seat adds no labels at all. If a permission check blocks its comments, it asks the maintainer for the permission and keeps its drafts until then; no other seat posts them for it. Without the spec seat running, the lead writes specs as before.
 
 ## Channels
 
