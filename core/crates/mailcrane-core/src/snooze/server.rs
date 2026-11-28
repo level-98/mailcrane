@@ -62,12 +62,18 @@
 //!    (`SnoozeSeen`: state, step, wake time, mark-unread, target UIDNEXT,
 //!    copy UID; #459). If the user changed it meanwhile, the write does
 //!    nothing, the sync stops there, and the next sync reads the row again
-//!    and decides afresh.
+//!    and decides afresh. One exception (#544): when that step write loses
+//!    after a committed MOVE or COPY, the copy's UID the server named is
+//!    still recorded, guarded only on step 1, the same target UIDNEXT and no
+//!    copy UID yet, since the copy exists on the server whatever the user
+//!    changed.
 //! 6. A message has at most one snooze row. While its wake is past step 0,
-//!    no new snooze starts (#431), and no move or delete is accepted
-//!    (lead's decision on G6, refused in the same transaction that reads
-//!    the row, `StoreError::Waking`): the user acts again once it lands, a
-//!    few seconds later. A wake the server refuses goes back to step 0, so
+//!    no new snooze starts (#431), and no move or delete of the copies the
+//!    wake moves is accepted (lead's decision on G6, refused in the same
+//!    transaction that reads the row, `StoreError::Waking`): the user acts
+//!    again once it lands, a few seconds later. A multi-select move or
+//!    delete leaves those copies out and applies the rest (#544); only a
+//!    selection that is all waking is refused. A wake the server refuses goes back to step 0, so
 //!    nothing stays locked; one held up by dropped connections stays past
 //!    step 0 with back-off and isn't given up (the move couldn't reach
 //!    that server either).
@@ -623,6 +629,26 @@ fn advance(
             s.copy_uid = copy_uid;
         }
     } else {
+        // The MOVE or COPY is on the server already: keep the UID it named,
+        // so the next pass finds that copy by its UID, and knows it as ours,
+        // rather than by the UIDNEXT floor (#544). Guarded on its own: only
+        // while the row is still at step 1 for this target.
+        // Only a help to the next pass, so a failure here is logged, never
+        // fatal to this one.
+        if let Some(uid) = copy_uid {
+            match store.record_snooze_copy_uid_if(s.id, s.target_uidnext, uid) {
+                Ok(true) => tracing::info!(
+                    snooze = s.id.0,
+                    "kept the copy's UID after a lost step write"
+                ),
+                Ok(false) => {}
+                Err(e) => tracing::warn!(
+                    snooze = s.id.0,
+                    error = %e,
+                    "couldn't keep the copy's UID after a lost step write"
+                ),
+            }
+        }
         tracing::info!(
             snooze = s.id.0,
             step,

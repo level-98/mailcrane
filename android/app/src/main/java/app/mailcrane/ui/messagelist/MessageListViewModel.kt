@@ -373,10 +373,15 @@ class MessageListViewModel
                             _bulkUndoOffers.send(BulkUndoOffer(applied.messageIds, BulkUndoKind.DELETED_FOR_GOOD))
                         undo != null -> _bulkUndoOffers.send(BulkUndoOffer(applied.messageIds, undo))
                     }
+                    // Messages a wake is moving right now were left out (#544): say so, never silently.
+                    if (applied.skippedWaking > 0u) _notices.send(R.string.bulk_skipped_waking)
                 } catch (e: ActionFailure.NoArchiveFolder) {
                     _notices.send(R.string.action_no_archive_folder)
                 } catch (e: ActionFailure.MixedAccounts) {
                     _notices.send(R.string.bulk_move_one_account)
+                } catch (e: ActionFailure.Waking) {
+                    // Every selected message is coming back from snooze right now (#544).
+                    _notices.send(R.string.bulk_skipped_waking)
                 } catch (e: ActionFailure) {
                     _notices.send(R.string.action_not_applied)
                 }

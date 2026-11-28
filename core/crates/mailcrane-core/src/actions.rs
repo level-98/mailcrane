@@ -246,13 +246,18 @@ pub struct BulkApplied {
     pub messages: Vec<MessageId>,
     /// Whether any message was deleted for good rather than moved to Trash.
     pub deleted_for_good: bool,
+    /// Messages left as they were because a wake is moving them (#544).
+    pub skipped_waking: Vec<MessageId>,
 }
 
 /// Multi-select (M4-14): applies `action` to `messages`, which may be in
 /// several folders and accounts. Every folder's group is checked first,
 /// then all are applied and queued in one transaction, one op per folder;
-/// on any error nothing changes. Sends `MessagesChanged` for each folder
-/// that changed. A move needs messages of one account.
+/// on any error nothing changes. A move or delete leaves out the messages a
+/// wake is moving and reports them in [`BulkApplied::skipped_waking`]; only
+/// a selection that is all waking fails, with [`ActionError::Waking`]
+/// (#544). Sends `MessagesChanged` for each folder that changed. A move
+/// needs messages of one account.
 pub fn apply_bulk_action(
     store: &Store,
     messages: &[MessageId],
@@ -289,10 +294,20 @@ pub fn apply_bulk_action(
         return Ok(applied);
     }
     let queued = store.queue_ops(&ops, now)?;
-    for (op, id) in ops.iter().zip(&queued) {
-        applied
-            .messages
-            .extend(op.messages.iter().map(|m| m.message_id));
+    let skipped: std::collections::HashSet<MessageId> =
+        queued.skipped_waking.iter().copied().collect();
+    for (op, id) in ops.iter().zip(&queued.ids) {
+        let before = applied.messages.len();
+        applied.messages.extend(
+            op.messages
+                .iter()
+                .map(|m| m.message_id)
+                .filter(|m| !skipped.contains(m)),
+        );
+        if applied.messages.len() == before {
+            // Every message of this folder was waking: nothing changed here.
+            continue;
+        }
         if op.kind == OpKind::Expunge {
             applied.deleted_for_good = true;
         }
@@ -303,9 +318,11 @@ pub fn apply_bulk_action(
             folder_id: op.folder,
         });
     }
+    applied.skipped_waking = queued.skipped_waking;
     tracing::debug!(
         folders = ops.len(),
         count = applied.messages.len(),
+        skipped = applied.skipped_waking.len(),
         "bulk message action applied"
     );
     Ok(applied)

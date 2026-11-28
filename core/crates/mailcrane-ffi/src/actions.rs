@@ -146,6 +146,11 @@ pub struct BulkApplied {
     /// Some messages were deleted for good (they were in Trash, or the
     /// account has none) rather than moved to Trash.
     pub deleted_for_good: bool,
+    /// Messages left as they were because they're coming back from snooze
+    /// right now (#544); the app says so. A selection that is all waking
+    /// fails with `Waking` instead.
+    #[uniffi(default = 0)]
+    pub skipped_waking: u32,
 }
 
 /// What [`SyncEngine::undo_bulk_action`] did.
@@ -209,8 +214,10 @@ impl SyncEngine {
     }
 
     /// Multi-select (M4-14): applies `action` to everything in `selection`,
-    /// across folders and accounts, all or nothing, one queued op per
-    /// folder. Delete moves to each account's Trash, or deletes for good in
+    /// across folders and accounts, one queued op per folder. A move or
+    /// delete leaves out messages coming back from snooze and counts them in
+    /// `skipped_waking` (#544); everything else is all or nothing, and a
+    /// selection that is all waking fails with `Waking`. Delete moves to each account's Trash, or deletes for good in
     /// Trash or without one. A move needs messages of one account
     /// (`MixedAccounts` otherwise). Doesn't wait for a running sync.
     pub fn apply_bulk_action(
@@ -226,6 +233,7 @@ impl SyncEngine {
             account_ids: applied.accounts.into_iter().map(|a| a.0).collect(),
             message_ids: applied.messages.into_iter().map(|m| m.0).collect(),
             deleted_for_good: applied.deleted_for_good,
+            skipped_waking: u32::try_from(applied.skipped_waking.len()).unwrap_or(u32::MAX),
         })
     }
 

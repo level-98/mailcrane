@@ -642,6 +642,29 @@ impl Store {
         Ok(done)
     }
 
+    /// The copy's UID from COPYUID (RFC 4315 §3) on its own, when the step
+    /// write after a committed MOVE or COPY lost (#544): only while the row
+    /// is still at step 1 for the same target UIDNEXT and has no copy UID
+    /// yet, so the next pass finds the copy by its UID rather than by the
+    /// UIDNEXT floor (#450). Returns whether it was recorded.
+    pub fn record_snooze_copy_uid_if(
+        &self,
+        id: SnoozeId,
+        target_uidnext: Option<u32>,
+        copy_uid: u32,
+    ) -> Result<bool, StoreError> {
+        // Through write_tx, like the other guarded writes: it waits out a
+        // busy database and gives way to the user's urgent writes.
+        let tx = self.write_tx()?;
+        let n = tx.execute(
+            "UPDATE snoozes SET copy_uid = ?3 WHERE id = ?1 AND step = 1 \
+             AND target_uidnext IS ?2 AND copy_uid IS NULL",
+            params![id.0, target_uidnext, copy_uid],
+        )?;
+        tx.commit()?;
+        Ok(n > 0)
+    }
+
     /// [`Store::start_snooze_rollback`], only if the row is still `seen`.
     pub fn start_snooze_rollback_if(
         &self,

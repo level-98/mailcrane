@@ -151,6 +151,7 @@ private class FakeMailbox(
 
     val bulkCalls = mutableListOf<Triple<BulkSelection, MessageAction, Boolean>>()
     var deletedForGood = false
+    var skippedWaking = 0u
 
     override suspend fun bulkAction(
         selection: BulkSelection,
@@ -160,7 +161,12 @@ private class FakeMailbox(
         actionFailure?.let { throw it }
         bulkCalls += Triple(selection, action, undoable)
         // A conversation row stands for its messages: here, thread n holds message n * 10.
-        return BulkApplied(listOf(1L), selection.messageIds + selection.threadIds.map { it * 10 }, deletedForGood)
+        return BulkApplied(
+            listOf(1L),
+            selection.messageIds + selection.threadIds.map { it * 10 },
+            deletedForGood,
+            skippedWaking,
+        )
     }
 
     val undoBulkCalls = mutableListOf<List<Long>>()
@@ -548,6 +554,28 @@ class MessageListViewModelTest {
             vm.toggleMessage(3)
             vm.bulk(BulkAction.DELETE)
             assertEquals(BulkUndoKind.DELETED_FOR_GOOD, vm.bulkUndoOffers.first().kind)
+        }
+
+    @Test
+    fun aBulkActionThatLeftWakingMessagesSaysSo() =
+        runTest {
+            val core = FakeMailbox(stored = 3).apply { skippedWaking = 1u }
+            val vm = MessageListViewModel(core, FakeAppSettings(), FOLDER)
+            vm.toggleMessage(2)
+            vm.toggleMessage(3)
+            vm.bulk(BulkAction.ARCHIVE)
+            assertEquals(R.string.bulk_skipped_waking, vm.notices.first())
+        }
+
+    @Test
+    fun aBulkActionOnOnlyWakingMessagesSaysSo() =
+        runTest {
+            val core = FakeMailbox(stored = 3)
+            val vm = MessageListViewModel(core, FakeAppSettings(), FOLDER)
+            core.actionFailure = ActionFailure.Waking()
+            vm.toggleMessage(3)
+            vm.bulk(BulkAction.ARCHIVE)
+            assertEquals(R.string.bulk_skipped_waking, vm.notices.first())
         }
 
     @Test

@@ -451,3 +451,102 @@ fn a_partly_refused_action_leaves_a_row_that_took_the_id_alone() -> R {
         .is_some_and(|h| h.details.flags.flagged));
     Ok(())
 }
+
+/// A wake past step 0 for the message with this header, from `inbox`.
+fn waking(f: &Fixture, header: &str) -> Result<SnoozeId, Box<dyn std::error::Error>> {
+    let id = f
+        .store
+        .snooze_message(&NewSnooze {
+            account_id: f.account,
+            message_id_header: header.into(),
+            original_folder_id: Some(f.inbox),
+            hide_message: None,
+            wake_at: 1_795_600_000,
+        })?
+        .ok_or("waking")?;
+    f.store.finish_snooze(id, true)?;
+    assert_eq!(f.store.take_due_snoozes(1_796_000_000)?.len(), 1);
+    f.store.set_snooze_step(id, 1, Some(42))?;
+    Ok(id)
+}
+
+fn archive_all(f: &Fixture) -> NewOp {
+    NewOp {
+        account: f.account,
+        kind: OpKind::Move,
+        folder: f.inbox,
+        dest: Some(f.archive),
+        messages: f.messages.clone(),
+    }
+}
+
+/// #544: one message a wake is moving no longer refuses a bulk archive.
+/// The others are archived and queued, the waking one is left as it is
+/// and reported.
+#[test]
+fn a_bulk_move_skips_a_waking_message_and_reports_it() -> R {
+    let f = fixture(Store::open_in_memory()?)?;
+    waking(&f, "<2@example.org>")?;
+    let queued = f.store.queue_ops(&[archive_all(&f)], 1_800_000_000)?;
+    assert_eq!(queued.skipped_waking, [f.messages[1].message_id]);
+    let id = queued.ids[0].ok_or("queued")?;
+    let ops = f.store.pending_ops(f.account)?;
+    assert_eq!(ops.len(), 1);
+    assert_eq!(ops[0].id, id);
+    let mut queued_ids: Vec<MessageId> = ops[0].messages.iter().map(|m| m.message_id).collect();
+    queued_ids.sort();
+    assert_eq!(
+        queued_ids,
+        [f.messages[0].message_id, f.messages[2].message_id]
+    );
+    let shown: Vec<MessageId> = f
+        .store
+        .list_messages(f.inbox, 10, 0)?
+        .into_iter()
+        .map(|m| m.id)
+        .collect();
+    assert_eq!(
+        shown,
+        [f.messages[1].message_id],
+        "only the waking one stays"
+    );
+    Ok(())
+}
+
+/// #544: when every selected message is waking, the action is refused and
+/// nothing changes.
+#[test]
+fn a_bulk_move_of_only_waking_messages_is_refused() -> R {
+    let f = fixture(Store::open_in_memory()?)?;
+    for uid in [1, 2, 3] {
+        waking(&f, &format!("<{uid}@example.org>"))?;
+    }
+    assert!(matches!(
+        f.store.queue_ops(&[archive_all(&f)], 1_800_000_000),
+        Err(StoreError::Waking)
+    ));
+    assert_eq!(f.store.count_pending_ops(f.account)?, 0);
+    assert_eq!(
+        f.store.list_messages(f.inbox, 10, 0)?.len(),
+        3,
+        "nothing hidden"
+    );
+    Ok(())
+}
+
+/// #544: a flag change isn't a move, so a waking message takes it like any
+/// other and nothing is skipped.
+#[test]
+fn a_bulk_flag_includes_waking_messages() -> R {
+    let f = fixture(Store::open_in_memory()?)?;
+    waking(&f, "<2@example.org>")?;
+    let op = NewOp {
+        kind: OpKind::MarkRead,
+        dest: None,
+        ..archive_all(&f)
+    };
+    let queued = f.store.queue_ops(&[op], 1_800_000_000)?;
+    assert!(queued.skipped_waking.is_empty());
+    assert!(queued.ids[0].is_some());
+    Ok(())
+}
