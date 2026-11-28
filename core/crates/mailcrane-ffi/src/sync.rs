@@ -212,6 +212,11 @@ pub struct SyncEngine {
     /// marked urgent when the job started (#473: it mustn't be).
     #[cfg(test)]
     pub(crate) urgent_at_open: Mutex<Vec<bool>>,
+    /// Makes every account job act as if its thread couldn't start, so tests
+    /// can check the entry points really go through [`Self::account_job`]
+    /// (#490).
+    #[cfg(test)]
+    pub(crate) job_threads_fail: std::sync::atomic::AtomicBool,
 }
 
 #[uniffi::export]
@@ -233,6 +238,8 @@ impl SyncEngine {
             extra_root_cert: Mutex::new(None),
             #[cfg(test)]
             urgent_at_open: Mutex::new(Vec::new()),
+            #[cfg(test)]
+            job_threads_fail: std::sync::atomic::AtomicBool::new(false),
         })
     }
 
@@ -368,13 +375,10 @@ impl SyncEngine {
 }
 
 impl SyncEngine {
-    /// [`Self::refresh_folders`], on the current thread.
+    /// [`Self::refresh_folders`], on the current thread. Its only caller has
+    /// already answered a local-only account (#289), so this never sees one.
     fn refresh_folders_here(&self, account_id: i64) -> Result<Option<i64>, SyncFailure> {
         let account = AccountId(account_id);
-        if self.is_local(account)? {
-            let store = self.open_store()?;
-            return Ok(inbox_of(&store, account)?.map(|f| f.0));
-        }
         if let Some(r) = self.run_jmap(account, |s| {
             Box::pin(async move { s.refresh_mailboxes().await })
         }) {
@@ -668,7 +672,7 @@ impl SyncEngine {
         }) {
             return r.map(|n| u32::try_from(n).unwrap_or(u32::MAX));
         }
-        let stored = self.run_replaying(FolderId(folder_id), true, |syncer| {
+        let stored = self.run_replaying(account, true, |syncer| {
             Box::pin(async move { syncer.sync_folder(FolderId(folder_id)).await })
         })?;
         Ok(u32::try_from(stored).unwrap_or(u32::MAX))
@@ -719,39 +723,37 @@ impl SyncEngine {
         folder: FolderId,
         job: impl for<'a> FnOnce(&'a mut FolderSyncer<'_>) -> SyncFuture<'a, T> + Send,
     ) -> Result<T, SyncFailure> {
-        self.run_replaying(folder, false, job)
+        // The folder's account, a short database read here, so a job thread
+        // that can't run is reported for it (#470 review).
+        let account = self.folder_account(folder)?;
+        self.run_replaying(account, false, job)
     }
 
-    /// [`Self::run`], replaying the account's queued actions first when
-    /// `replay` is set. A replay that fails only defers the actions; the
-    /// sync goes ahead.
+    /// [`Self::run`] for a folder of `account`, which the caller has read
+    /// once (#490); the job names the folder. Replays the account's queued
+    /// actions first when `replay` is set. A replay that fails only defers
+    /// the actions; the sync goes ahead. Never on the caller's stack (#462).
+    /// A folder deleted between the caller's read and the job isn't checked
+    /// for again: the job's own sync then fails and reports it, as a sync
+    /// error rather than a quiet `NotFound`. The gap is a few milliseconds,
+    /// and the same race already ran up to the account lock (#588 review).
     fn run_replaying<T: Send>(
         &self,
-        folder: FolderId,
+        account: AccountId,
         replay: bool,
         job: impl for<'a> FnOnce(&'a mut FolderSyncer<'_>) -> SyncFuture<'a, T> + Send,
     ) -> Result<T, SyncFailure> {
-        // The folder's account, a short database read here, so a job thread
-        // that can't run is reported for it (#470 review). Never on the
-        // caller's stack (#462).
-        let account = self.folder_account(folder)?;
-        self.account_job(account, || self.run_replaying_here(folder, replay, job))
+        self.account_job(account, || self.run_replaying_here(account, replay, job))
     }
 
     /// [`Self::run_replaying`], on the current thread.
     fn run_replaying_here<T>(
         &self,
-        folder: FolderId,
+        account: AccountId,
         replay: bool,
         job: impl for<'a> FnOnce(&'a mut FolderSyncer<'_>) -> SyncFuture<'a, T>,
     ) -> Result<T, SyncFailure> {
         let store = self.open_store()?;
-        let account = store
-            .get_folder(folder)
-            .map_err(|_| failed(events::SyncErrorKind::Storage))?
-            .ok_or_else(|| failed(events::SyncErrorKind::NotFound))?
-            .details
-            .account_id;
         // A poisoned lock only means an earlier call panicked; nothing in it
         // is left half-done.
         let lock = self.account_lock(account);
@@ -934,6 +936,13 @@ impl SyncEngine {
         account: AccountId,
         work: impl FnOnce() -> Result<T, SyncFailure> + Send,
     ) -> Result<T, SyncFailure> {
+        #[cfg(test)]
+        if self
+            .job_threads_fail
+            .load(std::sync::atomic::Ordering::SeqCst)
+        {
+            return self.job_outcome(account, None);
+        }
         self.job_outcome(account, crate::worker::on_job_thread(work))
     }
 

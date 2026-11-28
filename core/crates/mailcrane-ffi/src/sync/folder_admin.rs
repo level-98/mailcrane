@@ -330,6 +330,16 @@ impl SyncEngine {
     /// Connects, runs `job`, logs out. Holds the account's lock so no sync
     /// runs at the same time. Runs on a thread with a stack this crate sets
     /// (#462), never on the caller's.
+    ///
+    /// Plain `worker::on_job_thread`, not `SyncEngine::account_job`, on
+    /// purpose (#490): a folder change is something the user just asked for,
+    /// on the Manage folders screen, and every failure, a thread that couldn't
+    /// start included, comes back to that screen as a `FolderFailure`. A
+    /// `SyncError` event as well would show the same failure twice, once there
+    /// and once in the app's sync error display. A JMAP folder change goes
+    /// through `run_jmap`, shared with sync, so it does send the event too.
+    /// Making that path quiet as well is a change to `run_jmap` for every
+    /// caller, so it isn't made here.
     fn on_server<T: Send>(
         &self,
         account: AccountId,
