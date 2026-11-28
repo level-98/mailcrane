@@ -34,7 +34,7 @@ param(
     [string] $Phase,
     [ValidateSet('P1', 'P2', 'P3', 'P4')]
     [string] $Priority,
-    [string] $Repo = 'level-98/mailcrane',
+    [string] $Repo = 'mailcrane/mailcrane',
     [string] $Owner = 'level-98',
     [int] $Project = 1
 )
