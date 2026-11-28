@@ -53,6 +53,7 @@ import androidx.compose.ui.layout.layout
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalResources
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.CustomAccessibilityAction
@@ -661,6 +662,13 @@ internal fun SwipeableRow(
     /** TalkBack's label for an action on this row. */
     a11yLabel: (SwipeAction) -> Int,
     onSwipe: (SwipeAction) -> Unit,
+    /**
+     * For Settings' sample row (#553): when set, a swipe reports its direction (`true` for start to end)
+     * instead of running [onSwipe], the row always springs straight back, and TalkBack gets one action per
+     * direction labelled by [directionLabel], even when both directions have the same action.
+     */
+    onSwipeToward: ((startToEnd: Boolean) -> Unit)? = null,
+    directionLabel: ((startToEnd: Boolean) -> String)? = null,
     content: @Composable () -> Unit,
 ) {
     // Not saved: material3's dismiss effect runs onDismiss whenever the state isn't Settled, so a row
@@ -671,10 +679,24 @@ internal fun SwipeableRow(
     val scope = rememberCoroutineScope()
     val resources = LocalResources.current
     val actions =
-        listOf(right, left).distinct().filter { it != SwipeAction.NONE }.map { action ->
-            CustomAccessibilityAction(resources.getString(a11yLabel(action))) {
-                onSwipe(action)
-                true
+        if (onSwipeToward != null) {
+            // The same condition as a swipe's (onDismiss below): with onSwipeToward set, TalkBack
+            // never runs a mail action either (#594 review).
+            listOf(true to right, false to left)
+                .filter { it.second != SwipeAction.NONE }
+                .map { (startToEnd, action) ->
+                    val label = directionLabel?.invoke(startToEnd) ?: resources.getString(a11yLabel(action))
+                    CustomAccessibilityAction(label) {
+                        onSwipeToward(startToEnd)
+                        true
+                    }
+                }
+        } else {
+            listOf(right, left).distinct().filter { it != SwipeAction.NONE }.map { action ->
+                CustomAccessibilityAction(resources.getString(a11yLabel(action))) {
+                    onSwipe(action)
+                    true
+                }
             }
         }
     // SwipeToDismissBox keys its dismiss effect on this callback as well as on the settled value, so a
@@ -686,13 +708,16 @@ internal fun SwipeableRow(
     val currentRight by rememberUpdatedState(right)
     val currentLeft by rememberUpdatedState(left)
     val currentOnSwipe by rememberUpdatedState(onSwipe)
+    val currentOnSwipeToward by rememberUpdatedState(onSwipeToward)
     val onDismiss: (SwipeToDismissBoxValue) -> Unit =
         remember(state, scope) {
             { value ->
-                val action = if (value == SwipeToDismissBoxValue.StartToEnd) currentRight else currentLeft
-                currentOnSwipe(action)
+                val startToEnd = value == SwipeToDismissBoxValue.StartToEnd
+                val action = if (startToEnd) currentRight else currentLeft
+                val toward = currentOnSwipeToward
+                if (toward != null) toward(startToEnd) else currentOnSwipe(action)
                 scope.launch {
-                    if (swipeRemovesRow(action)) delay(SWIPE_REMOVE_TIMEOUT_MS)
+                    if (toward == null && swipeRemovesRow(action)) delay(SWIPE_REMOVE_TIMEOUT_MS)
                     state.reset()
                 }
             }
@@ -743,9 +768,13 @@ private fun SwipeBackground(
             painter = painterResource(swipeIcon(action)),
             contentDescription = null,
             tint = onContainer,
+            modifier = Modifier.testTag(swipeIconTag(action)),
         )
     }
 }
+
+/** The tag of a swipe background's icon, for tests. */
+internal fun swipeIconTag(action: SwipeAction): String = "swipe-icon-${action.name}"
 
 private fun swipeIcon(action: SwipeAction): Int =
     when (action) {
