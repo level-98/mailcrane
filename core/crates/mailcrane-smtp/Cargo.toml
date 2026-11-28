@@ -16,6 +16,8 @@ rustls = "0.23.46"
 rustls-platform-verifier = "0.7.1"
 tokio = { version = "1.54.1", features = ["net", "time", "io-util"] }
 tokio-rustls = "0.26.6"
+# Wipes passwords, tokens and the command lines carrying them (#521).
+zeroize = "1.9.2"
 
 [dev-dependencies]
 mailcrane-testkit = { path = "../mailcrane-testkit" }

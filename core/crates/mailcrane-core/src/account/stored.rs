@@ -31,7 +31,8 @@ pub fn imap_login(
 ) -> Result<ImapLogin, SyncErrorKind> {
     let row = remote_account(store, account)?;
     let auth = match credential(store, secrets, account) {
-        Ok(Credential::Password(p)) => ImapAuth::Password(Secret::new(p)),
+        // Moved, not copied: the emptied original is wiped on drop (#521).
+        Ok(Credential::Password(mut p)) => ImapAuth::Password(Secret::new(std::mem::take(&mut *p))),
         Ok(Credential::OAuth(token)) => ImapAuth::XOAuth2(Secret::new(token.as_str())),
         Err(CredentialError::Storage) => return Err(SyncErrorKind::Storage),
         Err(_) => return Err(SyncErrorKind::Auth),

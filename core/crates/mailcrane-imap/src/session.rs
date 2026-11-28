@@ -8,6 +8,7 @@ use crate::{b64, mutf7, roles, tls, ImapAuth, Secret, ServerQuirk};
 use mailcrane_store::{AccountId, FolderId, FolderRole, NewFolder, Store, VirtualRole};
 use std::collections::HashMap;
 use std::time::Duration;
+use zeroize::Zeroizing;
 
 /// The longest personal namespace prefix kept.
 const MAX_NAMESPACE_PREFIX: usize = 200;
@@ -328,8 +329,17 @@ impl Session {
         self.last_command = Some("AUTHENTICATE");
         let tag = self.tags.next();
         let start = format!("{tag} AUTHENTICATE XOAUTH2\r\n").into_bytes();
-        let payload = format!("user={username}\x01auth=Bearer {}\x01\x01", token.expose());
-        let response = format!("{}\r\n", b64::encode(payload.as_bytes())).into_bytes();
+        // The token's copies are wiped after use (#521): the payload, its
+        // base64 and the line sent (`exchange` wipes every segment).
+        let mut payload = Zeroizing::new(String::with_capacity(
+            username.len() + token.expose().len() + 20,
+        ));
+        payload.push_str("user=");
+        payload.push_str(username);
+        payload.push_str("\x01auth=Bearer ");
+        payload.push_str(token.expose());
+        payload.push_str("\x01\x01");
+        let response = line(&Zeroizing::new(b64::encode(payload.as_bytes())));
         let limit = self.command_timeout;
         within(
             limit,
@@ -347,12 +357,16 @@ impl Session {
         let tag = self.tags.next();
         let start = format!("{tag} AUTHENTICATE PLAIN\r\n").into_bytes();
         // RFC 4616 §2: empty authzid, NUL, authcid, NUL, passwd.
-        let mut payload = Vec::with_capacity(username.len() + password.expose().len() + 2);
+        // Sized up front, so it never grows and leaves a copy behind, and
+        // wiped after use (#521).
+        let mut payload = Zeroizing::new(Vec::with_capacity(
+            username.len() + password.expose().len() + 2,
+        ));
         payload.push(0);
         payload.extend_from_slice(username.as_bytes());
         payload.push(0);
         payload.extend_from_slice(password.expose().as_bytes());
-        let response = format!("{}\r\n", b64::encode(&payload)).into_bytes();
+        let response = line(&Zeroizing::new(b64::encode(&payload)));
         let limit = self.command_timeout;
         within(limit, exchange(&mut self.conn, tag, vec![start, response])).await?
     }
@@ -738,12 +752,25 @@ async fn start_tls(
 
 /// Sends `segments`, waiting for a `+` continuation between them, and
 /// collects responses until the one tagged `tag`.
+/// `text` and CRLF, as one line to send, in a buffer sized up front so it
+/// never grows and leaves a copy of a secret behind (#521).
+fn line(text: &str) -> Vec<u8> {
+    let mut out = Vec::with_capacity(text.len() + 2);
+    out.extend_from_slice(text.as_bytes());
+    out.extend_from_slice(b"\r\n");
+    out
+}
+
 async fn exchange(
     conn: &mut Connection,
     tag: String,
     segments: Vec<Vec<u8>>,
 ) -> Result<Done, ImapError> {
     let mut untagged = Vec::new();
+    // Every segment is wiped when it's dropped, however this returns: a
+    // LOGIN or AUTHENTICATE line carries the password or token (#521).
+    // Moving each buffer in copies nothing.
+    let segments: Vec<Zeroizing<Vec<u8>>> = segments.into_iter().map(Zeroizing::new).collect();
     let mut segments = segments.into_iter();
     if let Some(first) = segments.next() {
         conn.write(&first).await?;

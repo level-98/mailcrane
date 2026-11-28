@@ -16,13 +16,14 @@ const EARLY_SECS: i64 = 5 * 60;
 /// `expires_in` optional): short, so it's refreshed soon.
 const DEFAULT_LIFETIME_SECS: u64 = 10 * 60;
 
-/// An access token for one request. `Debug` hides it.
+/// An access token for one request. `Debug` hides it, and it's wiped from
+/// memory when dropped (#521).
 #[derive(Clone, PartialEq, Eq)]
-pub struct AccessToken(String);
+pub struct AccessToken(zeroize::Zeroizing<String>);
 
 impl AccessToken {
     pub fn as_str(&self) -> &str {
-        &self.0
+        self.0.as_str()
     }
 }
 
@@ -72,7 +73,7 @@ impl TokenCache {
         }
         let lifetime = tokens.expires_in.unwrap_or(DEFAULT_LIFETIME_SECS);
         let expires_at = now.saturating_add(i64::try_from(lifetime).unwrap_or(i64::MAX));
-        let token = AccessToken(tokens.access_token.clone());
+        let token = AccessToken(zeroize::Zeroizing::new(tokens.access_token.clone()));
         self.lock()
             .insert((scope.to_owned(), account), (token.clone(), expires_at));
         Ok(token)

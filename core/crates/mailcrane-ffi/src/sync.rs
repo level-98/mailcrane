@@ -1021,7 +1021,8 @@ fn sieve_login(
     let password = crate::secrets::secret_store()
         .and_then(|s| s.get(&SecretKey::account_password(account.0)))
         .ok()??;
-    let password = std::str::from_utf8(password.expose()).ok()?.to_owned();
+    // Copied straight into the wiping secret, with no plain `String` between (#521).
+    let password = std::str::from_utf8(password.expose()).ok()?;
     let domain = row.details.email.rsplit_once('@')?.1.to_ascii_lowercase();
     Some(mailcrane_core::rules::server::SieveLogin {
         username: row.details.username,

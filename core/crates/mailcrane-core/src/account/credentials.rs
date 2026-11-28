@@ -12,10 +12,11 @@ use mailcrane_store::{AccountId, Store};
 use crate::oauth::{providers, token_cache, AccessToken, OAuthError, OAuthProvider};
 use crate::secrets::{SecretKey, SecretStore};
 
-/// What to sign in with. `Debug` never shows the password or token.
+/// What to sign in with. `Debug` never shows the password or token, and
+/// both are wiped from memory when dropped (#521).
 #[derive(Clone, PartialEq, Eq)]
 pub enum Credential {
-    Password(String),
+    Password(zeroize::Zeroizing<String>),
     OAuth(AccessToken),
 }
 
@@ -72,7 +73,9 @@ pub fn credential(
         .map_err(|_| CredentialError::Storage)?
         .ok_or(CredentialError::Missing)?;
     let password = std::str::from_utf8(password.expose()).map_err(|_| CredentialError::Missing)?;
-    Ok(Credential::Password(password.to_owned()))
+    Ok(Credential::Password(zeroize::Zeroizing::new(
+        password.to_owned(),
+    )))
 }
 
 /// The OAuth provider the account signs in with, or `None` for a password.
@@ -146,4 +149,18 @@ pub async fn refresh_token(
             OAuthError::Network | OAuthError::Tls => CredentialError::Missing,
             _ => CredentialError::ReauthRequired,
         })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// #521: the password never shows in `Debug` output.
+    #[test]
+    fn a_credential_never_shows_its_password_in_debug() {
+        let credential = Credential::Password(zeroize::Zeroizing::new("hunter2-example".into()));
+        let shown = format!("{credential:?}");
+        assert_eq!(shown, "Credential::Password(…)");
+        assert!(!shown.contains("hunter2"));
+    }
 }
