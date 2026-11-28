@@ -46,6 +46,8 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
@@ -580,7 +582,11 @@ internal fun RulesList(
                                 onCheckedChange = { onEnabled(rule.id, it) },
                                 // A rule with nothing left to do stays off until it's edited (#323).
                                 enabled = rule.rule.enabled || rule.rule.actions.isNotEmpty(),
-                                modifier = Modifier.testTag("rule-switch-${rule.id}"),
+                                // Named after its rule, so TalkBack says which rule it turns on or off (#506).
+                                modifier =
+                                    Modifier
+                                        .semantics { contentDescription = rule.rule.name }
+                                        .testTag("rule-switch-${rule.id}"),
                             )
                         }
                     },
