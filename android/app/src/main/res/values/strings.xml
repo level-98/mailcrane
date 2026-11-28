@@ -642,6 +642,13 @@
     <!-- Swipe actions (M4-04) -->
     <string name="settings_swipe_right">Swipe right</string>
     <string name="settings_swipe_left">Swipe left</string>
+    <string name="swipe_preview_hint">Swipe the sample message to choose what each direction does.</string>
+    <string name="swipe_preview_sender">Sample sender</string>
+    <string name="swipe_preview_subject">Swipe me left or right</string>
+    <!-- TalkBack action on the sample row; %1$s is the action, such as "Archive". -->
+    <string name="swipe_preview_right">Swipe right: %1$s</string>
+    <string name="swipe_preview_left">Swipe left: %1$s</string>
+    <string name="settings_swipe_cancel">Cancel</string>
     <string name="swipe_none">Nothing</string>
     <string name="swipe_archive">Archive</string>
     <string name="swipe_delete">Delete</string>

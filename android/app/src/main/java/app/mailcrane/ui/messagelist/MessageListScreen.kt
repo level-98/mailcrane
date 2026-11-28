@@ -661,6 +661,13 @@ internal fun SwipeableRow(
     /** TalkBack's label for an action on this row. */
     a11yLabel: (SwipeAction) -> Int,
     onSwipe: (SwipeAction) -> Unit,
+    /**
+     * For Settings' sample row (#553): when set, a swipe reports its direction (`true` for start to end)
+     * instead of running [onSwipe], the row always springs straight back, and TalkBack gets one action per
+     * direction labelled by [directionLabel], even when both directions have the same action.
+     */
+    onSwipeToward: ((startToEnd: Boolean) -> Unit)? = null,
+    directionLabel: ((startToEnd: Boolean) -> String)? = null,
     content: @Composable () -> Unit,
 ) {
     // Not saved: material3's dismiss effect runs onDismiss whenever the state isn't Settled, so a row
@@ -671,10 +678,21 @@ internal fun SwipeableRow(
     val scope = rememberCoroutineScope()
     val resources = LocalResources.current
     val actions =
-        listOf(right, left).distinct().filter { it != SwipeAction.NONE }.map { action ->
-            CustomAccessibilityAction(resources.getString(a11yLabel(action))) {
-                onSwipe(action)
-                true
+        if (onSwipeToward != null && directionLabel != null) {
+            listOf(true to right, false to left)
+                .filter { it.second != SwipeAction.NONE }
+                .map { (startToEnd, _) ->
+                    CustomAccessibilityAction(directionLabel(startToEnd)) {
+                        onSwipeToward(startToEnd)
+                        true
+                    }
+                }
+        } else {
+            listOf(right, left).distinct().filter { it != SwipeAction.NONE }.map { action ->
+                CustomAccessibilityAction(resources.getString(a11yLabel(action))) {
+                    onSwipe(action)
+                    true
+                }
             }
         }
     // SwipeToDismissBox keys its dismiss effect on this callback as well as on the settled value, so a
@@ -686,13 +704,16 @@ internal fun SwipeableRow(
     val currentRight by rememberUpdatedState(right)
     val currentLeft by rememberUpdatedState(left)
     val currentOnSwipe by rememberUpdatedState(onSwipe)
+    val currentOnSwipeToward by rememberUpdatedState(onSwipeToward)
     val onDismiss: (SwipeToDismissBoxValue) -> Unit =
         remember(state, scope) {
             { value ->
-                val action = if (value == SwipeToDismissBoxValue.StartToEnd) currentRight else currentLeft
-                currentOnSwipe(action)
+                val startToEnd = value == SwipeToDismissBoxValue.StartToEnd
+                val action = if (startToEnd) currentRight else currentLeft
+                val toward = currentOnSwipeToward
+                if (toward != null) toward(startToEnd) else currentOnSwipe(action)
                 scope.launch {
-                    if (swipeRemovesRow(action)) delay(SWIPE_REMOVE_TIMEOUT_MS)
+                    if (toward == null && swipeRemovesRow(action)) delay(SWIPE_REMOVE_TIMEOUT_MS)
                     state.reset()
                 }
             }

@@ -315,6 +315,7 @@ fun SettingsContent(
             }
             AppearanceSection(appearance)
             UndoSendSection(undoSendSeconds, onUndoSendChange)
+            SwipePreviewSection(swipe)
             SwipeSection(R.string.settings_swipe_right, swipe.right, swipe.onRightChange)
             SwipeSection(R.string.settings_swipe_left, swipe.left, swipe.onLeftChange)
             accountSection()
