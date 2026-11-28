@@ -182,11 +182,17 @@ fn oversized_and_unparseable_files() {
     assert!(subjects.iter().any(|s| s == "empty.html"), "{subjects:?}");
 }
 
-#[test]
-fn every_repository_fixture_imports() {
+/// Every file under the repository's `tests/fixtures`.
+fn repository_fixtures() -> Vec<FixtureFile> {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../tests/fixtures");
     let mut files = Vec::new();
     read_dir_files(&root, &root, &mut files);
+    files
+}
+
+#[test]
+fn every_repository_fixture_imports() {
+    let files = repository_fixtures();
     let messages = files
         .iter()
         .filter(|f| f.path.ends_with(".eml") || f.path.ends_with(".html"))
@@ -197,13 +203,75 @@ fn every_repository_fixture_imports() {
     let report = import_fixtures(&store, &files, NOW).expect("import");
     assert_eq!(report.imported, messages);
     let listed = store.list_messages(report.inbox, 10_000, 0).expect("list");
-    assert_eq!(listed.len(), messages);
+    let sent = store.list_messages(report.sent, 10_000, 0).expect("sent");
+    assert_eq!(listed.len() + sent.len(), messages);
     // The link fixture #267 is checked with is there (when this branch has it).
     if files.iter().any(|f| f.path == "html/link-mismatch.html") {
         assert!(listed
             .iter()
             .any(|m| m.details.subject == "html/link-mismatch.html"));
     }
+}
+
+#[test]
+fn sent_fixtures_go_in_sent() {
+    let store = Store::open_in_memory().expect("store");
+    let files = [
+        file("t/1-reply.eml", &eml("in")),
+        file("t/2-mine.sent.eml", &eml("out")),
+    ];
+    let report = import_fixtures(&store, &files, NOW).expect("import");
+    assert_eq!(report.imported, 2);
+    let subjects = |folder| -> Vec<String> {
+        store
+            .list_messages(folder, 100, 0)
+            .expect("list")
+            .into_iter()
+            .map(|m| m.details.subject)
+            .collect()
+    };
+    assert_eq!(subjects(report.inbox), ["in"]);
+    assert_eq!(subjects(report.sent), ["out"]);
+    let sent = store.get_folder(report.sent).expect("get").expect("sent");
+    assert_eq!(sent.details.role, Some(FolderRole::Sent));
+}
+
+/// The conversations in `tests/fixtures/conversations` (#573): QA needs them to
+/// check conversation features with Load test mail.
+#[test]
+fn the_conversation_fixtures_group_into_conversations() {
+    let store = Store::open_in_memory().expect("store");
+    let report = import_fixtures(&store, &repository_fixtures(), NOW).expect("import");
+    let threads = store
+        .list_threads(report.inbox, 0, 10_000)
+        .expect("threads");
+    let count_of = |subject: &str| -> Vec<u32> {
+        threads
+            .iter()
+            .filter(|t| t.subject.trim_start_matches("Re: ") == subject)
+            .map(|t| t.message_count)
+            .collect()
+    };
+    assert_eq!(count_of("Lunch on Friday?"), [2]);
+    assert_eq!(count_of("Release plans"), [4]);
+    assert_eq!(count_of("Train times for the trip"), [2]);
+    // The reply in Sent is part of the same conversation.
+    let trip = threads
+        .iter()
+        .find(|t| t.subject.ends_with("Train times for the trip"))
+        .expect("trip");
+    let sent = store.list_threads(report.sent, 0, 100).expect("sent");
+    assert_eq!(sent.len(), 1);
+    assert_eq!(sent.first().map(|t| t.thread_id), Some(trip.thread_id));
+    // The newest message is the conversation's latest reply.
+    let newest = store
+        .get_message_header(trip.newest_message_id)
+        .expect("get")
+        .expect("newest");
+    assert_eq!(
+        newest.details.message_id_header.as_deref(),
+        Some("thread-trip-3@example.com")
+    );
 }
 
 #[test]

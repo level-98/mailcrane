@@ -48,14 +48,14 @@ Categories:
 License: MPL-2.0
 AuthorName: Mailcrane contributors
 WebSite: https://mailcrane.app
-SourceCode: https://github.com/level-98/mailcrane
-IssueTracker: https://github.com/level-98/mailcrane/issues
-Changelog: https://github.com/level-98/mailcrane/blob/main/CHANGELOG.md
+SourceCode: https://github.com/mailcrane/mailcrane
+IssueTracker: https://github.com/mailcrane/mailcrane/issues
+Changelog: https://github.com/mailcrane/mailcrane/blob/main/CHANGELOG.md
 
 AutoName: Mailcrane
 
 RepoType: git
-Repo: https://github.com/level-98/mailcrane.git
+Repo: https://github.com/mailcrane/mailcrane.git
 
 Builds:
   - versionName: 0.1.0

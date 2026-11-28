@@ -117,7 +117,7 @@ The agent runs on a maintainer's Claude token, so:
 To try Mailcrane or check a change, you don't need to build it:
 
 - **Nightly test build:** linked from the [Download page](https://mailcrane.app/download/). It's a release build signed with a development key, so it updates earlier test builds but not a store or release version.
-- **Debug build:** the `android-debug-apk` artifact from any CI run except a docs-only one (see [CI](#ci)). It installs as `app.mailcrane.debug`, alongside the release app (#406), and its Settings has **Load test mail**, which adds made-up messages without connecting anywhere.
+- **Debug build:** the `android-debug-apk` artifact from any CI run except a docs-only one (see [CI](#ci)). It installs as `app.mailcrane.debug`, alongside the release app (#406), and its Settings has **Load test mail**, which adds made-up messages without connecting anywhere. **Never add a real account to it:** its signing key is public ([ADR 0011](docs/decisions/0011-shared-debug-signing-key.md)), so anyone can publish an update for it that can read whatever it holds.
 
 The README's [Try it](README.md#try-it) section says what's built and what isn't yet. In bug reports and screenshots, never show a real address or real mail: use Load test mail.
 

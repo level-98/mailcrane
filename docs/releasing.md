@@ -57,19 +57,19 @@ In the `release` environment, under **Environment secrets** (not repository secr
 With the GitHub CLI, from the folder holding the keystore. The base64 text goes straight from the file to GitHub, and the password prompts don't show what you type:
 
 ```powershell
-[Convert]::ToBase64String([IO.File]::ReadAllBytes("$PWD\mailcrane-release.p12")) | gh secret set ANDROID_KEYSTORE_BASE64 --env release --repo level-98/mailcrane
+[Convert]::ToBase64String([IO.File]::ReadAllBytes("$PWD\mailcrane-release.p12")) | gh secret set ANDROID_KEYSTORE_BASE64 --env release --repo mailcrane/mailcrane
 ```
 
 ```powershell
-gh secret set ANDROID_KEYSTORE_PASSWORD --env release --repo level-98/mailcrane
+gh secret set ANDROID_KEYSTORE_PASSWORD --env release --repo mailcrane/mailcrane
 ```
 
 ```powershell
-gh secret set ANDROID_KEY_ALIAS --env release --repo level-98/mailcrane --body mailcrane
+gh secret set ANDROID_KEY_ALIAS --env release --repo mailcrane/mailcrane --body mailcrane
 ```
 
 ```powershell
-gh secret set ANDROID_KEY_PASSWORD --env release --repo level-98/mailcrane
+gh secret set ANDROID_KEY_PASSWORD --env release --repo mailcrane/mailcrane
 ```
 
 Or paste them in the web page. Then delete any base64 copy you made; keep only the backed-up keystore.

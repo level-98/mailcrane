@@ -1,0 +1,12 @@
+From: Frank Example <frank@example.com>
+To: Test <test@example.org>
+Subject: Train times for the trip
+Date: Wed, 25 Nov 2026 07:45:00 +0000
+Message-ID: <thread-trip-1@example.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Which train should we take on Saturday?
+
+Expected: one conversation "Train times for the trip" over two folders: 2
+messages in the Inbox and 1 in Sent.

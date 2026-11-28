@@ -491,6 +491,8 @@ async fn check(
     // \Deleted copy never shows.
     let mut shown_in = Vec::new();
     for loc in FOLDERS {
+        // The same lookup the wake uses to hide and show rows, which puts a
+        // live row before a \Deleted original (#519 review).
         if let Some(f) = folder(store, account, loc.name()) {
             if let Some(id) = store.find_message_by_header(f, MID).expect("find") {
                 if shown(store, f).contains(&id) {
@@ -505,10 +507,9 @@ async fn check(
     } else {
         vec![want.loc]
     };
-    // A server with neither MOVE nor UIDPLUS keeps every moved original
-    // flagged \Deleted, and the folder sync lists such messages: a sync
-    // gap outside the snooze code, #519.
-    if server != Server::Bare && shown_in != local_want {
+    // On a server with neither MOVE nor UIDPLUS a moved original stays,
+    // flagged \Deleted; it isn't listed (#519), so this holds there too.
+    if shown_in != local_want {
         wrong.push(format!(
             "shown locally in {shown_in:?}, want {local_want:?}"
         ));
@@ -765,6 +766,58 @@ async fn other_copies_of_a_waking_message_can_still_be_moved() {
         "the Archive copy isn't the one waking"
     );
     assert!(act(&store, account, User::Delete), "the Snoozed copy is");
+}
+
+/// How many listed rows of Lunch `name` has locally.
+fn listed_lunch(store: &Store, account: AccountId, name: &str) -> usize {
+    let f = folder(store, account, name).expect("folder");
+    store
+        .list_messages(f, 50, 0)
+        .expect("list")
+        .iter()
+        .filter(|m| m.details.message_id_header.as_deref() == Some(MID))
+        .count()
+}
+
+/// #519 review: on a server with neither MOVE nor UIDPLUS each move leaves
+/// a `\Deleted` original behind. Snoozed twice, the second wake must hide
+/// the live copy in Snoozed, not the older hidden original, so the message
+/// shows once, in the Inbox.
+#[tokio::test]
+async fn a_second_snooze_and_wake_on_a_bare_server_shows_the_message_once() {
+    let (imap, store, account) = Box::pin(due(Server::Bare)).await;
+    // The first wake.
+    Box::pin(push(&imap, &store, account, ACT)).await;
+    Box::pin(sync_all(&imap, &store, account)).await;
+    assert_eq!(listed_lunch(&store, account, "INBOX"), 1, "woken");
+    assert_eq!(listed_lunch(&store, account, SNOOZED_FOLDER_NAME), 0);
+
+    // Snoozed again from the Inbox, and moved.
+    let inbox = folder(&store, account, "INBOX").expect("inbox");
+    let again = store
+        .find_message_by_header(inbox, MID)
+        .expect("find")
+        .expect("the woken copy");
+    snooze(&store, &[again], LATER_WAKE, &Quiet).expect("snooze again");
+    Box::pin(push(&imap, &store, account, ACT + 3600)).await;
+    Box::pin(sync_all(&imap, &store, account)).await;
+    assert_eq!(listed_lunch(&store, account, "INBOX"), 0, "snoozed again");
+
+    // The second wake.
+    let due_again = LATER_WAKE + 60;
+    assert_eq!(wake_due(&store, due_again, &Quiet).expect("wake").len(), 1);
+    assert_eq!(
+        listed_lunch(&store, account, SNOOZED_FOLDER_NAME),
+        0,
+        "the live copy in Snoozed is hidden as it wakes"
+    );
+    Box::pin(push(&imap, &store, account, due_again)).await;
+    Box::pin(sync_all(&imap, &store, account)).await;
+    assert_eq!(listed_lunch(&store, account, "INBOX"), 1, "woken again");
+    assert_eq!(listed_lunch(&store, account, SNOOZED_FOLDER_NAME), 0);
+    assert!(list_snoozed(&store, Some(account))
+        .expect("rows")
+        .is_empty());
 }
 
 /// #459 (invariant 5): every write in the sync that finishes, advances or

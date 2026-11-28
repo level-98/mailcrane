@@ -1,6 +1,6 @@
 # Mail providers
 
-Which mail providers Mailcrane has been tried with, by whom and when, and what worked (M3-06, issue #48). Check here before you try the app with your provider. If you test one, please [send a report](https://github.com/level-98/mailcrane/issues/new?template=provider_report.yml), even when everything worked.
+Which mail providers Mailcrane has been tried with, by whom and when, and what worked (M3-06, issue #48). Check here before you try the app with your provider. If you test one, please [send a report](https://github.com/mailcrane/mailcrane/issues/new?template=provider_report.yml), even when everything worked.
 
 Mailcrane is **pre-alpha**. An empty row means nobody has reported on that provider yet, not that it fails.
 
@@ -66,7 +66,7 @@ Tests never use a real mailbox (AGENTS.md §7). They run against the fake IMAP, 
 
 ## Adding a row
 
-- **Testers:** fill in the [provider test report](https://github.com/level-98/mailcrane/issues/new?template=provider_report.yml) form. Never include your address, password, app password or message content; the provider's name is enough.
+- **Testers:** fill in the [provider test report](https://github.com/mailcrane/mailcrane/issues/new?template=provider_report.yml) form. Never include your address, password, app password or message content; the provider's name is enough.
 - **Maintainers:** turn each report into a row in a PR (a `docs` commit, with no changelog fragment needed), and link the report in the notes.
   - Fill in the row of a provider listed above, or add a new row in alphabetical order before the self-hosted ones.
   - Keep earlier rows when a newer version is tested, so the history stays visible; add a new row below the old one.

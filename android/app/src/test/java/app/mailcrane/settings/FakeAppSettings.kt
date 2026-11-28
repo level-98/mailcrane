@@ -180,4 +180,11 @@ class FakeAppSettings(
     override suspend fun setAfterMoveAction(action: AfterMoveAction) {
         afterMove.value = action
     }
+
+    val debugWarningSeen = MutableStateFlow(false)
+    override val debugAccountWarningSeen: StateFlow<Boolean> = debugWarningSeen
+
+    override suspend fun setDebugAccountWarningSeen() {
+        debugWarningSeen.value = true
+    }
 }

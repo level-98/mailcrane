@@ -20,6 +20,29 @@ Start them all with `scripts/fleet/start-fleet.ps1` (see [Running it](#running-i
 
 **GitHub is the record; Synapse is the live layer.** Issues, claims, PRs, reviews and CI stay on GitHub. The Synapse board, locks and channels say who is doing what *right now*. A seat that restarts rebuilds its picture from GitHub, not from memory.
 
+## The project board
+
+The [Mailcrane project](https://github.com/users/level-98/projects/1) shows every open issue and PR, for people more than for seats. It mirrors GitHub and the Synapse board; it's never the source of truth (#538).
+
+| Field | Values |
+|---|---|
+| Status | Backlog → Ready (`agent-ready`) → In progress → In review → QA → Done |
+| Seat | dev1, dev2, dev3, review, qa, lead, windows, human |
+| Group | text: the grouped dispatch, such as `G6` |
+| Phase | M3 … M8, post-1.0 (a select; the repository milestone shows in the built-in Milestone field) |
+| Priority | P1 … P4 |
+
+Views: **Board** (columns by Status), **By seat** (a table grouped by Seat) and **Needs Alex** (open items labelled `needs-human` or `needs-decision`).
+
+The project's own workflows add new issues and PRs from this repository and move closed or merged items to Done. The lead sets the rest on dispatch and at each hand-off:
+
+```powershell
+scripts/fleet/project-sync.ps1 -Item 538 -Status 'In progress' -Seat dev3
+scripts/fleet/project-sync.ps1 -Item 522 -Status QA -Group G6 -Phase M4
+```
+
+It adds the issue or PR if it isn't there yet, sets only the fields given (`-Group -` clears the group), and uses the maintainer's `gh` sign-in, which needs the `project` scope. Seats don't edit the board by hand.
+
 ## The flow
 
 ```
@@ -83,13 +106,13 @@ A PR without the `fleet` label is never merged by the fleet, even one the mainta
 
 ## The maintainer's phone
 
-When the maintainer's phone is plugged in with USB debugging on, QA uses it as a second test device. It shows up in `adb devices` as a serial that doesn't start with `emulator-`. The phone holds their **real** email in the release app `app.mailcrane`. Rules, no exceptions:
+When the maintainer's phone is plugged in with USB debugging on, QA uses it as a second test device. **A device counts as an emulator only if `adb -s <serial> shell getprop ro.kernel.qemu` or `getprop ro.boot.qemu` returns `1` (newer images may set only the second). Every other device is the maintainer's phone, and all the phone rules apply.** Never go by the serial: a remote emulator shows up as `127.0.0.1:5557`, not `emulator-NNNN` (#575). The phone holds their **real** email in the release app `app.mailcrane`. Rules, no exceptions:
 
 - Only ever install, launch, drive or clear **`app.mailcrane.debug`**, the debug build (#405). Never install anything else, never `adb uninstall` or `pm clear` any other package, and never open another app.
 - Before every tap or key event, check the foreground app (`adb shell dumpsys window | grep mCurrentFocus`) is `app.mailcrane.debug`. If it isn't, stop.
 - In the debug app, use only **Load test mail** (synthetic, never connects). Never add a real account, never type a real address, never send anything. The dev mail CA (`cargo xtask dev-mail`) never goes on the phone.
 - Screenshots from the phone are only of the debug app, and are deleted from the phone afterwards.
-- **Keep it current:** after each merge to `main`, QA builds the debug APK from `origin/main` (a Gradle build, so under `locks/heavy-job`, rule 11) and installs it on the phone with `adb -s <serial> install -r` (replace only, never uninstall first). If the install fails, say so in `qa`; don't work around it.
+- **Keep it current:** after each merge to `main`, QA downloads the `android-debug-apk` artifact from that merge's CI run on `main` and installs it on the phone with `adb -s <serial> install -r` (replace only, never uninstall first). No local Gradle build is needed: every debug APK is signed with the same committed debug key ([ADR 0011](decisions/0011-shared-debug-signing-key.md), #545), so any CI build replaces the last. If the install fails, say so in `qa`; don't work around it. When the shared key first arrives, the maintainer uninstalls `app.mailcrane.debug` on the phone once themselves, because the signature changes; seats never do.
 
 ## GitHub identity
 
@@ -126,6 +149,7 @@ These came from things that cost time on the first full day (the working list is
 - Check a PR once review has no important findings left, so each PR is checked once.
 - Do several PRs per emulator session, and skip re-checks when nothing under `android/` changed except merges from `main`.
 - Run the emulator with 2 GB of RAM and 2 cores (`-memory 2048 -cores 2`), so other seats can still run light checks.
+- Install the PR's CI APK (the `android-debug-apk` artifact of its run) with `adb install -r`, not a local build: it has the same debug signature as the snapshot's app (ADR 0011).
 - Boot the emulator from a ready snapshot (`qa-ready`: dev CA, debug app and the dev-mail account, synthetic mail only) with `-no-snapshot-save`. Refresh it when the app's schema changes or the dev CA rotates. Emulators only: the dev CA never goes on the phone.
 
 **Lead**

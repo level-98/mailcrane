@@ -1,0 +1,11 @@
+From: Ann Example <ann@example.com>
+To: Test <test@example.org>, Carol Example <carol@example.net>
+Subject: Lunch on Friday?
+Date: Mon, 23 Nov 2026 09:00:00 +0000
+Message-ID: <thread-lunch-1@example.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Shall we have lunch on Friday at noon?
+
+Expected: one conversation "Lunch on Friday?" of 2 messages in the Inbox.

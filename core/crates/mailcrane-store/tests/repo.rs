@@ -447,3 +447,34 @@ fn urgent_writes_on_one_database_never_delay_another() -> R {
     assert!(took < std::time::Duration::from_millis(200), "{took:?}");
     Ok(())
 }
+
+/// #519: a message flagged `\Deleted` (by another client, or the original a
+/// move leaves on a server without MOVE or UIDPLUS) stays on the server
+/// until someone expunges it. It isn't listed or counted.
+#[test]
+fn messages_flagged_deleted_are_not_listed_or_counted() -> R {
+    let s = Store::open_in_memory()?;
+    let acc = s.insert_account(&account())?;
+    let f = s.upsert_folder(&folder(acc, "INBOX"))?;
+    let kept = s.upsert_message_header(&header(f, 1, 10))?;
+    let mut gone = header(f, 2, 20);
+    gone.flags.deleted = true;
+    s.upsert_message_header(&gone)?;
+    let listed: Vec<MessageId> = s
+        .list_messages(f, 50, 0)?
+        .into_iter()
+        .map(|m| m.id)
+        .collect();
+    assert_eq!(listed, [kept]);
+    assert_eq!(s.count_unread(f)?, 1);
+
+    // Flagged later, as a flag sync does: gone from the list too.
+    let deleted = Flags {
+        deleted: true,
+        ..Flags::default()
+    };
+    assert!(s.set_flags(kept, deleted)?);
+    assert!(s.list_messages(f, 50, 0)?.is_empty());
+    assert_eq!(s.count_unread(f)?, 0);
+    Ok(())
+}

@@ -36,6 +36,7 @@ import app.mailcrane.R
 import app.mailcrane.core.Field
 import app.mailcrane.core.ServerConfig
 import app.mailcrane.core.SettingsSource
+import app.mailcrane.ui.theme.outlinedButtonBorder
 
 /** Step one of setup (M1-15): just the address and password. */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -86,6 +87,7 @@ internal fun EmailStepContent(
                     onClick = actions.onSignInWithGoogle,
                     enabled = enabled && !state.checking,
                     modifier = Modifier.fillMaxWidth(),
+                    border = outlinedButtonBorder(enabled && !state.checking),
                 ) { Text(stringResource(R.string.setup_google_sign_in)) }
             }
         }
@@ -145,6 +147,7 @@ internal fun ConfirmStepContent(
             onClick = actions.onEditSettings,
             enabled = !state.checking,
             modifier = Modifier.fillMaxWidth(),
+            border = outlinedButtonBorder(!state.checking),
         ) { Text(stringResource(R.string.setup_auto_edit)) }
     }
 }

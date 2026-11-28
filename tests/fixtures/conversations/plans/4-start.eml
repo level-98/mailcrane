@@ -1,0 +1,11 @@
+From: Dana Example <dana@example.com>
+To: Test <test@example.org>, Erik Example <erik@example.net>
+Subject: Release plans
+Date: Tue, 24 Nov 2026 08:30:00 +0000
+Message-ID: <thread-plans-1@example.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Here is a first list of what goes in the next release.
+
+Expected: one conversation "Release plans" of 4 messages in the Inbox.

@@ -35,6 +35,7 @@ import app.mailcrane.security.LockUi
 import app.mailcrane.settings.ThemeMode
 import app.mailcrane.ui.MailHome
 import app.mailcrane.ui.account.AccountsViewModel
+import app.mailcrane.ui.account.DebugAccountWarning
 import app.mailcrane.ui.account.ManualSetupScreen
 import app.mailcrane.ui.components.WelcomeState
 import app.mailcrane.ui.theme.FollowSystemBars
@@ -160,6 +161,8 @@ class MainActivity : FragmentActivity() {
         when {
             addingAccount -> {
                 BackHandler { addingAccount = false }
+                // Debug builds only: never a real account (#559).
+                DebugAccountWarning()
                 ManualSetupScreen(onAccountAdded = {
                     addingAccount = false
                     accountsModel.added(it)

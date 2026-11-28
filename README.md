@@ -45,7 +45,7 @@ Mailcrane is pre-alpha: expect rough edges, and don't rely on it for mail you ca
 | Build | Where to get it | Good to know |
 |---|---|---|
 | **Nightly test build** | The [Download page](https://mailcrane.app/download/) links the newest one, built from `main` every night ([docs/releasing.md](docs/releasing.md#nightly-test-builds)). | Signed with a development key, so it updates earlier test builds but not a store or release version. |
-| **Debug build** | Every CI run except a docs-only one uploads `android-debug-apk` (see [CONTRIBUTING.md](CONTRIBUTING.md#ci)). | It's `app.mailcrane.debug`, so it installs alongside the release app (#406). Its Settings has **Load test mail**, which adds made-up messages that never touch a server. |
+| **Debug build** | Every CI run except a docs-only one uploads `android-debug-apk` (see [CONTRIBUTING.md](CONTRIBUTING.md#ci)). | It's `app.mailcrane.debug`, so it installs alongside the release app (#406). Its Settings has **Load test mail**, which adds made-up messages that never touch a server. **Never add a real account to it:** its signing key is public ([ADR 0011](docs/decisions/0011-shared-debug-signing-key.md)), so anyone can publish an update for it that can read whatever it holds. |
 
 **What's built:** IMAP and SMTP accounts with automatic setup, JMAP accounts, reading, sending, search, rules and notifications.<br>
 **Not yet:** Sign in with Google for everyone (waiting for Google), Sign in with Microsoft, and OpenPGP.
@@ -125,7 +125,7 @@ Mail logic is written in Rust; the app has a native UI on top. Details and reaso
 **You need:** Rust via `rustup` (`rust-toolchain.toml` picks the version). For the app, JDK 17+, the Android SDK and NDK, the Android Rust targets and `cargo-ndk` (details in [android/README.md](android/README.md)). No Docker or test accounts needed: tests use built-in fake mail servers.
 
 ```bash
-git clone https://github.com/level-98/mailcrane.git
+git clone https://github.com/mailcrane/mailcrane.git
 cd mailcrane
 
 cargo xtask ci          # every check CI runs, in one command

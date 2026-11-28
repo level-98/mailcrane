@@ -1,0 +1,13 @@
+From: Test <test@example.org>
+To: Frank Example <frank@example.com>
+Subject: Re: Train times for the trip
+Date: Wed, 25 Nov 2026 08:10:00 +0000
+Message-ID: <thread-trip-2@example.org>
+In-Reply-To: <thread-trip-1@example.com>
+References: <thread-trip-1@example.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+The 9:30 one, if that suits you.
+
+Expected: in Sent, part of the "Train times for the trip" conversation.

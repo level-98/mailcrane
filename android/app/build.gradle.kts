@@ -67,6 +67,19 @@ android {
         ndk { abiFilters += listOf("arm64-v8a", "x86_64") }
     }
 
+    // One shared debug key (ADR 0011, #545), committed, so every debug APK, local
+    // or from CI, has the same signature and installs over the last with
+    // `adb install -r`. It signs the debug build type only: release stays
+    // unsigned (docs/fdroid.md), checked below.
+    signingConfigs {
+        getByName("debug") {
+            storeFile = rootProject.file("debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
+    }
+
     buildTypes {
         // Debug builds are a separate app, app.mailcrane.debug (#405), so they
         // install beside the release app on a real phone instead of replacing it
@@ -77,6 +90,7 @@ android {
         // the release app. Password sign-in still works.
         debug {
             applicationIdSuffix = ".debug"
+            signingConfig = signingConfigs.getByName("debug")
         }
         release {
             buildConfigField("boolean", "GOOGLE_SIGN_IN", "true")
@@ -412,6 +426,18 @@ abstract class CheckOAuthRedirect : DefaultTask() {
             )
         }
         report.get().asFile.writeText("$scheme: routed to $receivers\n")
+    }
+}
+
+// The shared debug key must never sign a release (ADR 0011): the release build
+// type has no signing config, so `assembleRelease` gives an unsigned APK that
+// the release workflow or F-Droid signs. Giving it one fails the build.
+androidComponents {
+    finalizeDsl { android ->
+        check(android.buildTypes.getByName("release").signingConfig == null) {
+            "The release build type must have no signing config: release builds are signed " +
+                "outside Gradle, never with the debug key (ADR 0011, docs/releasing.md)."
+        }
     }
 }
 
