@@ -1,5 +1,6 @@
 package app.mailcrane.settings
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -23,13 +24,18 @@ import app.mailcrane.R
 import app.mailcrane.core.AccountSummary
 import app.mailcrane.ui.components.AccountDot
 
-/** The saved accounts, with Add and Remove (M4-01). Removing asks first. */
+/**
+ * The saved accounts, with Add and Remove (M4-01). Removing asks first. Tapping a row opens that
+ * account's own settings page ([onOpen], #396). The address shows under the name only when it differs.
+ */
 @Composable
 internal fun AccountsSection(
     accounts: List<AccountSummary>,
     onAdd: () -> Unit,
     onRemove: (Long) -> Unit,
+    onOpen: (Long) -> Unit = {},
 ) {
+    val openLabel = stringResource(R.string.accounts_open_settings)
     var removing by rememberSaveable { mutableStateOf<Long?>(null) }
     Column(Modifier.fillMaxWidth().testTag("accounts-section")) {
         Text(
@@ -41,11 +47,15 @@ internal fun AccountsSection(
         accounts.forEach { account ->
             ListItem(
                 leadingContent = { AccountDot(account.color.toInt()) },
-                headlineContent = { Text(account.displayName.ifBlank { account.email }) },
-                supportingContent = { Text(account.email) },
+                headlineContent = { Text(accountName(account)) },
+                supportingContent = if (showsAddressApart(account)) ({ Text(account.email) }) else null,
                 trailingContent = {
                     TextButton(onClick = { removing = account.id }) { Text(stringResource(R.string.accounts_remove)) }
                 },
+                modifier =
+                    Modifier
+                        .clickable(onClickLabel = openLabel) { onOpen(account.id) }
+                        .testTag("account-row-${account.id}"),
             )
         }
         TextButton(onClick = onAdd, modifier = Modifier.padding(horizontal = 8.dp)) {

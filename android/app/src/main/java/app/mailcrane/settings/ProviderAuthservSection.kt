@@ -33,11 +33,13 @@ import dagger.assisted.Assisted
 import dagger.assisted.AssistedFactory
 import dagger.assisted.AssistedInject
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /** How the last save of the server name went. */
 enum class AuthservSaveStatus { NONE, SAVED, CLEARED, INVALID, FAILED }
@@ -87,9 +89,13 @@ class ProviderAuthservViewModel
             if (!current.dirty) return
             viewModelScope.launch {
                 try {
-                    val saved = core.setProviderAuthservId(accountId, current.text)
-                    // Open messages must show the new trust at once, lowered trust above all.
-                    senderTrust.changed()
+                    // The write and the trust refresh are one step: closing the page clears this view model
+                    // (#500), and a save cut off between them would leave open messages on the old trust
+                    // (#492 review). Open messages must show the new trust at once, lowered trust above all.
+                    val saved =
+                        withContext(NonCancellable) {
+                            core.setProviderAuthservId(accountId, current.text).also { senderTrust.changed() }
+                        }
                     _state.update {
                         it.copy(
                             text = saved.orEmpty(),
