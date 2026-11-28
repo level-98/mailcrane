@@ -11,7 +11,7 @@ A maintainer can run up to ten Claude Code sessions on their own machine that wo
 | `mailbot.dev3` | `.claude/agents/mailcrane-dev.md` | `.worktrees/dev3` | Like the other dev seats, but only issues that need no emulator or device (see rule 12). Not in the default seats: start it with `-Seats dev3` (only dev3, alongside a running fleet) or a list such as `-Seats lead,dev1,dev2,dev3,dev4,review,qa` |
 | `mailbot.review` | `.claude/agents/mailcrane-review.md` | `.worktrees/review` | Code review of every `fleet` PR marked ready |
 | `mailbot.qa` | `.claude/agents/mailcrane-qa.md` | `.worktrees/qa` | Emulator checks and screenshots of UI PRs; exploratory passes that file bugs |
-| `mailbot.spec` | `.claude/agents/mailcrane-spec.md` | `.worktrees/spec` (read-only) | Triages open issues and writes their specs, so at least 10 are `agent-ready`; the lead adds the label. Not in the default seats |
+| `mailbot.spec` | `.claude/agents/mailcrane-spec.md` | `.worktrees/spec` (read-only) | Triages open issues and writes their specs, so at least 10 are `agent-ready`; it adds no labels, the lead does. Not in the default seats |
 | `mailbot.docs` | `.claude/agents/mailcrane-docs.md` | `.worktrees/docs` | User docs, the website, README and CONTRIBUTING, changelog fragments and nightly release notes; never app code. Not in the default seats |
 | `mailbot.coach` | `.claude/agents/mailcrane-coach.md` | `.worktrees/coach` (read-only) | Finds repeated friction in the pipeline, measures the #474 metrics and sends the lead proposals. Advise-only: the lead decides. Not in the default seats |
 
@@ -57,7 +57,7 @@ issue ─▶ spec drafts the spec ─▶ lead checks it ─▶ agent-ready ─�
       ─▶ dev fixes findings ─▶ lead merges (see Merging) ─▶ qa installs the new build on the phone
 ```
 
-Triage: the spec seat reads each unlabelled issue and the code, and writes the spec (Goal, Files, Acceptance criteria, Test steps) as a comment. The lead glances at it and adds `agent-ready`; the spec seat never adds that label itself. Without the spec seat running, the lead writes specs as before.
+Triage: the spec seat reads each unlabelled issue and the code, and writes the spec (Goal, Files, Acceptance criteria, Test steps) as a comment. The lead glances at it and adds `agent-ready` (or `needs-human`, when the spec seat suggests it); the spec seat adds no labels at all. If a permission check blocks its comment, it sends the spec to the lead by direct message and the lead posts it. Without the spec seat running, the lead writes specs as before.
 
 ## Channels
 
