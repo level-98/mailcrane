@@ -795,7 +795,8 @@ class MessageListViewModelTest {
             // A second swiped delete while the first waits doesn't replace it.
             vm.swipeThread(swipedThread().copy(threadId = 6), SwipeAction.DELETE)
             vm.confirmDeleteForGood()
-            assertEquals(listOf(4L), core.bulkCalls.single().first.threadIds)
+            val (selection, _, _) = core.bulkCalls.single()
+            assertEquals(listOf(4L), selection.threadIds)
             assertEquals(0, vm.state.value.confirmDeleteForGood)
         }
 }
